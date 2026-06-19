@@ -16,6 +16,32 @@ let
       SITE_FLAG="--site $FRAPPE_SITE"
     fi
   '';
+
+  # Python with tomlkit for format-preserving pyproject.toml edits.
+  pythonToml = pkgs.python3.withPackages (ps: [ ps.tomlkit ]);
+
+  # Shell snippet: register "$APP_NAME" as a uv workspace member — appends
+  # apps/$APP_NAME to [tool.uv.workspace].members and sets
+  # [tool.uv.sources].$APP_NAME.workspace = true. Idempotent and
+  # comment-preserving (tomlkit). Expects $APP_NAME set and cwd at bench root.
+  # (dasel is not used: nixpkgs' dasel is the query-only rewrite without `put`.)
+  registerWorkspaceMember = ''
+    echo "Registering $APP_NAME in pyproject.toml workspace..."
+    ${pythonToml}/bin/python3 -c 'import sys, tomlkit; doc = tomlkit.parse(open("pyproject.toml").read()); uv = doc["tool"]["uv"]; m = uv["workspace"]["members"]; e = "apps/" + sys.argv[1]; (e in m) or m.append(e); uv.setdefault("sources", tomlkit.table()); s = uv["sources"]; (sys.argv[1] in s) or s.__setitem__(sys.argv[1], tomlkit.inline_table()); s[sys.argv[1]].setdefault("workspace", True); open("pyproject.toml", "w").write(tomlkit.dumps(doc))' "$APP_NAME"
+  '';
+
+  # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent, ensuring the file
+  # ends with a newline first (frappe's apps.txt has no trailing newline, so a
+  # naive `echo >>` concatenates onto the last app).
+  addToAppsTxt = ''
+    if ! grep -qx "$APP_NAME" sites/apps.txt 2>/dev/null; then
+      echo "Adding $APP_NAME to sites/apps.txt..."
+      if [ -s sites/apps.txt ] && [ -n "$(tail -c1 sites/apps.txt)" ]; then
+        echo >> sites/apps.txt
+      fi
+      echo "$APP_NAME" >> sites/apps.txt
+    fi
+  '';
 in
 {
   bench-console.exec = ''
@@ -173,24 +199,33 @@ in
   # ([tool.uv.workspace] members + [tool.uv.sources]) and sites/apps.txt.
   bench-get-app = {
     exec = ''
+      set -euo pipefail
+
       if [ -z "''${1:-}" ]; then
         echo "Usage: bench-get-app <url-or-alias>"
         echo ""
         echo "Adds a Frappe app as a git submodule and integrates it into the workspace."
         echo ""
         echo "Examples:"
-        echo "  bench-get-app frappe/payments"
-        echo "  bench-get-app https://github.com/frappe/payments.git"
+        echo "  bench-get-app helpdesk                              # → frappe/helpdesk"
+        echo "  bench-get-app frappe/payments                      # owner/repo on GitHub"
+        echo "  bench-get-app https://github.com/frappe/hrms.git   # full URL"
         exit 1
       fi
 
       INPUT="$1"
       cd "$FRAPPE_BENCH_ROOT"
 
-      if [[ "$INPUT" == */* ]] && [[ "$INPUT" != *://* ]]; then
+      # Resolve the app source URL:
+      #   full URL (scheme:// or git@…)  → used as-is
+      #   owner/repo                     → https://github.com/owner/repo.git
+      #   bare name                      → https://github.com/frappe/<name>.git
+      if [[ "$INPUT" == *://* ]] || [[ "$INPUT" == git@* ]]; then
+        URL="$INPUT"
+      elif [[ "$INPUT" == */* ]]; then
         URL="https://github.com/$INPUT.git"
       else
-        URL="$INPUT"
+        URL="https://github.com/frappe/$INPUT.git"
       fi
 
       APP_NAME=$(basename "$URL" .git)
@@ -205,14 +240,9 @@ in
       git submodule add "$URL" "$APP_DIR"
       git submodule update --init --recursive "$APP_DIR"
 
-      echo "Registering $APP_NAME in pyproject.toml workspace..."
-      dasel put -f pyproject.toml -t string 'tool.uv.workspace.members.append()' "apps/$APP_NAME"
-      dasel put -f pyproject.toml -t bool "tool.uv.sources.$APP_NAME.workspace" true
+      ${registerWorkspaceMember}
 
-      echo "Adding $APP_NAME to sites/apps.txt..."
-      if ! grep -q "^$APP_NAME$" sites/apps.txt 2>/dev/null; then
-        echo "$APP_NAME" >> sites/apps.txt
-      fi
+      ${addToAppsTxt}
 
       echo "Syncing Python dependencies..."
       uv sync
@@ -224,7 +254,6 @@ in
       echo "  1. Restart devenv: direnv reload --no-eval-cache"
       echo "  2. Install the app: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
     '';
-    packages = [ pkgs.dasel ];
     description = "Add a Frappe app from a git URL/alias as a submodule and register it in the uv workspace.";
   };
 
@@ -233,6 +262,8 @@ in
   # env (expected/ignored).
   bench-new-app = {
     exec = ''
+      set -euo pipefail
+
       if [ -z "''${1:-}" ]; then
         echo "Usage: bench-new-app <app-name>"
         echo ""
@@ -258,14 +289,9 @@ in
         exit 1
       fi
 
-      echo "Registering $APP_NAME in pyproject.toml workspace..."
-      dasel put -f pyproject.toml -t string 'tool.uv.workspace.members.append()' "apps/$APP_NAME"
-      dasel put -f pyproject.toml -t bool "tool.uv.sources.$APP_NAME.workspace" true
+      ${registerWorkspaceMember}
 
-      echo "Adding $APP_NAME to sites/apps.txt..."
-      if ! grep -q "^$APP_NAME$" sites/apps.txt 2>/dev/null; then
-        echo "$APP_NAME" >> sites/apps.txt
-      fi
+      ${addToAppsTxt}
 
       echo "Syncing Python dependencies..."
       uv sync
@@ -276,7 +302,6 @@ in
       echo "✅ App '$APP_NAME' created and integrated!"
       echo "   Install it with: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
     '';
-    packages = [ pkgs.dasel ];
     description = "Scaffold a new Frappe app and integrate it into the uv workspace.";
   };
 }
