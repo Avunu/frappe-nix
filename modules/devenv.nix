@@ -173,7 +173,7 @@ in
         };
 
         scripts = import ../lib/scripts.nix {
-          inherit lib;
+          inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
         };
 
