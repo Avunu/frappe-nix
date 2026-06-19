@@ -10,6 +10,7 @@
   workspaceRoot,
   nodejs,
   nodeOverrides ? { },
+  nodeOfflineHashes ? { },
 }:
 
 let
@@ -23,41 +24,46 @@ let
     && builtins.pathExists (workspaceRoot + "/apps/${app}/yarn.lock")
   ) appNames;
 
+  # Build immutable node_modules from yarn.lock using the yarn-v1 hooks
+  # (yarn2nix / mkYarnPackage was removed from nixpkgs). fetchYarnDeps builds an
+  # offline mirror — its hash depends on the app's yarn.lock, so it is supplied
+  # per-app by the consumer via `nodeOfflineHashes`. Generate a missing hash by
+  # leaving it unset (defaults to lib.fakeHash), building, and copying the
+  # reported `got: sha256-…` value into the consumer config.
+  #
+  # postinstall scripts are skipped (the hook passes --ignore-scripts): apps like
+  # hrms run nested `yarn install` in frontend/ subdirs needing network access
+  # not available in the sandbox.
   nodeModulesForApp =
     app:
     let
       appOverrides = nodeOverrides.${app} or { };
-      pkg = pkgs.mkYarnPackage (
-        {
-          name = app;
-          src = workspaceRoot + "/apps/${app}";
-          inherit nodejs;
-          version =
-            let
-              hooksPath = workspaceRoot + "/apps/${app}/hooks.py";
-              initPath = workspaceRoot + "/apps/${app}/${app}/__init__.py";
-              hooksContent =
-                if builtins.pathExists hooksPath then builtins.readFile hooksPath else "";
-              initContent =
-                if builtins.pathExists initPath then builtins.readFile initPath else "";
-              appVersionMatch = builtins.match ".*app_version[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*" hooksContent;
-              versionMatch = builtins.match ".*__version__[[:space:]]*=[[:space:]]*['\"]([^'\"]+)['\"].*" initContent;
-            in
-            if appVersionMatch != null then
-              builtins.elemAt appVersionMatch 0
-            else if versionMatch != null then
-              builtins.elemAt versionMatch 0
-            else
-              "0.1.0";
-          yarn = pkgs.yarn;
-        }
-        // appOverrides
-      );
+      appSrc = workspaceRoot + "/apps/${app}";
+      offlineCache = pkgs.fetchYarnDeps {
+        yarnLock = appSrc + "/yarn.lock";
+        hash = nodeOfflineHashes.${app} or lib.fakeHash;
+      };
     in
-    pkgs.runCommand "${app}-node-modules" { } ''
-      mkdir -p $out
-      ln -s ${pkg}/libexec/${app}/node_modules $out/node_modules
-    '';
+    pkgs.stdenv.mkDerivation (
+      {
+        name = "${app}-node-modules";
+        src = appSrc;
+        nativeBuildInputs = [
+          pkgs.yarnConfigHook
+          pkgs.yarn
+          nodejs
+        ];
+        yarnOfflineCache = offlineCache;
+        dontBuild = true;
+        installPhase = ''
+          runHook preInstall
+          mkdir -p $out
+          cp -R node_modules $out/node_modules
+          runHook postInstall
+        '';
+      }
+      // appOverrides
+    );
 
   nodeModules = lib.genAttrs appsWithNode nodeModulesForApp;
 

@@ -37,7 +37,7 @@
 
         benchInfra = import ../lib/bench.nix {
           inherit pkgs lib;
-          inherit (cfg) workspaceRoot nodejs nodeOverrides;
+          inherit (cfg) workspaceRoot nodejs nodeOverrides nodeOfflineHashes;
           inherit (pythonEnvs) prodPythonEnv;
         };
 
@@ -141,6 +141,9 @@
               })
               benchInfra.benchRoot
             ];
+            # fakeRootCommands uses absolute paths (/bench, /tmp), which require
+            # a chroot of the assembled image to resolve.
+            enableFakechroot = true;
             fakeRootCommands = ''
               mkdir -p /tmp /bench/logs /bench/config/pids
               chmod 1777 /tmp
@@ -284,6 +287,7 @@
             })
             benchInfra.benchRoot
           ];
+          enableFakechroot = true;
           fakeRootCommands = ''
             mkdir -p /tmp/nginx /var/log/nginx /var/cache/nginx
             chmod 1777 /tmp

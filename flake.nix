@@ -44,6 +44,8 @@
     {
       flakeModules.default = ./modules/flake-module.nix;
 
+      nixosModules.default = ./modules/nixos.nix;
+
       lib = {
         mkFlake =
           {

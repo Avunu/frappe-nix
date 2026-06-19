@@ -103,15 +103,29 @@ in
         nodeOverrides = mkOption {
           type = types.attrsOf types.attrs;
           default = { };
-          description = "Per-app overrides for mkYarnPackage (e.g., yarnFlags, preInstall).";
+          description = ''
+            Per-app attributes merged into the node_modules stdenv.mkDerivation
+            (e.g. postPatch, extra nativeBuildInputs).
+          '';
           example = {
             hrms = {
-              yarnFlags = [
-                "--offline"
-                "--frozen-lockfile"
-                "--ignore-scripts"
-              ];
+              postPatch = "rm -f frontend/yarn.lock";
             };
+          };
+        };
+
+        nodeOfflineHashes = mkOption {
+          type = types.attrsOf types.str;
+          default = { };
+          description = ''
+            Per-app fetchYarnDeps offline-cache hashes, keyed by app name. The
+            hash depends on the app's yarn.lock. To obtain one, leave it unset
+            (defaults to lib.fakeHash), build benchRoot (or a container), and copy
+            the reported `got: sha256-…` value here.
+          '';
+          example = {
+            frappe = "sha256-AAAA…";
+            erpnext = "sha256-BBBB…";
           };
         };
 
@@ -154,7 +168,7 @@ in
 
         benchInfra = import ../lib/bench.nix {
           inherit pkgs lib;
-          inherit (cfg) workspaceRoot nodejs nodeOverrides;
+          inherit (cfg) workspaceRoot nodejs nodeOverrides nodeOfflineHashes;
           inherit (pythonEnvs) prodPythonEnv;
         };
 
@@ -167,6 +181,9 @@ in
       lib.mkIf cfg.enable {
         packages.prodPythonEnv = pythonEnvs.prodPythonEnv;
         packages.devPythonEnv = pythonEnvs.devPythonEnv;
+        # Assembled /bench tree — consumed by the NixOS module (nixosModules.default)
+        # and by the OCI container builds in containers.nix.
+        packages.benchRoot = benchInfra.benchRoot;
 
         devenv.shells.default =
           { config, pkgs, ... }:

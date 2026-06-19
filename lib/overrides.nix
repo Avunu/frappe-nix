@@ -23,7 +23,9 @@
         nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
           final.setuptools
           pkgs.pkg-config
-          mariadb.dev
+          # mariadb_config + client headers (mysql.h). pkgs.mariadb has no `dev`
+          # output, so use the connector-c package for the build-time headers.
+          pkgs.mariadb-connector-c
         ];
         buildInputs = (old.buildInputs or [ ]) ++ [
           mariadb.client
