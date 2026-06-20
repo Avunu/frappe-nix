@@ -24,12 +24,23 @@ let
     && builtins.pathExists (workspaceRoot + "/apps/${app}/yarn.lock")
   ) appNames;
 
+  # Per-app fetchYarnDeps offline-cache hashes. The committed
+  # node-offline-hashes.json (kept current by `bench-update`) is the source of
+  # truth; entries in the nodeOfflineHashes option override it.
+  offlineHashesFile = workspaceRoot + "/node-offline-hashes.json";
+  fileOfflineHashes =
+    if builtins.pathExists offlineHashesFile then
+      builtins.fromJSON (builtins.readFile offlineHashesFile)
+    else
+      { };
+  offlineHashes = fileOfflineHashes // nodeOfflineHashes;
+
   # Build immutable node_modules from yarn.lock using the yarn-v1 hooks
   # (yarn2nix / mkYarnPackage was removed from nixpkgs). fetchYarnDeps builds an
-  # offline mirror — its hash depends on the app's yarn.lock, so it is supplied
-  # per-app by the consumer via `nodeOfflineHashes`. Generate a missing hash by
-  # leaving it unset (defaults to lib.fakeHash), building, and copying the
-  # reported `got: sha256-…` value into the consumer config.
+  # offline mirror — its hash depends on the app's yarn.lock. Hashes live in
+  # node-offline-hashes.json; run `bench-update --node-hashes` to (re)generate
+  # them. A missing hash falls back to lib.fakeHash so the build fails with the
+  # `got: sha256-…` value to record.
   #
   # postinstall scripts are skipped (the hook passes --ignore-scripts): apps like
   # hrms run nested `yarn install` in frontend/ subdirs needing network access
@@ -41,7 +52,7 @@ let
       appSrc = workspaceRoot + "/apps/${app}";
       offlineCache = pkgs.fetchYarnDeps {
         yarnLock = appSrc + "/yarn.lock";
-        hash = nodeOfflineHashes.${app} or lib.fakeHash;
+        hash = offlineHashes.${app} or lib.fakeHash;
       };
     in
     pkgs.stdenv.mkDerivation (

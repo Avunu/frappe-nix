@@ -69,26 +69,75 @@ in
     PULL=true
     MIGRATE=true
     BUILD=true
+    FORCE_NODE_HASHES=false
 
     for arg in "$@"; do
       case "$arg" in
-        --pull)    MIGRATE=false; BUILD=false ;;
-        --migrate) PULL=false;   BUILD=false  ;;
-        --build)   PULL=false;   MIGRATE=false;;
+        --pull)        MIGRATE=false; BUILD=false ;;
+        --migrate)     PULL=false;   BUILD=false  ;;
+        --build)       PULL=false;   MIGRATE=false ;;
+        --node-hashes) PULL=false;   MIGRATE=false; BUILD=false; FORCE_NODE_HASHES=true ;;
         --help|-h)
-          echo "Usage: bench-update [--pull | --migrate | --build]"
+          echo "Usage: bench-update [--pull | --migrate | --build | --node-hashes]"
           echo ""
-          echo "  (no flags)  Pull all apps, run migrations, build assets"
-          echo "  --pull      Pull latest commits for each app only"
-          echo "  --migrate   Run DB migrations only"
-          echo "  --build     Build JS/CSS assets only"
+          echo "  (no flags)     Pull apps, refresh node hashes, migrate, build"
+          echo "  --pull         Pull latest commits + refresh changed node hashes"
+          echo "  --migrate      Run DB migrations only"
+          echo "  --build        Build JS/CSS assets only"
+          echo "  --node-hashes  Force-regenerate node-offline-hashes.json (all apps)"
           exit 0 ;;
         *) echo "Unknown flag: $arg" >&2; exit 1 ;;
       esac
     done
 
+    cd "$FRAPPE_BENCH_ROOT"
+    HASHES_FILE="node-offline-hashes.json"
+
+    # Compute the fetchYarnDeps offline-cache hash for one app ($1) by building
+    # the real derivation with a fake hash and reading the reported `got:` value.
+    # (prefetch-yarn-deps' standalone hash does NOT match fetchYarnDeps' FOD hash,
+    # which also embeds the yarn.lock.)
+    _offline_hash() {
+      nix build --impure --no-link --no-warn-dirty --expr "
+        let pkgs = import ${pkgs.path} { system = builtins.currentSystem; };
+        in pkgs.fetchYarnDeps { yarnLock = $FRAPPE_BENCH_ROOT/apps/$1/yarn.lock; hash = pkgs.lib.fakeHash; }
+      " 2>&1 | awk '/got:/ { print $NF; exit }' || true
+    }
+
+    _write_hash() {
+      local app="$1" h="$2" tmp
+      tmp=$(mktemp)
+      { [ -f "$HASHES_FILE" ] && cat "$HASHES_FILE" || echo '{}'; } \
+        | ${pkgs.jq}/bin/jq --sort-keys --arg a "$app" --arg h "$h" '.[$a] = $h' > "$tmp"
+      mv "$tmp" "$HASHES_FILE"
+    }
+
+    _regen_hashes() {
+      if [ "$#" -eq 0 ]; then
+        echo "  node-offline-hashes.json already up to date"
+        return 0
+      fi
+      echo "── Regenerating node-offline-hashes.json for:$(printf ' %s' "$@") ──"
+      for app in "$@"; do
+        echo "  prefetching $app (downloads yarn deps)…"
+        h=$(_offline_hash "$app")
+        if [ -z "$h" ]; then
+          echo "  ⚠  could not compute hash for $app" >&2
+          continue
+        fi
+        _write_hash "$app" "$h"
+        echo "  $app = $h"
+      done
+    }
+
     if $PULL; then
       echo "── Pulling latest commits for all app submodules ────────────"
+      declare -A _before_lock
+      for lock in apps/*/yarn.lock; do
+        [ -e "$lock" ] || continue
+        _before_lock["$lock"]=$(git hash-object "$lock" 2>/dev/null || echo none)
+      done
+
       git submodule foreach --recursive '
         branch=$(git config -f "$toplevel/.gitmodules" "submodule.$name.branch") || {
           echo "  ⚠  $name: no branch configured in .gitmodules — skipping"
@@ -100,6 +149,29 @@ in
         find . -name "*.pyc" -delete
       '
       echo ""
+
+      # Refresh node hashes for apps whose yarn.lock changed or are not yet recorded.
+      changed=()
+      for lock in apps/*/yarn.lock; do
+        [ -e "$lock" ] || continue
+        app=$(basename "$(dirname "$lock")")
+        after=$(git hash-object "$lock" 2>/dev/null || echo none)
+        if [ "''${_before_lock["$lock"]:-none}" != "$after" ] \
+           || ! ${pkgs.jq}/bin/jq -e --arg a "$app" 'has($a)' "$HASHES_FILE" >/dev/null 2>&1; then
+          changed+=("$app")
+        fi
+      done
+      _regen_hashes "''${changed[@]}"
+      echo ""
+    fi
+
+    if $FORCE_NODE_HASHES; then
+      all_apps=()
+      for lock in apps/*/yarn.lock; do
+        [ -e "$lock" ] || continue
+        all_apps+=("$(basename "$(dirname "$lock")")")
+      done
+      _regen_hashes "''${all_apps[@]}"
     fi
 
     if $MIGRATE; then

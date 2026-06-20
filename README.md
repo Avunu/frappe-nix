@@ -133,7 +133,7 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `nodejs` | package | `pkgs.nodejs_22` | Node.js for frontend builds + socketio. |
 | `mariadb.package` | package | `pkgs.mariadb` | MariaDB package. |
 | `mariadb.initialDatabases` | list of `{ name }` | `[]` | Databases created on first `devenv up`. |
-| `nodeOfflineHashes` | attrs of str | `{}` | Per-app `fetchYarnDeps` hashes (see below). |
+| `nodeOfflineHashes` | attrs of str | `{}` | Per-app `fetchYarnDeps` hash overrides (see [Node offline hashes](#node-offline-hashes); normally generated into `node-offline-hashes.json`). |
 | `nodeOverrides` | attrs of attrs | `{}` | Per-app attrs merged into the node_modules `stdenv.mkDerivation`. |
 | `pythonOverrides` | overlay | no-op | Extra Python package set overlay (compose with `lib.overrides`). |
 | `extraDevPackages` | list of package | `[]` | Extra packages on the dev shell. |
@@ -170,7 +170,7 @@ Available in the shell (and as devenv scripts):
 | Script | Description |
 | --- | --- |
 | `provision-site [admin-pass]` | Create `$FRAPPE_SITE` and install every app from `sites/apps.txt`. |
-| `bench-update [--pull\|--migrate\|--build]` | Submodule-aware replacement for `bench update`. |
+| `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also refreshes `node-offline-hashes.json` for changed apps. |
 | `bench-migrate` / `bench-build` / `bench-clear-cache` / `bench-console` | Thin `bench` wrappers honoring `$FRAPPE_SITE`. |
 | `bench-restore <sql> [opts]` | Restore the site from a SQL backup. |
 | `bench-get-app <url\|alias>` | Add an app as a git submodule + register it in the uv workspace. `helpdesk` → `frappe/helpdesk`; `owner/repo` and full URLs also work. |
@@ -262,13 +262,22 @@ packages that need C headers/system libraries.
 Commit `uv.lock` and each app's `yarn.lock`; the production env, node_modules, containers,
 and NixOS deployment are all rebuilt from them.
 
-### `nodeOfflineHashes`
+### Node offline hashes
 
 Because the node_modules build went off the (removed) `mkYarnPackage` to the yarn-v1 hooks,
 each app's offline cache is a fixed-output derivation whose hash depends on its `yarn.lock`.
-Supply one hash per app via `nodeOfflineHashes`. To (re)generate a hash, leave the entry
-out, run `nix build .#benchRoot`, and copy the reported `got: sha256-…` value. Re-run after
-updating an app's `yarn.lock`.
+These hashes live in a committed **`node-offline-hashes.json`** at the workspace root
+(`{ "<app>": "sha256-…" }`), which `bench.nix` reads automatically.
+
+You don't manage that file by hand — **`bench-update` keeps it current**:
+
+- `bench-update` / `bench-update --pull` regenerates the hash for any app whose `yarn.lock`
+  changed during the pull (or is missing from the file);
+- `bench-update --node-hashes` force-regenerates every app's hash.
+
+(`bench-get-app` also adds new apps; run `bench-update --node-hashes` afterwards, or it will
+be picked up on the next pull.) The `nodeOfflineHashes` option still exists as a manual
+override for individual apps and takes precedence over the file.
 
 ## Layout
 
