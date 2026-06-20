@@ -5,11 +5,13 @@ description = "Frappe bench workspace managed by frappe-nix"
 requires-python = "@REQUIRES_PYTHON@"
 readme = "README.md"
 
-# frappe-bench provides the `bench` CLI; setuptools is needed at import time by
-# several transitive deps that use pkg_resources.
+# frappe-bench provides the `bench` CLI; setuptools is kept in the venv because
+# several transitive deps import pkg_resources at runtime. It is left
+# unconstrained so apps that pin an exact setuptools (e.g. payments) win instead
+# of conflicting with a floor here.
 dependencies = [
     "frappe-bench>=5.29.0",
-    "setuptools>=80.10.2",
+    "setuptools",
 ]
 
 # Dev-only tools — in the devenv shell, excluded from production containers.
