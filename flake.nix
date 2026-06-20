@@ -40,7 +40,17 @@
   };
 
   outputs =
-    { self, flake-parts, ... }@inputs:
+    { self, nixpkgs, flake-parts, ... }@inputs:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      frappeInit = pkgs: import ./lib/init.nix { inherit pkgs; };
+    in
     {
       flakeModules.default = ./modules/flake-module.nix;
 
@@ -59,5 +69,23 @@
 
         overrides = import ./lib/overrides.nix;
       };
+
+      # `nix run github:Avunu/frappe-nix` scaffolds a new bench (bench-init style).
+      packages = forAllSystems (pkgs: rec {
+        frappe-init = frappeInit pkgs;
+        default = frappe-init;
+      });
+
+      apps = forAllSystems (pkgs: let
+        program = "${frappeInit pkgs}/bin/frappe-init";
+        app = {
+          type = "app";
+          inherit program;
+          meta.description = "Scaffold a new frappe-nix bench (bench-init style)";
+        };
+      in {
+        default = app;
+        frappe-init = app;
+      });
     };
 }

@@ -36,6 +36,35 @@ laid out the way a Frappe bench is:
     └── apps.json             # (optional) app metadata for the bench
 ```
 
+## Create a new bench
+
+`nix run github:Avunu/frappe-nix` scaffolds a fresh bench — the frappe-nix equivalent of
+`bench init`. It selects a frappe version (which fixes the python/node versions from a
+preset) and an optional set of apps, then writes the wrapper flake, adds `frappe` + the apps
+as git submodules pinned to that version's branch, and runs `uv lock`:
+
+```sh
+nix run github:Avunu/frappe-nix                 # interactive (gum prompts)
+# or fully non-interactive:
+nix run github:Avunu/frappe-nix -- \
+  --frappe-version version-15 --apps erpnext,hrms --name mybench mybench
+cd mybench && direnv allow && devenv up         # then `provision-site` in another shell
+```
+
+Presets (curated in `lib/frappe-presets.json`, from frappe's `requires-python` / `engines`):
+
+| Preset | python | node | app branch |
+| --- | --- | --- | --- |
+| `develop` | python314 | nodejs_24 | `develop` |
+| `version-16` | python314 | nodejs_24 | `version-16` |
+| `version-15` | python312 | nodejs_20 | `version-15` |
+
+Apps follow the chosen version's branch when it exists (auto-detected via `git ls-remote`),
+else the repo default. Flags: `--frappe-version`, `--apps` (names → `frappe/<name>`, or
+`owner/repo`, or full git URLs), `--name`, `--site`, and a positional target dir. Bump the
+presets file as frappe's requirements move; the python/node defaults are overridable in the
+generated `flake.nix`.
+
 ## Quick start
 
 A complete consuming flake is just a configured module. Because `frappe-nix.lib.mkFlake`

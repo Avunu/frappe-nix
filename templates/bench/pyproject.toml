@@ -1,0 +1,180 @@
+[project]
+name = "@BENCH_NAME@"
+version = "0.1.0"
+description = "Frappe bench workspace managed by frappe-nix"
+requires-python = "@REQUIRES_PYTHON@"
+readme = "README.md"
+
+# frappe-bench provides the `bench` CLI; setuptools is needed at import time by
+# several transitive deps that use pkg_resources.
+dependencies = [
+    "frappe-bench>=5.29.0",
+    "setuptools>=80.10.2",
+]
+
+# Dev-only tools — in the devenv shell, excluded from production containers.
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.1",
+    "pydantic>=2.12.5",
+    "pytest>=9.0.2",
+    "responses",
+    "ruff>=0.15.0",
+    "semgrep>=1.145.0",
+]
+
+[tool.uv]
+# uv workspace over all apps; this root is a virtual package (no wheel built).
+package = false
+# Resolve conflicts between frappe-bench (the CLI) and frappe. Seeded from the
+# frappe-nix preset; add entries here if `uv lock` reports an unsatisfiable
+# requirement, then re-run `uv lock`.
+override-dependencies = @OVERRIDES@
+
+# Build-time deps for older Frappe/ERPNext packages that predate PEP 517/518 and
+# rely on setuptools/pkg_resources. uv2nix consumes this so the Nix build needs
+# no setuptools overlay. Unused entries are ignored, so this is a safe superset.
+[tool.uv.extra-build-dependencies]
+"cairocffi" = ["setuptools", "cffi", "pycparser"]
+"backcall" = ["setuptools"]
+"backoff" = ["setuptools"]
+"barcodenumber" = ["setuptools"]
+"bleach-allowlist" = ["setuptools"]
+"braintree" = ["setuptools"]
+"chardet" = ["setuptools"]
+"colorama" = ["setuptools"]
+"croniter" = ["setuptools"]
+"cssselect" = ["setuptools"]
+"cssselect2" = ["setuptools"]
+"cssutils" = ["setuptools"]
+"dataclasses-json" = ["setuptools"]
+"decorator" = ["setuptools"]
+"docopt" = ["setuptools"]
+"dropbox" = ["setuptools"]
+"email-reply-parser" = ["setuptools"]
+"et-xmlfile" = ["setuptools"]
+"executing" = ["setuptools"]
+"filetype" = ["setuptools"]
+"getmac" = ["setuptools"]
+"gocardless-pro" = ["setuptools"]
+"googlemaps" = ["setuptools"]
+"gunicorn" = ["setuptools"]
+"hiredis" = ["setuptools"]
+"html5lib" = ["setuptools"]
+"httplib2" = ["setuptools"]
+"jellyfish" = ["setuptools"]
+"jsonpath-ng" = ["setuptools"]
+"ldap3" = ["setuptools"]
+"markdown2" = ["setuptools"]
+"markdownify" = ["setuptools"]
+"marshmallow" = ["setuptools"]
+"matplotlib-inline" = ["setuptools"]
+"maxminddb-geolite2" = ["setuptools"]
+"maxminddb" = ["setuptools"]
+"monotonic" = ["setuptools"]
+"num2words" = ["setuptools"]
+"oauthlib" = ["setuptools"]
+"openpyxl" = ["setuptools"]
+"parso" = ["setuptools"]
+"passlib" = ["setuptools"]
+"paytmchecksum" = ["setuptools"]
+"pdfkit" = ["setuptools"]
+"pexpect" = ["setuptools"]
+"phonenumbers" = ["setuptools"]
+"pickleshare" = ["setuptools"]
+"plaid-python" = ["setuptools"]
+"ply" = ["setuptools"]
+"polyline" = ["setuptools"]
+"posthog" = ["setuptools"]
+"premailer" = ["setuptools"]
+"prompt-toolkit" = ["setuptools"]
+"psutil" = ["setuptools"]
+"ptyprocess" = ["setuptools"]
+"pure-eval" = ["setuptools"]
+"pyasn1-modules" = ["setuptools"]
+"pyasn1" = ["setuptools"]
+"pycountry" = ["setuptools"]
+"pycryptodome" = ["setuptools"]
+"pydyf" = ["setuptools"]
+"pyjwt" = ["setuptools"]
+"pymysql" = ["setuptools"]
+"pyopenssl" = ["setuptools"]
+"pyotp" = ["setuptools"]
+"pyparsing" = ["setuptools"]
+"pypdf" = ["setuptools"]
+"pyphen" = ["setuptools"]
+"pypika" = ["setuptools"]
+"pypng" = ["setuptools"]
+"pyqrcode" = ["setuptools"]
+"python-barcode" = ["setuptools"]
+"python-docx" = ["setuptools"]
+"python-ldap" = ["setuptools"]
+"python-magic" = ["setuptools"]
+"python-pptx" = ["setuptools"]
+"python-stdnum" = ["setuptools"]
+"python-youtube" = ["setuptools"]
+"pytz" = ["setuptools"]
+"rapidfuzz" = ["setuptools"]
+"rauth" = ["setuptools"]
+"razorpay" = ["setuptools"]
+"redis" = ["setuptools"]
+"requests-oauthlib" = ["setuptools"]
+"responses" = ["setuptools"]
+"restrictedpython" = ["setuptools"]
+"rq" = ["setuptools"]
+"rsa" = ["setuptools"]
+"ruamel-yaml-clib" = ["setuptools"]
+"six" = ["setuptools"]
+"soupsieve" = ["setuptools"]
+"sql-metadata" = ["setuptools"]
+"sqlparse" = ["setuptools"]
+"stack-data" = ["setuptools"]
+"stone" = ["setuptools"]
+"stripe" = ["setuptools"]
+"tenacity" = ["setuptools"]
+"terminaltables" = ["setuptools"]
+"tinycss2" = ["setuptools"]
+"tinyhtml5" = ["setuptools"]
+"traceback-with-variables" = ["setuptools"]
+"traitlets" = ["setuptools"]
+"typing-inspect" = ["setuptools"]
+"unidecode" = ["setuptools"]
+"uritemplate" = ["setuptools"]
+"us" = ["setuptools"]
+"vobject" = ["setuptools"]
+"wcwidth" = ["setuptools"]
+"weasyprint" = ["setuptools"]
+"webencodings" = ["setuptools"]
+"whoosh" = ["setuptools"]
+"xlrd" = ["setuptools"]
+"xmltodict" = ["setuptools"]
+"zopfli" = ["setuptools"]
+"zxcvbn" = ["setuptools"]
+
+[tool.uv.workspace]
+members = [
+@MEMBERS@
+]
+
+[tool.uv.sources]
+@SOURCES@
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+# Virtual package — workspace root only.
+skip-excluded-dirs = true
+
+[tool.ruff]
+line-length = 110
+target-version = "@PYTAG@"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "@PYVER@"
+ignore_missing_imports = true

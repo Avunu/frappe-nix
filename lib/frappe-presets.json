@@ -1,0 +1,26 @@
+{
+  "develop": {
+    "label": "develop — bleeding edge (python 3.14 / node 24)",
+    "branch": "develop",
+    "python": "python314",
+    "nodejs": "nodejs_24",
+    "requiresPython": ">=3.14",
+    "overrideDependencies": ["click~=8.3.1", "requests>=2.34.2"]
+  },
+  "version-16": {
+    "label": "version-16 — latest release (python 3.14 / node 24)",
+    "branch": "version-16",
+    "python": "python314",
+    "nodejs": "nodejs_24",
+    "requiresPython": ">=3.14",
+    "overrideDependencies": ["click~=8.3.1", "requests>=2.34.2"]
+  },
+  "version-15": {
+    "label": "version-15 — previous release (python 3.12 / node 20)",
+    "branch": "version-15",
+    "python": "python312",
+    "nodejs": "nodejs_20",
+    "requiresPython": ">=3.12",
+    "overrideDependencies": ["click>=8.2,<8.3"]
+  }
+}

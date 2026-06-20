@@ -1,0 +1,38 @@
+# nix / direnv / devenv
+.devenv
+.direnv
+result
+
+# editable python env symlink + node deps
+env
+node_modules
+
+# caches / package managers
+.cache
+.npm
+.venv
+.yarn
+.yarnrc
+
+# python
+**/__pycache__/*
+.ipython
+.python_history
+
+# frappe runtime + site data (keep the dirs via .gitkeep)
+config/pids/*
+!config/pids/.gitkeep
+logs/*
+!logs/.gitkeep
+sites/assets/*
+**/error-snapshots/*
+**/indexes/*
+**/locks/*
+**/private/*
+**/public/*
+**/touched_tables.json
+queue.rdb
+
+# shell history
+.bash_history
+.mariadb_history
