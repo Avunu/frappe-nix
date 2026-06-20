@@ -305,16 +305,33 @@ in
                 ln -sfn "${pythonEnvs.devPythonEnv}" env
               fi
 
-              # Install node_modules for each app (mutable, dev-friendly)
+              # Install node_modules for each app (mutable, dev-friendly).
+              #
+              # A `.frappe-nix-installed` sentinel inside node_modules is written
+              # ONLY after a fully-successful `yarn install` — including the app's
+              # postinstall, which is where nested vite frontends get their deps
+              # (erpnext/banking, hrms/frontend+roster, helpdesk/frontend, …).
+              # So if a postinstall fails (or the app gained a nested frontend
+              # after the first install), the app is retried on the next shell
+              # entry instead of being silently left without `vite` on PATH.
               ${lib.concatStringsSep "\n" (
                 map (app: ''
-                  if [ -L "apps/${app}/node_modules" ] && readlink "apps/${app}/node_modules" | grep -q '/nix/store'; then
+                  _nm="apps/${app}/node_modules"
+                  if [ -L "$_nm" ] && readlink "$_nm" | grep -q '/nix/store'; then
                     echo "Replacing Nix store node_modules symlink for ${app}..."
-                    rm "apps/${app}/node_modules"
+                    rm "$_nm"
                   fi
-                  if [ ! -d "apps/${app}/node_modules" ]; then
-                    echo "Installing node_modules for ${app}..."
-                    (cd "apps/${app}" && yarn install --frozen-lockfile 2>&1 | tail -1)
+                  if [ ! -e "$_nm/.frappe-nix-installed" ]; then
+                    echo "Installing node_modules for ${app} (incl. nested frontends)..."
+                    _log=$(mktemp)
+                    if (cd "apps/${app}" && yarn install --frozen-lockfile) > "$_log" 2>&1; then
+                      touch "$_nm/.frappe-nix-installed"
+                      echo "  ✓ ${app}"
+                    else
+                      echo "  ⚠  yarn install failed for ${app} (will retry next shell entry):" >&2
+                      tail -20 "$_log" >&2
+                    fi
+                    rm -f "$_log"
                   fi
                 '') benchInfra.appsWithNode
               )}
