@@ -7,6 +7,9 @@
   lib,
   pkgs,
   appsWithNode,
+  # Absolute path to the real bench CLI (devPythonEnv/bin/bench). The umbrella
+  # `bench` wrapper and the re-entrancy guard use it to reach the unwrapped bench.
+  benchBin ? "bench",
 }:
 
 let
@@ -44,27 +47,59 @@ let
   '';
 in
 {
+  # Umbrella wrapper: shadows devPythonEnv/bin/bench (devenv wraps scripts with
+  # hiPrioSet, so this wins on PATH) and transparently redirects the subcommands
+  # that need frappe-nix handling, passing everything else through to the real
+  # bench. The specialized scripts export _FRAPPE_BENCH_RAW=1, so their own nested
+  # `bench …` calls re-enter here and fall through to ${benchBin} rather than
+  # recursing — true whether a command is run via `bench update` or `bench-update`.
+  bench.exec = ''
+    if [ -n "''${_FRAPPE_BENCH_RAW:-}" ]; then
+      exec ${benchBin} "$@"
+    fi
+    case "''${1:-}" in
+      update)      shift; exec bench-update "$@" ;;
+      get-app)     shift; exec bench-get-app "$@" ;;
+      new-app)     shift; exec bench-new-app "$@" ;;
+      restore)     shift; exec bench-restore "$@" ;;
+      migrate)     shift; exec bench-migrate "$@" ;;
+      console)     shift; exec bench-console "$@" ;;
+      clear-cache) shift; exec bench-clear-cache "$@" ;;
+      new-site)
+        # Inject env-specific DB connection flags so site creation isn't
+        # interactive; provision-site stays the create-and-install-all flow.
+        shift
+        exec ${benchBin} new-site --db-socket "$FRAPPE_DB_SOCKET" --db-root-username root "$@" ;;
+      *)           exec ${benchBin} "$@" ;;
+    esac
+  '';
+
   bench-console.exec = ''
+    export _FRAPPE_BENCH_RAW=1
     ${siteFlag}
-    bench $SITE_FLAG console
+    bench $SITE_FLAG console "$@"
   '';
 
   bench-migrate.exec = ''
+    export _FRAPPE_BENCH_RAW=1
     ${siteFlag}
-    bench $SITE_FLAG migrate
+    bench $SITE_FLAG migrate "$@"
   '';
 
   bench-clear-cache.exec = ''
+    export _FRAPPE_BENCH_RAW=1
     ${siteFlag}
-    bench $SITE_FLAG clear-cache
+    bench $SITE_FLAG clear-cache "$@"
   '';
 
   bench-build.exec = ''
-    bench build
+    export _FRAPPE_BENCH_RAW=1
+    bench build "$@"
   '';
 
   bench-update.exec = ''
     set -euo pipefail
+    export _FRAPPE_BENCH_RAW=1
 
     PULL=true
     MIGRATE=true
@@ -192,6 +227,7 @@ in
 
   bench-restore.exec = ''
     set -euo pipefail
+    export _FRAPPE_BENCH_RAW=1
 
     if [ -z "''${1:-}" ]; then
       echo "Usage: bench-restore <sql-file-path> [options]"
@@ -234,6 +270,7 @@ in
 
   provision-site.exec = ''
     set -euo pipefail
+    export _FRAPPE_BENCH_RAW=1
     cd "$FRAPPE_BENCH_ROOT"
 
     if [ -z "''${FRAPPE_SITE:-}" ]; then
@@ -272,6 +309,7 @@ in
   bench-get-app = {
     exec = ''
       set -euo pipefail
+      export _FRAPPE_BENCH_RAW=1
 
       if [ -z "''${1:-}" ]; then
         echo "Usage: bench-get-app <url-or-alias>"
@@ -335,6 +373,7 @@ in
   bench-new-app = {
     exec = ''
       set -euo pipefail
+      export _FRAPPE_BENCH_RAW=1
 
       if [ -z "''${1:-}" ]; then
         echo "Usage: bench-new-app <app-name>"

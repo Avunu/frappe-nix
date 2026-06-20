@@ -163,9 +163,33 @@ edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) 
 `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` /
 `yarn.lock` are then consumed declaratively for production builds.
 
+### `bench` is transparent
+
+The shell ships an umbrella **`bench` wrapper** that shadows the venv's `bench` (devenv
+wraps scripts with `lib.hiPrioSet`, so it wins on PATH) and transparently redirects the
+subcommands that need frappe-nix handling — so you just run normal `bench` commands:
+
+| You run | Redirected to | Why |
+| --- | --- | --- |
+| `bench update …` | `bench-update` | vanilla update pip-installs / assumes `upstream` remotes |
+| `bench get-app <url\|alias>` | `bench-get-app` | git submodule + uv workspace instead of pip |
+| `bench new-app <name>` | `bench-new-app` | scaffold + uv workspace (skips the failing pip step) |
+| `bench restore <sql>` | `bench-restore` | injects the MariaDB root credentials |
+| `bench new-site <site>` | real bench + injected `--db-socket`/`--db-root-username root` | non-interactive site creation |
+| `bench migrate` / `console` / `clear-cache` | `bench-*` | inject `--site $FRAPPE_SITE` |
+| everything else (`build`, `serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
+
+Recursion is avoided with a `_FRAPPE_BENCH_RAW` env guard the specialized scripts export and
+the wrapper checks, so a script's own nested `bench …` calls reach the real CLI — whether you
+invoke `bench update` or the underlying `bench-update` directly. Two caveats: redirected
+commands follow the frappe-nix scripts' flags, not vanilla bench's (e.g. `bench update`
+takes `--pull|--migrate|--build|--node-hashes`, not `--reset`); and interception is
+subcommand-first, so `bench --site X migrate` (global option before the subcommand) passes
+straight through.
+
 ### Bench scripts
 
-Available in the shell (and as devenv scripts):
+These back the wrapper and are also callable directly:
 
 | Script | Description |
 | --- | --- |

@@ -175,6 +175,7 @@ in
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
+          benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
         };
 
       in
