@@ -22,7 +22,7 @@ dev = [
     "pytest>=9.0.2",
     "responses",
     "ruff>=0.15.0",
-    "semgrep>=1.145.0",
+    "semgrep",
 ]
 
 [tool.uv]
