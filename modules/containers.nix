@@ -6,6 +6,7 @@
   lib,
   flake-parts-lib,
   inputs,
+  frappe-nix-inputs,
   ...
 }:
 
@@ -26,9 +27,9 @@
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python workspaceRoot benchName;
-          pyproject-nix = inputs.pyproject-nix;
-          pyproject-build-systems = inputs.pyproject-build-systems;
-          uv2nix = inputs.uv2nix;
+          pyproject-nix = frappe-nix-inputs.pyproject-nix;
+          pyproject-build-systems = frappe-nix-inputs.pyproject-build-systems;
+          uv2nix = frappe-nix-inputs.uv2nix;
           extraOverrides = lib.composeManyExtensions [
             builtinOverrides
             cfg.pythonOverrides

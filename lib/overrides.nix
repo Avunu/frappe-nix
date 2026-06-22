@@ -16,14 +16,16 @@
 
 {
   # mysqlclient needs MariaDB/MySQL headers and client libraries.
+  # `connector` provides mysql_config/headers — defaults to mariadb-connector-c
+  # (lighter than the full server package). Override with `mariadb` if needed.
   mysqlclient =
-    { pkgs, mariadb }:
+    { pkgs, mariadb, connector ? pkgs.mariadb-connector-c }:
     final: prev: {
       mysqlclient = prev.mysqlclient.overrideAttrs (old: {
         nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
           final.setuptools
           pkgs.pkg-config
-          mariadb.dev
+          connector
         ];
         buildInputs = (old.buildInputs or [ ]) ++ [
           mariadb.client

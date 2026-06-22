@@ -42,7 +42,7 @@
   outputs =
     { self, flake-parts, ... }@inputs:
     {
-      flakeModules.default = ./modules/flake-module.nix;
+      flakeModules.default = import ./modules/flake-module.nix { frappe-nix-inputs = inputs; };
 
       lib = {
         mkFlake =
