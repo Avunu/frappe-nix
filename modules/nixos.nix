@@ -180,6 +180,13 @@ let
     requires = [ "frappe-init.service" ];
   };
 
+  # Packages that must be on PATH for every Frappe service. GitPython (imported
+  # by bench at module load time) probes for the git binary — without it every
+  # unit that touches `bench` crashes at import.
+  servicePath = [
+    pkgs.git
+  ];
+
   mkFrappeService =
     {
       description,
@@ -193,6 +200,7 @@ let
       inherit requires;
       wantedBy = [ "multi-user.target" ];
       environment = commonEnv;
+      path = servicePath;
       serviceConfig = {
         User = cfg.user;
         Group = cfg.group;
@@ -347,7 +355,10 @@ in
 
   config = mkIf cfg.enable (mkMerge [
     {
-      environment.systemPackages = [ benchCli ];
+      environment.systemPackages = [
+        benchCli
+        pkgs.git
+      ];
 
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
