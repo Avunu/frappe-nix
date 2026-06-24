@@ -102,6 +102,68 @@ let
       exec ${cmd}
     '';
 
+  benchBin = "${cfg.pythonEnv}/bin/bench";
+
+  siteFlag = ''
+    SITE_FLAG=""
+    if [ -n "''${FRAPPE_SITE:-}" ]; then
+      SITE_FLAG="--site $FRAPPE_SITE"
+    fi
+  '';
+
+  benchCli = pkgs.writeShellScriptBin "bench" ''
+    set -euo pipefail
+
+    ${lib.concatStringsSep "\n" (
+      lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") commonEnv
+    )}
+
+    PYTHONPATH=""
+    for d in ${benchDir}/apps/*; do
+      PYTHONPATH="$PYTHONPATH''${PYTHONPATH:+:}$d"
+    done
+    export PYTHONPATH
+
+    cd ${sitesPath}
+
+    ${siteFlag}
+
+    case "''${1:-}" in
+      restore)
+        shift
+        if [ -z "''${1:-}" ]; then
+          echo "Usage: bench restore <sql-file-path> [options]"
+          echo ""
+          echo "Options (passed to bench restore):"
+          echo "  --with-public-files <path>   Restore public files from tar"
+          echo "  --with-private-files <path>  Restore private files from tar"
+          echo "  --encryption-key <key>       Backup encryption key"
+          echo "  --force                      Ignore validations and warnings"
+          exit 1
+        fi
+        SQL_FILE="$1"; shift
+        exec ${benchBin} $SITE_FLAG restore "$SQL_FILE" \
+          ${lib.optionalString (cfg.database.socket != "") ''--db-root-username "root" --db-root-password ""''} \
+          "$@"
+        ;;
+      migrate)
+        shift
+        exec ${benchBin} $SITE_FLAG migrate "$@"
+        ;;
+      console)
+        shift
+        exec ${benchBin} $SITE_FLAG console "$@"
+        ;;
+      clear-cache)
+        shift
+        exec ${benchBin} $SITE_FLAG clear-cache "$@"
+        ;;
+      *)
+        exec ${benchBin} "$@"
+        ;;
+    esac
+  '';
+
   # Seed the mutable sites/ state dir from the read-only store benchRoot.
   seedSites = pkgs.writeShellScript "frappe-seed-sites" ''
     set -euo pipefail
@@ -285,6 +347,8 @@ in
 
   config = mkIf cfg.enable (mkMerge [
     {
+      environment.systemPackages = [ benchCli ];
+
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
           isSystemUser = true;
