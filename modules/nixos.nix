@@ -38,6 +38,7 @@ let
 
   benchDir = "${cfg.benchRoot}/bench";
   sitesPath = "/var/lib/frappe/sites";
+  runtimeBenchDir = "/var/lib/frappe/bench";
 
   libraryPath = lib.makeLibraryPath [
     pkgs.zlib
@@ -98,7 +99,7 @@ let
         PYTHONPATH="$PYTHONPATH''${PYTHONPATH:+:}$d"
       done
       export PYTHONPATH
-      cd ${sitesPath}
+      cd ${runtimeBenchDir}
       exec ${cmd}
     '';
 
@@ -124,7 +125,7 @@ let
     done
     export PYTHONPATH
 
-    cd ${sitesPath}
+    cd ${runtimeBenchDir}
 
     ${siteFlag}
 
@@ -173,6 +174,16 @@ let
         cp "${benchDir}/sites/$f" "${sitesPath}/$f"
       fi
     done
+
+    # Assemble a runtime bench root that the bench CLI recognises.
+    # bench checks cwd for apps/, sites/, config/, logs/, config/pids/.
+    # sites/ must point to the mutable state dir, everything else to the
+    # read-only nix store benchRoot.
+    mkdir -p ${runtimeBenchDir}/logs
+    ln -sfn ${benchDir}/apps   ${runtimeBenchDir}/apps
+    ln -sfn ${benchDir}/env    ${runtimeBenchDir}/env
+    ln -sfn ${benchDir}/config ${runtimeBenchDir}/config
+    ln -sfn ${sitesPath}       ${runtimeBenchDir}/sites
   '';
 
   dependsOnInit = {
