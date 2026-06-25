@@ -1,23 +1,20 @@
 # NixOS systemd service module for Frappe bench production deployment.
 #
-# This is a *standalone NixOS module* (not a flake-parts module). Surface it via
-# `nixosModules.default` in flake.nix and import it into a nixosConfiguration.
-#
-# It takes the two heavy artifacts as inputs rather than building them itself,
-# so it has no dependency on uv2nix / pyproject-nix / flake-parts:
-#   - benchRoot  : the assembled /bench tree (frappe-nix lib/bench.nix, exported
-#                  as packages.benchRoot)
-#   - pythonEnv  : the production virtualenv (packages.prodPythonEnv)
+# Multi-tenant: each site gets its own systemd unit instances and config.
+# Stack (python, node, apps, assets) comes from the bench package's passthru —
+# the module never takes pythonEnv/nodejs/benchRoot as options.
 #
 # Example:
 #   services.frappe = {
-#     enable      = true;
-#     benchRoot   = self.packages.x86_64-linux.benchRoot;
-#     pythonEnv   = self.packages.x86_64-linux.prodPythonEnv;
-#     defaultSite = "mysite.localhost";
-#     nginx.enable = true;
-#     redis.createLocally = true;
-#     database.createLocally = true;
+#     enable  = true;
+#     package = inputs.bench.packages.x86_64-linux.default;
+#     sites."mysite.example.com" = {
+#       enable = true;
+#       database.createLocally = true;
+#       database.passwordFile  = config.age.secrets.db-pass.path;
+#       encryptionKeyFile      = config.age.secrets.enc-key.path;
+#       nginx.enable           = true;
+#     };
 #   };
 {
   config,
@@ -32,13 +29,28 @@ let
     mkIf
     mkMerge
     types
+    mapAttrs
+    mapAttrsToList
+    nameValuePair
+    filterAttrs
+    concatStringsSep
+    optionalAttrs
+    optionalString
+    escapeShellArg
     ;
 
   cfg = config.services.frappe;
 
-  benchDir = "${cfg.benchRoot}/bench";
-  sitesPath = "/var/lib/frappe/sites";
-  runtimeBenchDir = "/var/lib/frappe/bench";
+  enabledSites = filterAttrs (_: s: s.enable) cfg.sites;
+
+  # Resolve the effective package for a site (per-site override or top-level).
+  sitePackage = siteCfg: if siteCfg.package != null then siteCfg.package else cfg.package;
+
+  # Derive interpreter paths from a bench package's passthru.
+  pkgBenchDir = pkg: "${pkg}/bench";
+  pkgPythonEnv = pkg: pkg.passthru.pythonEnv;
+  pkgNodejs = pkg: pkg.passthru.nodejs;
+  pkgAppsPath = pkg: pkg.passthru.appsPath (pkgBenchDir pkg);
 
   libraryPath = lib.makeLibraryPath [
     pkgs.zlib
@@ -56,276 +68,465 @@ let
     pkgs.libpng
   ];
 
-  # Environment shared by every Frappe unit, mirroring the keys baked into the
-  # OCI images (see modules/containers.nix containerEnvList).
-  commonEnv =
+  # Per-site environment. The package (and therefore interpreters) can differ
+  # per site, so this is a function of (siteName, siteCfg).
+  siteEnv = name: siteCfg:
+    let
+      pkg = sitePackage siteCfg;
+      benchDir = pkgBenchDir pkg;
+    in
     {
       FRAPPE_BENCH_ROOT = benchDir;
-      SITES_PATH = sitesPath;
+      SITES_PATH = "${siteCfg.siteDir}/sites";
+      FRAPPE_SITE = name;
       DEV_SERVER = "0";
       FRAPPE_ENV_TYPE = "production";
       FRAPPE_STREAM_LOGGING = "1";
       FRAPPE_TUNE_GC = "1";
 
-      FRAPPE_DB_HOST = cfg.database.host;
-      FRAPPE_DB_PORT = toString cfg.database.port;
+      FRAPPE_DB_HOST = siteCfg.database.host;
+      FRAPPE_DB_PORT = toString siteCfg.database.port;
       FRAPPE_DB_TYPE = "mariadb";
 
-      FRAPPE_REDIS_CACHE = cfg.redis.cacheUrl;
-      FRAPPE_REDIS_QUEUE = cfg.redis.queueUrl;
-      FRAPPE_REDIS_SOCKETIO = cfg.redis.socketioUrl;
+      FRAPPE_REDIS_CACHE = siteCfg.redis.cacheUrl;
+      FRAPPE_REDIS_QUEUE = siteCfg.redis.queueUrl;
+      FRAPPE_REDIS_SOCKETIO = siteCfg.redis.socketioUrl;
 
       SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       LD_LIBRARY_PATH = libraryPath;
     }
-    // lib.optionalAttrs (cfg.database.socket != "") {
-      FRAPPE_DB_SOCKET = cfg.database.socket;
-    }
-    // lib.optionalAttrs (cfg.defaultSite != "") {
-      FRAPPE_SITE = cfg.defaultSite;
+    // optionalAttrs (siteCfg.database.socket != "") {
+      FRAPPE_DB_SOCKET = siteCfg.database.socket;
     }
     // cfg.extraEnv;
 
-  # Build PYTHONPATH from the apps in benchRoot at runtime. benchRoot is a
-  # derivation, so we can't readDir it at eval time; glob it in the wrapper
-  # instead. Workspace apps (frappe, erpnext, …) must resolve from their source
-  # copies in /bench/apps so their non-Python assets and entry points are found.
-  mkExec =
-    name: cmd:
+  # Packages on PATH for every Frappe service (git needed by GitPython).
+  servicePath = [ pkgs.git ];
+
+  # Script wrapper that sets PYTHONPATH from the package's apps and execs.
+  mkExec = pkg: name: cmd:
+    let benchDir = pkgBenchDir pkg; in
     pkgs.writeShellScript "frappe-${name}" ''
       set -euo pipefail
-      PYTHONPATH=""
-      for d in ${benchDir}/apps/*; do
-        PYTHONPATH="$PYTHONPATH''${PYTHONPATH:+:}$d"
-      done
-      export PYTHONPATH
-      cd ${runtimeBenchDir}
+      export PYTHONPATH="${pkgAppsPath pkg}"
+      cd ${benchDir}
       exec ${cmd}
     '';
 
-  benchBin = "${cfg.pythonEnv}/bin/bench";
+  # Per-site init script: assemble runtime bench tree, symlink assets,
+  # seed sites dir, and synthesize site_config.json (merging secrets).
+  mkSiteInit = name: siteCfg:
+    let
+      pkg = sitePackage siteCfg;
+      benchDir = pkgBenchDir pkg;
+      sitesPath = "${siteCfg.siteDir}/sites";
+      runtimeBenchDir = "${siteCfg.siteDir}/bench";
 
-  siteFlag = ''
-    SITE_FLAG=""
-    if [ -n "''${FRAPPE_SITE:-}" ]; then
-      SITE_FLAG="--site $FRAPPE_SITE"
-    fi
-  '';
+      # Base site_config.json from Nix options (no secrets).
+      baseConfig = {
+        db_host = siteCfg.database.host;
+        db_port = siteCfg.database.port;
+        db_type = "mariadb";
+        db_name = siteCfg.database.name;
+        db_user = siteCfg.database.user;
+        redis_cache = siteCfg.redis.cacheUrl;
+        redis_queue = siteCfg.redis.queueUrl;
+        redis_socketio = siteCfg.redis.socketioUrl;
+      }
+      // optionalAttrs (siteCfg.database.socket != "") {
+        db_socket = siteCfg.database.socket;
+      }
+      // siteCfg.extraConfig;
 
-  benchCli = pkgs.writeShellScriptBin "bench" ''
-    set -euo pipefail
+      baseConfigFile = pkgs.writeText "site-config-${name}.json"
+        (builtins.toJSON baseConfig);
 
-    ${lib.concatStringsSep "\n" (
-      lib.mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") commonEnv
-    )}
+      # Build the jq merge expression for secret files.
+      secretFiles =
+        (lib.optional (siteCfg.database.passwordFile != null)
+          { file = siteCfg.database.passwordFile; key = "db_password"; })
+        ++ (lib.optional (siteCfg.encryptionKeyFile != null)
+          { file = siteCfg.encryptionKeyFile; key = "encryption_key"; });
 
-    PYTHONPATH=""
-    for d in ${benchDir}/apps/*; do
-      PYTHONPATH="$PYTHONPATH''${PYTHONPATH:+:}$d"
-    done
-    export PYTHONPATH
+    in
+    pkgs.writeShellScript "frappe-init-${name}" ''
+      set -euo pipefail
 
-    cd ${runtimeBenchDir}
+      # Assemble runtime bench tree.
+      mkdir -p ${runtimeBenchDir}/logs
+      ln -sfn ${benchDir}/apps   ${runtimeBenchDir}/apps
+      ln -sfn ${benchDir}/env    ${runtimeBenchDir}/env
+      ln -sfn ${benchDir}/config ${runtimeBenchDir}/config
+      ln -sfn ${sitesPath}       ${runtimeBenchDir}/sites
 
-    ${siteFlag}
-
-    case "''${1:-}" in
-      restore)
-        shift
-        if [ -z "''${1:-}" ]; then
-          echo "Usage: bench restore <sql-file-path> [options]"
-          echo ""
-          echo "Options (passed to bench restore):"
-          echo "  --with-public-files <path>   Restore public files from tar"
-          echo "  --with-private-files <path>  Restore private files from tar"
-          echo "  --encryption-key <key>       Backup encryption key"
-          echo "  --force                      Ignore validations and warnings"
-          exit 1
+      # Seed sites directory.
+      mkdir -p ${sitesPath}
+      for f in apps.json apps.txt common_site_config.json; do
+        if [ ! -e "${sitesPath}/$f" ] && [ -e "${benchDir}/sites/$f" ]; then
+          cp "${benchDir}/sites/$f" "${sitesPath}/$f"
         fi
-        SQL_FILE="$1"; shift
-        exec ${benchBin} $SITE_FLAG restore "$SQL_FILE" \
-          ${lib.optionalString (cfg.database.socket != "") ''--db-root-username "root" --db-root-password ""''} \
-          "$@"
-        ;;
-      migrate)
-        shift
-        exec ${benchBin} $SITE_FLAG migrate "$@"
-        ;;
-      console)
-        shift
-        exec ${benchBin} $SITE_FLAG console "$@"
-        ;;
-      clear-cache)
-        shift
-        exec ${benchBin} $SITE_FLAG clear-cache "$@"
-        ;;
-      *)
-        exec ${benchBin} "$@"
-        ;;
-    esac
-  '';
+      done
 
-  # Seed the mutable sites/ state dir from the read-only store benchRoot.
-  seedSites = pkgs.writeShellScript "frappe-seed-sites" ''
-    set -euo pipefail
-    mkdir -p ${sitesPath}
-    for f in apps.json apps.txt common_site_config.json; do
-      if [ ! -e "${sitesPath}/$f" ] && [ -e "${benchDir}/sites/$f" ]; then
-        cp "${benchDir}/sites/$f" "${sitesPath}/$f"
+      # Symlink compiled assets from the package.
+      if [ -d "${benchDir}/sites/assets" ]; then
+        ln -sfn ${benchDir}/sites/assets ${sitesPath}/assets
       fi
-    done
 
-    # Assemble a runtime bench root that the bench CLI recognises.
-    # bench checks cwd for apps/, sites/, config/, logs/, config/pids/.
-    # sites/ must point to the mutable state dir, everything else to the
-    # read-only nix store benchRoot.
-    mkdir -p ${runtimeBenchDir}/logs
-    ln -sfn ${benchDir}/apps   ${runtimeBenchDir}/apps
-    ln -sfn ${benchDir}/env    ${runtimeBenchDir}/env
-    ln -sfn ${benchDir}/config ${runtimeBenchDir}/config
-    ln -sfn ${sitesPath}       ${runtimeBenchDir}/sites
-  '';
+      # Create site directory.
+      mkdir -p ${sitesPath}/${name}
 
-  dependsOnInit = {
-    after = [ "frappe-init.service" ];
-    requires = [ "frappe-init.service" ];
-  };
+      # Synthesize site_config.json: base config + secrets + extra files.
+      ${let
+        # Read secret values into env vars.
+        readSecrets = concatStringsSep "\n" (
+          map (s: ''SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}="$(cat ${escapeShellArg s.file})"'')
+            secretFiles
+        );
+        exportSecrets = concatStringsSep "\n" (
+          map (s: ''export SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}'')
+            secretFiles
+        );
 
-  # Packages that must be on PATH for every Frappe service. GitPython (imported
-  # by bench at module load time) probes for the git binary — without it every
-  # unit that touches `bench` crashes at import.
-  servicePath = [
-    pkgs.git
-  ];
+        # Build jq expression.
+        jqExpr = let
+          base = ".";
+          withSecrets = concatStringsSep " | " (
+            map (s: ''. + {"${s.key}": $ENV.SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}}'')
+              secretFiles
+          );
+          extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}") siteCfg.extraConfigFiles;
+        in
+          concatStringsSep " | " (
+            [ base ]
+            ++ lib.optional (secretFiles != []) withSecrets
+            ++ extraMerges
+          );
 
-  mkFrappeService =
+        extraSlurpArgs = concatStringsSep " " (
+          lib.imap1 (i: f: "--slurpfile extra${toString i} ${escapeShellArg f}")
+            siteCfg.extraConfigFiles
+        );
+      in ''
+        ${readSecrets}
+        ${exportSecrets}
+        ${pkgs.jq}/bin/jq '${jqExpr}' ${extraSlurpArgs} ${baseConfigFile} \
+          > ${sitesPath}/${name}/site_config.json
+        chmod 0600 ${sitesPath}/${name}/site_config.json
+      ''}
+    '';
+
+  # Generate all systemd services for a single site.
+  mkSiteServices = name: siteCfg:
+    let
+      pkg = sitePackage siteCfg;
+      pyEnv = pkgPythonEnv pkg;
+      node = pkgNodejs pkg;
+      benchDir = pkgBenchDir pkg;
+      env = siteEnv name siteCfg;
+      benchBin = "${pyEnv}/bin/bench";
+
+      initName = "frappe-init-${name}";
+      dependsOn = {
+        after = [ "${initName}.service" ];
+        requires = [ "${initName}.service" ];
+      };
+
+      mkService = { description, execStart, extra ? {} }:
+        {
+          inherit description;
+          after = [ "network.target" ] ++ (extra.after or []);
+          requires = extra.requires or [];
+          wantedBy = [ "multi-user.target" ];
+          environment = env;
+          path = servicePath;
+          serviceConfig = {
+            User = cfg.user;
+            Group = cfg.group;
+            WorkingDirectory = "${siteCfg.siteDir}/sites";
+            ExecStart = execStart;
+            Restart = "always";
+            RestartSec = "5";
+          };
+        };
+
+      workerUnits = lib.listToAttrs (
+        map (queue: nameValuePair "frappe-worker-${queue}-${name}" (
+          mkService {
+            description = "Frappe worker (${queue}) for ${name}";
+            execStart = mkExec pkg "worker-${queue}-${name}"
+              "${benchBin} worker --queue ${queue}";
+            extra = dependsOn;
+          }
+        )) cfg.workers
+      );
+    in
     {
-      description,
-      execStart,
-      after ? [ ],
-      requires ? [ ],
-    }:
+      "${initName}" = {
+        description = "Frappe init for site ${name}";
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          User = cfg.user;
+          Group = cfg.group;
+          ExecStart = mkSiteInit name siteCfg;
+        };
+      };
+
+      "frappe-web-${name}" = mkService {
+        description = "Frappe web (gunicorn) for ${name}";
+        execStart = mkExec pkg "web-${name}" ''
+          ${pyEnv}/bin/gunicorn \
+            --bind 0.0.0.0:${toString siteCfg.web.port} \
+            --workers ${toString cfg.web.workers} \
+            --max-requests 5000 \
+            --max-requests-jitter 500 \
+            --timeout 120 \
+            --preload \
+            --graceful-timeout 30 \
+            --keep-alive 5 \
+            --access-logfile - \
+            --error-logfile - \
+            frappe.app:application'';
+        extra = dependsOn;
+      };
+
+      "frappe-scheduler-${name}" = mkService {
+        description = "Frappe scheduler for ${name}";
+        execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
+        extra = dependsOn;
+      };
+
+      "frappe-socketio-${name}" = mkService {
+        description = "Frappe SocketIO for ${name}";
+        execStart = mkExec pkg "socketio-${name}"
+          "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
+        extra = dependsOn;
+      };
+    } // workerUnits;
+
+  # bench CLI wrapper — defaults FRAPPE_SITE to the sole enabled site.
+  # Uses the top-level package for interpreter discovery.
+  siteNames = builtins.attrNames enabledSites;
+  singleSite = if builtins.length siteNames == 1 then builtins.head siteNames else null;
+
+  benchCli =
+    let
+      pkg = cfg.package;
+      benchDir = pkgBenchDir pkg;
+      pyEnv = pkgPythonEnv pkg;
+      benchBin = "${pyEnv}/bin/bench";
+    in
+    pkgs.writeShellScriptBin "bench" ''
+      set -euo pipefail
+
+      ${optionalString (singleSite != null) ''
+        export FRAPPE_SITE=''${FRAPPE_SITE:-${singleSite}}
+      ''}
+
+      export PYTHONPATH="${pkgAppsPath pkg}"
+      export FRAPPE_BENCH_ROOT=${benchDir}
+      export DEV_SERVER=0
+      export FRAPPE_ENV_TYPE=production
+      export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+      export LD_LIBRARY_PATH="${libraryPath}"
+
+      # Resolve SITES_PATH from the site's siteDir if FRAPPE_SITE is set.
+      ${concatStringsSep "\n" (mapAttrsToList (name: siteCfg: ''
+        if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
+          export SITES_PATH="${siteCfg.siteDir}/sites"
+        fi
+      '') enabledSites)}
+      export SITES_PATH=''${SITES_PATH:-/var/lib/frappe/sites}
+
+      SITE_FLAG=""
+      if [ -n "''${FRAPPE_SITE:-}" ]; then
+        SITE_FLAG="--site $FRAPPE_SITE"
+      fi
+
+      cd ${benchDir}
+
+      case "''${1:-}" in
+        restore)
+          shift
+          if [ -z "''${1:-}" ]; then
+            echo "Usage: bench restore <sql-file-path> [options]"
+            exit 1
+          fi
+          SQL_FILE="$1"; shift
+          exec ${benchBin} $SITE_FLAG restore "$SQL_FILE" "$@"
+          ;;
+        migrate|console|clear-cache)
+          CMD="$1"; shift
+          exec ${benchBin} $SITE_FLAG "$CMD" "$@"
+          ;;
+        *)
+          exec ${benchBin} "$@"
+          ;;
+      esac
+    '';
+
+  # Per-site nginx virtualHost config.
+  mkSiteNginxVhost = name: siteCfg:
+    let
+      pkg = sitePackage siteCfg;
+      benchDir = pkgBenchDir pkg;
+    in
     {
-      inherit description;
-      after = [ "network.target" ] ++ after;
-      inherit requires;
-      wantedBy = [ "multi-user.target" ];
-      environment = commonEnv;
-      path = servicePath;
-      serviceConfig = {
-        User = cfg.user;
-        Group = cfg.group;
-        WorkingDirectory = sitesPath;
-        StateDirectory = "frappe";
-        ExecStart = execStart;
-        Restart = "always";
-        RestartSec = "5";
+      root = "${siteCfg.siteDir}/sites";
+      locations = {
+        "/assets/" = {
+          extraConfig = ''
+            try_files $uri =404;
+            add_header Cache-Control "max-age=31536000";
+          '';
+        };
+        "/socket.io" = {
+          proxyPass = "http://127.0.0.1:${toString siteCfg.socketio.port}";
+          proxyWebsockets = true;
+        };
+        "/" = {
+          proxyPass = "http://127.0.0.1:${toString siteCfg.web.port}";
+        };
       };
     };
 
-  workerServices = lib.listToAttrs (
-    map (queue: {
-      name = "frappe-worker-${queue}";
-      value = mkFrappeService (
-        {
-          description = "Frappe background worker (${queue} queue)";
-          execStart = mkExec "worker-${queue}" "${cfg.pythonEnv}/bin/bench worker --queue ${queue}";
-        }
-        // dependsOnInit
-      );
-    }) cfg.workers
-  );
+  # Site submodule option definition.
+  siteModule = types.submodule ({ name, ... }: {
+    options = {
+      enable = mkEnableOption "this Frappe site";
+
+      package = mkOption {
+        type = types.nullOr types.package;
+        default = null;
+        description = "Per-site bench package override. Defaults to services.frappe.package.";
+      };
+
+      siteDir = mkOption {
+        type = types.str;
+        default = "/var/lib/frappe/${name}";
+        description = "State directory for this site.";
+      };
+
+      web.port = mkOption {
+        type = types.port;
+        default = 8000;
+        description = "Gunicorn listen port for this site.";
+      };
+
+      socketio.port = mkOption {
+        type = types.port;
+        default = 9000;
+        description = "SocketIO listen port for this site.";
+      };
+
+      database = {
+        createLocally = mkEnableOption "a local MariaDB database for this site";
+        host = mkOption {
+          type = types.str;
+          default = "127.0.0.1";
+        };
+        port = mkOption {
+          type = types.port;
+          default = 3306;
+        };
+        socket = mkOption {
+          type = types.str;
+          default = "/run/mysqld/mysqld.sock";
+          description = "Database unix socket (empty to disable socket auth).";
+        };
+        name = mkOption {
+          type = types.str;
+          default = builtins.replaceStrings ["." "-"] ["_" "_"] name;
+          description = "Database name. Defaults to site name with dots/hyphens replaced by underscores.";
+        };
+        user = mkOption {
+          type = types.str;
+          default = builtins.replaceStrings ["." "-"] ["_" "_"] name;
+          description = "Database user. Defaults to site name with dots/hyphens replaced by underscores.";
+        };
+        passwordFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "File containing the database password. Merged into site_config.json at activation.";
+        };
+      };
+
+      redis = {
+        cacheUrl = mkOption {
+          type = types.str;
+          default = "redis://127.0.0.1:13000";
+        };
+        queueUrl = mkOption {
+          type = types.str;
+          default = "redis://127.0.0.1:13000";
+        };
+        socketioUrl = mkOption {
+          type = types.str;
+          default = "redis://127.0.0.1:13000";
+        };
+      };
+
+      encryptionKeyFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = "File containing the Frappe encryption key. Merged into site_config.json at activation.";
+      };
+
+      extraConfig = mkOption {
+        type = types.attrsOf types.anything;
+        default = {};
+        description = "Extra keys merged into the base site_config.json (Nix values, no secrets).";
+      };
+
+      extraConfigFiles = mkOption {
+        type = types.listOf types.path;
+        default = [];
+        description = "JSON files deep-merged into site_config.json at activation (for secrets).";
+      };
+
+      nginx.enable = mkEnableOption "an nginx virtualHost for this site";
+    };
+  });
 
 in
 {
   options.services.frappe = {
     enable = mkEnableOption "Frappe bench production deployment (systemd)";
 
-    benchRoot = mkOption {
+    package = mkOption {
       type = types.package;
-      description = "The assembled /bench tree derivation (frappe-nix packages.benchRoot).";
-    };
-
-    pythonEnv = mkOption {
-      type = types.package;
-      description = "The production Python virtualenv (frappe-nix packages.prodPythonEnv).";
-    };
-
-    nodejs = mkOption {
-      type = types.package;
-      default = pkgs.nodejs_24;
-      description = "Node.js package used to run socketio.";
-    };
-
-    defaultSite = mkOption {
-      type = types.str;
-      default = "";
-      description = "Default site (FRAPPE_SITE). Empty for multi-tenancy.";
-      example = "mysite.localhost";
+      description = "Default bench package (builtBench). Sites inherit this unless they set their own.";
     };
 
     user = mkOption {
       type = types.str;
       default = "frappe";
-      description = "User the Frappe services run as.";
     };
 
     group = mkOption {
       type = types.str;
       default = "frappe";
-      description = "Group the Frappe services run as.";
     };
 
-    web = {
-      port = mkOption {
-        type = types.port;
-        default = 8000;
-        description = "Gunicorn listen port.";
-      };
-      workers = mkOption {
-        type = types.int;
-        default = 4;
-        description = "Number of gunicorn workers.";
-      };
-    };
-
-    socketio.port = mkOption {
-      type = types.port;
-      default = 9000;
-      description = "SocketIO listen port.";
+    web.workers = mkOption {
+      type = types.int;
+      default = 4;
+      description = "Number of gunicorn workers (shared across sites).";
     };
 
     workers = mkOption {
       type = types.listOf types.str;
-      default = [
-        "default"
-        "short"
-        "long"
-      ];
-      description = "Background worker queues to run (one systemd service each).";
+      default = [ "default" "short" "long" ];
+      description = "Background worker queues to run per site.";
     };
 
     database = {
-      createLocally = mkEnableOption "a local MariaDB instance for Frappe";
+      createLocally = mkEnableOption "a local MariaDB instance (aggregate: enabled if any site requests it)";
       package = mkOption {
         type = types.package;
         default = pkgs.mariadb;
-        description = "MariaDB package (used for the client library on LD_LIBRARY_PATH).";
-      };
-      host = mkOption {
-        type = types.str;
-        default = "127.0.0.1";
-        description = "Database host.";
-      };
-      port = mkOption {
-        type = types.port;
-        default = 3306;
-        description = "Database port.";
-      };
-      socket = mkOption {
-        type = types.str;
-        default = "/run/mysqld/mysqld.sock";
-        description = "Database unix socket (empty to disable socket auth).";
+        description = "MariaDB package (client library on LD_LIBRARY_PATH).";
       };
     };
 
@@ -334,42 +535,25 @@ in
       port = mkOption {
         type = types.port;
         default = 13000;
-        description = "Port for the locally-created Redis instance.";
       };
-      cacheUrl = mkOption {
-        type = types.str;
-        default = "redis://127.0.0.1:13000";
-        description = "Redis cache URL.";
-      };
-      queueUrl = mkOption {
-        type = types.str;
-        default = "redis://127.0.0.1:13000";
-        description = "Redis queue URL.";
-      };
-      socketioUrl = mkOption {
-        type = types.str;
-        default = "redis://127.0.0.1:13000";
-        description = "Redis socketio URL.";
-      };
-    };
-
-    nginx = {
-      enable = mkEnableOption "an nginx reverse proxy + static asset vhost for Frappe";
     };
 
     extraEnv = mkOption {
       type = types.attrsOf types.str;
-      default = { };
-      description = "Additional environment variables for the Frappe services.";
+      default = {};
+      description = "Additional environment variables for all Frappe services.";
+    };
+
+    sites = mkOption {
+      type = types.attrsOf siteModule;
+      default = {};
+      description = "Per-site configuration. Each key is the site name (FQDN).";
     };
   };
 
   config = mkIf cfg.enable (mkMerge [
     {
-      environment.systemPackages = [
-        benchCli
-        pkgs.git
-      ];
+      environment.systemPackages = [ benchCli pkgs.git ];
 
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
@@ -380,64 +564,24 @@ in
         };
       };
       users.groups = mkIf (cfg.group == "frappe") {
-        frappe = { };
+        frappe = {};
       };
 
-      systemd.services = {
-        # Oneshot init: seed the mutable sites/ dir from benchRoot.
-        frappe-init = {
-          description = "Frappe bench init (seed sites state)";
-          wantedBy = [ "multi-user.target" ];
-          serviceConfig = {
-            Type = "oneshot";
-            RemainAfterExit = true;
-            User = cfg.user;
-            Group = cfg.group;
-            StateDirectory = "frappe";
-            ExecStart = seedSites;
-          };
-        };
+      # Generate per-site systemd services.
+      systemd.services = lib.mkMerge (
+        mapAttrsToList (name: siteCfg: mkSiteServices name siteCfg) enabledSites
+      );
 
-        frappe-web = mkFrappeService (
-          {
-            description = "Frappe web server (gunicorn)";
-            execStart = mkExec "web" ''
-              ${cfg.pythonEnv}/bin/gunicorn \
-                --bind 0.0.0.0:${toString cfg.web.port} \
-                --workers ${toString cfg.web.workers} \
-                --max-requests 5000 \
-                --max-requests-jitter 500 \
-                --timeout 120 \
-                --preload \
-                --graceful-timeout 30 \
-                --keep-alive 5 \
-                --access-logfile - \
-                --error-logfile - \
-                frappe.app:application'';
-          }
-          // dependsOnInit
-        );
-
-        frappe-scheduler = mkFrappeService (
-          {
-            description = "Frappe scheduler";
-            execStart = mkExec "scheduler" "${cfg.pythonEnv}/bin/bench schedule";
-          }
-          // dependsOnInit
-        );
-
-        frappe-socketio = mkFrappeService (
-          {
-            description = "Frappe SocketIO realtime server";
-            execStart = mkExec "socketio" "${cfg.nodejs}/bin/node ${benchDir}/apps/frappe/socketio.js";
-          }
-          // dependsOnInit
-        );
-      }
-      // workerServices;
+      # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
+      systemd.tmpfiles.rules = mapAttrsToList
+        (name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -")
+        enabledSites;
     }
 
-    (mkIf cfg.database.createLocally {
+    # Aggregate database.createLocally: enable MariaDB if any site requests it
+    # or if the top-level toggle is on.
+    (mkIf (cfg.database.createLocally ||
+           lib.any (s: s.database.createLocally) (builtins.attrValues enabledSites)) {
       services.mysql = {
         enable = true;
         package = cfg.database.package;
@@ -458,30 +602,14 @@ in
       };
     })
 
-    (mkIf cfg.nginx.enable {
+    # Per-site nginx virtualHosts.
+    (mkIf (lib.any (s: s.nginx.enable) (builtins.attrValues enabledSites)) {
       services.nginx = {
         enable = true;
         recommendedProxySettings = true;
         recommendedGzipSettings = true;
-        virtualHosts.${if cfg.defaultSite != "" then cfg.defaultSite else "_"} = {
-          default = true;
-          root = "${benchDir}/sites";
-          locations = {
-            "/assets/" = {
-              extraConfig = ''
-                try_files $uri =404;
-                add_header Cache-Control "max-age=31536000";
-              '';
-            };
-            "/socket.io" = {
-              proxyPass = "http://127.0.0.1:${toString cfg.socketio.port}";
-              proxyWebsockets = true;
-            };
-            "/" = {
-              proxyPass = "http://127.0.0.1:${toString cfg.web.port}";
-            };
-          };
-        };
+        virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg)
+          (filterAttrs (_: s: s.nginx.enable) enabledSites);
       };
     })
   ]);
