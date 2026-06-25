@@ -182,9 +182,11 @@ in
       lib.mkIf cfg.enable {
         packages.prodPythonEnv = pythonEnvs.prodPythonEnv;
         packages.devPythonEnv = pythonEnvs.devPythonEnv;
-        # Assembled /bench tree — consumed by the NixOS module (nixosModules.default)
-        # and by the OCI container builds in containers.nix.
+        # Unbuilt /bench tree — used by containers.nix and as input to builtBench.
         packages.benchRoot = benchInfra.benchRoot;
+        # Production-ready bench with compiled assets + passthru interpreters.
+        packages.builtBench = benchInfra.builtBench;
+        packages.default = benchInfra.builtBench;
 
         devenv.shells.default =
           { config, pkgs, ... }:

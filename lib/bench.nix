@@ -1,7 +1,9 @@
-# Bench infrastructure: app discovery, node_modules, and benchRoot derivation.
+# Bench infrastructure: app discovery, node_modules, benchRoot, and builtBench.
 #
-# Builds the production /bench directory structure declaratively from source,
-# lock files, and Nix-built environments.
+# benchRoot  — unbuilt /bench tree for dev shells and as a build input.
+# builtBench — benchRoot + compiled assets (`bench build`), the deployable
+#              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames}
+#              so the NixOS module can discover interpreters from the package.
 
 {
   pkgs,
@@ -78,6 +80,40 @@ let
 
   nodeModules = lib.genAttrs appsWithNode nodeModulesForApp;
 
+  # Discover nested frontends: subdirs of apps that have their own yarn.lock
+  # (e.g. commit/dashboard, commit/docs). These need separate offline caches
+  # because their postinstall-driven `yarn install` is skipped in the sandbox.
+  # Hash keys in node-offline-hashes.json use "app/subdir" format.
+  nestedFrontends = lib.concatMap (app:
+    let
+      appDir = workspaceRoot + "/apps/${app}";
+      subdirs = builtins.attrNames (
+        lib.filterAttrs (_: type: type == "directory")
+          (builtins.readDir appDir)
+      );
+    in
+    lib.concatMap (sub:
+      let subDir = appDir + "/${sub}"; in
+      if builtins.pathExists (subDir + "/yarn.lock")
+         && builtins.pathExists (subDir + "/package.json")
+         && sub != "node_modules"
+      then [{
+        app = app;
+        subdir = sub;
+        path = subDir;
+        hashKey = "${app}/${sub}";
+      }]
+      else []
+    ) subdirs
+  ) appsWithNode;
+
+  nestedOfflineCaches = lib.listToAttrs (map (nf:
+    lib.nameValuePair nf.hashKey (pkgs.fetchYarnDeps {
+      yarnLock = nf.path + "/yarn.lock";
+      hash = offlineHashes.${nf.hashKey} or lib.fakeHash;
+    })
+  ) nestedFrontends);
+
   benchRoot = pkgs.runCommand "bench-root" { } ''
     mkdir -p $out/bench/{sites,logs,config/pids}
 
@@ -108,6 +144,128 @@ let
     ''}
   '';
 
+  # Production-ready bench with compiled assets. Runs `bench build` (frappe's
+  # esbuild pipeline) inside the Nix sandbox, producing sites/assets/ with
+  # hashed bundles. No network access required — node_modules are pre-built.
+  builtBench = pkgs.stdenv.mkDerivation {
+    name = "built-bench";
+
+    dontUnpack = true;
+    dontConfigure = true;
+
+    nativeBuildInputs = [
+      prodPythonEnv
+      nodejs
+      pkgs.yarn
+      pkgs.fixup-yarn-lock
+      pkgs.git
+    ];
+
+    buildPhase = ''
+      runHook preBuild
+
+      # Start from the unbuilt benchRoot — copy so we can write into it.
+      cp -a ${benchRoot}/bench $TMPDIR/bench
+      chmod -R u+w $TMPDIR/bench
+
+      # bench build writes into sites/assets and apps/*/public/dist.
+      mkdir -p $TMPDIR/bench/sites/assets
+      mkdir -p $TMPDIR/bench/logs $TMPDIR/bench/config/pids
+
+      export FRAPPE_BENCH_ROOT=$TMPDIR/bench
+      export SITES_PATH=$TMPDIR/bench/sites
+      export PYTHONPATH=${appsPath "$TMPDIR/bench"}
+      export NODE_OPTIONS="--max-old-space-size=4096"
+      export HOME=$TMPDIR/home
+      mkdir -p $HOME
+
+      # Install nested frontends (e.g. commit/dashboard, commit/docs) that have
+      # their own yarn.lock. The top-level Nix node_modules build skips postinstall,
+      # so these never get installed. Replicate yarnConfigHook's approach: set the
+      # offline mirror, fixup the lockfile, then install offline.
+      ${lib.concatStringsSep "\n" (
+        map (nf: ''
+          _subdir=$TMPDIR/bench/apps/${nf.app}/${nf.subdir}
+          echo "Installing nested frontend: ${nf.hashKey}"
+          (
+            cd "$_subdir"
+            yarn config --offline set yarn-offline-mirror ${nestedOfflineCaches.${nf.hashKey}}
+            fixup-yarn-lock yarn.lock
+            yarn install \
+              --frozen-lockfile \
+              --force \
+              --production=false \
+              --ignore-engines \
+              --ignore-platform \
+              --ignore-scripts \
+              --no-progress \
+              --non-interactive \
+              --offline
+            patchShebangs node_modules
+          )
+        '') nestedFrontends
+      )}
+
+      cd $TMPDIR/bench
+      ${prodPythonEnv}/bin/bench build --production 2>&1
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+
+      # Start from benchRoot (preserves store symlinks for env, node_modules),
+      # then layer the compiled assets on top.
+      mkdir -p $out
+      cp -a ${benchRoot}/* $out/
+      chmod -R u+w $out/bench/sites
+
+      # Copy per-app dist bundles written by esbuild. The dist files are at
+      # apps/<app>/<app>/public/dist/ (esbuild writes through the sites/assets
+      # symlinks which point to apps/<app>/<app>/public/).
+      ${lib.concatStringsSep "\n" (
+        map (app: ''
+          if [ -d "$TMPDIR/bench/apps/${app}/${app}/public/dist" ]; then
+            chmod -R u+w $out/bench/apps/${app}/${app}/public 2>/dev/null || true
+            rm -rf $out/bench/apps/${app}/${app}/public/dist
+            cp -a $TMPDIR/bench/apps/${app}/${app}/public/dist $out/bench/apps/${app}/${app}/public/dist
+          fi
+        '') appNames
+      )}
+
+      # bench build creates sites/assets/ with symlinks to each app's public dir
+      # and compiled files (locale .mo files, etc.). The symlinks point into the
+      # build tree ($TMPDIR) which won't exist in the store. Replace them with
+      # links to $out and copy any real files.
+      rm -rf $out/bench/sites/assets
+      mkdir -p $out/bench/sites/assets
+      for item in $TMPDIR/bench/sites/assets/*; do
+        name=$(basename "$item")
+        if [ -L "$item" ]; then
+          # Rewrite symlink: /build/bench/apps/foo/... → $out/bench/apps/foo/...
+          target=$(readlink "$item")
+          newtarget=$(echo "$target" | sed "s|$TMPDIR/bench|$out/bench|g; s|/build/bench|$out/bench|g")
+          ln -s "$newtarget" "$out/bench/sites/assets/$name"
+        elif [ -d "$item" ]; then
+          cp -a "$item" "$out/bench/sites/assets/$name"
+        else
+          cp -a "$item" "$out/bench/sites/assets/$name"
+        fi
+      done
+
+      runHook postInstall
+    '';
+
+    passthru = {
+      pythonEnv = prodPythonEnv;
+      inherit nodejs appNames;
+      # Function: root -> colon-separated PYTHONPATH of apps under root.
+      # Usage: pkg.passthru.appsPath "${pkg}/bench"
+      inherit appsPath;
+    };
+  };
+
 in
 {
   inherit
@@ -116,5 +274,6 @@ in
     appsPath
     nodeModules
     benchRoot
+    builtBench
     ;
 }

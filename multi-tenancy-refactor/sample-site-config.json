@@ -1,0 +1,22 @@
+{
+ "allow_tests": true,
+ "cloud_storage_settings": {
+  "access_key": "blbablabla",
+  "bucket": "StockDesigns",
+  "endpoint_url": "https://s3.us-east-005.backblazeb2.com",
+  "folder": "ERP",
+  "region": "us-east-005",
+  "secret": "blbablabla",
+  "use_legacy_paths": 1,
+  "use_local": false
+ },
+ "db_host": "localhost",
+ "db_name": "littlecocalicoerp",
+ "db_password": "blbablabla",
+ "db_port": "3306",
+ "db_socket": "/run/mysqld/mysqld.sock",
+ "db_type": "mariadb",
+ "developer_mode": 1,
+ "encryption_key": "blbablabla=",
+ "pause_scheduler": false
+}
