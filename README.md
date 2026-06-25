@@ -11,8 +11,10 @@ declaratively, so a consuming project's flake stays a thin wrapper instead of a
 - reproducible **production Python environments** (via [uv2nix](https://github.com/pyproject-nix/uv2nix));
 - reproducible **node_modules** from `yarn.lock` (yarn-v1 hooks);
 - a `benchRoot` derivation that assembles the whole `/bench` tree;
+- a **`builtBench`** package that runs `bench build` at build time (immutable assets) —
+  the production-ready deployable consumed by both the NixOS module and OCI containers;
 - eight **OCI container images** (web, scheduler, three workers, socketio, nginx, bench-cli);
-- a **NixOS module** (`services.frappe`) with systemd units for production deployment;
+- a multi-tenant **NixOS module** (`services.frappe`) with per-site systemd units;
 - a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …).
 
 It is consumed as a [flake-parts](https://flake.parts/) module.
@@ -103,7 +105,7 @@ re-declare them:
               containers.enable = true;
 
               # fetchYarnDeps offline-cache hashes, one per app with a yarn.lock.
-              # Leave an app out, run `nix build .#benchRoot`, and copy the
+              # Leave an app out, run `nix build .#default`, and copy the
               # reported `got: sha256-…` value here.
               nodeOfflineHashes = {
                 frappe = "sha256-…";
@@ -133,7 +135,7 @@ provision-site          # (first run, in another shell) create the site + instal
 | Output | Purpose |
 | --- | --- |
 | `flakeModules.default` | The flake-parts module — `imports` it and configure `perSystem.frappe-nix`. |
-| `nixosModules.default` | Standalone NixOS module exposing `services.frappe` (production systemd). |
+| `nixosModules.default` | Standalone NixOS module exposing `services.frappe` (multi-tenant production systemd). |
 | `lib.mkFlake` | `flake-parts.lib.mkFlake` wrapper that merges frappe-nix's inputs into the consumer's. |
 | `lib.overrides` | Composable Python package overrides for native deps (`mysqlclient`, `pycups`, `python-ldap`, `cairocffi`). |
 
@@ -142,9 +144,14 @@ When `frappe-nix.enable` is set, the module adds these **packages** to your flak
 
 | Package | What it is |
 | --- | --- |
+| `default` / `builtBench` | Production-ready bench: apps + python env + node + **compiled assets**. The deployable consumed by the NixOS module and OCI containers. |
 | `prodPythonEnv` | Production virtualenv — workspace apps + runtime deps, no dev tools. |
 | `devPythonEnv` | Development virtualenv — adds dev groups + editable installs of `apps/*`. |
-| `benchRoot` | The assembled `/bench` tree (apps + node_modules + Python env + site/config). |
+| `benchRoot` | The unbuilt `/bench` tree (apps + node_modules + Python env + site/config). Used by the dev path and as input to `builtBench`. |
+
+The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}` so
+the NixOS module and containers can discover interpreters from the package itself —
+no separate `pythonEnv`/`nodejs` options needed.
 
 With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`):
 `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`,
@@ -237,43 +244,113 @@ nix build .#web          # → result is a Docker image tarball
 docker load < result     # loads <benchName>/web:latest
 ```
 
-The images are built from `benchRoot` (declarative apps + node_modules + `prodPythonEnv`),
-with no imperative `uv sync` / `yarn install` at container start. `web` runs gunicorn on
-`:8000`, `nginx` reverse-proxies on `:80` reading `/bench/config/nginx.conf`, `socketio`
-runs on `:9000`, and `bench-cli` is for migrations / one-off commands.
+The images are built from `builtBench` (apps + python env + node + compiled assets),
+with no imperative `uv sync` / `yarn install` / `bench build` at container start. Each
+process container runs a config-synthesis entrypoint that assembles `site_config.json`
+from environment variables and mounted secret files (`/secrets/`). `web` runs gunicorn on
+`:8000`, `nginx` reverse-proxies on `:80`, `socketio` runs on `:9000`, and `bench-cli`
+is for migrations / one-off commands.
 
 ## NixOS module — `services.frappe`
 
-`nixosModules.default` is a standalone NixOS module (not flake-parts). It takes the
-`benchRoot` and `prodPythonEnv` packages your flake already builds and runs them as
-systemd units, so it stays pure-nixpkgs with no uv2nix dependency.
+`nixosModules.default` is a standalone NixOS module (not flake-parts) for multi-tenant
+production deployment. It takes a **bench package** (the `builtBench` / `packages.default`
+from a bench repo) and derives all interpreters from its `passthru` — no separate
+`pythonEnv`/`nodejs`/`benchRoot` options.
+
+**Important:** The bench repo exposes only the package. The NixOS module is imported
+directly from `frappe-nix`, not re-exported by the bench. A deployment server combines
+both:
 
 ```nix
-# In a nixosConfiguration:
+# In a nixosConfiguration — the two-import pattern:
 {
   imports = [ frappe-nix.nixosModules.default ];
 
   services.frappe = {
     enable = true;
-    benchRoot = self.packages.x86_64-linux.benchRoot;
-    pythonEnv = self.packages.x86_64-linux.prodPythonEnv;
-    defaultSite = "mysite.localhost";
-    nginx.enable = true;
-    redis.createLocally = true;
+    package = benchFlake.packages.x86_64-linux.default;  # builtBench from a bench repo
+
     database.createLocally = true;
+    redis.createLocally = true;
+
+    sites."mysite.example.com" = {
+      enable = true;
+      database.createLocally = true;
+      database.passwordFile = config.age.secrets.db-pass.path;
+      encryptionKeyFile = config.age.secrets.enc-key.path;
+      extraConfigFiles = [ config.age.secrets.cloud-storage.path ];
+      nginx.enable = true;
+    };
+
+    # Multiple sites on one host, optionally with different bench packages:
+    sites."staging.example.com" = {
+      enable = true;
+      package = stagingBench.packages.x86_64-linux.default;  # per-site override
+      web.port = 8001;
+      socketio.port = 9001;
+      nginx.enable = true;
+    };
   };
 }
 ```
 
-It creates a `frappe` user, a `frappe-init` oneshot that seeds a writable
-`/var/lib/frappe/sites`, and units for `frappe-web` (gunicorn), `frappe-scheduler`,
-`frappe-worker-{default,short,long}`, and `frappe-socketio`. Optional toggles bring up a
-local MariaDB / Redis and an nginx reverse-proxy vhost.
+### Per-site systemd services
 
-Key options: `web.{port,workers}`, `socketio.port`, `workers` (queue list),
-`database.{createLocally,host,port,socket}`, `redis.{createLocally,port,cacheUrl,queueUrl,socketioUrl}`,
-`nginx.enable`, `user`/`group`, `extraEnv`. Site creation/migration and asset builds
-remain operational steps (run `bench` against the deployed bench).
+For each enabled site, the module generates:
+
+| Unit | Role |
+| --- | --- |
+| `frappe-init-<site>` | Oneshot: assembles runtime bench tree, symlinks assets from the package, synthesizes `site_config.json` via `jq` (merging base config + secrets). |
+| `frappe-web-<site>` | Gunicorn bound to `sites.<name>.web.port`. |
+| `frappe-scheduler-<site>` | Background scheduler. |
+| `frappe-socketio-<site>` | SocketIO (Node). |
+| `frappe-worker-{default,short,long}-<site>` | Background workers (one per queue). |
+
+All service units `after`/`requires` their `frappe-init-<site>`.
+
+### Config synthesis (secrets stay out of the store)
+
+`frappe-init-<site>` writes a base `site_config.json` to the store from Nix-declared
+values (db host/port, redis URLs, `extraConfig`), then merges in secrets at activation
+time via `jq`:
+- `database.passwordFile` → `db_password` key
+- `encryptionKeyFile` → `encryption_key` key
+- `extraConfigFiles` → deep-merged JSON (for cloud storage creds, etc.)
+
+The final `site_config.json` is written to the site's state directory with mode 0600.
+
+### Key options
+
+**Top-level:**
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `package` | package | *(required)* | Default bench package (`builtBench`). Sites inherit this unless overridden. |
+| `web.workers` | int | `4` | Gunicorn worker count (shared across sites). |
+| `workers` | list of str | `["default" "short" "long"]` | Background worker queues per site. |
+| `database.createLocally` | bool | `false` | Aggregate: enable MariaDB if this or any site requests it. |
+| `redis.createLocally` | bool | `false` | Enable a local Redis instance. |
+| `user` / `group` | str | `"frappe"` | Service user/group. |
+| `extraEnv` | attrs of str | `{}` | Extra env vars for all Frappe services. |
+
+**Per-site (`services.frappe.sites.<name>`):**
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enable` | bool | `false` | Enable this site. |
+| `package` | package or null | `null` | Per-site bench package override. |
+| `siteDir` | str | `/var/lib/frappe/<name>` | State directory for this site. |
+| `web.port` | port | `8000` | Gunicorn listen port. |
+| `socketio.port` | port | `9000` | SocketIO listen port. |
+| `database.{createLocally,host,port,socket,name,user,passwordFile}` | — | — | Per-site database config. |
+| `redis.{cacheUrl,queueUrl,socketioUrl}` | str | `redis://127.0.0.1:13000` | Redis URLs. |
+| `encryptionKeyFile` | path or null | `null` | File containing the Frappe encryption key. |
+| `extraConfig` | attrs | `{}` | Extra keys merged into base `site_config.json` (no secrets). |
+| `extraConfigFiles` | list of path | `[]` | JSON files deep-merged at activation (for secrets). |
+| `nginx.enable` | bool | `false` | Create an nginx virtualHost for this site. |
+
+Site creation/migration remain operational steps (run `bench` against the deployed site).
 
 ## Library
 
@@ -310,10 +387,11 @@ packages that need C headers/system libraries.
 | ----------------------------- | ---------------------------------- |
 | `uv add` / `uv sync`          | uv2nix reads `uv.lock`             |
 | `yarn add` / `yarn install`   | `fetchYarnDeps` reads `yarn.lock`  |
-| edits `apps/*` source         | `benchRoot` copies the source tree |
+| `bench build`                  | `builtBench` runs `bench build` in the sandbox |
+| edits `apps/*` source         | `benchRoot` / `builtBench` copies the source tree |
 
-Commit `uv.lock` and each app's `yarn.lock`; the production env, node_modules, containers,
-and NixOS deployment are all rebuilt from them.
+Commit `uv.lock` and each app's `yarn.lock`; the production env, node_modules, compiled
+assets, containers, and NixOS deployment are all rebuilt from them.
 
 ### Node offline hashes
 
