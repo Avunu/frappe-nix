@@ -331,20 +331,30 @@ let
       export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       export LD_LIBRARY_PATH="${libraryPath}"
 
-      # Resolve SITES_PATH from the site's siteDir if FRAPPE_SITE is set.
+      # Resolve SITES_PATH and runtime bench dir from the site's siteDir.
+      RUNTIME_BENCH=""
       ${concatStringsSep "\n" (mapAttrsToList (name: siteCfg: ''
         if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
           export SITES_PATH="${siteCfg.siteDir}/sites"
+          RUNTIME_BENCH="${siteCfg.siteDir}/bench"
         fi
       '') enabledSites)}
       export SITES_PATH=''${SITES_PATH:-/var/lib/frappe/sites}
+      RUNTIME_BENCH=''${RUNTIME_BENCH:-/var/lib/frappe/bench}
+
+      # Ensure the mutable runtime bench tree exists (mirrors frappe-init).
+      mkdir -p "$RUNTIME_BENCH"/logs
+      ln -sfn ${benchDir}/apps   "$RUNTIME_BENCH"/apps   2>/dev/null || true
+      ln -sfn ${benchDir}/env    "$RUNTIME_BENCH"/env    2>/dev/null || true
+      ln -sfn ${benchDir}/config "$RUNTIME_BENCH"/config 2>/dev/null || true
+      ln -sfn "$SITES_PATH"      "$RUNTIME_BENCH"/sites  2>/dev/null || true
 
       SITE_FLAG=""
       if [ -n "''${FRAPPE_SITE:-}" ]; then
         SITE_FLAG="--site $FRAPPE_SITE"
       fi
 
-      cd ${benchDir}
+      cd "$RUNTIME_BENCH"
 
       case "''${1:-}" in
         restore)
