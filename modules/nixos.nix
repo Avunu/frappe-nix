@@ -73,7 +73,6 @@ let
   # `bench` CLI wrapper, so a var like GIT_PYTHON_REFRESH only needs setting
   # once instead of being kept in sync by hand in two places.
   mkCoreEnv = pkg: {
-    FRAPPE_BENCH_ROOT = pkgBenchDir pkg;
     DEV_SERVER = "0";
     FRAPPE_ENV_TYPE = "production";
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
@@ -90,6 +89,10 @@ let
     in
     mkCoreEnv pkg
     // {
+      # The site's runtime bench tree (mkSiteInit), not the store path —
+      # frappe.utils.get_bench_path() reads this directly to locate
+      # config/ (scheduler lock/pid files), which must be writable.
+      FRAPPE_BENCH_ROOT = "${siteCfg.siteDir}/bench";
       SITES_PATH = "${siteCfg.siteDir}/sites";
       FRAPPE_SITE = name;
       FRAPPE_STREAM_LOGGING = "1";
@@ -187,6 +190,7 @@ let
       # every init run to stay in sync with the package; any in-progress
       # state gets reset, which is fine since dependent services restart
       # right after this unit anyway.
+
       mkdir -p ${runtimeBenchDir}/config
       cp -rT ${benchDir}/config ${runtimeBenchDir}/config
       chmod -R u+w ${runtimeBenchDir}/config
@@ -374,29 +378,34 @@ let
       ${coreEnvExports}
 
       # Resolve SITES_PATH and runtime bench dir from the site's siteDir.
-      RUNTIME_BENCH=""
+      FRAPPE_BENCH_ROOT=""
       ${concatStringsSep "\n" (mapAttrsToList (name: siteCfg: ''
         if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
           export SITES_PATH="${siteCfg.siteDir}/sites"
-          RUNTIME_BENCH="${siteCfg.siteDir}/bench"
+          FRAPPE_BENCH_ROOT="${siteCfg.siteDir}/bench"
         fi
       '') enabledSites)}
       export SITES_PATH=''${SITES_PATH:-/var/lib/frappe/sites}
-      RUNTIME_BENCH=''${RUNTIME_BENCH:-/var/lib/frappe/bench}
+      export FRAPPE_BENCH_ROOT=''${FRAPPE_BENCH_ROOT:-/var/lib/frappe/bench}
 
       # Ensure the mutable runtime bench tree exists (mirrors frappe-init).
-      mkdir -p "$RUNTIME_BENCH"/logs
-      ln -sfn ${benchDir}/apps   "$RUNTIME_BENCH"/apps   2>/dev/null || true
-      ln -sfn ${benchDir}/env    "$RUNTIME_BENCH"/env    2>/dev/null || true
-      ln -sfn ${benchDir}/config "$RUNTIME_BENCH"/config 2>/dev/null || true
-      ln -sfn "$SITES_PATH"      "$RUNTIME_BENCH"/sites  2>/dev/null || true
+      mkdir -p "$FRAPPE_BENCH_ROOT"/logs
+      ln -sfn ${benchDir}/apps "$FRAPPE_BENCH_ROOT"/apps 2>/dev/null || true
+      ln -sfn ${benchDir}/env  "$FRAPPE_BENCH_ROOT"/env  2>/dev/null || true
+      ln -sfn "$SITES_PATH"    "$FRAPPE_BENCH_ROOT"/sites 2>/dev/null || true
+
+      # config/ holds runtime state (scheduler lock/pid files), not just
+      # static config — must be a real writable tree, same as frappe-init.
+      mkdir -p "$FRAPPE_BENCH_ROOT"/config
+      cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
+      chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
 
       SITE_FLAG=""
       if [ -n "''${FRAPPE_SITE:-}" ]; then
         SITE_FLAG="--site $FRAPPE_SITE"
       fi
 
-      cd "$RUNTIME_BENCH"
+      cd "$FRAPPE_BENCH_ROOT"
 
       case "''${1:-}" in
         restore)
