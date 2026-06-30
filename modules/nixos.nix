@@ -350,6 +350,7 @@ let
       export FRAPPE_ENV_TYPE=production
       export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       export LD_LIBRARY_PATH="${libraryPath}"
+      export GIT_PYTHON_REFRESH=none
 
       # Resolve SITES_PATH and runtime bench dir from the site's siteDir.
       RUNTIME_BENCH=""
