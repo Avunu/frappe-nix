@@ -36,7 +36,6 @@ let
     concatStringsSep
     optionalAttrs
     optionalString
-    escapeShellArg
     ;
 
   cfg = config.services.frappe;
@@ -103,6 +102,20 @@ let
   # Packages on PATH for every Frappe service (git needed by GitPython).
   servicePath = [ pkgs.git ];
 
+  # Secret-bearing files for a site's init unit, keyed for both
+  # systemd LoadCredential= and the jq merge expression below. Source files
+  # (e.g. agenix's /run/agenix/*) are typically root:root 0400 — LoadCredential
+  # has systemd (root) read them and re-expose them under $CREDENTIALS_DIRECTORY
+  # owned by the unit's own User/Group, so the unit never needs direct access
+  # to the original file.
+  mkSiteCredentials = siteCfg:
+    (lib.optional (siteCfg.database.passwordFile != null)
+      { file = siteCfg.database.passwordFile; key = "db_password"; })
+    ++ (lib.optional (siteCfg.encryptionKeyFile != null)
+      { file = siteCfg.encryptionKeyFile; key = "encryption_key"; })
+    ++ lib.imap1 (i: f: { file = f; key = "extra_config_${toString i}"; })
+      siteCfg.extraConfigFiles;
+
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
   mkExec = pkg: name: cmd:
     let benchDir = pkgBenchDir pkg; in
@@ -141,7 +154,7 @@ let
       baseConfigFile = pkgs.writeText "site-config-${name}.json"
         (builtins.toJSON baseConfig);
 
-      # Build the jq merge expression for secret files.
+      # Secrets merged via systemd LoadCredential — see mkSiteCredentials.
       secretFiles =
         (lib.optional (siteCfg.database.passwordFile != null)
           { file = siteCfg.database.passwordFile; key = "db_password"; })
@@ -176,10 +189,13 @@ let
       mkdir -p ${sitesPath}/${name}
 
       # Synthesize site_config.json: base config + secrets + extra files.
+      # Secret values are read from $CREDENTIALS_DIRECTORY (populated by
+      # systemd's LoadCredential= on this unit) rather than the original
+      # source paths, so this script never needs read access to those.
       ${let
         # Read secret values into env vars.
         readSecrets = concatStringsSep "\n" (
-          map (s: ''SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}="$(cat ${escapeShellArg s.file})"'')
+          map (s: ''SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}="$(cat "$CREDENTIALS_DIRECTORY/${s.key}")"'')
             secretFiles
         );
         exportSecrets = concatStringsSep "\n" (
@@ -203,7 +219,7 @@ let
           );
 
         extraSlurpArgs = concatStringsSep " " (
-          lib.imap1 (i: f: "--slurpfile extra${toString i} ${escapeShellArg f}")
+          lib.imap1 (i: _f: ''--slurpfile extra${toString i} "$CREDENTIALS_DIRECTORY/extra_config_${toString i}"'')
             siteCfg.extraConfigFiles
         );
       in ''
@@ -269,6 +285,10 @@ let
           RemainAfterExit = true;
           User = cfg.user;
           Group = cfg.group;
+          # Source secret files (e.g. agenix's root:root 0400 outputs) are read
+          # by systemd (root) and re-exposed under $CREDENTIALS_DIRECTORY owned
+          # by cfg.user — the unit never needs direct read access to them.
+          LoadCredential = map (s: "${s.key}:${s.file}") (mkSiteCredentials siteCfg);
           ExecStart = mkSiteInit name siteCfg;
         };
       };
