@@ -257,6 +257,22 @@ let
       ''}
     '';
 
+  # services.mysql's `ensureUsers` only ever creates passwordless accounts
+  # (`IDENTIFIED WITH unix_socket`, i.e. OS-peer auth) — there is no
+  # declarative way to set a real password through that option. Frappe
+  # connects over TCP with the password baked into site_config.json, so we
+  # set/refresh it separately here using the same secret. Safe to rerun on
+  # every deploy (`ALTER USER ... IDENTIFIED BY` is idempotent and swaps the
+  # account onto password auth regardless of its previous auth plugin).
+  mkSiteDbPasswordSync = name: siteCfg:
+    pkgs.writeShellScript "frappe-db-password-${name}" ''
+      set -euo pipefail
+      PASS="$(cat "$CREDENTIALS_DIRECTORY/db_password")"
+      ESCAPED=$(printf '%s' "$PASS" | sed "s/'/'''/g")
+      echo "ALTER USER '${siteCfg.database.user}'@'localhost' IDENTIFIED BY '$ESCAPED';" \
+        | ${cfg.database.package}/bin/mysql -N
+    '';
+
   # Generate all systemd services for a single site.
   mkSiteServices = name: siteCfg:
     let
@@ -273,6 +289,11 @@ let
         after = [ "${initName}.service" ];
         requires = [ "${initName}.service" ];
       };
+
+      # Only locally-created DBs with a password go through the sync unit —
+      # an externally-managed DB is the operator's responsibility.
+      needsDbPasswordSync = siteCfg.database.createLocally && siteCfg.database.passwordFile != null;
+      dbPasswordSyncName = "frappe-db-password-${name}";
 
       mkService = { description, execStart, extra ? {} }:
         {
@@ -307,6 +328,8 @@ let
       "${initName}" = {
         description = "Frappe init for site ${name}";
         wantedBy = [ "multi-user.target" ];
+        after = lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service";
+        requires = lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service";
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
@@ -350,7 +373,25 @@ let
           "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
         extra = dependsOn;
       };
-    } // workerUnits;
+    }
+    // workerUnits
+    // optionalAttrs needsDbPasswordSync {
+      "${dbPasswordSyncName}" = {
+        description = "Sync MariaDB password for site ${name}";
+        after = [ "mysql.service" ];
+        requires = [ "mysql.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          # Must run as the MariaDB service's own system user — that's the
+          # only unix_socket-mapped account with ALL PRIVILEGES, set up by
+          # services.mysql's own postStart (see ensureUsers/ensureDatabases).
+          User = config.services.mysql.user;
+          LoadCredential = [ "db_password:${siteCfg.database.passwordFile}" ];
+          ExecStart = mkSiteDbPasswordSync name siteCfg;
+        };
+      };
+    };
 
   # bench CLI wrapper — defaults FRAPPE_SITE to the sole enabled site.
   # Uses the top-level package for interpreter discovery.
@@ -646,6 +687,15 @@ in
       services.mysql = {
         enable = true;
         package = cfg.database.package;
+        # `ensureUsers` only creates passwordless unix_socket accounts —
+        # the actual password is set separately by mkSiteDbPasswordSync,
+        # since NixOS deliberately doesn't manage passwords declaratively.
+        ensureDatabases = mapAttrsToList (_: s: s.database.name)
+          (filterAttrs (_: s: s.database.createLocally) enabledSites);
+        ensureUsers = mapAttrsToList (_: s: {
+          name = s.database.user;
+          ensurePermissions = { "${s.database.name}.*" = "ALL PRIVILEGES"; };
+        }) (filterAttrs (_: s: s.database.createLocally) enabledSites);
         settings.mysqld = {
           character-set-server = "utf8mb4";
           collation-server = "utf8mb4_unicode_ci";
