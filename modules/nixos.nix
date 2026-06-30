@@ -179,8 +179,17 @@ let
       mkdir -p ${runtimeBenchDir}/logs
       ln -sfn ${benchDir}/apps   ${runtimeBenchDir}/apps
       ln -sfn ${benchDir}/env    ${runtimeBenchDir}/env
-      ln -sfn ${benchDir}/config ${runtimeBenchDir}/config
       ln -sfn ${sitesPath}       ${runtimeBenchDir}/sites
+
+      # config/ is not pure config — bench writes runtime state into it
+      # (scheduler_process, site_config.lock, pids/), so it must be a real
+      # writable tree, not a symlink into the read-only store. Re-copy on
+      # every init run to stay in sync with the package; any in-progress
+      # state gets reset, which is fine since dependent services restart
+      # right after this unit anyway.
+      mkdir -p ${runtimeBenchDir}/config
+      cp -rT ${benchDir}/config ${runtimeBenchDir}/config
+      chmod -R u+w ${runtimeBenchDir}/config
 
       # Seed sites directory.
       mkdir -p ${sitesPath}
