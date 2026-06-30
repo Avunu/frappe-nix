@@ -219,7 +219,10 @@ let
             map (s: ''. + {"${s.key}": $ENV.SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}}'')
               secretFiles
           );
-          extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}") siteCfg.extraConfigFiles;
+          # --slurpfile binds $extraN to an array of every JSON value in the
+          # file, even when the file holds a single object — index [0] to get
+          # the object itself before merging.
+          extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.extraConfigFiles;
         in
           concatStringsSep " | " (
             [ base ]
