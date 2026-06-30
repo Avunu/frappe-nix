@@ -67,19 +67,31 @@ let
     pkgs.libpng
   ];
 
+  # Env vars that depend only on the resolved package (interpreters, SSL,
+  # library path) and not on any particular site's config. Shared by every
+  # systemd unit's `environment=` (via siteEnv) and by the imperative
+  # `bench` CLI wrapper, so a var like GIT_PYTHON_REFRESH only needs setting
+  # once instead of being kept in sync by hand in two places.
+  mkCoreEnv = pkg: {
+    FRAPPE_BENCH_ROOT = pkgBenchDir pkg;
+    DEV_SERVER = "0";
+    FRAPPE_ENV_TYPE = "production";
+    SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+    LD_LIBRARY_PATH = libraryPath;
+    # GitPython probes `git` on import; skip it, we ship git on PATH ourselves.
+    GIT_PYTHON_REFRESH = "none";
+  };
+
   # Per-site environment. The package (and therefore interpreters) can differ
   # per site, so this is a function of (siteName, siteCfg).
   siteEnv = name: siteCfg:
     let
       pkg = sitePackage siteCfg;
-      benchDir = pkgBenchDir pkg;
     in
-    {
-      FRAPPE_BENCH_ROOT = benchDir;
+    mkCoreEnv pkg
+    // {
       SITES_PATH = "${siteCfg.siteDir}/sites";
       FRAPPE_SITE = name;
-      DEV_SERVER = "0";
-      FRAPPE_ENV_TYPE = "production";
       FRAPPE_STREAM_LOGGING = "1";
       FRAPPE_TUNE_GC = "1";
 
@@ -90,9 +102,6 @@ let
       FRAPPE_REDIS_CACHE = siteCfg.redis.cacheUrl;
       FRAPPE_REDIS_QUEUE = siteCfg.redis.queueUrl;
       FRAPPE_REDIS_SOCKETIO = siteCfg.redis.socketioUrl;
-
-      SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-      LD_LIBRARY_PATH = libraryPath;
     }
     // optionalAttrs (siteCfg.database.socket != "") {
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
@@ -336,6 +345,9 @@ let
       benchDir = pkgBenchDir pkg;
       pyEnv = pkgPythonEnv pkg;
       benchBin = "${pyEnv}/bin/bench";
+      coreEnvExports = concatStringsSep "\n" (
+        mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") (mkCoreEnv pkg)
+      );
     in
     pkgs.writeShellScriptBin "bench" ''
       set -euo pipefail
@@ -345,12 +357,7 @@ let
       ''}
 
       export PYTHONPATH="${pkgAppsPath pkg}"
-      export FRAPPE_BENCH_ROOT=${benchDir}
-      export DEV_SERVER=0
-      export FRAPPE_ENV_TYPE=production
-      export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-      export LD_LIBRARY_PATH="${libraryPath}"
-      export GIT_PYTHON_REFRESH=none
+      ${coreEnvExports}
 
       # Resolve SITES_PATH and runtime bench dir from the site's siteDir.
       RUNTIME_BENCH=""
