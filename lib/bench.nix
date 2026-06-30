@@ -170,7 +170,7 @@ let
 
       # bench build writes into sites/assets and apps/*/public/dist.
       mkdir -p $TMPDIR/bench/sites/assets
-      mkdir -p $TMPDIR/bench/logs $TMPDIR/bench/config/pids
+      mkdir -p $TMPDIR/bench/config/pids
 
       export FRAPPE_BENCH_ROOT=$TMPDIR/bench
       export SITES_PATH=$TMPDIR/bench/sites
