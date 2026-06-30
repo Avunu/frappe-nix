@@ -126,12 +126,13 @@ let
       siteCfg.extraConfigFiles;
 
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
+  # cwd is left to systemd's WorkingDirectory= (set per-service in
+  # mkSiteServices to the site's runtime bench dir) rather than `cd`-ing here
+  # — one declarative source of truth instead of two that can drift apart.
   mkExec = pkg: name: cmd:
-    let benchDir = pkgBenchDir pkg; in
     pkgs.writeShellScript "frappe-${name}" ''
       set -euo pipefail
       export PYTHONPATH="${pkgAppsPath pkg}"
-      cd ${benchDir}
       exec ${cmd}
     '';
 
@@ -250,6 +251,7 @@ let
       pyEnv = pkgPythonEnv pkg;
       node = pkgNodejs pkg;
       benchDir = pkgBenchDir pkg;
+      runtimeBenchDir = "${siteCfg.siteDir}/bench";
       env = siteEnv name siteCfg;
       benchBin = "${pyEnv}/bin/bench";
 
@@ -270,7 +272,7 @@ let
           serviceConfig = {
             User = cfg.user;
             Group = cfg.group;
-            WorkingDirectory = "${siteCfg.siteDir}/sites";
+            WorkingDirectory = runtimeBenchDir;
             ExecStart = execStart;
             Restart = "always";
             RestartSec = "5";
