@@ -715,6 +715,9 @@ in
 
     # Per-site nginx virtualHosts.
     (mkIf (lib.any (s: s.nginx.enable) (builtins.attrValues enabledSites)) {
+      # nginx needs group membership to traverse the 0750 site directories.
+      users.users.nginx.extraGroups = [ cfg.group ];
+
       services.nginx = {
         enable = true;
         recommendedProxySettings = true;
