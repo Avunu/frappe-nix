@@ -68,6 +68,20 @@
       });
     };
 
+  # pyvips uses cffi ffi.dlopen at runtime and needs the absolute store path
+  # for libvips — ctypes.util.find_library won't find it in the Nix store.
+  pyvips =
+    { pkgs }:
+    final: prev: {
+      pyvips = prev.pyvips.overrideAttrs (old: {
+        buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.vips ];
+        postPatch = ''
+          substituteInPlace pyvips/__init__.py \
+            --replace "library_name('vips', 42)" "'${pkgs.lib.getLib pkgs.vips}/lib/libvips.so.42'"
+        '';
+      });
+    };
+
   # cairocffi needs cairo headers. Only needed if not using
   # [tool.uv.extra-build-dependencies] for the pure-Python deps.
   cairocffi =
