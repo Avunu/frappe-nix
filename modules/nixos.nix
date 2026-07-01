@@ -431,7 +431,7 @@ let
 
       # Ensure the mutable runtime bench tree exists (mirrors frappe-init).
       mkdir -p "$FRAPPE_BENCH_ROOT"/logs
-      mkdir -p "$(dirname "$FRAPPE_BENCH_ROOT")/logs
+      mkdir -p "$(dirname "$FRAPPE_BENCH_ROOT")/logs"
       ln -sfn ${benchDir}/apps "$FRAPPE_BENCH_ROOT"/apps 2>/dev/null || true
       ln -sfn ${benchDir}/env  "$FRAPPE_BENCH_ROOT"/env  2>/dev/null || true
       ln -sfn "$SITES_PATH"    "$FRAPPE_BENCH_ROOT"/sites 2>/dev/null || true
