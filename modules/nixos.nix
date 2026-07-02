@@ -285,15 +285,16 @@ let
       benchBin = "${pyEnv}/bin/bench";
 
       initName = "frappe-init-${name}";
-      dependsOn = {
-        after = [ "${initName}.service" ];
-        requires = [ "${initName}.service" ];
-      };
-
       # Only locally-created DBs with a password go through the sync unit —
       # an externally-managed DB is the operator's responsibility.
       needsDbPasswordSync = siteCfg.database.createLocally && siteCfg.database.passwordFile != null;
       dbPasswordSyncName = "frappe-db-password-${name}";
+      migrateName = "frappe-migrate-${name}";
+
+      dependsOn = {
+        after = [ "${initName}.service" "${migrateName}.service" ];
+        requires = [ "${initName}.service" ];
+      };
 
       mkService = { description, execStart, extra ? {} }:
         {
@@ -340,6 +341,31 @@ let
           # by cfg.user — the unit never needs direct read access to them.
           LoadCredential = map (s: "${s.key}:${s.file}") (mkSiteCredentials siteCfg);
           ExecStart = mkSiteInit name siteCfg;
+        };
+      };
+
+      "${migrateName}" = {
+        description = "Frappe schema migration for ${name}";
+        wantedBy = [ "multi-user.target" ];
+        # Order after the data stores — migrate is a Restart-less oneshot and would
+        # race MariaDB/Redis on a cold boot otherwise. Gate each on its createLocally
+        # flag so this stays correct for externally-managed DB/Redis too.
+        after = [ "${initName}.service" "network.target" ]
+          ++ lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service"
+          ++ lib.optional cfg.database.createLocally "mysql.service"
+          ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
+        requires = [ "${initName}.service" ];
+        environment = env;
+        path = servicePath;
+        serviceConfig = {
+          Type = "oneshot";
+          # RemainAfterExit=true keeps the unit active(exited) so switch-to-configuration
+          # can restart it when the unit file changes (new pkgAppsPath store path on code change).
+          RemainAfterExit = true;
+          User = cfg.user;
+          Group = cfg.group;
+          WorkingDirectory = runtimeBenchDir;
+          ExecStart = mkExec pkg "migrate-${name}" "${benchBin} --site ${name} migrate";
         };
       };
 
