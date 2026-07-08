@@ -13,6 +13,7 @@
   nodejs,
   nodeOverrides ? { },
   nodeOfflineHashes ? { },
+  extraPackages ? [ ],
 }:
 
 let
@@ -259,7 +260,7 @@ let
 
     passthru = {
       pythonEnv = prodPythonEnv;
-      inherit nodejs appNames;
+      inherit nodejs appNames extraPackages;
       # Function: root -> colon-separated PYTHONPATH of apps under root.
       # Usage: pkg.passthru.appsPath "${pkg}/bench"
       inherit appsPath;

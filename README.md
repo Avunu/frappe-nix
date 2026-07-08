@@ -174,6 +174,7 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `pythonOverrides` | overlay | no-op | Extra Python package set overlay (compose with `lib.overrides`). |
 | `extraDevPackages` | list of package | `[]` | Extra packages on the dev shell. |
 | `extraContainerRuntimeDeps` | list of package | `[]` | Extra runtime packages in production containers. |
+| `extraPackages` | list of package | `[]` | Extra packages installed in *both* the dev shell and any production deployment of this package (read off `builtBench`'s `passthru.extraPackages` by `services.frappe`'s NixOS module — no server-side config needed). |
 | `extraLibraryPaths` | list of package | `[]` | Extra `LD_LIBRARY_PATH` entries (dev shell). |
 | `extraScripts` | attrs | `{}` | Extra devenv scripts, merged over the standard set. |
 | `extraEnv` | attrs of str | `{}` | Extra environment variables (dev shell). |

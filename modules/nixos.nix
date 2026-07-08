@@ -681,7 +681,7 @@ in
 
   config = mkIf cfg.enable (mkMerge [
     {
-      environment.systemPackages = [ benchCli pkgs.git ];
+      environment.systemPackages = [ benchCli pkgs.git ] ++ (cfg.package.passthru.extraPackages or [ ]);
 
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
