@@ -112,7 +112,14 @@ let
     // cfg.extraEnv;
 
   # Packages on PATH for every Frappe service (git needed by GitPython).
-  servicePath = [ pkgs.git ];
+  # systemd's `path` option sets PATH to exactly these packages' bin/sbin —
+  # it does NOT fall back to /run/current-system/sw/bin (see
+  # nixos/lib/systemd-lib.nix's environment.PATH = makeBinPath config.path),
+  # so a package only in environment.systemPackages is invisible to these
+  # services no matter what. cfg.extraPath is the escape hatch for callers
+  # that need a CLI on these services' PATH (e.g. little_cocalico's
+  # caldera-print subprocess calls).
+  servicePath = [ pkgs.git ] ++ cfg.extraPath;
 
   # Secret-bearing files for a site's init unit, keyed for both
   # systemd LoadCredential= and the jq merge expression below. Source files
@@ -670,6 +677,19 @@ in
       type = types.attrsOf types.str;
       default = {};
       description = "Additional environment variables for all Frappe services.";
+    };
+
+    extraPath = mkOption {
+      type = types.listOf types.package;
+      default = [];
+      description = ''
+        Additional packages on PATH for all Frappe services (web, workers,
+        migrate). Needed because systemd's `path` sets PATH to exactly the
+        listed packages' bin/sbin, not falling back to
+        /run/current-system/sw/bin — a package only in
+        environment.systemPackages is otherwise invisible to these services
+        even though it's installed system-wide.
+      '';
     };
 
     sites = mkOption {
