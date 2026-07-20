@@ -82,6 +82,12 @@ in
           description = "Additional runtime packages for production containers.";
         };
 
+        extraPackages = mkOption {
+          type = types.listOf types.package;
+          default = [ ];
+          description = "Additional packages installed in both the dev shell and any production deployment of this package (via builtBench's passthru.extraPackages — see services.frappe.package in modules/nixos.nix).";
+        };
+
         extraLibraryPaths = mkOption {
           type = types.listOf types.package;
           default = [ ];
@@ -168,7 +174,7 @@ in
 
         benchInfra = import ../lib/bench.nix {
           inherit pkgs lib;
-          inherit (cfg) workspaceRoot nodejs nodeOverrides nodeOfflineHashes;
+          inherit (cfg) workspaceRoot nodejs nodeOverrides nodeOfflineHashes extraPackages;
           inherit (pythonEnvs) prodPythonEnv;
         };
 
@@ -182,9 +188,11 @@ in
       lib.mkIf cfg.enable {
         packages.prodPythonEnv = pythonEnvs.prodPythonEnv;
         packages.devPythonEnv = pythonEnvs.devPythonEnv;
-        # Assembled /bench tree — consumed by the NixOS module (nixosModules.default)
-        # and by the OCI container builds in containers.nix.
+        # Unbuilt /bench tree — used by containers.nix and as input to builtBench.
         packages.benchRoot = benchInfra.benchRoot;
+        # Production-ready bench with compiled assets + passthru interpreters.
+        packages.builtBench = benchInfra.builtBench;
+        packages.default = benchInfra.builtBench;
 
         devenv.shells.default =
           { config, pkgs, ... }:
@@ -223,7 +231,8 @@ in
                 just
                 pv
               ]
-              ++ cfg.extraDevPackages;
+              ++ cfg.extraDevPackages
+              ++ cfg.extraPackages;
 
             languages.javascript = {
               enable = true;

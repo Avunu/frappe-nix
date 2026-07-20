@@ -16,6 +16,14 @@
     ];
   };
 
+  # This flake exposes:
+  #   packages.<system>.default  — the built bench package (apps + python + node + assets)
+  #
+  # Deployment servers import the NixOS module directly from frappe-nix:
+  #   imports = [ frappe-nix.nixosModules.default ];
+  #   services.frappe.package = benchFlake.packages.x86_64-linux.default;
+  #   services.frappe.sites."mysite.example.com" = { ... };
+
   outputs =
     { self, frappe-nix, ... }@inputs:
     frappe-nix.lib.mkFlake { inherit inputs; } (
