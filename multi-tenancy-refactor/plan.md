@@ -1,1 +1,0 @@
-/home/gideon/.claude/plans/we-need-to-refactor-cozy-papert.md
