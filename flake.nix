@@ -87,5 +87,13 @@
         default = app;
         frappe-init = app;
       });
+
+      # NixOS VM tests (Linux only — runNixOSTest builds a VM).
+      checks = forAllSystems (pkgs:
+        nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          migrate-rollback = pkgs.testers.runNixOSTest (
+            import ./tests/migrate-rollback.nix { inherit self pkgs; }
+          );
+        });
     };
 }

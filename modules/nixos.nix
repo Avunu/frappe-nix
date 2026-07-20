@@ -4,6 +4,11 @@
 # Stack (python, node, apps, assets) comes from the bench package's passthru —
 # the module never takes pythonEnv/nodejs/benchRoot as options.
 #
+# On each new build the per-site frappe-migrate-<site> oneshot runs
+# `bench migrate`. By default (services.frappe.migrate.*) it first snapshots the
+# database (mysqldump) and, if the migration fails, restores the snapshot and
+# leaves the site in maintenance mode — see the `migrate` options below.
+#
 # Example:
 #   services.frappe = {
 #     enable  = true;
@@ -280,6 +285,134 @@ let
         | ${cfg.database.package}/bin/mysql -N
     '';
 
+  # Safe deploy-time migration script (ExecStart of frappe-migrate-<site>).
+  #
+  # Snapshots the DB before migrating and, if `bench migrate` fails, restores
+  # the snapshot and leaves the site in maintenance mode. A physical snapshot is
+  # the only real rollback here: `bench migrate` performs DDL (CREATE/ALTER
+  # TABLE), which auto-commits in MariaDB and cannot be undone in a transaction.
+  #
+  # Runs entirely as cfg.user with the site's own DB credentials (read from the
+  # 0600 site_config.json) — no DB-root privilege needed, so it works for both
+  # locally-created and externally-managed databases.
+  mkSiteMigrate = name: siteCfg:
+    let
+      pkg = sitePackage siteCfg;
+      pyEnv = pkgPythonEnv pkg;
+      benchBin = "${pyEnv}/bin/bench";
+      mg = cfg.migrate;
+
+      dbName = siteCfg.database.name;
+      # Connection flags shared by mysqldump (snapshot) and mysql (rollback).
+      # Password comes from MYSQL_PWD (exported below) to keep it out of argv.
+      # Connect the same way Frappe does: over the unix socket when one is
+      # configured (locally-created DB users are `user@localhost`, which MariaDB
+      # matches only for socket connections, not TCP to 127.0.0.1), otherwise
+      # over TCP for an externally-managed database.
+      connArgs =
+        if siteCfg.database.socket != "" then
+          "--socket=${siteCfg.database.socket} --user=${siteCfg.database.user}"
+        else
+          "--host=${siteCfg.database.host} --port=${toString siteCfg.database.port} --user=${siteCfg.database.user}";
+
+      mysql = "${cfg.database.package}/bin/mysql";
+      mysqldump = "${cfg.database.package}/bin/mysqldump";
+      jq = "${pkgs.jq}/bin/jq";
+      gzip = "${pkgs.gzip}/bin/gzip";
+      gunzip = "${pkgs.gzip}/bin/gunzip";
+
+      siteConfig = "${siteCfg.siteDir}/sites/${name}/site_config.json";
+      snapDir = "${siteCfg.siteDir}/snapshots";
+      # Build store path of the last successful migrate; guards against redundant
+      # re-runs (e.g. on every reboot) when the app build hasn't changed.
+      marker = "${siteCfg.siteDir}/.frappe-migrate-build";
+
+      setMaintenance = state:
+        optionalString mg.maintenanceMode ''
+          ${benchBin} --site ${name} set-maintenance-mode ${state} \
+            || echo "frappe-migrate(${name}): warning: could not set maintenance mode ${state}" >&2
+        '';
+    in
+    pkgs.writeShellScript "frappe-migrate-${name}" ''
+      set -uo pipefail
+      # Snapshots are full DB dumps — keep everything this script writes
+      # owner-only (systemd's default umask would make them world-readable).
+      umask 0077
+      export PYTHONPATH="${pkgAppsPath pkg}"
+
+      BUILD="${pkg}"
+      if [ "$(cat "${marker}" 2>/dev/null || true)" = "$BUILD" ]; then
+        echo "frappe-migrate(${name}): build unchanged since last successful migrate; skipping."
+        exit 0
+      fi
+
+      # Site DB credentials for snapshot/rollback (frappe user owns this file).
+      export MYSQL_PWD="$(${jq} -r '.db_password // empty' "${siteConfig}")"
+
+      SNAP=""
+      ${optionalString mg.snapshot ''
+        mkdir -p "${snapDir}"
+        SNAP="${snapDir}/premigrate-${name}-$(date +%Y%m%d-%H%M%S).sql.gz"
+        echo "frappe-migrate(${name}): taking pre-migrate snapshot -> $SNAP"
+        if ! ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
+             --routines --triggers ${dbName} | ${gzip} > "$SNAP"; then
+          echo "frappe-migrate(${name}): ERROR pre-migrate snapshot failed; aborting before migrate (no safety net)." >&2
+          rm -f "$SNAP"
+          exit 1
+        fi
+      ''}
+
+      ${setMaintenance "on"}
+
+      echo "frappe-migrate(${name}): running bench migrate"
+      ${benchBin} --site ${name} migrate
+      RC=$?
+
+      if [ "$RC" -eq 0 ]; then
+        ${setMaintenance "off"}
+        printf '%s' "$BUILD" > "${marker}"
+        ${optionalString mg.snapshot ''
+          # Prune to the newest ${toString mg.snapshotRetention} snapshots.
+          ls -1t "${snapDir}"/premigrate-${name}-*.sql.gz 2>/dev/null \
+            | tail -n +${toString (mg.snapshotRetention + 1)} \
+            | while IFS= read -r old; do rm -f "$old"; done
+        ''}
+        echo "frappe-migrate(${name}): migrate OK"
+        exit 0
+      fi
+
+      echo ">>> frappe-migrate(${name}): MIGRATION FAILED (bench migrate exit $RC) <<<" >&2
+
+      ${optionalString (mg.snapshot && mg.rollbackOnFailure) ''
+        if [ -n "$SNAP" ] && [ -f "$SNAP" ]; then
+          echo "frappe-migrate(${name}): rolling back database from $SNAP" >&2
+          rollback_ok=1
+          # Drop every current table/view — including any a partial migration
+          # created — then re-import the snapshot (whose own DROP/CREATE/INSERT
+          # restores the pre-migrate tables and data). FK checks off so drop
+          # order does not matter.
+          { echo "SET FOREIGN_KEY_CHECKS=0;"
+            ${mysql} ${connArgs} -N -e \
+              "SELECT CONCAT('DROP ', IF(TABLE_TYPE='VIEW','VIEW','TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';"
+          } | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
+          ${gunzip} -c "$SNAP" | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
+          if [ "$rollback_ok" -eq 1 ]; then
+            echo "frappe-migrate(${name}): rollback complete — restored pre-migrate snapshot." >&2
+          else
+            echo "frappe-migrate(${name}): ERROR rollback FAILED; database may be inconsistent. Snapshot preserved at $SNAP." >&2
+          fi
+        else
+          echo "frappe-migrate(${name}): no snapshot available to roll back to." >&2
+        fi
+      ''}
+
+      # Failure posture: leave maintenance mode ON so the site serves the
+      # maintenance page instead of new code on the rolled-back (older) schema.
+      # Recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
+      echo "frappe-migrate(${name}): site left in maintenance mode; investigate and redeploy." >&2
+      exit "$RC"
+    '';
+
   # Generate all systemd services for a single site.
   mkSiteServices = name: siteCfg:
     let
@@ -351,31 +484,6 @@ let
         };
       };
 
-      "${migrateName}" = {
-        description = "Frappe schema migration for ${name}";
-        wantedBy = [ "multi-user.target" ];
-        # Order after the data stores — migrate is a Restart-less oneshot and would
-        # race MariaDB/Redis on a cold boot otherwise. Gate each on its createLocally
-        # flag so this stays correct for externally-managed DB/Redis too.
-        after = [ "${initName}.service" "network.target" ]
-          ++ lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service"
-          ++ lib.optional cfg.database.createLocally "mysql.service"
-          ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
-        requires = [ "${initName}.service" ];
-        environment = env;
-        path = servicePath;
-        serviceConfig = {
-          Type = "oneshot";
-          # RemainAfterExit=true keeps the unit active(exited) so switch-to-configuration
-          # can restart it when the unit file changes (new pkgAppsPath store path on code change).
-          RemainAfterExit = true;
-          User = cfg.user;
-          Group = cfg.group;
-          WorkingDirectory = runtimeBenchDir;
-          ExecStart = mkExec pkg "migrate-${name}" "${benchBin} --site ${name} migrate";
-        };
-      };
-
       "frappe-web-${name}" = mkService {
         description = "Frappe web (gunicorn) for ${name}";
         execStart = mkExec pkg "web-${name}" ''
@@ -408,6 +516,34 @@ let
       };
     }
     // workerUnits
+    // optionalAttrs cfg.migrate.enable {
+      "${migrateName}" = {
+        description = "Frappe schema migration for ${name}";
+        wantedBy = [ "multi-user.target" ];
+        # Order after the data stores — migrate is a Restart-less oneshot and would
+        # race MariaDB/Redis on a cold boot otherwise. Gate each on its createLocally
+        # flag so this stays correct for externally-managed DB/Redis too.
+        after = [ "${initName}.service" "network.target" ]
+          ++ lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service"
+          ++ lib.optional cfg.database.createLocally "mysql.service"
+          ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
+        requires = [ "${initName}.service" ];
+        environment = env;
+        # coreutils for date/ls/tail/rm/cat used by the snapshot/rollback script;
+        # mysql/mysqldump/jq/gzip are referenced by absolute store path.
+        path = servicePath ++ [ pkgs.coreutils ];
+        serviceConfig = {
+          Type = "oneshot";
+          # RemainAfterExit=true keeps the unit active(exited) so switch-to-configuration
+          # can restart it when the unit file changes (new pkgAppsPath store path on code change).
+          RemainAfterExit = true;
+          User = cfg.user;
+          Group = cfg.group;
+          WorkingDirectory = runtimeBenchDir;
+          ExecStart = mkSiteMigrate name siteCfg;
+        };
+      };
+    }
     // optionalAttrs needsDbPasswordSync {
       "${dbPasswordSyncName}" = {
         description = "Sync MariaDB password for site ${name}";
@@ -670,6 +806,51 @@ in
       port = mkOption {
         type = types.port;
         default = 13000;
+      };
+    };
+
+    migrate = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Run `bench migrate` automatically for each site when a new build is
+          deployed (the per-site frappe-migrate-<site> oneshot). Set to false to
+          skip it and run migrations manually.
+        '';
+      };
+      snapshot = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Take a physical DB snapshot (mysqldump) immediately before migrating,
+          so a failed migration can be rolled back. Frappe schema changes are
+          DDL, which auto-commits in MariaDB and cannot be undone in a
+          transaction — a snapshot is the only real safety net.
+        '';
+      };
+      rollbackOnFailure = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Restore the pre-migrate snapshot if `bench migrate` fails, returning
+          the database to its pre-migrate state. No effect when snapshot = false.
+        '';
+      };
+      maintenanceMode = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Put the site into Frappe maintenance mode around the migration. On
+          failure the site is left in maintenance mode so it serves the
+          maintenance page rather than running new code against a rolled-back
+          (older) schema.
+        '';
+      };
+      snapshotRetention = mkOption {
+        type = types.ints.positive;
+        default = 3;
+        description = "Number of most-recent pre-migrate snapshots to keep per site under <siteDir>/snapshots.";
       };
     };
 

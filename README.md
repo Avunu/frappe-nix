@@ -303,6 +303,7 @@ For each enabled site, the module generates:
 | Unit | Role |
 | --- | --- |
 | `frappe-init-<site>` | Oneshot: assembles runtime bench tree, symlinks assets from the package, synthesizes `site_config.json` via `jq` (merging base config + secrets). |
+| `frappe-migrate-<site>` | Oneshot: runs `bench migrate` when the build changes. Snapshots the DB first and rolls back on failure (see [Safe migrations](#safe-migrations-on-deploy)). |
 | `frappe-web-<site>` | Gunicorn bound to `sites.<name>.web.port`. |
 | `frappe-scheduler-<site>` | Background scheduler. |
 | `frappe-socketio-<site>` | SocketIO (Node). |
@@ -334,6 +335,11 @@ The final `site_config.json` is written to the site's state directory with mode 
 | `redis.createLocally` | bool | `false` | Enable a local Redis instance. |
 | `user` / `group` | str | `"frappe"` | Service user/group. |
 | `extraEnv` | attrs of str | `{}` | Extra env vars for all Frappe services. |
+| `migrate.enable` | bool | `true` | Run `bench migrate` automatically per site when the build changes. |
+| `migrate.snapshot` | bool | `true` | Take a `mysqldump` snapshot before migrating (safety net). |
+| `migrate.rollbackOnFailure` | bool | `true` | Restore the snapshot if the migration fails. |
+| `migrate.maintenanceMode` | bool | `true` | Toggle maintenance mode around migrate; left on if it fails. |
+| `migrate.snapshotRetention` | int | `3` | Snapshots to keep per site under `<siteDir>/snapshots`. |
 
 **Per-site (`services.frappe.sites.<name>`):**
 
@@ -351,7 +357,33 @@ The final `site_config.json` is written to the site's state directory with mode 
 | `extraConfigFiles` | list of path | `[]` | JSON files deep-merged at activation (for secrets). |
 | `nginx.enable` | bool | `false` | Create an nginx virtualHost for this site. |
 
-Site creation/migration remain operational steps (run `bench` against the deployed site).
+Site creation remains an operational step (run `bench new-site` against the deployed host).
+
+### Safe migrations on deploy
+
+Whenever a new build is deployed (`nixos-rebuild switch`), the `frappe-migrate-<site>`
+oneshot runs `bench migrate` for the site. It re-runs only when the build actually
+changes — the last migrated build's store path is recorded in
+`<siteDir>/.frappe-migrate-build` and re-migration is skipped when it is unchanged.
+
+Because Frappe migrations perform DDL (`CREATE`/`ALTER TABLE`), which auto-commits in
+MariaDB and cannot be rolled back in a transaction, the unit wraps the migration in a
+physical snapshot instead:
+
+1. **Snapshot** — `mysqldump --single-transaction` of the site DB to
+   `<siteDir>/snapshots/premigrate-<site>-<timestamp>.sql.gz` (owner-only, 0600). If the
+   snapshot cannot be taken, the migration is aborted (never migrate without a safety net).
+2. **Migrate** — `bench --site <name> migrate`, with the site in maintenance mode.
+3. **On success** — clear maintenance mode, record the build, prune old snapshots.
+4. **On failure** — restore the snapshot (drop all current tables, re-import the dump),
+   **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit
+   non-zero (the unit shows `failed`). The database is returned to its pre-migrate state;
+   recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
+
+It runs as the `frappe` user with the site's own DB credentials (no DB-root needed), so it
+works for both locally-created and externally-managed databases. Tune or disable it via the
+`services.frappe.migrate.*` options above (e.g. `migrate.snapshot = false` for very large
+databases where a snapshot per deploy is too costly).
 
 ## Library
 
