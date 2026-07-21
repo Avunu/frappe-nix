@@ -301,10 +301,15 @@ in
               // cfg.extraEnv;
 
             enterShell = ''
-              # Initialize git submodules if needed
+              # Initialize the bench's direct app submodules (apps/*) if needed.
+              #
+              # NOT --recursive: Frappe apps frequently ship nested submodules
+              # with broken/missing .gitmodules refs. Those have no role in
+              # production, and recursing into them fails the init and breaks
+              # shell startup. We only init the direct submodules of this bench.
               if git submodule status 2>/dev/null | grep -q '^-'; then
                 echo "Initializing git submodules..."
-                git submodule update --init --recursive
+                git submodule update --init
               fi
 
               # Create required directories

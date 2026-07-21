@@ -173,7 +173,7 @@ in
         _before_lock["$lock"]=$(git hash-object "$lock" 2>/dev/null || echo none)
       done
 
-      git submodule foreach --recursive '
+      git submodule foreach '
         branch=$(git config -f "$toplevel/.gitmodules" "submodule.$name.branch") || {
           echo "  ⚠  $name: no branch configured in .gitmodules — skipping"
           exit 0
@@ -348,7 +348,9 @@ in
 
       echo "Adding git submodule: $URL -> $APP_DIR"
       git submodule add "$URL" "$APP_DIR"
-      git submodule update --init --recursive "$APP_DIR"
+      # Not --recursive: Frappe apps often ship broken nested submodules that
+      # have no production role and would fail init.
+      git submodule update --init "$APP_DIR"
 
       ${registerWorkspaceMember}
 

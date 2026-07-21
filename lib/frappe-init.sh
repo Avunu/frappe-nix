@@ -187,8 +187,10 @@ add_app_submodule "https://github.com/frappe/frappe.git" frappe
 for i in "${!app_names[@]}"; do
   add_app_submodule "${app_urls[$i]}" "${app_names[$i]}"
 done
-# Initialize any nested submodules (e.g. helpdesk/frappe-ui).
-git submodule update --init --recursive
+# Initialize only the direct app submodules. Frappe apps often carry broken
+# nested submodules (missing/incorrect .gitmodules refs) with no production
+# role, so we deliberately do NOT recurse into them.
+git submodule update --init
 
 # ── resolve the python workspace ──────────────────────────────────────────
 echo "Resolving Python workspace (uv lock)…"
