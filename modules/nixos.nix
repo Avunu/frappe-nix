@@ -110,6 +110,8 @@ let
       FRAPPE_REDIS_CACHE = siteCfg.redis.cacheUrl;
       FRAPPE_REDIS_QUEUE = siteCfg.redis.queueUrl;
       FRAPPE_REDIS_SOCKETIO = siteCfg.redis.socketioUrl;
+
+      FRAPPE_SOCKETIO_PORT = toString siteCfg.socketio.port;
     }
     // optionalAttrs (siteCfg.database.socket != "") {
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
@@ -170,6 +172,7 @@ let
         redis_cache = siteCfg.redis.cacheUrl;
         redis_queue = siteCfg.redis.queueUrl;
         redis_socketio = siteCfg.redis.socketioUrl;
+        socketio_port = siteCfg.socketio.port;
       }
       // optionalAttrs (siteCfg.database.socket != "") {
         db_socket = siteCfg.database.socket;
@@ -655,9 +658,16 @@ let
         "/socket.io" = {
           proxyPass = "http://127.0.0.1:${toString siteCfg.socketio.port}";
           proxyWebsockets = true;
+          extraConfig = ''
+            proxy_set_header X-Frappe-Site-Name ${name};
+            proxy_set_header Origin $scheme://$http_host;
+          '';
         };
         "/" = {
           proxyPass = "http://127.0.0.1:${toString siteCfg.web.port}";
+          extraConfig = ''
+            proxy_set_header X-Frappe-Site-Name ${name};
+          '';
         };
       };
     };
@@ -944,6 +954,13 @@ in
     (mkIf (lib.any (s: s.nginx.enable) (builtins.attrValues enabledSites)) {
       # nginx needs group membership to traverse the 0750 site directories.
       users.users.nginx.extraGroups = [ cfg.group ];
+
+      # Pin each site's FQDN to loopback so the socketio server's session-
+      # validation callback (Origin -> /api/method/frappe.realtime.get_user_info)
+      # hits local nginx directly instead of round-tripping through a public
+      # reverse proxy / tunnel in front of this host.
+      networking.hosts."127.0.0.1" =
+        mapAttrsToList (name: _: name) (filterAttrs (_: s: s.nginx.enable) enabledSites);
 
       services.nginx = {
         enable = true;
