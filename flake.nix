@@ -94,6 +94,9 @@
           migrate-rollback = pkgs.testers.runNixOSTest (
             import ./tests/migrate-rollback.nix { inherit self pkgs; }
           );
+          socket = pkgs.testers.runNixOSTest (
+            import ./tests/socket.nix { inherit self pkgs; }
+          );
         });
     };
 }
