@@ -521,7 +521,7 @@ let
         description = "Frappe web (gunicorn) for ${name}";
         execStart = mkExec pkg "web-${name}" ''
           ${pyEnv}/bin/gunicorn \
-            --bind 0.0.0.0:${toString siteCfg.web.port} \
+            --bind ${webBind siteCfg} \
             --workers ${toString cfg.web.workers} \
             --max-requests 5000 \
             --max-requests-jitter 500 \
@@ -670,14 +670,71 @@ let
       esac
     '';
 
+  # Where gunicorn listens: a unix socket when web.socketPath is set, else TCP.
+  webBind =
+    siteCfg:
+    if siteCfg.web.socketPath != "" then
+      "unix:${siteCfg.web.socketPath}"
+    else
+      "0.0.0.0:${toString siteCfg.web.port}";
+
+  # nginx upstream names are used as a host in proxy_pass, so a site's FQDN has
+  # to be flattened to keep it unambiguous.
+  upstreamName = name: "frappe-web-${lib.replaceStrings [ "." ] [ "_" ] name}";
+
   # Per-site nginx virtualHost config.
   mkSiteNginxVhost = name: siteCfg:
     let
       pkg = sitePackage siteCfg;
       benchDir = pkgBenchDir pkg;
+      viaSocket = siteCfg.nginx.socketPath != "";
+      webUpstream =
+        if siteCfg.web.socketPath != "" then
+          "http://${upstreamName name}"
+        else
+          "http://127.0.0.1:${toString siteCfg.web.port}";
+
+      # Over a unix socket $scheme is "http", but TLS was terminated at the edge
+      # in front of us, so the public scheme is https.
+      pubScheme = if viaSocket then "https" else "$scheme";
+
+      # recommendedProxySettings hardcodes `X-Forwarded-Proto $scheme` and NixOS
+      # emits its include AFTER a location's extraConfig, so the wrong scheme
+      # cannot be overridden from there. Opt the location out and set the whole
+      # header block explicitly instead.
+      socketProxyHeaders = optionalString viaSocket ''
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Server $hostname;
+      '';
     in
     {
       root = "${siteCfg.siteDir}/sites";
+
+      # Socket mode listens on BOTH the unix socket (for the proxy or tunnel in
+      # front) and loopback: the socketio session-validation callback resolves
+      # this site's FQDN to 127.0.0.1 (see networking.hosts below) and must still
+      # reach nginx over TCP.
+      listen = lib.optionals viaSocket [
+        { addr = "unix:${siteCfg.nginx.socketPath}"; }
+        {
+          addr = "127.0.0.1";
+          port = 80;
+        }
+      ];
+
+      # A unix socket has no peer address, so $remote_addr is meaningless and
+      # recommendedProxySettings would forward it as the client IP. Trust the
+      # socket peer and take the real address from Cloudflare's header instead —
+      # the socket is only reachable from the connector beside it.
+      extraConfig = lib.optionalString viaSocket ''
+        set_real_ip_from unix:;
+        real_ip_header CF-Connecting-IP;
+      '';
+
       locations = {
         "/assets/" = {
           extraConfig = ''
@@ -688,14 +745,18 @@ let
         "/socket.io" = {
           proxyPass = "http://127.0.0.1:${toString siteCfg.socketio.port}";
           proxyWebsockets = true;
+          recommendedProxySettings = !viaSocket;
           extraConfig = ''
+            ${socketProxyHeaders}
             proxy_set_header X-Frappe-Site-Name ${name};
-            proxy_set_header Origin $scheme://$http_host;
+            proxy_set_header Origin ${pubScheme}://$http_host;
           '';
         };
         "/" = {
-          proxyPass = "http://127.0.0.1:${toString siteCfg.web.port}";
+          proxyPass = webUpstream;
+          recommendedProxySettings = !viaSocket;
           extraConfig = ''
+            ${socketProxyHeaders}
             proxy_set_header X-Frappe-Site-Name ${name};
           '';
         };
@@ -722,7 +783,22 @@ let
       web.port = mkOption {
         type = types.port;
         default = 8000;
-        description = "Gunicorn listen port for this site.";
+        description = "Gunicorn listen port for this site (ignored when web.socketPath is set).";
+      };
+
+      web.socketPath = mkOption {
+        type = types.str;
+        default = "";
+        example = "/run/frappe-erp/web.sock";
+        description = ''
+          Bind gunicorn to this unix socket instead of a TCP port, removing the
+          nginx->gunicorn hop from the network stack. nginx reaches it through a
+          generated upstream block.
+
+          Access is governed by the socket's *directory*, which this module
+          creates 0750 owned by the service user — nginx is already a member of
+          that group. Put the socket in its own directory, not directly in /run.
+        '';
       };
 
       socketio.port = mkOption {
@@ -796,7 +872,28 @@ let
         description = "JSON files deep-merged into site_config.json at activation (for secrets).";
       };
 
-      nginx.enable = mkEnableOption "an nginx virtualHost for this site";
+      nginx = {
+        enable = mkEnableOption "an nginx virtualHost for this site";
+
+        socketPath = mkOption {
+          type = types.str;
+          default = "";
+          example = "/run/frappe-erp/nginx.sock";
+          description = ''
+            Additionally serve this vhost over a unix socket, for a co-located
+            reverse proxy or tunnel connector that terminates TLS elsewhere.
+
+            The loopback :80 listener is kept alongside it — the socketio
+            session-validation callback resolves the site FQDN to 127.0.0.1 and
+            needs it. In this mode the client IP comes from `CF-Connecting-IP`,
+            since a unix socket has no peer address.
+
+            nginx chmods its unix listen sockets to 0666, so the socket file does
+            not restrict access. Give it its own directory; this module creates
+            that 0750 and owned by the service user, which is the real gate.
+          '';
+        };
+      };
     };
   });
 
@@ -928,6 +1025,29 @@ in
 
   config = mkIf cfg.enable (mkMerge [
     {
+      # Socket paths must sit in their own directory: nginx chmods its unix listen
+      # sockets to 0666 and gunicorn's mode follows its umask, so neither socket
+      # file gates access. The 0750 directory this module creates around it does.
+      assertions = lib.concatLists (mapAttrsToList (name: siteCfg:
+        let
+          paths = filterAttrs (_: p: p != "") {
+            "web.socketPath" = siteCfg.web.socketPath;
+            "nginx.socketPath" = siteCfg.nginx.socketPath;
+          };
+        in
+        mapAttrsToList (opt: p: {
+          assertion = lib.hasPrefix "/" p && builtins.dirOf p != "/run" && builtins.dirOf p != "/";
+          message =
+            "services.frappe.sites.\"${name}\".${opt} must be an absolute path inside its own"
+            + " directory (e.g. /run/frappe-${name}/web.sock), not directly in /run —"
+            + " the directory's 0750 mode is what keeps the socket private.";
+        }) paths
+        ++ lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
+          assertion = false;
+          message = "services.frappe.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
+        }
+      ) enabledSites);
+
       environment.systemPackages = [ benchCli pkgs.git ] ++ (cfg.package.passthru.extraPackages or [ ]);
 
       users.users = mkIf (cfg.user == "frappe") {
@@ -950,7 +1070,19 @@ in
       # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
       systemd.tmpfiles.rules = mapAttrsToList
         (name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -")
-        enabledSites;
+        enabledSites
+        # Socket directories gate access to the sockets inside them, since nginx
+        # chmods its listen socket to 0666 and gunicorn's follows its umask.
+        # 0770, not 0750: nginx *creates* its socket in here and is only a member
+        # of cfg.group, so it needs group write, not just traversal.
+        # Deduplicated — both sockets of a site normally share one directory.
+        ++ lib.unique (lib.concatMap (siteCfg:
+          map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -")
+            (lib.filter (p: p != "") [
+              siteCfg.web.socketPath
+              siteCfg.nginx.socketPath
+            ]))
+          (builtins.attrValues enabledSites));
     }
 
     # Aggregate database.createLocally: enable MariaDB if any site requests it
@@ -1002,6 +1134,14 @@ in
         enable = true;
         recommendedProxySettings = true;
         recommendedGzipSettings = true;
+
+        # One upstream per site whose gunicorn listens on a unix socket.
+        upstreams = lib.mapAttrs' (name: siteCfg:
+          nameValuePair (upstreamName name) {
+            servers."unix:${siteCfg.web.socketPath}" = { };
+          })
+          (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites);
+
         virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg)
           (filterAttrs (_: s: s.nginx.enable) enabledSites);
       };
