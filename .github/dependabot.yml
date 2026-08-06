@@ -1,0 +1,23 @@
+version: 2
+
+# This repo is Nix infrastructure, so the Dependabot-supported surface is thin: the
+# workflows below, and nothing else.
+#
+# Deliberately NOT configured:
+#   • flake.lock — Dependabot has no Nix ecosystem, and flake.lock (nixpkgs, flake-parts,
+#     devenv, nix2container, pyproject-nix, uv2nix, pyproject-build-systems, nix-oci) is
+#     the real dependency set here. It is updated by .github/workflows/update-flake-lock.yml.
+#   • templates/bench/pyproject.toml — a scaffolding template, not a resolvable project.
+#     It is not even valid TOML until `frappe-init` substitutes the @PLACEHOLDER@ tokens
+#     (`override-dependencies = @OVERRIDES@`), so a uv/pip updater would only error. The
+#     generated bench gets its own uv.lock, which the project owner updates with `uv lock`.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    commit-message:
+      prefix: chore
+    groups:
+      github-actions:
+        patterns: ["*"]

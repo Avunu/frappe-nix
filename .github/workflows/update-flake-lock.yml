@@ -1,0 +1,53 @@
+name: update-flake-lock
+
+# Dependabot has no Nix ecosystem, so flake.lock is bumped here instead. For this repo
+# that *is* the dependency set — nixpkgs, flake-parts, devenv, nix2container,
+# pyproject-nix, uv2nix, pyproject-build-systems, nix-oci — so this workflow, not
+# .github/dependabot.yml, is what actually keeps frappe-nix current.
+#
+# IMPORTANT — required for auto-merge to work:
+#   A PR opened with the default GITHUB_TOKEN does NOT trigger other workflows (GitHub's
+#   recursion guard), so `check` would never run and the PR would sit with zero checks.
+#   Create a repo secret FLAKE_LOCK_TOKEN holding a PAT (or GitHub App token) with
+#   `contents: write` + `pull-requests: write` and CI runs normally. Without it this
+#   still opens the PR, but nothing verifies it, so auto-merge is deliberately skipped —
+#   close and reopen the PR by hand to kick off CI.
+
+on:
+  schedule:
+    # Mondays 04:00 UTC — weekly, so a broken nixpkgs bump does not land daily.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    env:
+      # Surfaced as env because the `secrets` context is not available in a step `if:`.
+      FLAKE_LOCK_TOKEN: ${{ secrets.FLAKE_LOCK_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Update flake.lock
+        id: update
+        uses: DeterminateSystems/update-flake-lock@v28
+        with:
+          token: ${{ secrets.FLAKE_LOCK_TOKEN || secrets.GITHUB_TOKEN }}
+          commit-msg: "chore: update flake.lock"
+          pr-title: "chore: update flake.lock"
+          pr-labels: |
+            dependencies
+            nix
+
+      - name: Enable auto-merge
+        if: ${{ steps.update.outputs.pull-request-number != '' && env.FLAKE_LOCK_TOKEN != '' }}
+        run: gh pr merge --auto --squash "$PR"
+        env:
+          PR: ${{ steps.update.outputs.pull-request-number }}
+          GH_TOKEN: ${{ secrets.FLAKE_LOCK_TOKEN }}

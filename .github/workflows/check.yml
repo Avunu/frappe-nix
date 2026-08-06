@@ -1,0 +1,52 @@
+name: check
+
+# CI gate for this repo. Auto-merge (Dependabot PRs, and the weekly flake.lock PR) is
+# only as safe as what runs here, so this is what you mark required on `main`.
+#
+# The `flake` job is the cheap, always-on gate: it evaluates every flake output on
+# x86_64-linux, which is what actually breaks when nixpkgs or uv2nix move under us
+# (renamed attrs, changed function signatures, dropped packages).
+#
+# The VM tests are not on the PR path on purpose — they build a full Frappe bench inside
+# a NixOS guest, which is far past what a hosted runner does in a reasonable time without
+# a binary cache. Run them with "Run workflow", or move them onto `pull_request` once
+# this repo has a Cachix/Attic cache to pull from.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  flake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      # Evaluates checks/packages/apps/devShells and the NixOS module without building
+      # the VM tests. Catches the overwhelming majority of flake.lock breakage.
+      - name: Evaluate all flake outputs
+        run: nix flake check --no-build --show-trace
+
+      # The scaffolder is small enough to build outright, so the gate is not eval-only.
+      - name: Build the bench scaffolder
+        run: nix build .#default --show-trace
+
+  vm-tests:
+    # Manual only — see the header note.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [migrate-rollback, socket]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v22
+
+      - name: Run the ${{ matrix.test }} NixOS test
+        run: nix build .#checks.x86_64-linux.${{ matrix.test }} -L --show-trace
