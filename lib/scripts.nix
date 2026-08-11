@@ -20,30 +20,27 @@ let
     fi
   '';
 
-  # Python with tomlkit for format-preserving pyproject.toml edits.
-  pythonToml = pkgs.python3.withPackages (ps: [ ps.tomlkit ]);
+  # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.txt
+  # contract, shared with the `frappe-init` scaffolder/migrator so the two
+  # cannot drift apart. Idempotent and comment-preserving (tomlkit).
+  workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
+  workspaceBin = "${workspaceTool}/bin/frappe-nix-workspace";
 
   # Shell snippet: register "$APP_NAME" as a uv workspace member — appends
-  # apps/$APP_NAME to [tool.uv.workspace].members and sets
-  # [tool.uv.sources].$APP_NAME.workspace = true. Idempotent and
-  # comment-preserving (tomlkit). Expects $APP_NAME set and cwd at bench root.
-  # (dasel is not used: nixpkgs' dasel is the query-only rewrite without `put`.)
+  # apps/$APP_NAME to [tool.uv.workspace].members and adds a [tool.uv.sources]
+  # entry keyed on the app's own [project].name (which is what uv resolves the
+  # member to; a dir-named key is inert when the two differ, e.g.
+  # print_designer → print-designer). Expects $APP_NAME set and cwd at bench root.
   registerWorkspaceMember = ''
     echo "Registering $APP_NAME in pyproject.toml workspace..."
-    ${pythonToml}/bin/python3 -c 'import sys, tomlkit; doc = tomlkit.parse(open("pyproject.toml").read()); uv = doc["tool"]["uv"]; m = uv["workspace"]["members"]; e = "apps/" + sys.argv[1]; (e in m) or m.append(e); uv.setdefault("sources", tomlkit.table()); s = uv["sources"]; (sys.argv[1] in s) or s.__setitem__(sys.argv[1], tomlkit.inline_table()); s[sys.argv[1]].setdefault("workspace", True); open("pyproject.toml", "w").write(tomlkit.dumps(doc))' "$APP_NAME"
+    ${workspaceBin} add-app --pyproject pyproject.toml --app "$APP_NAME"
   '';
 
-  # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent, ensuring the file
-  # ends with a newline first (frappe's apps.txt has no trailing newline, so a
-  # naive `echo >>` concatenates onto the last app).
+  # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent. Frappe writes
+  # that file without a trailing newline, so a naive `echo >>` would concatenate
+  # onto the last app; the tool rewrites the whole list instead.
   addToAppsTxt = ''
-    if ! grep -qx "$APP_NAME" sites/apps.txt 2>/dev/null; then
-      echo "Adding $APP_NAME to sites/apps.txt..."
-      if [ -s sites/apps.txt ] && [ -n "$(tail -c1 sites/apps.txt)" ]; then
-        echo >> sites/apps.txt
-      fi
-      echo "$APP_NAME" >> sites/apps.txt
-    fi
+    ${workspaceBin} apps-txt --file sites/apps.txt --add "$APP_NAME"
   '';
 in
 {
@@ -175,11 +172,30 @@ in
 
       git submodule foreach '
         branch=$(git config -f "$toplevel/.gitmodules" "submodule.$name.branch") || {
-          echo "  ⚠  $name: no branch configured in .gitmodules — skipping"
+          echo "  ⚠  $name: no branch configured in .gitmodules — skipping."
+          echo "     Fix it with: frappe-init --migrate (or: git config -f .gitmodules submodule.$name.branch <branch>)"
           exit 0
         }
-        echo "  → $name ($branch)"
-        git fetch origin --depth 1 "$branch"
+        # Benches built with `bench get-app` often have only an `upstream`
+        # remote — the bench CLI prefers that name in get_remote() — so origin
+        # is not a safe assumption for a migrated bench.
+        remote=origin
+        git remote | grep -qx origin || remote=$(git remote | head -n1)
+        [ -n "$remote" ] || { echo "  ⚠  $name: no git remote — skipping"; exit 0; }
+        echo "  → $name ($branch from $remote)"
+        git fetch "$remote" --depth 1 "$branch"
+        # `checkout -B` discards anything not on the remote branch. Refuse when
+        # this submodule carries commits that are not in what we just fetched.
+        if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
+          if [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
+            echo "     ⚠  local commits will be discarded (FRAPPE_BENCH_UPDATE_FORCE=1)"
+          else
+            echo "  ⚠  $name: HEAD is not an ancestor of $remote/$branch — it has local or"
+            echo "     unpushed commits that checkout -B would discard. Skipping."
+            echo "     Push them, or re-run with FRAPPE_BENCH_UPDATE_FORCE=1 to overwrite."
+            exit 0
+          fi
+        fi
         git checkout -B "$branch" "FETCH_HEAD"
         find . -name "*.pyc" -delete
       '

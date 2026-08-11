@@ -681,7 +681,19 @@ in
               # Create required directories
               mkdir -p "$DEVENV_STATE/mariadb" "$DEVENV_STATE/sockets" logs config/pids
 
-              # Symlink the Nix-built Python env to ./env where bench expects it
+              # Symlink the Nix-built Python env to ./env where bench expects it.
+              #
+              # A classic `bench init` bench has a real env/ directory (its own
+              # virtualenv). `ln -sfn` does not replace a directory — it creates
+              # env/<store-path> *inside* it — so the guard below would never be
+              # satisfied and bench would keep resolving env/bin/python to the
+              # stale virtualenv, silently. Move it aside first.
+              if [ -e env ] && [ ! -L env ]; then
+                echo "⚠  ./env is a real directory (a classic bench virtualenv)."
+                mkdir -p .frappe-nix-backup
+                mv env ".frappe-nix-backup/env-$(date +%s)"
+                echo "   moved to .frappe-nix-backup/ — frappe-nix symlinks env/ to the Nix venv"
+              fi
               if [ "$(readlink env 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
                 ln -sfn "${pythonEnvs.devPythonEnv}" env
               fi
