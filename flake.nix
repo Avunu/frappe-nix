@@ -88,9 +88,18 @@
         frappe-init = app;
       });
 
-      # NixOS VM tests (Linux only — runNixOSTest builds a VM).
       checks = forAllSystems (pkgs:
-        nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        {
+          # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and
+          # the assertions are about which socket the connection landed on.
+          mailcatch = pkgs.runCommand "frappe-mailcatch-check" { } ''
+            cp -r ${./lib/mailcatch} ./mailcatch
+            chmod -R u+w ./mailcatch
+            ${pkgs.python3}/bin/python ./mailcatch/tests/test_mailcatch.py | tee "$out"
+          '';
+        }
+        # NixOS VM tests (Linux only — runNixOSTest builds a VM).
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (
             import ./tests/migrate-rollback.nix { inherit self pkgs; }
           );

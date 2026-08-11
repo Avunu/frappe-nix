@@ -7,7 +7,9 @@ declaratively, so a consuming project's flake stays a thin wrapper instead of a
 1000-line monolith. From a single `uv` workspace + `apps/` tree it provides:
 
 - a **devenv** development shell (MariaDB, Redis, web/scheduler/worker/socketio/watch,
-  Mailpit) with editable Python installs and live asset reloading;
+  Mailpit) with editable Python installs, live asset reloading, and a
+  [catch-all mail interceptor](#mail-is-caught-always) so no bench can ever mail the
+  outside world;
 - reproducible **production Python environments** (via [uv2nix](https://github.com/pyproject-nix/uv2nix));
 - reproducible **node_modules** from `yarn.lock` (yarn-v1 hooks);
 - a `benchRoot` derivation that assembles the whole `/bench` tree;
@@ -178,6 +180,15 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `extraLibraryPaths` | list of package | `[]` | Extra `LD_LIBRARY_PATH` entries (dev shell). |
 | `extraScripts` | attrs | `{}` | Extra devenv scripts, merged over the standard set. |
 | `extraEnv` | attrs of str | `{}` | Extra environment variables (dev shell). |
+| `mailcatch.enable` | bool | `true` | Route all outgoing mail to Mailpit — see [Mail is caught, always](#mail-is-caught-always). |
+| `mailcatch.host` | str | `"127.0.0.1"` | Interface Mailpit binds and Frappe is redirected to. |
+| `mailcatch.smtpPort` | port | `1025` | Catcher SMTP port. |
+| `mailcatch.httpPort` | port | `8025` | Mailpit web UI port. |
+| `mailcatch.sender` | str | `"notifications@example.com"` | From address used only on sites with no outgoing Email Account at all. |
+| `mailcatch.unmute` | bool | `true` | Ignore `mute_emails` in `site_config.json`. |
+| `mailcatch.pop3.enable` | bool | `false` | Serve incoming mail from Mailpit's POP3 listener instead of blocking it. |
+| `mailcatch.pop3.port` | port | `1110` | Mailpit POP3 port. |
+| `mailcatch.pop3.user` / `.password` | str | `"dev"` | Mailpit POP3 credentials (local development only). |
 | `containers.enable` | bool | `false` | Build the OCI images. |
 | `containers.registry` | str | `""` | Registry URL prefix. |
 
@@ -192,13 +203,65 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `web` (`bench serve`) | 8000 |
 | `socketio` (Node) | 9000 |
 | `watch` (asset file watcher) | 6787 |
-| Mailpit (SMTP / HTTP) | 1025 / 8025 |
+| Mailpit (SMTP / HTTP / POP3) | 1025 / 8025 / 1110 |
 | `scheduler`, `worker` | — |
 
 `apps/*` are installed as **editable** packages (uv2nix editable overlay), so source
 edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) so
 `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` /
 `yarn.lock` are then consumed declaratively for production builds.
+
+### Mail is caught, always
+
+Every outgoing mail from **every site in the bench** goes to Mailpit
+(<http://127.0.0.1:8025>) — including a bench restored from a production backup, whose
+`site_config.json` and `Email Account` rows still point at the real relay. Nothing is
+installed into any site and no config is edited; `mailcatch.enable = false` turns it
+all off.
+
+Frappe offers no config-only way to do this — `find_default_outgoing` consults the
+database *before* falling back to `frappe.conf`, so any `Email Account` row with
+`default_outgoing` wins over `mail_server`. The interception therefore lives below the
+app layer, in `lib/mailcatch/frappe_mailcatch`, grafted into the development virtualenv
+by a `.pth` file that Python executes at interpreter startup. It applies to `bench
+serve`, `worker`, `schedule`, `console`, and any bare `./env/bin/python`.
+
+It is deliberately **not** on `PYTHONPATH`: `apps/*` reach `sys.path` through the
+editable `.pth` files in the venv, so an interpreter started outside the devenv
+environment would still import Frappe and would still send mail for real. And it is
+development-only by construction — `prodPythonEnv`, the NixOS module and the containers
+never see it.
+
+Two layers:
+
+- **stdlib containment** rewrites every `smtplib` connection target and refuses
+  `imaplib`/`poplib` connections. It knows nothing about Frappe, so it holds across
+  Frappe upgrades, third-party apps talking to `smtplib` directly, and
+  `override_doctype_class` controllers.
+- **Frappe patches**, applied through a post-import hook, keep behaviour faithful: a
+  site with no `Email Account` still resolves one, `Email Account`/`Email Domain`
+  records save without dialling real servers, `mute_emails` is ignored, and an
+  app-level `override_email_send` hook cannot route around SMTP. Subclasses installed
+  via `override_doctype_class` are disarmed as they are imported.
+
+Each patch is checked on application: if Frappe's internals move, the import fails
+loudly rather than leaving a silently inert interceptor behind.
+
+**Incoming mail is blocked** by default — a dev bench polling production mailboxes
+every 10 minutes marks real messages seen and fires auto-replies. Set
+`mailcatch.pop3.enable = true` to serve incoming from Mailpit's POP3 listener instead,
+with the caveat that Frappe issues `DELE` after fetching and Mailpit honours it, so
+pulled messages disappear from the Mailpit UI.
+
+To reach real mail servers for one command, set `FRAPPE_MAILCATCH_ENABLED=0` — the
+patches then delegate to the originals and behaviour is stock Frappe:
+
+```sh
+FRAPPE_MAILCATCH_ENABLED=0 bench console
+```
+
+`FRAPPE_MAILCATCH_HOST` / `_PORT` / `_POP3_ENABLED` / `_POP3_PORT` / `_SENDER` /
+`_UNMUTE` likewise override the values Nix baked in, without a rebuild.
 
 ### `bench` is transparent
 
@@ -452,6 +515,7 @@ frappe-nix/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
+│   ├── mailcatch/            # frappe_mailcatch — the catch-all mail interceptor
 │   └── scripts.nix           # portable bench shell scripts
 └── modules/
     ├── flake-module.nix      # imports devenv.flakeModule + devenv.nix + containers.nix
