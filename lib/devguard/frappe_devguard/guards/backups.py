@@ -19,7 +19,7 @@ two paths reach an upload without ever calling it.
 """
 
 from .._hook import on_import
-from .._patch import announce, assert_not_overridden, block, mark, require, rewhitelist, throw
+from .._patch import assert_not_overridden, blocking, no_op, require, rewhitelist, throwing
 
 NAME = "backups"
 
@@ -56,8 +56,7 @@ def install():
     on_import("frappe.integrations.frappe_providers", _rebind_frappe_providers)
 
 
-def _announce():
-    announce(NAME, "offsite backup upload is blocked; local backups still work")
+_BANNER = "offsite backup upload is blocked; local backups still work"
 
 
 def _no_op(what):
@@ -67,15 +66,7 @@ def _no_op(what):
     spend twenty minutes every night dumping a production-sized database that
     is then thrown away.
     """
-
-    def replacement(*_args, **_kwargs):
-        _announce()
-        from .._patch import warn
-
-        warn(NAME, f"skipping {what}")
-        return None
-
-    return mark(replacement, what)
+    return no_op(NAME, what, _BANNER)
 
 
 def _blocked(what):
@@ -83,24 +74,14 @@ def _blocked(what):
 
     Every caller of these swallows exceptions — Dropbox and S3 turn them into a
     "backup failed" email, ScheduledJobType.execute records status "Failed" —
-    so the log line in block() is the only thing an operator will actually see.
+    so the log line is the only thing an operator will actually see.
     """
-
-    def replacement(*_args, **_kwargs):
-        _announce()
-        block(NAME, f"{what}: {_UPLOAD_BLOCKED}")
-
-    return mark(replacement, what)
+    return blocking(NAME, what, _UPLOAD_BLOCKED, _BANNER)
 
 
 def _throwing(what):
     """Deliberate user actions: surface the reason in the desk UI."""
-
-    def replacement(*_args, **_kwargs):
-        _announce()
-        throw(NAME, f"{what}: {_UPLOAD_BLOCKED}")
-
-    return mark(replacement, what)
+    return throwing(NAME, what, _UPLOAD_BLOCKED, _BANNER)
 
 
 # --------------------------------------------------------------------------

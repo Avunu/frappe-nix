@@ -8,8 +8,8 @@ declaratively, so a consuming project's flake stays a thin wrapper instead of a
 
 - a **devenv** development shell (MariaDB, Redis, web/scheduler/worker/socketio/watch,
   Mailpit) with editable Python installs, live asset reloading, and a
-  [catch-all mail interceptor](#mail-is-caught-always) so no bench can ever mail the
-  outside world;
+  [guard rails](#development-guard-rails) so no bench can mail customers, overwrite a
+  production bucket or upload a backup;
 - reproducible **production Python environments** (via [uv2nix](https://github.com/pyproject-nix/uv2nix));
 - reproducible **node_modules** from `yarn.lock` (yarn-v1 hooks);
 - a `benchRoot` derivation that assembles the whole `/bench` tree;
@@ -180,15 +180,26 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `extraLibraryPaths` | list of package | `[]` | Extra `LD_LIBRARY_PATH` entries (dev shell). |
 | `extraScripts` | attrs | `{}` | Extra devenv scripts, merged over the standard set. |
 | `extraEnv` | attrs of str | `{}` | Extra environment variables (dev shell). |
-| `mailcatch.enable` | bool | `true` | Route all outgoing mail to Mailpit — see [Mail is caught, always](#mail-is-caught-always). |
-| `mailcatch.host` | str | `"127.0.0.1"` | Interface Mailpit binds and Frappe is redirected to. |
-| `mailcatch.smtpPort` | port | `1025` | Catcher SMTP port. |
-| `mailcatch.httpPort` | port | `8025` | Mailpit web UI port. |
-| `mailcatch.sender` | str | `"notifications@example.com"` | From address used only on sites with no outgoing Email Account at all. |
-| `mailcatch.unmute` | bool | `true` | Ignore `mute_emails` in `site_config.json`. |
-| `mailcatch.pop3.enable` | bool | `false` | Serve incoming mail from Mailpit's POP3 listener instead of blocking it. |
-| `mailcatch.pop3.port` | port | `1110` | Mailpit POP3 port. |
-| `mailcatch.pop3.user` / `.password` | str | `"dev"` | Mailpit POP3 credentials (local development only). |
+| `devguard.enable` | bool | `true` | Master switch for all guard rails — see [Development guard rails](#development-guard-rails). |
+| `devguard.mail.enable` | bool | `true` | Route all outgoing mail to Mailpit, refuse IMAP/POP3. |
+| `devguard.mail.host` | str | `"127.0.0.1"` | Interface Mailpit binds and Frappe is redirected to. |
+| `devguard.mail.smtpPort` | port | `1025` | Catcher SMTP port. |
+| `devguard.mail.httpPort` | port | `8025` | Mailpit web UI port. |
+| `devguard.mail.sender` | str | `"notifications@example.com"` | From address used only on sites with no outgoing Email Account at all. |
+| `devguard.mail.unmute` | bool | `true` | Ignore `mute_emails` in `site_config.json`. |
+| `devguard.mail.pop3.enable` | bool | `false` | Serve incoming mail from Mailpit's POP3 listener instead of blocking it. |
+| `devguard.mail.pop3.port` | port | `1110` | Mailpit POP3 port. |
+| `devguard.mail.pop3.user` / `.password` | str | `"dev"` | Mailpit POP3 credentials (local development only). |
+| `devguard.backups.enable` | bool | `true` | Block Dropbox / S3 / Google Drive / Frappe Cloud backup upload. |
+| `devguard.objectstore.enable` | bool | `true` | Force `cloud_storage` to local disk instead of the configured bucket. |
+| `devguard.integrations.enable` | bool | `true` | Block outbound HTTP via `frappe.integrations.utils.make_request`. |
+| `devguard.integrations.allowHosts` | list of str | `[]` | Hosts to permit anyway. Loopback is always allowed. |
+| `devguard.google.enable` | bool | `true` | Block Google Calendar / Contacts / Drive access. |
+| `devguard.webhooks.enable` | bool | `true` | Drop outbound `Webhook` requests. |
+| `devguard.plaid.enable` | bool | `true` | Block Plaid bank synchronisation. |
+| `devguard.scheduler.enable` | bool | `true` | Skip scheduled jobs that reach production services. |
+| `devguard.scheduler.blockServerScripts` | bool | `true` | Skip `Scheduled Job Type`s backed by a `Server Script`. |
+| `devguard.scheduler.extraBlockedJobs` | list of str | `[]` | Extra `Scheduled Job Type.method` values to skip (exact match). |
 | `containers.enable` | bool | `false` | Build the OCI images. |
 | `containers.registry` | str | `""` | Registry URL prefix. |
 
@@ -211,57 +222,85 @@ edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) 
 `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` /
 `yarn.lock` are then consumed declaratively for production builds.
 
-### Mail is caught, always
+### Development guard rails
 
-Every outgoing mail from **every site in the bench** goes to Mailpit
-(<http://127.0.0.1:8025>) — including a bench restored from a production backup, whose
-`site_config.json` and `Email Account` rows still point at the real relay. Nothing is
-installed into any site and no config is edited; `mailcatch.enable = false` turns it
-all off.
+A bench restored from a production backup carries working production credentials in its
+database and `site_config.json`. Left alone, `devenv up` will mail real customers within
+minutes, delete production files out of an object store within the hour, and — depending
+on what is configured — capture real payments, push its dev-mutated database over the
+production backup rotation, and delete real calendar events.
+
+`frappe-nix.devguard` closes those routes. Nothing is installed into any site and no
+config is edited; each guard is independently toggleable, and `devguard.enable = false`
+turns them all off.
+
+| Guard | What it stops | How |
+| --- | --- | --- |
+| `mail` | Any mail leaving the machine | Redirects SMTP to Mailpit (<http://127.0.0.1:8025>); refuses IMAP/POP3 |
+| `backups` | Dropbox / S3 / Google Drive / Frappe Cloud backup upload | No-ops the scheduler entries, blocks the upload funnels, throws on the desk buttons |
+| `objectstore` | `cloud_storage` writing to and deleting from the production bucket | Forces the app's own `use_local` mode, so files go to local disk |
+| `integrations` | Outbound HTTP via `frappe.integrations.utils.make_request` | Refuses non-loopback hosts unless listed in `allowHosts` |
+| `google` | Calendar / Contacts / Drive access — sync writes back and can delete real events | Blocks `GoogleOAuth`'s service-object and token-refresh calls |
+| `webhooks` | `Webhook` rows firing at production endpoints | No-ops `enqueue_webhook` |
+| `plaid` | Bank sync against the production Plaid item | Blocks `PlaidConnector`, no-ops the hourly job |
+| `scheduler` | Third-party backup jobs and `Server Script` scheduler events | Skips them in `ScheduledJobType.execute` |
+
+Local backups are untouched by all of this: `bench backup`, `bench restore`,
+`trim-database`, `drop-site` and the desk Backups page keep working. Only egress is
+blocked.
+
+#### How it works
 
 Frappe offers no config-only way to do this — `find_default_outgoing` consults the
-database *before* falling back to `frappe.conf`, so any `Email Account` row with
-`default_outgoing` wins over `mail_server`. The interception therefore lives below the
-app layer, in `lib/mailcatch/frappe_mailcatch`, grafted into the development virtualenv
-by a `.pth` file that Python executes at interpreter startup. It applies to `bench
-serve`, `worker`, `schedule`, `console`, and any bare `./env/bin/python`.
+database *before* falling back to `frappe.conf`, and the backup integrations are gated
+by doctype rows that a production dump restores in the enabled state. The interception
+therefore lives below the app layer, in `lib/devguard/frappe_devguard`, grafted into the
+development virtualenv by a `.pth` file that Python executes at interpreter startup. It
+applies to `bench serve`, `worker`, `schedule`, `console`, and any bare
+`./env/bin/python`.
 
 It is deliberately **not** on `PYTHONPATH`: `apps/*` reach `sys.path` through the
 editable `.pth` files in the venv, so an interpreter started outside the devenv
-environment would still import Frappe and would still send mail for real. And it is
+environment would still import Frappe and still reach production. And it is
 development-only by construction — `prodPythonEnv`, the NixOS module and the containers
 never see it.
 
-Two layers:
+Each patch is checked as it is applied: if Frappe's internals move, the import fails
+loudly rather than leaving a silently inert guard behind.
 
-- **stdlib containment** rewrites every `smtplib` connection target and refuses
-  `imaplib`/`poplib` connections. It knows nothing about Frappe, so it holds across
-  Frappe upgrades, third-party apps talking to `smtplib` directly, and
-  `override_doctype_class` controllers.
-- **Frappe patches**, applied through a post-import hook, keep behaviour faithful: a
-  site with no `Email Account` still resolves one, `Email Account`/`Email Domain`
-  records save without dialling real servers, `mute_emails` is ignored, and an
-  app-level `override_email_send` hook cannot route around SMTP. Subclasses installed
-  via `override_doctype_class` are disarmed as they are imported.
+#### What this is not
 
-Each patch is checked on application: if Frappe's internals move, the import fails
-loudly rather than leaving a silently inert interceptor behind.
+Only the `mail` guard offers **transport-level** containment: it patches
+`smtplib`/`imaplib`/`poplib`, which know nothing about Frappe and so hold across
+upgrades, third-party apps, and `override_doctype_class` controllers.
 
-**Incoming mail is blocked** by default — a dev bench polling production mailboxes
-every 10 minutes marks real messages seen and fires auto-replies. Set
-`mailcatch.pop3.enable = true` to serve incoming from Mailpit's POP3 listener instead,
-with the caveat that Frappe issues `DELE` after fetching and Mailpit honours it, so
-pulled messages disappear from the Mailpit UI.
+Every other guard patches Frappe and app APIs, and is therefore one refactor or one
+unknown app away from being bypassed. The `scheduler` denylist covers exactly the dotted
+paths in it; egress from a document event in an app nobody has looked at is not covered.
+Treat this as a large reduction in blast radius, not an airgap.
 
-To reach real mail servers for one command, set `FRAPPE_MAILCATCH_ENABLED=0` — the
-patches then delegate to the originals and behaviour is stock Frappe:
+Two related notes for a restored bench: Frappe's telemetry is inert here only because
+`developer_mode: 1` is set, so re-check it if you ever clear that flag; and
+`check_for_update` / `fetch_changelog_feed` still reach github.com and frappe.io, which
+is harmless and deliberately left alone.
+
+#### Turning guards off
 
 ```sh
-FRAPPE_MAILCATCH_ENABLED=0 bench console
+FRAPPE_DEVGUARD_DISABLE=backups,google bench console   # named guards, one command
+FRAPPE_DEVGUARD_ENABLED=0 bench console                # all of them
 ```
 
-`FRAPPE_MAILCATCH_HOST` / `_PORT` / `_POP3_ENABLED` / `_POP3_PORT` / `_SENDER` /
-`_UNMUTE` likewise override the values Nix baked in, without a rebuild.
+Nix-baked values are likewise overridable at runtime — `FRAPPE_DEVGUARD_MAIL_HOST`,
+`FRAPPE_DEVGUARD_MAIL_PORT`, `FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS`, and so on —
+without a rebuild.
+
+**Incoming mail is blocked** by default: a dev bench polling production mailboxes every
+10 minutes marks real messages seen and fires auto-replies. Set
+`devguard.mail.pop3.enable = true` to serve incoming from Mailpit's POP3 listener
+instead, with the caveat that Frappe issues `DELE` after fetching and Mailpit honours it,
+so pulled messages disappear from the Mailpit UI.
+
 
 ### `bench` is transparent
 
@@ -515,7 +554,7 @@ frappe-nix/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
-│   ├── mailcatch/            # frappe_mailcatch — the catch-all mail interceptor
+│   ├── devguard/             # frappe_devguard — guards against reaching production
 │   └── scripts.nix           # portable bench shell scripts
 └── modules/
     ├── flake-module.nix      # imports devenv.flakeModule + devenv.nix + containers.nix

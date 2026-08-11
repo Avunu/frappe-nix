@@ -68,6 +68,48 @@ def throw(guard, message):
     frappe.throw(message, title="Blocked by frappe-devguard")
 
 
+def no_op(guard, what, banner=None):
+    """Replacement that logs and returns None.
+
+    For scheduler entry points, where manufacturing a failure would only fill
+    Scheduled Job Log with noise nobody reads.
+    """
+
+    def replacement(*_args, **_kwargs):
+        if banner:
+            announce(guard, banner)
+        warn(guard, f"skipping {what}")
+        return None
+
+    return mark(replacement, what)
+
+
+def blocking(guard, what, message, banner=None):
+    """Replacement that logs and raises. For the funnels that must not proceed."""
+
+    def replacement(*_args, **_kwargs):
+        if banner:
+            announce(guard, banner)
+        block(guard, f"{what}: {message}")
+
+    return mark(replacement, what)
+
+
+def throwing(guard, what, message, banner=None):
+    """Replacement that surfaces the reason in the desk UI.
+
+    For deliberate user actions — a button, an API call — where a silent no-op
+    would leave someone believing the action succeeded.
+    """
+
+    def replacement(*_args, **_kwargs):
+        if banner:
+            announce(guard, banner)
+        throw(guard, f"{what}: {message}")
+
+    return mark(replacement, what)
+
+
 def mark(fn, target):
     """Tag a replacement so it is identifiable after ``update_wrapper``.
 

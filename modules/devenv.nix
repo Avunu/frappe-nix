@@ -212,6 +212,92 @@ in
             };
           };
 
+          objectstore = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Keep File writes and deletes on local disk instead of the
+                configured S3-protocol object store.
+
+                Forces the `cloud_storage` app's own `use_local` mode rather
+                than blocking, so nothing breaks. Without it, a bench restored
+                from production deletes real objects out of the production
+                bucket — Frappe's own hourly `delete_old_exported_report_files`
+                is enough to start that within an hour of `devenv up` — and
+                overwrites others, since the keys carry no site prefix.
+
+                Files inherited from the dump will 404 in dev, because their
+                objects are not on local disk.
+              '';
+            };
+          };
+
+          integrations = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse outbound HTTP made through
+                `frappe.integrations.utils.make_request`, the funnel behind
+                make_get_request and friends.
+
+                Covers most gateways and third-party integrations in Frappe,
+                ERPNext and the payments app — including
+                `razorpay_settings.capture_payment`, which runs every minute
+                with no enabled or sandbox check and can capture real money.
+              '';
+            };
+
+            allowHosts = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                Hosts to permit anyway, for deliberate integration work.
+                Loopback is always allowed.
+              '';
+              example = [ "api.sandbox.example.com" ];
+            };
+          };
+
+          google = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse Google API access (Calendar, Contacts, Drive) by
+                blocking GoogleOAuth's service-object and token-refresh calls.
+
+                Calendar and Contacts sync are not read-only: Frappe binds
+                Event and Contact document events to write-back handlers, so a
+                dev bench can create, mutate and delete real calendar entries.
+              '';
+            };
+          };
+
+          webhooks = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Drop outbound Webhook requests. Any scheduled job that saves a
+                document fires the matching webhooks, and on a restored bench
+                those point at production integrations.
+              '';
+            };
+          };
+
+          plaid = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse Plaid bank synchronisation. Plaid uses its own SDK, so
+                the integrations guard does not cover it.
+              '';
+            };
+          };
+
           scheduler = {
             enable = mkOption {
               type = types.bool;
@@ -388,6 +474,14 @@ in
               pop3_password = mc.pop3.password;
             };
             backups.enable = dg.backups.enable;
+            objectstore.enable = dg.objectstore.enable;
+            integrations = {
+              enable = dg.integrations.enable;
+              allow_hosts = dg.integrations.allowHosts;
+            };
+            google.enable = dg.google.enable;
+            webhooks.enable = dg.webhooks.enable;
+            plaid.enable = dg.plaid.enable;
             scheduler = {
               enable = dg.scheduler.enable;
               block_server_scripts = dg.scheduler.blockServerScripts;
