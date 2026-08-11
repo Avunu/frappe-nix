@@ -1,10 +1,10 @@
-"""Self-contained tests for frappe_mailcatch's Frappe-independent layers.
+"""Self-contained tests for the Frappe-independent parts of frappe_devguard.
 
 Runs without Frappe, without a site and without network access: stub SMTP/POP3
 servers stand in for Mailpit, and the assertions are about *where the socket
 landed*, which is the only property that actually matters.
 
-Run directly (``python test_mailcatch.py``) or via ``nix flake check``.
+Run directly (``python test_devguard.py``) or via ``nix flake check``.
 """
 
 import os
@@ -93,31 +93,36 @@ pop3_server, POP3_PORT = start_server(
     b"QUIT",
 )
 
-os.environ["FRAPPE_MAILCATCH_HOST"] = "127.0.0.1"
-os.environ["FRAPPE_MAILCATCH_PORT"] = str(SMTP_PORT)
-os.environ["FRAPPE_MAILCATCH_POP3_PORT"] = str(POP3_PORT)
-os.environ.pop("FRAPPE_MAILCATCH_ENABLED", None)
-os.environ.pop("FRAPPE_MAILCATCH_POP3_ENABLED", None)
+os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "127.0.0.1"
+os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = str(SMTP_PORT)
+os.environ["FRAPPE_DEVGUARD_MAIL_POP3_PORT"] = str(POP3_PORT)
+for stale in ("FRAPPE_DEVGUARD_ENABLED", "FRAPPE_DEVGUARD_DISABLE", "FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"):
+    os.environ.pop(stale, None)
 
 import imaplib  # noqa: E402
 import poplib  # noqa: E402
 import smtplib  # noqa: E402
 
-import frappe_mailcatch  # noqa: E402  - installs both layers on import
-from frappe_mailcatch import MailcatchBlocked  # noqa: E402
-from frappe_mailcatch._hook import on_import  # noqa: E402
+import frappe_devguard  # noqa: E402
+from frappe_devguard import DevGuardBlocked, DevGuardPatchError  # noqa: E402
+
+frappe_devguard.install()  # exactly what the .pth bootstrap does
+
+from frappe_devguard._hook import on_import  # noqa: E402
+from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require  # noqa: E402
 
 # An unresolvable host is the point: if any of these reach DNS, the redirect
 # did not happen and the test fails with gaierror rather than passing quietly.
-ELSEWHERE = "smtp.mailcatch-must-not-resolve.invalid"
+ELSEWHERE = "smtp.devguard-must-not-resolve.invalid"
 
 
 # --------------------------------------------------------------------------
 # settings
 # --------------------------------------------------------------------------
 
-check("settings read from env", frappe_mailcatch.settings().port == SMTP_PORT)
-check("incoming blocked by default", frappe_mailcatch.settings().block_incoming)
+check("settings read from env", frappe_devguard.settings().mail_port == SMTP_PORT)
+check("mail guard enabled by default", frappe_devguard.settings().guard_enabled("mail"))
+check("incoming blocked by default", frappe_devguard.settings().block_incoming)
 
 
 # --------------------------------------------------------------------------
@@ -158,18 +163,18 @@ check("SMTP_SSL is still the stdlib class", smtplib.SMTP_SSL.__module__ == "smtp
 # incoming is blocked
 # --------------------------------------------------------------------------
 
-expect_raises("IMAP4 is blocked", MailcatchBlocked, lambda: imaplib.IMAP4(ELSEWHERE, 143))
-expect_raises("IMAP4_SSL is blocked", MailcatchBlocked, lambda: imaplib.IMAP4_SSL(ELSEWHERE, 993))
-expect_raises("POP3 is blocked", MailcatchBlocked, lambda: poplib.POP3(ELSEWHERE, 110))
-expect_raises("POP3_SSL is blocked", MailcatchBlocked, lambda: poplib.POP3_SSL(ELSEWHERE, 995))
-check("MailcatchBlocked is an OSError", issubclass(MailcatchBlocked, OSError))
+expect_raises("IMAP4 is blocked", DevGuardBlocked, lambda: imaplib.IMAP4(ELSEWHERE, 143))
+expect_raises("IMAP4_SSL is blocked", DevGuardBlocked, lambda: imaplib.IMAP4_SSL(ELSEWHERE, 993))
+expect_raises("POP3 is blocked", DevGuardBlocked, lambda: poplib.POP3(ELSEWHERE, 110))
+expect_raises("POP3_SSL is blocked", DevGuardBlocked, lambda: poplib.POP3_SSL(ELSEWHERE, 995))
+check("DevGuardBlocked is an OSError", issubclass(DevGuardBlocked, OSError))
 
 
 # --------------------------------------------------------------------------
 # incoming redirected to the catcher's POP3 when enabled
 # --------------------------------------------------------------------------
 
-os.environ["FRAPPE_MAILCATCH_POP3_ENABLED"] = "1"
+os.environ["FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"] = "1"
 mailbox = poplib.POP3(ELSEWHERE, 110)
 check(
     "POP3 lands on the catcher when enabled",
@@ -189,32 +194,44 @@ mailbox.quit()
 
 expect_raises(
     "IMAP stays blocked in POP3 mode",
-    MailcatchBlocked,
+    DevGuardBlocked,
     lambda: imaplib.IMAP4(ELSEWHERE, 143),
 )
-os.environ.pop("FRAPPE_MAILCATCH_POP3_ENABLED")
+os.environ.pop("FRAPPE_DEVGUARD_MAIL_POP3_ENABLED")
 
 
 # --------------------------------------------------------------------------
 # disabling restores stock behaviour
 # --------------------------------------------------------------------------
 
-os.environ["FRAPPE_MAILCATCH_ENABLED"] = "0"
-check("disabled settings report disabled", not frappe_mailcatch.settings().enabled)
-expect_raises(
-    "disabled SMTP resolves the real host",
-    socket.gaierror,
-    lambda: smtplib.SMTP(ELSEWHERE, 25, timeout=5),
+for label, var, value in (
+    ("globally", "FRAPPE_DEVGUARD_ENABLED", "0"),
+    ("per guard", "FRAPPE_DEVGUARD_DISABLE", "backups,mail"),
+):
+    os.environ[var] = value
+    check(f"mail guard reports disabled ({label})", not frappe_devguard.settings().guard_enabled("mail"))
+    expect_raises(
+        f"disabled SMTP resolves the real host ({label})",
+        socket.gaierror,
+        lambda: smtplib.SMTP(ELSEWHERE, 25, timeout=5),
+    )
+    expect_raises(
+        f"disabled IMAP resolves the real host ({label})",
+        socket.gaierror,
+        lambda: imaplib.IMAP4(ELSEWHERE, 143),
+    )
+    session = smtplib.SMTP("127.0.0.1", SMTP_PORT)
+    check(f"disabled SMTP still connects normally ({label})", session.sock.getpeername()[1] == SMTP_PORT)
+    session.quit()
+    os.environ.pop(var)
+
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "backups"
+check(
+    "disabling one guard leaves the others alone",
+    frappe_devguard.settings().guard_enabled("mail")
+    and not frappe_devguard.settings().guard_enabled("backups"),
 )
-expect_raises(
-    "disabled IMAP resolves the real host",
-    socket.gaierror,
-    lambda: imaplib.IMAP4(ELSEWHERE, 143),
-)
-session = smtplib.SMTP("127.0.0.1", SMTP_PORT)
-check("disabled SMTP still connects normally", session.sock.getpeername()[1] == SMTP_PORT)
-session.quit()
-os.environ.pop("FRAPPE_MAILCATCH_ENABLED")
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
 
 
 # --------------------------------------------------------------------------
@@ -239,13 +256,6 @@ check("hook on an imported module fires immediately", already == ["base64"], alr
 # subclass disarming (the mechanism that defeats override_doctype_class)
 # --------------------------------------------------------------------------
 
-from frappe_mailcatch._frappe import (  # noqa: E402
-    _disarm_subclasses,
-    _redirect_kwargs,
-    _require,
-)
-from frappe_mailcatch._settings import MailcatchPatchError  # noqa: E402
-
 
 class Base:
     def send(self):
@@ -257,7 +267,7 @@ class EarlySubclass(Base):
         return "escaped"
 
 
-_disarm_subclasses(Base, ("send",))
+disarm_subclasses(Base, ("send",))
 check("existing subclass is disarmed", EarlySubclass().send() == "base")
 
 
@@ -283,7 +293,7 @@ def _sample(self, server, port=None, password=None):
     return (server, port, password)
 
 
-args, kwargs = _redirect_kwargs(
+args, kwargs = redirect_kwargs(
     _sample, None, ("real.example.com",), {"password": "hunter2"}, {"server": "127.0.0.1", "port": 1025}
 )
 check(
@@ -294,8 +304,8 @@ check(
 
 expect_raises(
     "a missing patch target fails loudly",
-    MailcatchPatchError,
-    lambda: _require(Base, "no_such_method"),
+    DevGuardPatchError,
+    lambda: require(Base, "no_such_method"),
 )
 
 
@@ -303,7 +313,7 @@ expect_raises(
 # the synthesised account used on sites with no Email Account at all
 # --------------------------------------------------------------------------
 
-from frappe_mailcatch._frappe import _synthetic_account  # noqa: E402
+from frappe_devguard.guards.mail import _synthetic_account  # noqa: E402
 
 
 class FakeEmailAccount:
@@ -331,6 +341,94 @@ check(
     record["always_use_account_email_id_as_sender"] == 0,
 )
 
+
+# --------------------------------------------------------------------------
+# whitelist swap — a replacement the framework still recognises
+# --------------------------------------------------------------------------
+
+import types  # noqa: E402
+
+
+def stub_frappe():
+    """Minimal stand-in for the four registries frappe.whitelist() populates."""
+    stub = types.ModuleType("frappe")
+    stub.whitelisted = []
+    stub.guest_methods = []
+    stub.xss_safe_methods = []
+    stub.allowed_http_methods_for_whitelisted_func = {}
+    stub.logger = lambda *_a, **_k: types.SimpleNamespace(warning=lambda *_a, **_k: None)
+    sys.modules["frappe"] = stub
+    return stub
+
+
+frappe_stub = stub_frappe()
+from frappe_devguard._patch import assert_not_overridden, rewhitelist  # noqa: E402
+
+
+def take_backup():
+    return "uploaded"
+
+
+frappe_stub.whitelisted.append(take_backup)
+frappe_stub.guest_methods.append(take_backup)
+frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
+
+
+def refuse():
+    return "blocked"
+
+
+replacement = rewhitelist(take_backup, refuse)
+
+check("replacement is whitelisted", replacement in frappe_stub.whitelisted)
+check("original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
+check("whitelist did not grow", len(frappe_stub.whitelisted) == 1, frappe_stub.whitelisted)
+check(
+    "http methods follow the replacement",
+    frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
+)
+check(
+    "stale http-methods key is gone",
+    take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
+)
+check("guest_methods follows too", replacement in frappe_stub.guest_methods)
+check(
+    "replacement keeps the original identity",
+    replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
+)
+
+frappe_stub.get_hooks = lambda _name: {"some.other.cmd": ["app.override"]}
+assert_not_overridden("backups", ["protected.cmd"])  # must not raise
+print("ok   assert_not_overridden tolerates an unrelated override map")
+
+
+# --------------------------------------------------------------------------
+# scheduler denylist — exact match only
+# --------------------------------------------------------------------------
+
+from frappe_devguard.guards.scheduler import blocked_jobs  # noqa: E402
+
+jobs = blocked_jobs()
+check(
+    "core backup jobs are blocked",
+    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
+)
+check(
+    "the local retention reaper is NOT blocked",
+    "frappe.desk.page.backups.backups.delete_downloadable_backups" not in jobs,
+)
+check("all seven core entries are listed", len(jobs) == 7, len(jobs))
+
+os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.push_backup"
+check(
+    "extra jobs are unioned in, not replacing",
+    "myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 8,
+    len(blocked_jobs()),
+)
+os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
+
+del sys.modules["frappe"]
+
 smtp_server.shutdown()
 pop3_server.shutdown()
 
@@ -338,4 +436,4 @@ print()
 if FAILURES:
     print(f"{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
     sys.exit(1)
-print("all mailcatch checks passed")
+print("all devguard checks passed")

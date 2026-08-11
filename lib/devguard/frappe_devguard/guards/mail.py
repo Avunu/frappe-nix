@@ -1,23 +1,24 @@
-"""Layer 1 — Frappe patches, plus the Layer 2 subclass sweep.
+"""Mail guard, Frappe layer.
 
-Layer 0 already guarantees no mail leaves the machine. What this layer buys is
-*fidelity*: mail still resolves an outgoing account on a site with no Email
-Account rows, Email Account/Domain records still save without dialling real
-servers, the scheduler's IMAP poll stops hammering production mailboxes, and an
-app-level ``override_email_send`` hook cannot route around SMTP entirely.
-
-Each patch binds to a named Frappe internal, so each one is checked: a missing
-target raises :class:`MailcatchPatchError` from inside the import, failing the
-bench loudly rather than leaving a silently inert interceptor behind.
-
-Patching is skipped altogether when the catcher is disabled at import time, so
-``FRAPPE_MAILCATCH_ENABLED=0`` is stock Frappe even if these internals move.
+``mail_stdlib`` already guarantees no mail leaves the machine. What this layer
+buys is *fidelity*: mail still resolves an outgoing account on a site with no
+Email Account rows, Email Account/Domain records still save without dialling
+real servers, the scheduler's IMAP poll stops hammering production mailboxes,
+and an app-level ``override_email_send`` hook cannot route around SMTP.
 """
 
-import inspect
+from .._hook import on_import
+from .._patch import (
+    announce,
+    disarm_subclasses,
+    redirect_kwargs,
+    require,
+    with_in_install,
+)
+from .._settings import DevGuardBlocked, settings
+from .mail_stdlib import announce_mail
 
-from ._hook import on_import
-from ._settings import MailcatchBlocked, MailcatchPatchError, announce, settings
+NAME = "mail"
 
 #: Name used for the synthesised account when a site has no outgoing Email
 #: Account at all. It is never written to the Email Queue (``is_exists_in_db``
@@ -45,6 +46,10 @@ _EMAIL_DOMAIN_OVERRIDES = (
 _INSTALLED = False
 
 
+def enabled():
+    return settings().guard_enabled(NAME)
+
+
 def install():
     global _INSTALLED
     if _INSTALLED:
@@ -59,113 +64,21 @@ def install():
 
 
 # --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
-
-
-def _require(owner, name):
-    """Fetch a patch target, or fail the import loudly."""
-    value = getattr(owner, name, None)
-    if value is None:
-        label = getattr(owner, "__qualname__", None) or getattr(owner, "__name__", owner)
-        raise MailcatchPatchError(
-            f"frappe_mailcatch: {label}.{name} is missing — Frappe's email internals "
-            "have moved and the catch-all can no longer be guaranteed. Update "
-            "frappe-nix, or set FRAPPE_MAILCATCH_ENABLED=0 to run without it."
-        )
-    return value
-
-
-def _redirect_kwargs(func, self, args, kwargs, replacements):
-    """Rebind a call's arguments, overriding ``replacements`` by name.
-
-    Used where the original callable validates its arguments before we would
-    otherwise get a chance to fix them up.
-    """
-    bound = inspect.signature(func).bind(self, *args, **kwargs)
-    bound.apply_defaults()
-    bound.arguments.update(replacements)
-    return bound.args, bound.kwargs
-
-
-def _in_install(doc, original):
-    """Run ``original`` with ``frappe.local.flags.in_install`` set.
-
-    Both ``EmailAccount.validate`` and ``EmailDomain.validate`` gate their
-    connection tests (and the "Password is required" throw) on that flag. It is
-    request-scoped and leaking it would skip cache clearing and Deleted
-    Document bookkeeping for the rest of the request, so restore it in
-    ``finally``.
-    """
-    import frappe
-
-    previous = frappe.local.flags.in_install
-    frappe.local.flags.in_install = True
-    try:
-        return original(doc)
-    finally:
-        frappe.local.flags.in_install = previous
-
-
-def _all_subclasses(base):
-    seen = []
-    pending = list(base.__subclasses__())
-    while pending:
-        cls = pending.pop()
-        if cls in seen:
-            continue
-        seen.append(cls)
-        pending.extend(cls.__subclasses__())
-    return seen
-
-
-def _disarm_subclasses(base, names):
-    """Strip overriding attributes from subclasses — now and in the future.
-
-    ``override_doctype_class`` subclasses (``DevEmailAccount``, cloudflare's
-    ``EmailAccount``, …) shadow the methods patched below, and they are imported
-    lazily on the first ``get_controller`` call, so a one-shot sweep would miss
-    them. Hooking ``__init_subclass__`` disarms whichever ones show up later.
-    """
-
-    def disarm(cls):
-        for name in names:
-            if name in cls.__dict__:
-                delattr(cls, name)
-
-    for subclass in _all_subclasses(base):
-        disarm(subclass)
-
-    original = base.__dict__.get("__init_subclass__")
-
-    def __init_subclass__(cls, **kwargs):
-        if original is not None:
-            original.__func__(cls, **kwargs)
-        else:
-            super(base, cls).__init_subclass__(**kwargs)
-        if settings().enabled:
-            disarm(cls)
-
-    base.__init_subclass__ = classmethod(__init_subclass__)
-
-
-# --------------------------------------------------------------------------
 # frappe
 # --------------------------------------------------------------------------
 
 
 def _patch_frappe(module):
-    if not settings().enabled:
+    if not enabled():
         return
 
-    original = _require(module, "are_emails_muted")
+    original = require(module, "are_emails_muted")
 
     def are_emails_muted():
-        st = settings()
-        if st.enabled and st.unmute:
+        if enabled() and settings().mail_unmute:
             # A site_config restored from production often carries
-            # ``mute_emails``, which would drop mail before it ever reaches the
-            # catcher and read as "mailcatch is broken".
+            # ``mute_emails``, which would drop mail before it ever reached the
+            # catcher and read as "the mail guard is broken".
             return False
         return original()
 
@@ -186,27 +99,27 @@ def _rebind_are_emails_muted(module):
 
 
 def _patch_smtp(module):
-    if not settings().enabled:
+    if not enabled():
         return
 
-    smtp_server = _require(module, "SMTPServer")
-    original_init = _require(smtp_server, "__init__")
+    smtp_server = require(module, "SMTPServer")
+    original_init = require(smtp_server, "__init__")
 
     def __init__(self, *args, **kwargs):
-        st = settings()
-        if not st.enabled:
+        if not enabled():
             return original_init(self, *args, **kwargs)
-        announce()
+        st = settings()
+        announce_mail()
         # Rewrite before delegating: the original raises OutgoingEmailError on
         # an empty server, which a caller with no account would otherwise hit.
-        new_args, new_kwargs = _redirect_kwargs(
+        new_args, new_kwargs = redirect_kwargs(
             original_init,
             self,
             args,
             kwargs,
             {
-                "server": st.host,
-                "port": st.port,
+                "server": st.mail_host,
+                "port": st.mail_port,
                 "login": None,
                 "password": None,
                 "use_tls": 0,
@@ -217,8 +130,8 @@ def _patch_smtp(module):
         )
         original_init(*new_args, **new_kwargs)
         # ``server``/``port`` are read-only properties over these two.
-        self._server = st.host
-        self._port = st.port
+        self._server = st.mail_host
+        self._port = st.mail_port
 
     smtp_server.__init__ = __init__
 
@@ -229,40 +142,40 @@ def _patch_smtp(module):
 
 
 def _patch_email_account(module):
-    if not settings().enabled:
+    if not enabled():
         return
 
     _rebind_are_emails_muted(module)
 
-    email_account = _require(module, "EmailAccount")
-    original_find_default = _require(email_account, "find_default_outgoing")
-    original_sendmail_config = _require(email_account, "sendmail_config")
-    original_validate = _require(email_account, "validate")
-    original_validate_smtp = _require(email_account, "validate_smtp_conn")
-    original_incoming = _require(email_account, "get_incoming_server")
-    original_append = _require(email_account, "append_email_to_sent_folder")
-    original_pull = _require(module, "pull")
+    email_account = require(module, "EmailAccount")
+    original_find_default = require(email_account, "find_default_outgoing")
+    original_sendmail_config = require(email_account, "sendmail_config")
+    original_validate = require(email_account, "validate")
+    original_validate_smtp = require(email_account, "validate_smtp_conn")
+    original_incoming = require(email_account, "get_incoming_server")
+    original_append = require(email_account, "append_email_to_sent_folder")
+    original_pull = require(module, "pull")
 
     def find_default_outgoing(cls):
         doc = original_find_default.__func__(cls)
-        if doc is not None or not settings().enabled:
+        if doc is not None or not enabled():
             return doc
         # A site with no Email Account rows would otherwise raise
         # OutgoingEmailError and never queue the mail at all.
         return _synthetic_account(cls)
 
     def sendmail_config(self):
-        st = settings()
-        if not st.enabled:
+        if not enabled():
             return original_sendmail_config(self)
-        announce()
+        st = settings()
+        announce_mail()
         # Built from scratch rather than by overriding the original's result:
         # reading ``self._password`` decrypts, which throws outright on a bench
         # restored from production without its encryption_key.
         config = {
             "email_account": self.name,
-            "server": st.host,
-            "port": st.port,
+            "server": st.mail_host,
+            "port": st.mail_port,
             "login": None,
             "password": None,
             "use_ssl": 0,
@@ -275,47 +188,48 @@ def _patch_email_account(module):
         return config
 
     def validate(self):
-        if not settings().enabled:
+        if not enabled():
             return original_validate(self)
-        return _in_install(self, original_validate)
+        return with_in_install(self, original_validate)
 
     def validate_smtp_conn(self):
-        import frappe
         import smtplib
+
+        import frappe
         from frappe import _
 
-        st = settings()
-        if not st.enabled:
+        if not enabled():
             return original_validate_smtp(self)
+        st = settings()
         try:
-            session = smtplib.SMTP(st.host, st.port, timeout=10)
+            session = smtplib.SMTP(st.mail_host, st.mail_port, timeout=10)
             session.ehlo()
             session.quit()
         except Exception as exc:
             frappe.throw(
                 _("Could not reach the development mail catcher at {0}:{1}: {2}").format(
-                    st.host, st.port, exc
+                    st.mail_host, st.mail_port, exc
                 ),
-                title=_("Mailcatch unreachable"),
+                title=_("Mail catcher unreachable"),
             )
         return True
 
     def get_incoming_server(self, *args, **kwargs):
-        st = settings()
-        if not st.enabled:
+        if not enabled():
             return original_incoming(self, *args, **kwargs)
-        announce()
+        st = settings()
+        announce_mail()
         if st.block_incoming:
-            raise MailcatchBlocked(
-                "frappe_mailcatch: refusing to open the mailbox for "
+            raise DevGuardBlocked(
+                "frappe_devguard[mail]: refusing to open the mailbox for "
                 f"{self.get('email_id')!r} from a development bench. Enable "
-                "mailcatch.pop3 to read caught mail back instead."
+                "devguard.mail.pop3 to read caught mail back instead."
             )
         # Point the account at Mailpit's POP3 listener. Credentials are
         # substituted at the poplib layer, and clearing ``password`` here keeps
         # get_password() — which decrypts — off the path entirely.
         overrides = {
-            "email_server": st.host,
+            "email_server": st.mail_host,
             "incoming_port": st.pop3_port,
             "use_imap": 0,
             "use_ssl": 0,
@@ -333,14 +247,13 @@ def _patch_email_account(module):
                 self.set(key, value)
 
     def append_email_to_sent_folder(self, message):
-        if not settings().enabled:
+        if not enabled():
             return original_append(self, message)
         # Would IMAP-APPEND every dev-sent mail into the production Sent folder.
         return None
 
     def pull(*args, **kwargs):
-        st = settings()
-        if st.enabled and st.block_incoming:
+        if enabled() and settings().block_incoming:
             # Scheduled every 10 minutes; left alone it marks production mail
             # SEEN and can fire auto-replies.
             return None
@@ -354,7 +267,7 @@ def _patch_email_account(module):
     email_account.append_email_to_sent_folder = append_email_to_sent_folder
     module.pull = pull
 
-    _disarm_subclasses(email_account, _EMAIL_ACCOUNT_OVERRIDES)
+    disarm_subclasses(email_account, _EMAIL_ACCOUNT_OVERRIDES)
 
 
 def _synthetic_account(cls):
@@ -363,14 +276,14 @@ def _synthetic_account(cls):
         {
             "name": ACCOUNT_NAME,
             "email_account_name": ACCOUNT_NAME,
-            "email_id": st.sender,
+            "email_id": st.mail_sender,
             "enable_outgoing": 1,
             "default_outgoing": 1,
             "enable_incoming": 0,
             "use_imap": 0,
             "append_emails_to_sent_folder": 0,
-            "smtp_server": st.host,
-            "smtp_port": st.port,
+            "smtp_server": st.mail_host,
+            "smtp_port": st.mail_port,
             "use_tls": 0,
             "use_ssl_for_outgoing": 0,
             "auth_method": "Basic",
@@ -392,30 +305,30 @@ def _synthetic_account(cls):
 
 
 def _patch_email_queue(module):
-    if not settings().enabled:
+    if not enabled():
         return
 
     _rebind_are_emails_muted(module)
 
-    original_get_hook_method = _require(module, "get_hook_method")
-    smtp_server = _require(module, "SMTPServer")
-    send_mail_context = _require(module, "SendMailContext")
-    original_fetch = _require(send_mail_context, "fetch_smtp_server")
+    original_get_hook_method = require(module, "get_hook_method")
+    smtp_server = require(module, "SMTPServer")
+    send_mail_context = require(module, "SendMailContext")
+    original_fetch = require(send_mail_context, "fetch_smtp_server")
 
     def get_hook_method(hook_name, fallback=None):
-        if settings().enabled and hook_name == "override_email_send":
+        if enabled() and hook_name == "override_email_send":
             # An app owning this hook (cloudflare_email_delivery, …) sends over
             # its own HTTP API and never touches SMTP, escaping the catcher.
             return fallback
         return original_get_hook_method(hook_name, fallback=fallback)
 
     def fetch_smtp_server(self):
-        if not settings().enabled:
+        if not enabled():
             return original_fetch(self)
         self.email_account_doc = self.queue_doc.get_email_account(raise_error=True)
         if not self.smtp_server:
             st = settings()
-            self.smtp_server = smtp_server(server=st.host, port=st.port)
+            self.smtp_server = smtp_server(server=st.mail_host, port=st.mail_port)
 
     # Bound by name at module scope (``from frappe.utils import get_hook_method``)
     # and resolved from module globals at call time, so patching frappe.utils
@@ -430,21 +343,25 @@ def _patch_email_queue(module):
 
 
 def _patch_email_domain(module):
-    if not settings().enabled:
+    if not enabled():
         return
 
-    email_domain = _require(module, "EmailDomain")
-    original_validate = _require(email_domain, "validate")
-    _require(email_domain, "validate_incoming_server_conn")
-    _require(email_domain, "validate_outgoing_server_conn")
+    email_domain = require(module, "EmailDomain")
+    original_validate = require(email_domain, "validate")
+    require(email_domain, "validate_incoming_server_conn")
+    require(email_domain, "validate_outgoing_server_conn")
 
     def validate(self):
-        if not settings().enabled:
+        if not enabled():
             return original_validate(self)
         # validate() already early-returns on in_install, which covers both the
         # incoming and outgoing connection tests in one go.
-        return _in_install(self, original_validate)
+        return with_in_install(self, original_validate)
 
     email_domain.validate = validate
 
-    _disarm_subclasses(email_domain, _EMAIL_DOMAIN_OVERRIDES)
+    disarm_subclasses(email_domain, _EMAIL_DOMAIN_OVERRIDES)
+
+
+# ``announce`` is re-exported for guards that want the shared one-shot banner.
+__all__ = ["NAME", "announce", "install"]

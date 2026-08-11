@@ -92,10 +92,10 @@
         {
           # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and
           # the assertions are about which socket the connection landed on.
-          mailcatch = pkgs.runCommand "frappe-mailcatch-check" { } ''
-            cp -r ${./lib/mailcatch} ./mailcatch
-            chmod -R u+w ./mailcatch
-            ${pkgs.python3}/bin/python ./mailcatch/tests/test_mailcatch.py | tee "$out"
+          devguard = pkgs.runCommand "frappe-devguard-check" { } ''
+            cp -r ${./lib/devguard} ./devguard
+            chmod -R u+w ./devguard
+            ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
           '';
         }
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).

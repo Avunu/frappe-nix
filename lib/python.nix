@@ -26,9 +26,9 @@
   pyproject-build-systems,
   uv2nix,
   extraOverrides ? (_final: _prev: { }),
-  # Derivation containing a `frappe_mailcatch/` package to graft into the
-  # development virtualenv, or null. See lib/mailcatch.
-  mailcatch ? null,
+  # Derivation containing a `frappe_devguard/` package to graft into the
+  # development virtualenv, or null. See lib/devguard.
+  devguard ? null,
 }:
 
 let
@@ -100,7 +100,7 @@ let
     // rootDevDepsAttr
   );
 
-  # The mail catcher is grafted into the virtualenv rather than put on
+  # The guards are grafted into the virtualenv rather than put on
   # PYTHONPATH: `apps/*` reach sys.path through the editable `.pth` files
   # installed here, so an interpreter started without the devenv environment
   # (an editor terminal, `nix run`, CI) still imports Frappe — and would send
@@ -109,18 +109,20 @@ let
   # Development only. prodPythonEnv never sees this, so the interception code
   # cannot reach production by construction.
   devPythonEnv =
-    if mailcatch == null then
+    if devguard == null then
       baseDevPythonEnv
     else
       # postInstall, not postBuild: mkVirtualEnv sets dontBuild and creates the
       # tree from pyprojectMakeVenvHook's installPhase.
       baseDevPythonEnv.overrideAttrs (old: {
         postInstall = (old.postInstall or "") + ''
-          cp -r ${mailcatch}/frappe_mailcatch "$out/${python.sitePackages}/"
+          cp -r ${devguard}/frappe_devguard "$out/${python.sitePackages}/"
           # `.pth` lines starting with `import` are executed by site.py during
-          # interpreter startup, before any user code runs.
-          printf 'import frappe_mailcatch\n' \
-            > "$out/${python.sitePackages}/zzz-frappe-mailcatch.pth"
+          # interpreter startup, before any user code runs. install() is called
+          # here rather than from the package body so that importing a single
+          # guard module cannot re-enter a partially initialised package.
+          printf 'import frappe_devguard; frappe_devguard.install()\n' \
+            > "$out/${python.sitePackages}/zzz-frappe-devguard.pth"
         '';
       });
 
