@@ -189,6 +189,67 @@ in
               };
             };
           };
+
+          backups = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse to upload site backups to Dropbox, Amazon S3, Google
+                Drive or Frappe Cloud.
+
+                Local backups keep working: `bench backup`, `bench restore`,
+                `trim-database`, `drop-site` and the desk Backups page are all
+                untouched. Only egress is blocked — a bench restored from
+                production would otherwise push its dev-mutated database, and
+                the site_config.json inside it, over the production backup
+                rotation.
+
+                App-layer only: unlike the mail guard there is no
+                transport-level containment behind this, so an unknown
+                third-party uploader is not covered.
+              '';
+            };
+          };
+
+          scheduler = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse scheduled jobs that reach production services.
+
+                The backstop for what the named guards do not know about: a
+                third-party app's backup job, and Server Script scheduler
+                events, which are arbitrary production Python carried in the
+                database dump.
+              '';
+            };
+
+            blockServerScripts = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Skip Scheduled Job Types backed by a Server Script. Their
+                method is a scrubbed script name rather than a dotted path, so
+                blockedJobs cannot match them.
+              '';
+            };
+
+            extraBlockedJobs = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                Additional `Scheduled Job Type.method` values to skip, matched
+                exact-string and unioned with the built-in list.
+
+                Never matched as a substring: `hourly_maintenance` also runs
+                frappe.desk.page.backups.backups.delete_downloadable_backups,
+                the purely local retention reaper.
+              '';
+              example = [ "myapp.tasks.push_backup_to_ftp" ];
+            };
+          };
         };
 
         extraDevPackages = mkOption {
@@ -325,6 +386,14 @@ in
               pop3_port = mc.pop3.port;
               pop3_user = mc.pop3.user;
               pop3_password = mc.pop3.password;
+            };
+            backups.enable = dg.backups.enable;
+            scheduler = {
+              enable = dg.scheduler.enable;
+              block_server_scripts = dg.scheduler.blockServerScripts;
+              # Unioned with the built-in list, which lives in Python so the
+              # two never drift.
+              extra_blocked_jobs = dg.scheduler.extraBlockedJobs;
             };
           };
         };

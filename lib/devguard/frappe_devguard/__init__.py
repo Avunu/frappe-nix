@@ -58,4 +58,6 @@ def status():
     return dict(STATUS)
 
 
-install()
+# NB: install() is called by the .pth bootstrap, not here. Importing the guard
+# modules from this module's body would make `import frappe_devguard.guards.X`
+# re-enter a partially initialised package.

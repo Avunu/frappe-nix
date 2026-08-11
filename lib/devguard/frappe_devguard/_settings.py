@@ -58,6 +58,9 @@ DEFAULTS = {
                 "frappe.integrations.doctype.google_drive.google_drive.daily_backup",
                 "frappe.integrations.doctype.google_drive.google_drive.weekly_backup",
             ],
+            # Unioned with blocked_jobs, so a consumer adds to the list above
+            # rather than restating it.
+            "extra_blocked_jobs": [],
         },
     },
 }

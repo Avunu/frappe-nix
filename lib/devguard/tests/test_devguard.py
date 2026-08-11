@@ -103,8 +103,11 @@ import imaplib  # noqa: E402
 import poplib  # noqa: E402
 import smtplib  # noqa: E402
 
-import frappe_devguard  # noqa: E402  - installs every guard on import
+import frappe_devguard  # noqa: E402
 from frappe_devguard import DevGuardBlocked, DevGuardPatchError  # noqa: E402
+
+frappe_devguard.install()  # exactly what the .pth bootstrap does
+
 from frappe_devguard._hook import on_import  # noqa: E402
 from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require  # noqa: E402
 
@@ -337,6 +340,94 @@ check(
     "synthetic account preserves the real sender",
     record["always_use_account_email_id_as_sender"] == 0,
 )
+
+
+# --------------------------------------------------------------------------
+# whitelist swap — a replacement the framework still recognises
+# --------------------------------------------------------------------------
+
+import types  # noqa: E402
+
+
+def stub_frappe():
+    """Minimal stand-in for the four registries frappe.whitelist() populates."""
+    stub = types.ModuleType("frappe")
+    stub.whitelisted = []
+    stub.guest_methods = []
+    stub.xss_safe_methods = []
+    stub.allowed_http_methods_for_whitelisted_func = {}
+    stub.logger = lambda *_a, **_k: types.SimpleNamespace(warning=lambda *_a, **_k: None)
+    sys.modules["frappe"] = stub
+    return stub
+
+
+frappe_stub = stub_frappe()
+from frappe_devguard._patch import assert_not_overridden, rewhitelist  # noqa: E402
+
+
+def take_backup():
+    return "uploaded"
+
+
+frappe_stub.whitelisted.append(take_backup)
+frappe_stub.guest_methods.append(take_backup)
+frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
+
+
+def refuse():
+    return "blocked"
+
+
+replacement = rewhitelist(take_backup, refuse)
+
+check("replacement is whitelisted", replacement in frappe_stub.whitelisted)
+check("original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
+check("whitelist did not grow", len(frappe_stub.whitelisted) == 1, frappe_stub.whitelisted)
+check(
+    "http methods follow the replacement",
+    frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
+)
+check(
+    "stale http-methods key is gone",
+    take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
+)
+check("guest_methods follows too", replacement in frappe_stub.guest_methods)
+check(
+    "replacement keeps the original identity",
+    replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
+)
+
+frappe_stub.get_hooks = lambda _name: {"some.other.cmd": ["app.override"]}
+assert_not_overridden("backups", ["protected.cmd"])  # must not raise
+print("ok   assert_not_overridden tolerates an unrelated override map")
+
+
+# --------------------------------------------------------------------------
+# scheduler denylist — exact match only
+# --------------------------------------------------------------------------
+
+from frappe_devguard.guards.scheduler import blocked_jobs  # noqa: E402
+
+jobs = blocked_jobs()
+check(
+    "core backup jobs are blocked",
+    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
+)
+check(
+    "the local retention reaper is NOT blocked",
+    "frappe.desk.page.backups.backups.delete_downloadable_backups" not in jobs,
+)
+check("all seven core entries are listed", len(jobs) == 7, len(jobs))
+
+os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.push_backup"
+check(
+    "extra jobs are unioned in, not replacing",
+    "myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 8,
+    len(blocked_jobs()),
+)
+os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
+
+del sys.modules["frappe"]
 
 smtp_server.shutdown()
 pop3_server.shutdown()

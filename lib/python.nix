@@ -118,8 +118,10 @@ let
         postInstall = (old.postInstall or "") + ''
           cp -r ${devguard}/frappe_devguard "$out/${python.sitePackages}/"
           # `.pth` lines starting with `import` are executed by site.py during
-          # interpreter startup, before any user code runs.
-          printf 'import frappe_devguard\n' \
+          # interpreter startup, before any user code runs. install() is called
+          # here rather than from the package body so that importing a single
+          # guard module cannot re-enter a partially initialised package.
+          printf 'import frappe_devguard; frappe_devguard.install()\n' \
             > "$out/${python.sitePackages}/zzz-frappe-devguard.pth"
         '';
       });

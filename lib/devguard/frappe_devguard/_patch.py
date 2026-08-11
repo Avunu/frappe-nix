@@ -68,6 +68,21 @@ def throw(guard, message):
     frappe.throw(message, title="Blocked by frappe-devguard")
 
 
+def mark(fn, target):
+    """Tag a replacement so it is identifiable after ``update_wrapper``.
+
+    ``rewhitelist`` copies the original's ``__name__``/``__module__`` on
+    purpose, so introspection cannot otherwise tell a guarded endpoint from an
+    untouched one.
+    """
+    fn.__devguard__ = target
+    return fn
+
+
+def is_guarded(fn):
+    return getattr(fn, "__devguard__", None) is not None
+
+
 def require(owner, name):
     """Fetch a patch target, or fail the import loudly."""
     value = getattr(owner, name, None)
@@ -126,6 +141,7 @@ def rewhitelist(original, replacement):
     import frappe
 
     functools.update_wrapper(replacement, original)
+    mark(replacement, f"{original.__module__}.{original.__name__}")
 
     if original in frappe.whitelisted:
         frappe.whitelisted[frappe.whitelisted.index(original)] = replacement
