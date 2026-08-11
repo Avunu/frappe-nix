@@ -70,97 +70,123 @@ in
           description = "Python package set overlay for system-library overrides.";
         };
 
-        mailcatch = {
+        devguard = {
           enable = mkOption {
             type = types.bool;
             default = true;
             description = ''
-              Route ALL outgoing mail from every site in this bench to Mailpit.
+              Guard rails that stop this development bench from reaching
+              production services.
 
-              The interception is grafted into the development virtualenv, below
-              the Frappe app layer, so it needs no per-site app install and no
-              site_config.json edits — a bench restored from production cannot
-              deliver through the real relay. Development only: it is never
+              A bench restored from a production backup carries working
+              production credentials in its database and site_config.json.
+              Left alone it will mail real customers, push its dev-mutated
+              database over the production backup rotation, and delete
+              production files out of an object store. Each guard closes one
+              of those routes.
+
+              The interception is grafted into the development virtualenv,
+              below the Frappe app layer, so it needs no per-site app install
+              and no site_config.json edits. Development only: it is never
               added to prodPythonEnv, the NixOS module, or the containers.
+
+              Individual guards can be turned off for a single command with
+              FRAPPE_DEVGUARD_DISABLE=mail,backups; FRAPPE_DEVGUARD_ENABLED=0
+              disables all of them.
             '';
           };
 
-          host = mkOption {
-            type = types.str;
-            default = "127.0.0.1";
-            description = "Interface Mailpit binds and Frappe is redirected to.";
-          };
-
-          smtpPort = mkOption {
-            type = types.port;
-            default = 1025;
-            description = "Catcher SMTP port — drives both Mailpit and Frappe.";
-          };
-
-          httpPort = mkOption {
-            type = types.port;
-            default = 8025;
-            description = "Mailpit web UI port.";
-          };
-
-          sender = mkOption {
-            type = types.str;
-            default = "notifications@example.com";
-            description = ''
-              From address for the synthesised account used on sites that have
-              no outgoing Email Account at all. Mail sent by code that names its
-              own sender keeps that sender.
-            '';
-          };
-
-          unmute = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Ignore `mute_emails` in site_config. A config restored from
-              production often carries it, which would drop mail before it ever
-              reached the catcher and read as "mailcatch is broken".
-            '';
-          };
-
-          pop3 = {
+          mail = {
             enable = mkOption {
               type = types.bool;
-              default = false;
+              default = true;
               description = ''
-                Serve incoming mail from Mailpit's POP3 listener instead of
-                blocking it, so the receive loop can be exercised end to end.
+                Route ALL outgoing mail from every site in this bench to
+                Mailpit, and refuse incoming IMAP/POP3.
 
-                Off by default: Frappe's POP3 path issues DELE after fetching
-                and Mailpit honours it, so every message pulled into a site
-                disappears from the Mailpit UI.
-
-                With this disabled, IMAP/POP3 connections are refused outright —
-                which is the point, since a bench restored from production would
-                otherwise poll real mailboxes every 10 minutes, mark messages
-                seen, and fire auto-replies.
+                The only guard with transport-level containment: it patches
+                smtplib/imaplib/poplib, which know nothing about Frappe and so
+                hold across upgrades and third-party apps.
               '';
             };
 
-            port = mkOption {
+            host = mkOption {
+              type = types.str;
+              default = "127.0.0.1";
+              description = "Interface Mailpit binds and Frappe is redirected to.";
+            };
+
+            smtpPort = mkOption {
               type = types.port;
-              default = 1110;
-              description = "Mailpit POP3 port.";
+              default = 1025;
+              description = "Catcher SMTP port — drives both Mailpit and Frappe.";
             };
 
-            user = mkOption {
-              type = types.str;
-              default = "dev";
-              description = "POP3 username. Substituted for whatever the Email Account carries.";
+            httpPort = mkOption {
+              type = types.port;
+              default = 8025;
+              description = "Mailpit web UI port.";
             };
 
-            password = mkOption {
+            sender = mkOption {
               type = types.str;
-              default = "dev";
+              default = "notifications@example.com";
               description = ''
-                POP3 password. Written to a world-readable file in the Nix
-                store, so treat it as a local development credential only.
+                From address for the synthesised account used on sites that have
+                no outgoing Email Account at all. Mail sent by code that names its
+                own sender keeps that sender.
               '';
+            };
+
+            unmute = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Ignore `mute_emails` in site_config. A config restored from
+                production often carries it, which would drop mail before it ever
+                reached the catcher and read as "the mail guard is broken".
+              '';
+            };
+
+            pop3 = {
+              enable = mkOption {
+                type = types.bool;
+                default = false;
+                description = ''
+                  Serve incoming mail from Mailpit's POP3 listener instead of
+                  blocking it, so the receive loop can be exercised end to end.
+
+                  Off by default: Frappe's POP3 path issues DELE after fetching
+                  and Mailpit honours it, so every message pulled into a site
+                  disappears from the Mailpit UI.
+
+                  With this disabled, IMAP/POP3 connections are refused outright —
+                  which is the point, since a bench restored from production would
+                  otherwise poll real mailboxes every 10 minutes, mark messages
+                  seen, and fire auto-replies.
+                '';
+              };
+
+              port = mkOption {
+                type = types.port;
+                default = 1110;
+                description = "Mailpit POP3 port.";
+              };
+
+              user = mkOption {
+                type = types.str;
+                default = "dev";
+                description = "POP3 username. Substituted for whatever the Email Account carries.";
+              };
+
+              password = mkOption {
+                type = types.str;
+                default = "dev";
+                description = ''
+                  POP3 password. Written to a world-readable file in the Nix
+                  store, so treat it as a local development credential only.
+                '';
+              };
             };
           };
         };
@@ -255,43 +281,74 @@ in
           mariadb = cfg.mariadb.package;
         };
 
-        mc = cfg.mailcatch;
-        pyBool = value: if value then "True" else "False";
+        dg = cfg.devguard;
+        mc = dg.mail;
+        # Mailpit itself is only worth running when the mail guard will point
+        # Frappe at it.
+        mailEnabled = dg.enable && mc.enable;
+
+        # Render a Nix value as a Python literal, so the baked settings file
+        # can mirror the option tree instead of being hand-spelled per key.
+        toPy =
+          value:
+          if builtins.isBool value then
+            (if value then "True" else "False")
+          else if builtins.isInt value then
+            toString value
+          else if builtins.isString value then
+            builtins.toJSON value
+          else if builtins.isList value then
+            "[" + lib.concatMapStringsSep ", " toPy value + "]"
+          else if builtins.isAttrs value then
+            "{"
+            + lib.concatStringsSep ", " (
+              lib.mapAttrsToList (name: inner: "${builtins.toJSON name}: ${toPy inner}") value
+            )
+            + "}"
+          else
+            throw "frappe-nix: cannot render ${builtins.typeOf value} as a Python literal";
+
+        # Single source of truth: the same values reach Mailpit through
+        # MAILPIT_* and Frappe through these baked defaults, so the two can
+        # never drift. FRAPPE_DEVGUARD_* overrides them at runtime.
+        devguardConfig = {
+          enabled = dg.enable;
+          guards = {
+            mail = {
+              enable = mc.enable;
+              host = mc.host;
+              port = mc.smtpPort;
+              http_port = mc.httpPort;
+              sender = mc.sender;
+              unmute = mc.unmute;
+              pop3_enabled = mc.pop3.enable;
+              pop3_port = mc.pop3.port;
+              pop3_user = mc.pop3.user;
+              pop3_password = mc.pop3.password;
+            };
+          };
+        };
 
         # Own content hash, so unrelated frappe-nix edits don't churn the
         # development virtualenv. Bytecode caches are filtered out so running
         # the tests in place can't change it either.
-        mailcatchSrc = builtins.path {
-          path = ../lib/mailcatch;
-          name = "frappe-mailcatch-src";
+        devguardSrc = builtins.path {
+          path = ../lib/devguard;
+          name = "frappe-devguard-src";
           filter = path: _type: baseNameOf path != "__pycache__";
         };
 
-        # Single source of truth: the same values reach Mailpit through
-        # MAILPIT_* and Frappe through these baked defaults, so the two can
-        # never drift. FRAPPE_MAILCATCH_* overrides them at runtime.
-        mailcatchBaked = pkgs.writeText "frappe-mailcatch-baked.py" ''
-          # Generated by frappe-nix from `frappe-nix.mailcatch`. Every value is
-          # overridden at runtime by the matching FRAPPE_MAILCATCH_* variable.
-          BAKED = {
-              "enabled": ${pyBool mc.enable},
-              "host": "${mc.host}",
-              "port": ${toString mc.smtpPort},
-              "http_port": ${toString mc.httpPort},
-              "sender": "${mc.sender}",
-              "unmute": ${pyBool mc.unmute},
-              "pop3_enabled": ${pyBool mc.pop3.enable},
-              "pop3_port": ${toString mc.pop3.port},
-              "pop3_user": "${mc.pop3.user}",
-              "pop3_password": "${mc.pop3.password}",
-          }
+        devguardBaked = pkgs.writeText "frappe-devguard-baked.py" ''
+          # Generated by frappe-nix from `frappe-nix.devguard`. Every value is
+          # overridden at runtime by the matching FRAPPE_DEVGUARD_* variable.
+          BAKED = ${toPy devguardConfig}
         '';
 
-        mailcatchPkg = pkgs.runCommand "frappe-mailcatch" { } ''
+        devguardPkg = pkgs.runCommand "frappe-devguard" { } ''
           mkdir -p "$out"
-          cp -r ${mailcatchSrc}/frappe_mailcatch "$out/"
+          cp -r ${devguardSrc}/frappe_devguard "$out/"
           chmod -R u+w "$out"
-          cp ${mailcatchBaked} "$out/frappe_mailcatch/_baked.py"
+          cp ${devguardBaked} "$out/frappe_devguard/_baked.py"
         '';
 
         mailpitPop3Auth = pkgs.writeText "mailpit-pop3-auth" ''
@@ -308,7 +365,7 @@ in
             builtinOverrides
             cfg.pythonOverrides
           ];
-          mailcatch = if mc.enable then mailcatchPkg else null;
+          devguard = if dg.enable then devguardPkg else null;
         };
 
         benchInfra = import ../lib/bench.nix {
@@ -369,7 +426,7 @@ in
                 just
                 pv
               ]
-              ++ lib.optional mc.enable pkgs.mailpit
+              ++ lib.optional mailEnabled pkgs.mailpit
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -431,11 +488,11 @@ in
                   ++ cfg.extraLibraryPaths
                 );
               }
-              // (lib.optionalAttrs mc.enable {
+              // (lib.optionalAttrs mailEnabled {
                 # Consumed by the mailpit process. Frappe reads the matching
                 # values from its baked-in config instead, so that it stays
                 # redirected even outside the devenv environment; the
-                # FRAPPE_MAILCATCH_* variables override those when set.
+                # FRAPPE_DEVGUARD_* variables override those when set.
                 MAILPIT_SMTP_HOST = mc.host;
                 MAILPIT_SMTP_PORT = toString mc.smtpPort;
                 MAILPIT_HTTP_PORT = toString mc.httpPort;
@@ -517,7 +574,7 @@ in
               echo ""
               echo "  Python: ${pythonEnvs.devPythonEnv}/bin/python"
               echo "  Bench root: $PWD"
-              ${lib.optionalString mc.enable ''
+              ${lib.optionalString mailEnabled ''
                 echo "  Mail: ALL outgoing email → Mailpit (http://${mc.host}:${toString mc.httpPort})"
                 echo "        incoming (IMAP/POP3) is ${
                   if mc.pop3.enable then "served from Mailpit POP3 :${toString mc.pop3.port}" else "blocked"
@@ -576,7 +633,7 @@ in
               '';
 
             }
-            // lib.optionalAttrs mc.enable {
+            // lib.optionalAttrs mailEnabled {
               mailpit.exec =
                 let
                   bind = "\${MAILPIT_SMTP_HOST:-${mc.host}}";
@@ -600,7 +657,7 @@ in
               let
                 # Anything that can send mail waits for the catcher, so the
                 # first send of a session doesn't hit a closed port.
-                needsMailpit = lib.optionalAttrs mc.enable {
+                needsMailpit = lib.optionalAttrs mailEnabled {
                   mailpit.condition = "process_started";
                 };
               in
