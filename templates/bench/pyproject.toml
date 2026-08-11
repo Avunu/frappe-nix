@@ -1,5 +1,7 @@
 [project]
-name = "@BENCH_NAME@"
+# Usually the bench name; suffixed with -bench when an app under apps/ has the
+# same name, since uv refuses a workspace root that collides with a member.
+name = "@PROJECT_NAME@"
 version = "0.1.0"
 description = "Frappe bench workspace managed by frappe-nix"
 requires-python = "@REQUIRES_PYTHON@"
@@ -155,13 +157,13 @@ override-dependencies = @OVERRIDES@
 "zopfli" = ["setuptools"]
 "zxcvbn" = ["setuptools"]
 
+# Managed by frappe-nix: `frappe-init`, `bench-get-app` and `bench-new-app` all
+# register apps here through `frappe-nix-workspace`. Members are paths; source
+# keys are the app's own [project].name, which is what uv resolves it to.
 [tool.uv.workspace]
-members = [
-@MEMBERS@
-]
+members = []
 
 [tool.uv.sources]
-@SOURCES@
 
 [build-system]
 requires = ["hatchling"]

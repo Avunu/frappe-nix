@@ -16,22 +16,40 @@ node_modules
 
 # python
 **/__pycache__/*
+*.pyc
 .ipython
 .python_history
 
 # frappe runtime + site data (keep the dirs via .gitkeep)
+#
+# Scoped to sites/, NOT `**/`: a bare `**/public/*` also matches
+# apps/<app>/<app>/public, and because gitignore cannot re-include a file whose
+# parent directory is excluded, an app's frontend assets would silently never
+# reach the index — and a flake's source tree is exactly its tracked files.
 config/pids/*
 !config/pids/.gitkeep
 logs/*
 !logs/.gitkeep
-sites/assets/*
-**/error-snapshots/*
-**/indexes/*
-**/locks/*
-**/private/*
-**/public/*
-**/touched_tables.json
+sites/assets/
+sites/*/private/
+sites/*/public/
+sites/*/site_config.json
+sites/*/locks/
+sites/*/indexes/
+sites/*/error-snapshots/
+sites/*/backups/
+sites/*/touched_tables.json
 queue.rdb
+
+# classic `bench init` artifacts — superseded by frappe-nix, kept on disk
+Procfile
+patches.txt
+config/*.conf
+apps/*/node_modules/
+apps/*/*/public/dist/
+archived/
+archived_sites/
+.frappe-nix-backup/
 
 # shell history
 .bash_history

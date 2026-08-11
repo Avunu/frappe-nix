@@ -98,6 +98,12 @@
             ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
           '';
         }
+        # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
+        # is cheap enough to gate PRs on.
+        // import ./tests/migrate-classic.nix {
+          inherit pkgs;
+          frappe-init = frappeInit pkgs;
+        }
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (

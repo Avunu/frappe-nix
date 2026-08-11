@@ -17,7 +17,11 @@
 }:
 
 let
-  appNames = builtins.attrNames (builtins.readDir (workspaceRoot + "/apps"));
+  # Directories only: readDir also reports files, and a stray tracked file under
+  # apps/ would otherwise become an "app" on PYTHONPATH and in benchRoot.
+  appNames = builtins.attrNames (
+    lib.filterAttrs (_: type: type == "directory") (builtins.readDir (workspaceRoot + "/apps"))
+  );
 
   appsPath = root: lib.concatMapStringsSep ":" (app: "${root}/apps/${app}") appNames;
 

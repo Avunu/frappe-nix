@@ -32,8 +32,18 @@ jobs:
         run: nix flake check --no-build --show-trace
 
       # The scaffolder is small enough to build outright, so the gate is not eval-only.
+      # This is also where shellcheck runs over lib/sh/*.
       - name: Build the bench scaffolder
         run: nix build .#default --show-trace
+
+      # Offline checks (no network, no VM): the devguard unit tests and the
+      # `frappe-init --migrate` end-to-end runs over a synthetic classic bench.
+      - name: Run the offline checks
+        run: |
+          nix build -L --show-trace \
+            .#checks.x86_64-linux.devguard \
+            .#checks.x86_64-linux.migrate-classic \
+            .#checks.x86_64-linux.migrate-versions
 
   vm-tests:
     # Manual only — see the header note.
