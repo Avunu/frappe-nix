@@ -655,6 +655,18 @@ in
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
         };
 
+        # Keeps `bench update` importable — see lib/bench-patches.nix for the
+        # upstream hole it fills.
+        benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
+
+        # The patch list frappe-bench ships. Resolved from the interpreter's own
+        # sitePackages rather than globbed at runtime, so a python bump moves
+        # this path loudly instead of silently turning the reconcile into a
+        # no-op. Not `pathExists`-guarded: that would force the venv to build
+        # during evaluation. The tool tolerates the file being absent, which is
+        # what a bench whose pyproject.toml drops frappe-bench looks like.
+        shippedBenchPatches = "${pythonEnvs.devPythonEnv}/${cfg.python.sitePackages}/bench/patches/patches.txt";
+
       in
       lib.mkIf cfg.enable {
         packages.prodPythonEnv = pythonEnvs.prodPythonEnv;
@@ -875,6 +887,14 @@ in
               if [ "$(readlink env 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
                 ln -sfn "${pythonEnvs.devPythonEnv}" env
               fi
+
+              # Record bench's own patches as already done, so `bench update`
+              # does not die importing bench.patches.v3 — a module bench deleted
+              # in 2022 but still lists in the patches.txt it ships. This is what
+              # `bench init` writes and frappe-nix otherwise never would; see
+              # lib/bench-patches.nix. Quiet unless it changes something.
+              ${benchPatchesTool}/bin/frappe-nix-bench-patches \
+                "${shippedBenchPatches}" .
 
               # Install node_modules for each app (mutable, dev-friendly).
               #

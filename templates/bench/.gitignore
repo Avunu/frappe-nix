@@ -41,9 +41,14 @@ sites/*/backups/
 sites/*/touched_tables.json
 queue.rdb
 
+# bench's record of which of its own patches have run. Per-install state, not
+# source: the dev shell reconciles it against the list the installed frappe-bench
+# ships on every shell entry (see lib/bench-patches.nix), so a clone that starts
+# without it gets a correct one before anything can read it.
+patches.txt
+
 # classic `bench init` artifacts — superseded by frappe-nix, kept on disk
 Procfile
-patches.txt
 config/*.conf
 apps/*/node_modules/
 apps/*/*/public/dist/

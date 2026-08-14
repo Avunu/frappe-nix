@@ -442,6 +442,19 @@ takes `--pull|--migrate|--build|--node-hashes`, not `--reset`); and interception
 subcommand-first, so `bench --site X migrate` (global option before the subcommand) passes
 straight through.
 
+Because those two caveats leave the real `bench update` reachable — `_FRAPPE_BENCH_RAW=1
+bench update --reset`, or just `env/bin/bench` — the shell also keeps its first step
+working. `bench update` starts with `bench.patches.run()`, which executes every entry in the
+`patches.txt` frappe-bench ships that the **bench root's** `patches.txt` does not record as
+done. bench deleted the v3/v4 patch modules in 2022 but still lists them, so a bench root
+with no record dies immediately on `ModuleNotFoundError: No module named 'bench.patches.v3'`
+— and stays dead, because the failed run rewrites the root file as one empty byte. `bench
+init` avoids this by copying the shipped list in verbatim; frappe-nix never runs `bench
+init`, and the file is gitignored, so `enterShell` reconciles it instead — on every shell
+entry, non-destructively, and silently unless it changes something. See
+[`lib/bench-patches.nix`](lib/bench-patches.nix) for why *every* patch is recorded as done
+rather than only the two that cannot import.
+
 ### Bench scripts
 
 These back the wrapper and are also callable directly:
@@ -671,6 +684,7 @@ frappe-nix/
 ├── lib/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
+│   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
 │   ├── devguard/             # frappe_devguard — guards against reaching production
 │   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)
