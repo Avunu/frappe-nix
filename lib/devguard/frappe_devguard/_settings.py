@@ -1,15 +1,32 @@
 """Settings resolution and shared exception types.
 
 Resolution order, highest first: ``FRAPPE_DEVGUARD_*`` environment variables,
-then values baked in by Nix (``_baked.py``, generated at build time), then the
-defaults below. Env wins so a running process can be re-pointed without a
-rebuild; the baked values mean the guards still hold when the devenv
-environment is absent (an editor terminal, ``nix run``, a stray ``sudo -u``).
+then the runtime file (see below), then values baked in by Nix (``_baked.py``,
+generated at build time), then the defaults below. Env wins so a running
+process can be re-pointed without a rebuild; the baked values mean the guards
+still hold when the devenv environment is absent (an editor terminal,
+``nix run``, a stray ``sudo -u``).
+
+The runtime file exists because a couple of settings are only *known* once the
+processes start: Mailpit's ports go through devenv's allocator, which walks
+forward if the bench's derived port is taken, so the port Nix baked in can be
+one or two below the one Mailpit actually bound. ``devenv up`` writes the
+resolved values to ``$DEVENV_RUNTIME/devguard-runtime.json`` and this reads
+them back.
+
+It sits *below* env and *above* baked on purpose. Putting the ports there
+instead of baking them would have been simpler but wrong: outside the devenv
+environment ``DEVENV_RUNTIME`` is unset, so the mail guard would fall back to
+the stock 1025 — which on a machine running several benches is *another
+project's* Mailpit. Falling back to this bench's own derived base is contained;
+falling back to a shared default is a cross-project mail leak, in the one guard
+that offers transport-level containment.
 
 Settings are read at *call* time rather than frozen at import, so a guard can
 be turned off for a single command without a rebuild.
 """
 
+import json
 import os
 import sys
 
@@ -120,6 +137,38 @@ def _env(*parts):
     return value if value is not None and value.strip() != "" else None
 
 
+def _runtime_path():
+    explicit = os.environ.get("FRAPPE_DEVGUARD_RUNTIME")
+    if explicit:
+        return explicit
+    runtime = os.environ.get("DEVENV_RUNTIME")
+    return os.path.join(runtime, "devguard-runtime.json") if runtime else None
+
+
+#: Cache keyed on the resolved path, so a `devenv up` that rewrites the file
+#: under a long-lived worker still takes effect on the next process, while
+#: Settings.get() — called on every guard invocation by design — does not stat
+#: and parse JSON each time.
+_RUNTIME_CACHE = {}
+
+
+def _runtime():
+    path = _runtime_path()
+    if path is None:
+        return {}
+    if path in _RUNTIME_CACHE:
+        return _RUNTIME_CACHE[path]
+    try:
+        with open(path) as handle:
+            loaded = json.load(handle)
+    except (OSError, ValueError):
+        # Absent outside devenv, and unreadable is not worth failing a guard
+        # over — the baked values below are a safe fallback by construction.
+        loaded = {}
+    _RUNTIME_CACHE[path] = loaded
+    return loaded
+
+
 class Settings:
     """Lazily-resolved view of the guard configuration."""
 
@@ -140,8 +189,10 @@ class Settings:
         return _as_bool(self.get(guard, "enable"), True)
 
     def get(self, guard, key, cast=None):
-        """Resolve one guard setting: env, then Nix-baked, then the default."""
+        """Resolve one setting: env, then runtime file, then baked, then default."""
         value = _env(guard, key)
+        if value is None:
+            value = _runtime().get("guards", {}).get(guard, {}).get(key)
         if value is None:
             value = BAKED.get("guards", {}).get(guard, {}).get(key)
         if value is None:

@@ -263,6 +263,10 @@ in
 
     ${siteFlag}
     echo "Restoring site ''${FRAPPE_SITE:-all sites} from $SQL_FILE..."
+    # No --db-socket here: unlike `new-site`, `bench restore` has no such option
+    # (frappe/commands/site.py), so the socket has to arrive the other way — from
+    # the site's own site_config.json, or from FRAPPE_DB_SOCKET via
+    # frappe/config.py. Both are set by the dev shell.
     exec bench $SITE_FLAG restore "$SQL_FILE" \
       --db-root-username "root" \
       --db-root-password "" \
@@ -317,7 +321,10 @@ in
     echo ""
     echo "✅ Site $FRAPPE_SITE provisioned!"
     echo "   Admin password: $ADMIN_PASS"
-    echo "   URL: http://localhost:''${FRAPPE_WEBSERVER_PORT:-8000}"
+    # Read the port back rather than trusting an env var: devenv only runs its
+    # port allocator for `devenv up`, so anything resolved in a plain shell is
+    # the bench's base port, which may not be the one nginx actually took.
+    echo "   URL: http://127.0.0.1:$(${pkgs.jq}/bin/jq -r '.webserver_port // 8000' sites/common_site_config.json)"
   '';
 
   # Add an existing app as a git submodule and register it in the uv workspace

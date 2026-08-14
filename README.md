@@ -99,9 +99,10 @@ is a no-op. Concretely it:
 - writes `flake.nix`, `pyproject.toml`, `.envrc` and the `uv.lock`, merging into an existing
   `pyproject.toml` rather than replacing it, and shimming a `pyproject.toml` for vendored
   apps that only ship `setup.py`;
-- reconciles `sites/common_site_config.json` — forcing the values the dev shell requires
-  (one Redis on 13000, the fixed web/socketio/watcher ports), preserving everything else,
-  dropping production-only keys (`host_name`, `http_port`, `restart_*`), and blanking
+- reconciles `sites/common_site_config.json` — forcing the per-bench web/socketio port
+  the dev shell derives from the bench name, preserving everything else, dropping
+  production-only keys (`host_name`, `http_port`, `restart_*`) and keys the socket setup
+  supersedes (`db_host`, `db_port`, the `redis_*` URLs, `file_watcher_port`), and blanking
   `mariadb_root_password` since the file is about to be committed;
 - extends `.gitignore` with a managed block so `sites/*/site_config.json`, site
   `private/`/`public/` data, `Procfile`, `patches.txt`, `config/*.conf` and `node_modules`
@@ -247,15 +248,17 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `extraLibraryPaths` | list of package | `[]` | Extra `LD_LIBRARY_PATH` entries (dev shell). |
 | `extraScripts` | attrs | `{}` | Extra devenv scripts, merged over the standard set. |
 | `extraEnv` | attrs of str | `{}` | Extra environment variables (dev shell). |
+| `sockets.enable` | bool | `true` | Put MariaDB, Redis, socketio and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs frappe ≥ 15.46. |
+| `ports.base` | port or null | `null` | First port this bench tries; defaults to `8000` + a hash of `benchName`. |
 | `devguard.enable` | bool | `true` | Master switch for all guard rails — see [Development guard rails](#development-guard-rails). |
 | `devguard.mail.enable` | bool | `true` | Route all outgoing mail to Mailpit, refuse IMAP/POP3. |
 | `devguard.mail.host` | str | `"127.0.0.1"` | Interface Mailpit binds and Frappe is redirected to. |
-| `devguard.mail.smtpPort` | port | `1025` | Catcher SMTP port. |
-| `devguard.mail.httpPort` | port | `8025` | Mailpit web UI port. |
+| `devguard.mail.smtpPort` | port | `19000` + hash | Catcher SMTP port (per-bench). |
+| `devguard.mail.httpPort` | port | `20000` + hash | Mailpit web UI port (per-bench). |
 | `devguard.mail.sender` | str | `"notifications@example.com"` | From address used only on sites with no outgoing Email Account at all. |
 | `devguard.mail.unmute` | bool | `true` | Ignore `mute_emails` in `site_config.json`. |
 | `devguard.mail.pop3.enable` | bool | `false` | Serve incoming mail from Mailpit's POP3 listener instead of blocking it. |
-| `devguard.mail.pop3.port` | port | `1110` | Mailpit POP3 port. |
+| `devguard.mail.pop3.port` | port | `21000` + hash | Mailpit POP3 port (per-bench). |
 | `devguard.mail.pop3.user` / `.password` | str | `"dev"` | Mailpit POP3 credentials (local development only). |
 | `devguard.backups.enable` | bool | `true` | Block Dropbox / S3 / Google Drive / Frappe Cloud backup upload. |
 | `devguard.objectstore.enable` | bool | `true` | Force `cloud_storage` to local disk instead of the configured bucket. |
@@ -272,17 +275,41 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 
 ## Development shell
 
-`devenv up` runs the full stack via process-compose:
+`devenv up` runs the full stack via process-compose. **Several benches can run at
+once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which
+devenv gives each project uniquely, and the ports that remain are per-bench.
 
-| Service / process | Port |
+| Service / process | Listens on |
 | --- | --- |
-| MariaDB | 3306 |
-| Redis (cache / queue / socketio) | 13000 |
-| `web` (`bench serve`) | 8000 |
-| `socketio` (Node) | 9000 |
-| `watch` (asset file watcher) | 6787 |
-| Mailpit (SMTP / HTTP / POP3) | 1025 / 8025 / 1110 |
-| `scheduler`, `worker` | — |
+| `nginx` | **TCP `8000` + a hash of `benchName`** — the only port a browser sees |
+| `web` (`bench serve`) | `$DEVENV_RUNTIME/web.sock` |
+| `socketio` (Node) | `$DEVENV_RUNTIME/socketio.sock` |
+| MariaDB | `$DEVENV_RUNTIME/mysql.sock` |
+| Redis (cache + queue) | `$DEVENV_RUNTIME/redis.sock` |
+| Mailpit (SMTP / HTTP / POP3) | TCP `19000` / `20000` / `21000` + the same hash |
+| `scheduler`, `worker`, `watch` | — |
+
+nginx routes `/socket.io` to the realtime socket and everything else to the web
+socket — the same shape [`services.frappe`](#nixos-module--servicesfrappe) uses
+in production. `webserver_port` and `socketio_port` in
+`sites/common_site_config.json` are both set to the nginx port, which is what
+lets the browser reach both over one origin.
+
+The ports are hashed from `benchName` rather than the project path so that every
+*clone* of a bench derives the same number and the committed
+`common_site_config.json` never conflicts; devenv's port allocator still walks
+forward if something is genuinely in the way, and `devenv up` writes the value it
+settled on back into the config. Override the base with `ports.base`, or set
+`sockets.enable = false` to put everything back on TCP — ports are still
+allocated dynamically in that mode, so benches still do not collide, they just
+use more ports and no nginx.
+
+> One caveat if you use the **wiki** app: its frontend does
+> `import { socketio_port } from 'sites/common_site_config.json'`, so the port is
+> baked into its bundle at build time. If the allocator ever moves your port,
+> re-run `bench build --app wiki`. `frappe-ui`'s vendored `socketio.js` similarly
+> defaults to a hardcoded 9000 unless the call site passes
+> `port: window.frappe?.boot?.socketio_port`.
 
 `apps/*` are installed as **editable** packages (uv2nix editable overlay), so source
 edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) so
@@ -334,6 +361,28 @@ never see it.
 
 Each patch is checked as it is applied: if Frappe's internals move, the import fails
 loudly rather than leaving a silently inert guard behind.
+
+#### `frappe_unixsock` — grafted the same way, but not a guard rail
+
+`lib/unixsock/frappe_unixsock` uses the same `.pth` mechanism but ships to **both**
+virtualenvs, and therefore into `builtBench`, the containers and `services.frappe`. It
+carries no policy: its whole job is to make Frappe honour a unix socket in the two places
+it only half-does.
+
+| Patch | Where it bites |
+| --- | --- |
+| `frappe.app.serve` binds `unix://$FRAPPE_WEB_SOCKET` | `bench serve` hardcodes `run_simple("0.0.0.0", int(port))`, so there is no other way off TCP. Inert in production, which runs gunicorn `--bind unix:` natively. |
+| `frappe.connect_replica` uses `$FRAPPE_REPLICA_DB_SOCKET` | it hardcodes `socket=None`, twenty lines below the `connect()` that honours `db_socket`. Production-only, and only when a replica is configured. |
+
+Every patch is gated on its socket actually being set, so a bench with no sockets
+installs nothing and cannot be broken by a Frappe upgrade moving a target; a bench that
+*is* on sockets fails loudly instead, because silently falling back to TCP would mean
+connecting to another project's service. `FRAPPE_UNIXSOCK_ENABLED=0` disables it for a
+single command.
+
+Shipping it to production does not weaken devguard's dev-only guarantee: the two packages
+are separate and share no code. Guarding against *reaching* production is meaningless in
+production; correcting a socket transport is not.
 
 #### What this is not
 
@@ -517,8 +566,10 @@ The final `site_config.json` is written to the site's state directory with mode 
 | `enable` | bool | `false` | Enable this site. |
 | `package` | package or null | `null` | Per-site bench package override. |
 | `siteDir` | str | `/var/lib/frappe/<name>` | State directory for this site. |
-| `web.port` | port | `8000` | Gunicorn listen port. |
-| `socketio.port` | port | `9000` | SocketIO listen port. |
+| `web.port` | port | `8000` | Gunicorn listen port (ignored when `web.socketPath` is set). |
+| `web.socketPath` | str | `""` | Unix socket for gunicorn; nginx reaches it via a generated upstream. |
+| `socketio.port` | port | `9000` | SocketIO listen port (ignored when `socketio.socketPath` is set). |
+| `socketio.socketPath` | str | `""` | Unix socket for the realtime server (`socketio_uds`); needs frappe ≥ 15.46. Removes the site's last non-loopback TCP listener. |
 | `database.{createLocally,host,port,socket,name,user,passwordFile}` | — | — | Per-site database config. |
 | `redis.{cacheUrl,queueUrl,socketioUrl}` | str | `redis://127.0.0.1:13000` | Redis URLs. |
 | `encryptionKeyFile` | path or null | `null` | File containing the Frappe encryption key. |
@@ -622,6 +673,7 @@ frappe-nix/
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
 │   ├── devguard/             # frappe_devguard — guards against reaching production
+│   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)
 │   ├── init.nix              # `nix run` entry point: builds frappe-init from sh/*
 │   ├── sh/                   # the scaffolder/migrator, concatenated into one script
 │   │   ├── common.sh         #   presets, naming, output helpers

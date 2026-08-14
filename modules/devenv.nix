@@ -9,6 +9,22 @@
 let
   inherit (lib) mkOption mkEnableOption types;
   inherit (flake-parts-lib) mkPerSystemOption;
+
+  # Per-bench port offset, 0..899, hashed from the bench name.
+  #
+  # NOT from the project path, though that is the obvious choice and is what
+  # devenv itself hashes for DEVENV_RUNTIME. The web port has to be written into
+  # sites/common_site_config.json — realtime/utils.js reads webserver_port
+  # straight out of the JSON and no env var can reach it — and that file is
+  # committed. A path-derived port would therefore differ in every clone and
+  # dirty the worktree forever. `benchName` is committed in the bench's own
+  # flake.nix, so every clone on every machine derives the same number.
+  #
+  # Two clones of one bench running at once is then devenv's port allocator's
+  # problem, which is exactly what it is for.
+  portOffsetFor =
+    benchName:
+    lib.mod (lib.fromHexString (builtins.substring 0 4 (builtins.hashString "sha256" benchName))) 900;
 in
 {
   options.perSystem = mkPerSystemOption (
@@ -61,6 +77,54 @@ in
             example = [
               { name = "mysite_db"; }
             ];
+          };
+        };
+
+        sockets = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Put every backing service this bench can on a unix socket, so
+              several benches can run at once without fighting over ports.
+
+              MariaDB, Redis, the realtime server and the web server all move to
+              sockets under $DEVENV_RUNTIME, which devenv already gives each
+              project uniquely. An nginx in front on a single TCP port routes
+              /socket.io to the realtime socket and everything else to the web
+              socket — the same shape services.frappe uses in production.
+
+              That leaves exactly one TCP listener per bench (plus Mailpit's,
+              which is Go and has no unix listener). Set false to keep every
+              service on TCP; ports are still allocated dynamically, so benches
+              still do not collide — they just use more ports and no nginx.
+
+              Needs frappe >= 15.46 (or any v16), which is where the realtime
+              server learned `socketio_uds` and the node redis client learned
+              `unix://`.
+            '';
+          };
+        };
+
+        ports = {
+          base = mkOption {
+            type = types.nullOr types.port;
+            default = null;
+            description = ''
+              First port this bench tries, overriding the value derived from
+              `benchName`.
+
+              By default the offset is a hash of `benchName`, so every bench
+              lands somewhere different and every *clone* of one bench lands in
+              the same place — which is what keeps the port out of
+              sites/common_site_config.json's git diff. devenv's allocator walks
+              forward from here if something is genuinely in the way, so this is
+              a preference, not a reservation.
+
+              Mailpit is offset from this by fixed amounts (see mailpitSmtpBase
+              in modules/devenv.nix).
+            '';
+            example = 8200;
           };
         };
 
@@ -118,14 +182,27 @@ in
 
             smtpPort = mkOption {
               type = types.port;
-              default = 1025;
-              description = "Catcher SMTP port — drives both Mailpit and Frappe.";
+              default = 19000 + portOffsetFor config.frappe-nix.benchName;
+              defaultText = lib.literalMD "`19000` + a hash of `benchName`";
+              description = ''
+                Catcher SMTP port — drives both Mailpit and Frappe.
+
+                Per-bench by default so several benches can catch mail at once,
+                and kept clear of the 11000 range because that would cover
+                11311, Frappe's own default redis_queue port.
+
+                This is where devenv's allocator starts looking, so the running
+                Mailpit may end up one or two higher; the resolved value is
+                written to $DEVENV_RUNTIME/devguard-runtime.json, which
+                frappe_devguard prefers over this baked-in one.
+              '';
             };
 
             httpPort = mkOption {
               type = types.port;
-              default = 8025;
-              description = "Mailpit web UI port.";
+              default = 20000 + portOffsetFor config.frappe-nix.benchName;
+              defaultText = lib.literalMD "`20000` + a hash of `benchName`";
+              description = "Mailpit web UI port. Per-bench by default; see smtpPort.";
             };
 
             sender = mkOption {
@@ -169,8 +246,9 @@ in
 
               port = mkOption {
                 type = types.port;
-                default = 1110;
-                description = "Mailpit POP3 port.";
+                default = 21000 + portOffsetFor config.frappe-nix.benchName;
+                defaultText = lib.literalMD "`21000` + a hash of `benchName`";
+                description = "Mailpit POP3 port. Per-bench by default; see smtpPort.";
               };
 
               user = mkOption {
@@ -434,6 +512,21 @@ in
         # Frappe at it.
         mailEnabled = dg.enable && mc.enable;
 
+        sockets = cfg.sockets.enable;
+
+        portOffset = portOffsetFor cfg.benchName;
+
+        # Every base below is where devenv's allocator starts looking, not a
+        # reservation: it walks forward if something is genuinely in the way.
+        webBase = if cfg.ports.base != null then cfg.ports.base else 8000 + portOffset;
+
+        # These carry the per-bench offset through their option defaults, so a
+        # consumer overriding devguard.mail.smtpPort still drives both Mailpit
+        # and the address Frappe is redirected to, exactly as before.
+        mailpitSmtpBase = mc.smtpPort;
+        mailpitHttpBase = mc.httpPort;
+        mailpitPop3Base = mc.pop3.port;
+
         # Render a Nix value as a Python literal, so the baked settings file
         # can mirror the option tree instead of being hand-spelled per key.
         toPy =
@@ -518,6 +611,21 @@ in
           ${mc.pop3.user}:${mc.pop3.password}
         '';
 
+        # Unlike devguard there is nothing to bake: every setting frappe_unixsock
+        # reads is a runtime fact (the path of a socket some other process in
+        # this bench is listening on), not a policy decision, so the environment
+        # is the only source and there is nothing that could drift.
+        unixsockPkg = pkgs.runCommand "frappe-unixsock" { } ''
+          mkdir -p "$out"
+          cp -r ${
+            builtins.path {
+              path = ../lib/unixsock;
+              name = "frappe-unixsock-src";
+              filter = path: _type: baseNameOf path != "__pycache__";
+            }
+          }/frappe_unixsock "$out/"
+        '';
+
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python workspaceRoot benchName;
@@ -529,6 +637,10 @@ in
             cfg.pythonOverrides
           ];
           devguard = if dg.enable then devguardPkg else null;
+          # Both envs, and therefore builtBench, the containers and the NixOS
+          # module. Independent of devguard.enable: turning the guards off must
+          # not silently put the web server back on TCP.
+          unixsock = unixsockPkg;
         };
 
         benchInfra = import ../lib/bench.nix {
@@ -555,6 +667,66 @@ in
 
         devenv.shells.default =
           { config, pkgs, ... }:
+          let
+            # Every socket lives here, not in $DEVENV_STATE. DEVENV_RUNTIME is
+            # ~27 bytes ($XDG_RUNTIME_DIR/devenv-<7 hex>, or /tmp/devenv-<7 hex>)
+            # whereas $DEVENV_STATE is <project>/.devenv/state — which fits for a
+            # shallow checkout and blows past the 108-byte sockaddr_un limit for
+            # a deep one, as a bare "AF_UNIX path too long" from inside the
+            # server. It is also created 0700, so the sockets are unreachable by
+            # other users without any per-socket permission work.
+            runtime = config.env.DEVENV_RUNTIME;
+
+            mysqlSocket = "${runtime}/mysql.sock";
+            redisSocket = "${runtime}/redis.sock";
+            socketioSocket = "${runtime}/socketio.sock";
+            webSocket = "${runtime}/web.sock";
+
+            # Three slashes. `runtime` is absolute, so "unix://" + it gives
+            # unix:///run/... — two would make node's
+            # `connStr.replace("unix://","")` yield a *relative* path and
+            # Python's urlparse yield a different wrong one, both silently.
+            redisUrl = "unix://${redisSocket}";
+
+            # The single public port: nginx when we are on sockets, otherwise
+            # the web server itself. Read from the process that actually owns
+            # the listener so the allocator's self-heal is followed.
+            #
+            # NB this is the *base* during a plain shell eval and the allocated
+            # value only under `devenv up` — devenv enables the allocator for
+            # `up` alone. Hence: never surface it in `env`, and let the up-task
+            # (which does run with the allocator live) be the one writer.
+            webPort =
+              if sockets then
+                config.processes.nginx.ports.main.value
+              else
+                config.processes.web.ports.main.value;
+
+            redisCli =
+              "${config.services.redis.package}/bin/redis-cli "
+              + (if sockets then ''-s "${redisSocket}"'' else "-p ${toString config.services.redis.port}");
+
+            # Readiness for a process listening on a unix socket.
+            #
+            # devenv infers a TCP connectivity probe from a process's allocated
+            # ports; a socket-only process has none, so `after = [ "…web" ]` —
+            # which means @ready — has nothing to wait on and devenv refuses the
+            # whole task graph. This gives it something.
+            #
+            # Deliberately not `curl -f`: any HTTP response means the server is
+            # accepting connections, which is all a dependent needs to know. On a
+            # bench whose site has not been created yet Frappe answers 500, and
+            # requiring 2xx would keep nginx down until after `provision-site`.
+            socketReady = socket: path: {
+              exec = ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 --unix-socket "${socket}" http://localhost${path}'';
+              initial_delay = 2;
+              period = 5;
+              probe_timeout = 5;
+              # Generous: `bench serve` on a bench with a dozen apps spends a
+              # while importing before it binds anything at all.
+              failure_threshold = 60;
+            };
+          in
           {
             dotenv.enable = true;
 
@@ -615,21 +787,12 @@ in
                 USE_PROXY = "";
                 NO_STATICS = "";
 
-                FRAPPE_DB_HOST = "127.0.0.1";
-                FRAPPE_DB_PORT = "3306";
                 FRAPPE_DB_TYPE = "mariadb";
 
-                FRAPPE_REDIS_CACHE = "redis://localhost:13000";
-                FRAPPE_REDIS_QUEUE = "redis://localhost:13000";
-                FRAPPE_REDIS_SOCKETIO = "redis://localhost:13000";
-
-                FRAPPE_WEBSERVER_PORT = "8000";
-                FRAPPE_SOCKETIO_PORT = "9000";
-                FRAPPE_FILE_WATCHER_PORT = "6787";
-
-                FRAPPE_DB_SOCKET = config.env.DEVENV_RUNTIME + "/mysql.sock";
-                FRAPPE_SOCKETS_DIR = config.env.DEVENV_STATE + "/sockets";
-                FRAPPE_WEB_SOCKET = config.env.DEVENV_STATE + "/sockets/frappe.sock";
+                # The database has been socket-only since long before the rest
+                # of this — `bench new-site --db-socket` already wrote db_socket
+                # into every site_config.json — so it needs no `sockets` guard.
+                FRAPPE_DB_SOCKET = mysqlSocket;
 
                 FRAPPE_BENCH_ROOT = config.devenv.root;
                 SITES_PATH = config.devenv.root + "/sites";
@@ -651,16 +814,27 @@ in
                   ++ cfg.extraLibraryPaths
                 );
               }
-              // (lib.optionalAttrs mailEnabled {
-                # Consumed by the mailpit process. Frappe reads the matching
-                # values from its baked-in config instead, so that it stays
-                # redirected even outside the devenv environment; the
-                # FRAPPE_DEVGUARD_* variables override those when set.
-                MAILPIT_SMTP_HOST = mc.host;
-                MAILPIT_SMTP_PORT = toString mc.smtpPort;
-                MAILPIT_HTTP_PORT = toString mc.httpPort;
-                MAILPIT_POP3_PORT = toString mc.pop3.port;
-              })
+              // (
+                if sockets then
+                  {
+                    FRAPPE_REDIS_CACHE = redisUrl;
+                    FRAPPE_REDIS_QUEUE = redisUrl;
+
+                    # Read by node_utils.js; realtime/index.js does
+                    # `server.listen(uds || port)`.
+                    FRAPPE_SOCKETIO_UDS = socketioSocket;
+                    # Read by frappe_unixsock, which is the only way past
+                    # frappe/app.py's hardcoded run_simple("0.0.0.0", int(port)).
+                    FRAPPE_WEB_SOCKET = webSocket;
+                  }
+                else
+                  {
+                    # Fallback mode: still no fixed ports, just more of them.
+                    FRAPPE_DB_HOST = "127.0.0.1";
+                    FRAPPE_REDIS_CACHE = "redis://127.0.0.1:${toString config.services.redis.port}";
+                    FRAPPE_REDIS_QUEUE = "redis://127.0.0.1:${toString config.services.redis.port}";
+                  }
+              )
               // (lib.optionalAttrs (cfg.siteName != "") {
                 FRAPPE_SITE = cfg.siteName;
               })
@@ -678,8 +852,12 @@ in
                 git submodule update --init
               fi
 
-              # Create required directories
-              mkdir -p "$DEVENV_STATE/mariadb" "$DEVENV_STATE/sockets" logs config/pids
+              # Create required directories. Frappe writes pids and lock files
+              # into config/ and logs/, so both must be real and writable.
+              # (No socket dir: every socket lives in $DEVENV_RUNTIME, which
+              # devenv creates 0700 for us. And no $DEVENV_STATE/mariadb —
+              # devenv's mysql module uses $DEVENV_STATE/mysql.)
+              mkdir -p logs config/pids
 
               # Symlink the Nix-built Python env to ./env where bench expects it.
               #
@@ -749,10 +927,18 @@ in
               echo ""
               echo "  Python: ${pythonEnvs.devPythonEnv}/bin/python"
               echo "  Bench root: $PWD"
+              # Read back rather than interpolate: the port allocator only runs
+              # for `devenv up`, so a value baked in here would be the base while
+              # the running nginx might have moved on.
+              _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' sites/common_site_config.json 2>/dev/null || true)"
+              echo "  URL: http://127.0.0.1:''${_port:-${toString webBase}}"
+              ${lib.optionalString sockets ''
+                echo "  Sockets: $DEVENV_RUNTIME/{mysql,redis,socketio,web}.sock"
+              ''}
               ${lib.optionalString mailEnabled ''
-                echo "  Mail: ALL outgoing email → Mailpit (http://${mc.host}:${toString mc.httpPort})"
+                echo "  Mail: ALL outgoing email → Mailpit (http://${mc.host}:${toString mailpitHttpBase})"
                 echo "        incoming (IMAP/POP3) is ${
-                  if mc.pop3.enable then "served from Mailpit POP3 :${toString mc.pop3.port}" else "blocked"
+                  if mc.pop3.enable then "served from Mailpit POP3" else "blocked"
                 }"
               ''}
               ${lib.optionalString (cfg.siteName != "") ''
@@ -773,87 +959,332 @@ in
                   innodb-log-file-size = "64M";
                   max-connections = 200;
                   innodb-read-only-compressed = "OFF";
-                  port = 3306;
-                  bind-address = "127.0.0.1";
-                };
+                }
+                // (
+                  if sockets then
+                    {
+                      # devenv puts the socket at $DEVENV_RUNTIME/mysql.sock
+                      # (MYSQL_UNIX_PORT) either way; this drops the listener the
+                      # clients were never using. The module still reserves an
+                      # unused TCP port — harmless, and not worth patching around.
+                      skip-networking = true;
+                    }
+                  else
+                    {
+                      port = 3306; # allocator base, not a reservation
+                      bind-address = "127.0.0.1";
+                    }
+                );
               };
               initialDatabases = cfg.mariadb.initialDatabases;
             };
 
+            # One instance serving both redis_cache and redis_queue. (There is no
+            # third: redis_socketio was dropped from Frappe — realtime publishes
+            # over redis_queue now — so setting it only left a dead config key.)
             services.redis = {
               enable = true;
-              port = 13000;
+              # port 0 is devenv's switch for "unix socket only": it emits
+              # `unixsocket $DEVENV_RUNTIME/redis.sock` + `unixsocketperm 700`,
+              # skips port allocation entirely, and moves its readiness probe to
+              # `redis-cli -s`.
+              port = if sockets then 0 else 13000;
             };
 
-            processes = {
-              web.exec = ''
-                exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ''${FRAPPE_WEBSERVER_PORT:-8000}
-              '';
-
-              scheduler.exec = ''
-                exec ${pythonEnvs.devPythonEnv}/bin/bench schedule
-              '';
-
-              worker.exec = ''
-                exec ${pythonEnvs.devPythonEnv}/bin/bench worker
-              '';
-
-              socketio.exec = ''
-                rm -f "$DEVENV_STATE/sockets/socketio.sock"
-                exec ${cfg.nodejs}/bin/node apps/frappe/socketio.js
-              '';
-
-              watch.exec = ''
-                exec ${pythonEnvs.devPythonEnv}/bin/bench watch
-              '';
-
-            }
-            // lib.optionalAttrs mailEnabled {
-              mailpit.exec =
-                let
-                  bind = "\${MAILPIT_SMTP_HOST:-${mc.host}}";
-                  flags = [
-                    "--smtp ${bind}:\${MAILPIT_SMTP_PORT:-${toString mc.smtpPort}}"
-                    "--listen ${bind}:\${MAILPIT_HTTP_PORT:-${toString mc.httpPort}}"
-                  ]
-                  ++ lib.optionals mc.pop3.enable [
-                    "--pop3 ${bind}:\${MAILPIT_POP3_PORT:-${toString mc.pop3.port}}"
-                    "--pop3-auth-file ${mailpitPop3Auth}"
-                  ]
-                  ++ [ ''--database "$DEVENV_STATE/mailpit.db"'' ];
-                in
-                ''
-                  exec ${pkgs.mailpit}/bin/mailpit \
-                    ${lib.concatStringsSep " \\\n    " flags}
-                '';
+            # Mailpit is Go and has no unix listener, so it keeps two TCP ports.
+            # devenv's own module runs both through the port allocator, which is
+            # the whole reason to use it instead of the hand-rolled process this
+            # replaces. POP3 is not one of its options, so that port is allocated
+            # here and passed through additionalArgs.
+            services.mailpit = lib.mkIf mailEnabled {
+              enable = true;
+              uiListenAddress = "${mc.host}:${toString mailpitHttpBase}";
+              smtpListenAddress = "${mc.host}:${toString mailpitSmtpBase}";
+              additionalArgs = lib.optionals mc.pop3.enable [
+                "--pop3"
+                "${mc.host}:${toString config.processes.mailpit.ports.pop3.value}"
+                "--pop3-auth-file"
+                "${mailpitPop3Auth}"
+              ];
             };
 
-            process.managers.process-compose.settings.processes =
+            # The single public listener. Everything behind it is on a socket, so
+            # this is the only port a browser — or another project — can see.
+            #
+            # Deliberately NOT a copy of the production vhost in modules/nixos.nix:
+            # that one terminates behind an edge proxy on :443, this one *is* the
+            # origin, and two of its headers are actively wrong here. See below.
+            services.nginx = lib.mkIf sockets {
+              enable = true;
+              eventsConfig = "worker_connections 1024;";
+              httpConfig = ''
+                upstream frappe-web      { server unix:${webSocket}; }
+                upstream frappe-socketio { server unix:${socketioSocket}; }
+
+                map $http_upgrade $connection_upgrade {
+                  default upgrade;
+                  ""      close;
+                }
+
+                server {
+                  listen 127.0.0.1:${toString webPort};
+
+                  # nginx defaults to 1m; Frappe's own limit is 25m
+                  # (frappe/app.py: request.max_content_length). Without this,
+                  # every attachment over 1MB fails as a 413 Frappe never sees.
+                  client_max_body_size 100m;
+
+                  # The dev server has no timeout of its own, so nginx's default
+                  # 60s would start failing slow reports, migrations and PDF
+                  # renders that work today.
+                  proxy_read_timeout 300s;
+                  proxy_send_timeout 300s;
+                  # Stream backup downloads straight through instead of spooling
+                  # them into $DEVENV_STATE.
+                  proxy_max_temp_file_size 0;
+
+                  # $http_host, NOT $host: $host drops the port. Frappe builds the
+                  # base URL for PDF rendering from request.host_url
+                  # (frappe/utils/pdf.py), so with the port stripped the headless
+                  # browser fetches /assets from :80 and every print format comes
+                  # out unstyled.
+                  proxy_set_header Host $http_host;
+                  # Load-bearing, not decoration: an AF_UNIX peer has no address,
+                  # so werkzeug reports REMOTE_ADDR as "<local>". frappe/auth.py's
+                  # set_request_ip prefers this header, which is what keeps
+                  # Activity Log, session IPs and 2FA allowlists meaningful.
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+
+                  # NB no X-Frappe-Site-Name: frappe/app.py reads it *before*
+                  # get_site_name(request.host), which would pin the bench to one
+                  # site and break the documented siteName = "" multi-tenancy
+                  # mode. With Host: localhost:<port>, socketio's authenticate.js
+                  # already falls through to default_site.
+                  #
+                  # And no Origin override: production sets one only because a
+                  # unix listener reports $scheme as http behind a TLS-terminating
+                  # edge. Here there is no mismatch, and realtime/utils.js needs
+                  # the browser's own Origin to rewrite.
+
+                  location /socket.io {
+                    proxy_pass http://frappe-socketio;
+                    proxy_http_version 1.1;
+                    proxy_set_header Upgrade $http_upgrade;
+                    proxy_set_header Connection $connection_upgrade;
+                    proxy_read_timeout 3600s;
+                  }
+
+                  # Everything else, /assets included, stays with werkzeug's
+                  # application_with_statics — it already tracks what `bench watch`
+                  # rebuilds, which a static nginx root would not.
+                  location / {
+                    proxy_pass http://frappe-web;
+                  }
+                }
+              '';
+            };
+
+            # Ordering uses devenv's own `after`, not the raw process-compose
+            # `depends_on` this replaces: `after` is honoured by whichever manager
+            # is in play (the process-compose backend derives depends_on from it),
+            # and it defaults to @ready rather than @started, so these now wait for
+            # mysql's and redis's actual readiness probes instead of racing them.
+            processes =
               let
-                # Anything that can send mail waits for the catcher, so the
-                # first send of a session doesn't hit a closed port.
-                needsMailpit = lib.optionalAttrs mailEnabled {
-                  mailpit.condition = "process_started";
-                };
+                # Anything that can send mail waits for the catcher, so the first
+                # send of a session doesn't hit a closed port.
+                needsMailpit = lib.optional mailEnabled "devenv:processes:mailpit";
+                needsConfig = [ "frappe:config" ];
               in
               {
-                web.depends_on = {
-                  mysql.condition = "process_started";
-                  redis.condition = "process_started";
+                web = {
+                  # --port is ignored when FRAPPE_WEB_SOCKET is set
+                  # (frappe_unixsock rewrites the bind address), but still passed:
+                  # it is the port the site is actually reachable on, and it is
+                  # what `bench serve` logs.
+                  exec = ''
+                    exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}
+                  '';
+                  after = needsConfig ++ [
+                    "devenv:processes:mysql"
+                    "devenv:processes:redis"
+                  ] ++ needsMailpit;
                 }
-                // needsMailpit;
-                scheduler.depends_on = {
-                  mysql.condition = "process_started";
+                # Without nginx out front, the web server owns the public port.
+                // lib.optionalAttrs (!sockets) { ports.main.allocate = webBase; }
+                // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_WEB_SOCKET" "/"; };
+
+                scheduler = {
+                  exec = ''
+                    exec ${pythonEnvs.devPythonEnv}/bin/bench schedule
+                  '';
+                  after = [
+                    "devenv:processes:mysql"
+                    # The scheduler enqueues; it has always needed redis and never
+                    # declared it.
+                    "devenv:processes:redis"
+                  ] ++ needsMailpit;
+                };
+
+                worker = {
+                  exec = ''
+                    exec ${pythonEnvs.devPythonEnv}/bin/bench worker
+                  '';
+                  after = [
+                    "devenv:processes:mysql"
+                    "devenv:processes:redis"
+                  ] ++ needsMailpit;
+                };
+
+                socketio = {
+                  # node's server.listen() does not unlink a stale socket, so a
+                  # crashed run would otherwise leave EADDRINUSE behind forever.
+                  # This has to be in exec rather than a task: the manager re-runs
+                  # exec on restart, not the task graph. (werkzeug needs no
+                  # equivalent — it unlinks its own, and the reloader child
+                  # inherits the fd instead of rebinding.)
+                  exec = lib.optionalString sockets ''
+                    rm -f "$FRAPPE_SOCKETIO_UDS"
+                  '' + ''
+                    exec ${cfg.nodejs}/bin/node apps/frappe/socketio.js
+                  '';
+                  after = needsConfig ++ [ "devenv:processes:redis" ];
                 }
-                // needsMailpit;
-                worker.depends_on = {
-                  mysql.condition = "process_started";
-                  redis.condition = "process_started";
+                // lib.optionalAttrs (!sockets) {
+                  ports.main.allocate = 9000 + portOffset;
+                  env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
                 }
-                // needsMailpit;
-                socketio.depends_on.redis.condition = "process_started";
-                watch.depends_on.web.condition = "process_started";
+                // lib.optionalAttrs sockets {
+                  ready = socketReady "$FRAPPE_SOCKETIO_UDS" "/socket.io/";
+                };
+
+                watch = {
+                  exec = ''
+                    exec ${pythonEnvs.devPythonEnv}/bin/bench watch
+                  '';
+                  # After the config task as well as web: apps/wiki's frontend
+                  # imports sites/common_site_config.json, so the file is a vite
+                  # input and rewriting it under a running watcher is a rebuild.
+                  after = needsConfig ++ [ "devenv:processes:web" ];
+                };
+              }
+              // lib.optionalAttrs sockets {
+                nginx = {
+                  ports.main.allocate = webBase;
+                  after = [
+                    "devenv:processes:web"
+                    "devenv:processes:socketio"
+                  ];
+                };
+              }
+              // lib.optionalAttrs mailEnabled {
+                mailpit = {
+                  # Everything that can send mail waits for the catcher, and
+                  # "wait" means @ready — devenv's default — so it needs a probe
+                  # of its own. The UI port is a real check: Mailpit only serves
+                  # it once its listeners are up.
+                  ready.http.get = {
+                    host = mc.host;
+                    port = config.processes.mailpit.ports.ui.value;
+                    path = "/";
+                  };
+                }
+                // lib.optionalAttrs mc.pop3.enable {
+                  ports.pop3.allocate = mailpitPop3Base;
+                };
               };
+
+            # The one writer of the effective ports.
+            #
+            # webserver_port and socketio_port have to reach sites/common_site_config.json
+            # — realtime/utils.js reads webserver_port straight out of the JSON and
+            # node_utils.js has no env override for it, and on the Python side
+            # boot.py copies socketio_port to the browser. Neither can come from
+            # the environment.
+            #
+            # It runs here rather than in enterShell because devenv only enables
+            # the port allocator for `devenv up`; a shell eval would write the
+            # base port while the running nginx used the allocated one.
+            tasks."frappe:config" = {
+              exec = ''
+                set -euo pipefail
+                config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
+                port=${toString webPort}
+
+                ${lib.optionalString mailEnabled ''
+                  # Mailpit's ports come from the allocator too, and devguard
+                  # cannot see them: it is loaded by a .pth in every interpreter,
+                  # including ones started outside this shell. Hand it the
+                  # resolved values here — it prefers them over the baked-in
+                  # base, and falls back to the base (this bench's own range,
+                  # never a shared 1025) when this file is out of reach.
+                  printf '%s\n' ${
+                    lib.escapeShellArg (
+                      builtins.toJSON {
+                        guards.mail = {
+                          port = config.processes.mailpit.ports.smtp.value;
+                          http_port = config.processes.mailpit.ports.ui.value;
+                        }
+                        // lib.optionalAttrs mc.pop3.enable {
+                          pop3_port = config.processes.mailpit.ports.pop3.value;
+                        };
+                      }
+                    )
+                  } > "$DEVENV_RUNTIME/devguard-runtime.json"
+                ''}
+
+                [ -f "$config" ] || echo '{}' > "$config"
+
+                tmp="$(mktemp)"
+                ${pkgs.jq}/bin/jq --argjson port "$port" '
+                  .webserver_port = $port
+                  | .socketio_port = $port
+                  # Transport keys the shell now owns through the environment.
+                  # Left in place they are a trap: a stale redis://localhost:13000
+                  # here is another project'"'"'s Redis, and it would be used by
+                  # anything that reads the config without inheriting our env.
+                  # They cannot simply be corrected in place either — the socket
+                  # paths live under $DEVENV_RUNTIME, which is a hash of the
+                  # project directory and so differs in every clone.
+                  | del(.redis_cache, .redis_queue, .redis_socketio,
+                        .db_host, .db_port,
+                        .file_watcher_port)
+                ' "$config" > "$tmp"
+
+                # Compare before writing. The port is derived from benchName, so
+                # after the first run this is a no-op and the committed file stays
+                # clean; a diff later means the allocator genuinely had to move.
+                if cmp -s "$tmp" "$config"; then
+                  rm -f "$tmp"
+                  exit 0
+                fi
+
+                echo "frappe-nix: serving on http://127.0.0.1:$port (updating sites/common_site_config.json)"
+                mv "$tmp" "$config"
+
+                # boot.py copies socketio_port into bootinfo and sessions.py
+                # caches the whole bootinfo in redis, which survives restarts in
+                # $DEVENV_STATE. Without this every already-logged-in browser
+                # keeps dialling the old port, with no symptom but a socket.io
+                # connect failure.
+                keys="$(${redisCli} --scan --pattern '*bootinfo*' 2>/dev/null || true)"
+                if [ -n "$keys" ]; then
+                  echo "$keys" | while read -r key; do
+                    [ -z "$key" ] || ${redisCli} del "$key" > /dev/null
+                  done
+                  echo "frappe-nix: cleared cached bootinfo so browsers pick up the new port"
+                fi
+
+                # apps/wiki's frontend imports socketio_port from this file at
+                # *build* time, so its bundle still points at the old port.
+                echo "frappe-nix: if you use the wiki SPA, run 'bench build --app wiki'"
+              '';
+              # Needs redis up to clear the cache, and must land before anything
+              # reads the config — including `watch`, since the file is a vite
+              # input for wiki.
+              after = [ "devenv:processes:redis" ];
+            };
 
             scripts = scripts // cfg.extraScripts;
           };
