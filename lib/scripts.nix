@@ -10,6 +10,10 @@
   # Absolute path to the real bench CLI (devPythonEnv/bin/bench). The umbrella
   # `bench` wrapper and the re-entrancy guard use it to reach the unwrapped bench.
   benchBin ? "bench",
+  # lib/secrets-tools.nix. `enabled = false` when the bench declares no secrets,
+  # in which case the secret scripts are omitted entirely rather than shipped as
+  # stubs that fail late.
+  secrets ? { enabled = false; },
 }:
 
 let
@@ -42,8 +46,96 @@ let
   addToAppsTxt = ''
     ${workspaceBin} apps-txt --file sites/apps.txt --add "$APP_NAME"
   '';
+
+  # ── secrets ───────────────────────────────────────────────────────────────
+  # Only defined when the bench declares secrets; merged in below. They live
+  # here, with every other script, rather than being contributed separately from
+  # modules/secrets.nix — modules/devenv.nix assigns `scripts` wholesale as
+  # `scripts // cfg.extraScripts`, so a second module defining the same
+  # attribute would turn a consumer's `extraScripts.edit-secret` into a
+  # *conflict* instead of the documented override.
+  secretNames = lib.concatMapStringsSep "\n" (s: "  ${s.name}") (secrets.names or [ ]);
+
+  secretScripts = lib.optionalAttrs (secrets.enabled or false) {
+    edit-secret.exec = ''
+      set -euo pipefail
+      cd "$FRAPPE_BENCH_ROOT"
+
+      if [ -z "''${1:-}" ] || [ "''${1:-}" = "--help" ] || [ "''${1:-}" = "-h" ]; then
+        cat <<'EOF'
+      Usage: edit-secret <name> [identity-file]
+
+      Decrypts a secret into $EDITOR and re-encrypts it to the recipients
+      declared in flake.nix. Creates it if it does not exist.
+
+      Declared secrets:
+      ${secretNames}
+
+      The recipient list is generated from `frappe-nix.secrets.recipients`, so
+      there is no secrets.nix to keep in step. After changing that list, run
+      `rekey-secrets`.
+      EOF
+        exit 0
+      fi
+
+      REL="${secrets.relDir}/$1.age"
+      shift
+
+      # RULES is how agenix finds the recipients. Pointing it at the generated
+      # store file is what removes the committed rules file — and with it the
+      # whole class of "the rules changed but the ciphertext did not".
+      export RULES=${secrets.rulesFile}
+
+      if [ -n "''${1:-}" ]; then
+        ${lib.getExe' secrets.cli "agenix"} -e "$REL" -i "$1"
+      else
+        ${lib.getExe' secrets.cli "agenix"} -e "$REL"
+      fi
+
+      # A new .age is untracked, and a flake's source tree is only its tracked
+      # files — so an untracked secret is invisible to the build and the next
+      # `direnv reload` reports it missing. Stage it now rather than letting
+      # that happen.
+      if ! git ls-files --error-unmatch -- "$REL" >/dev/null 2>&1; then
+        git add -- "$REL"
+        echo "staged new secret $REL (age ciphertext is meant to be committed)"
+      fi
+
+      ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check ${secrets.rulesJSON} --root .
+    '';
+
+    rekey-secrets.exec = ''
+      set -euo pipefail
+      cd "$FRAPPE_BENCH_ROOT"
+
+      echo "Re-encrypting every declared secret to the current recipient list…"
+      echo "(you need to be able to decrypt them, so this cannot run in CI)"
+      echo
+
+      export RULES=${secrets.rulesFile}
+      ${lib.getExe' secrets.cli "agenix"} -r
+
+      echo
+      ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check ${secrets.rulesJSON} --root .
+      echo
+      echo "Commit the changed .age files — until you do, the recipient list in"
+      echo "flake.nix and the ciphertext on the branch disagree."
+    '';
+
+    check-secrets.exec = ''
+      set -euo pipefail
+      cd "$FRAPPE_BENCH_ROOT"
+      if [ -n "''${1:-}" ]; then
+        exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} explain \
+          ${secrets.rulesJSON} "$1" --root .
+      fi
+      exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check \
+        ${secrets.rulesJSON} --root .
+    '';
+  };
 in
-{
+secretScripts
+// {
   # Umbrella wrapper: shadows devPythonEnv/bin/bench (devenv wraps scripts with
   # hiPrioSet, so this wins on PATH) and transparently redirects the subcommands
   # that need frappe-nix handling, passing everything else through to the real
