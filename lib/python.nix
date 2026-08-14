@@ -74,6 +74,18 @@ let
         ]
       );
 
+  # Turn a stale uv.lock into a sentence instead of an "attribute 'x' missing"
+  # deep inside uv2nix's resolver. Membership is tested against `pythonSet`
+  # because that is precisely the set resolvers.nix indexes.
+  lockAudit = import ./lock-audit.nix { inherit lib; } {
+    inherit workspaceRoot rootPyproject;
+    hasPackage = name: pythonSet ? ${name};
+  };
+
+  # Wraps both virtualenvs: every consumer — the dev shell, benchRoot, the
+  # containers, the NixOS module — reaches uv2nix's resolver through one of them.
+  assertLockCurrent = env: if lockAudit.missing == [ ] then env else throw lockAudit.message;
+
   # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap,
   # so the interpreter runs them at startup — *below* the Frappe app layer, and
   # without an app install or a site_config.json edit.
@@ -127,9 +139,11 @@ let
       });
 
   # Production: workspace members + runtime deps, no dev tools
-  prodPythonEnv = withGrafts "prod" (
-    pythonSet.mkVirtualEnv "${benchName}-bench-prod-env" (
-      lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
+  prodPythonEnv = assertLockCurrent (
+    withGrafts "prod" (
+      pythonSet.mkVirtualEnv "${benchName}-bench-prod-env" (
+        lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
+      )
     )
   );
 
@@ -160,7 +174,7 @@ let
   # Development: the guards (frappe_devguard) plus the socket corrections
   # (frappe_unixsock). See graftFor above for why only one of those two is also
   # in prodPythonEnv.
-  devPythonEnv = withGrafts "dev" baseDevPythonEnv;
+  devPythonEnv = assertLockCurrent (withGrafts "dev" baseDevPythonEnv);
 
 in
 {

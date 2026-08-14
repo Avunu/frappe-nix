@@ -1,0 +1,14 @@
+[project]
+name = "alpha"
+version = "0.0.1"
+dependencies = [
+    "json-repair>=0.30",
+    "requests",
+    "zope.interface>=5",
+    "Pillow_SIMD",
+    "win-only-gap; sys_platform == 'win32'",
+    "url-gap @ https://example.com/url_gap-1.0-py3-none-any.whl",
+]
+
+[project.optional-dependencies]
+extras = ["optional-gap>=2"]
