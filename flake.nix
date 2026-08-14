@@ -106,6 +106,17 @@
             chmod -R u+w ./unixsock
             ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
           '';
+
+          # Also Frappe-independent: a fixture stands in for the patch list
+          # frappe-bench ships, and the assertions are about what the reconcile
+          # leaves in the bench root's patches.txt.
+          bench-patches = pkgs.runCommand "frappe-nix-bench-patches-check" {
+            nativeBuildInputs = [ pkgs.findutils ];
+          } ''
+            bash ${./tests/bench-patches.sh} \
+              ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
+              2>&1 | tee "$out"
+          '';
         }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
         # is cheap enough to gate PRs on.
