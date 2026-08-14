@@ -219,6 +219,12 @@ When `frappe-nix.enable` is set, the module adds these **packages** to your flak
 | `devPythonEnv` | Development virtualenv — adds dev groups + editable installs of `apps/*`. |
 | `benchRoot` | The unbuilt `/bench` tree (apps + node_modules + Python env + site/config). Used by the dev path and as input to `builtBench`. |
 
+and one **app** (`nix run .#<name>`):
+
+| App | What it does |
+| --- | --- |
+| `relock` | `uv lock` in the bench root, from a uv that does not come from the workspace. See [stale `uv.lock`](#a-stale-uvlock-is-an-evaluation-error) — it exists for the case where the shell that carries `uv` is what refuses to open. |
+
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}` so
 the NixOS module and containers can discover interpreters from the package itself —
 no separate `pythonEnv`/`nodejs` options needed.
@@ -455,6 +461,35 @@ entry, non-destructively, and silently unless it changes something. See
 [`lib/bench-patches.nix`](lib/bench-patches.nix) for why *every* patch is recorded as done
 rather than only the two that cannot import.
 
+### A stale `uv.lock` is an evaluation error
+
+`apps/*` are git submodules and `uv.lock` is a committed, resolved snapshot of what
+they all declare. Move an app to a commit whose `pyproject.toml` gained a dependency
+and the two disagree — uv2nix then looks up a name the lock never recorded, and the
+bench fails to **evaluate**:
+
+```
+error: attribute 'json-repair' missing
+at …/uv2nix/build/lib/resolvers.nix:123:23
+```
+
+Three things keep that from being a puzzle:
+
+- **`bench-update --pull` re-locks.** It already refreshed `node-offline-hashes.json`
+  for every app whose `yarn.lock` moved; it now runs `uv lock` when any app's
+  `pyproject.toml` moved, so the pull that causes the drift also resolves it. Commit
+  `uv.lock` with the submodule bumps.
+- **The error says so.** Before uv2nix resolves anything, frappe-nix audits every
+  declared requirement against the set the resolver will index
+  ([`lib/lock-audit.nix`](lib/lock-audit.nix)) and names the app, the requirement and
+  the fix. Marker-gated and direct-URL requirements are left alone — they can sit
+  outside a resolution legitimately, and a false alarm would be worse than the raw
+  error it replaces.
+- **`nix run .#relock` works when nothing else does.** This class of failure blocks
+  evaluation, so the dev shell that carries `uv` is exactly what you cannot open. The
+  `relock` app is deliberately outside every other output's dependency graph and
+  takes its `uv` from nixpkgs, so it still runs.
+
 ### Bench scripts
 
 These back the wrapper and are also callable directly:
@@ -462,7 +497,7 @@ These back the wrapper and are also callable directly:
 | Script | Description |
 | --- | --- |
 | `provision-site [admin-pass]` | Create `$FRAPPE_SITE` and install every app from `sites/apps.txt`. |
-| `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also refreshes `node-offline-hashes.json` for changed apps. |
+| `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also re-locks the workspace (`uv lock`) and refreshes `node-offline-hashes.json` for the apps whose lock files moved. |
 | `bench-migrate` / `bench-build` / `bench-clear-cache` / `bench-console` | Thin `bench` wrappers honoring `$FRAPPE_SITE`. |
 | `bench-restore <sql> [opts]` | Restore the site from a SQL backup. |
 | `bench-get-app <url\|alias>` | Add an app as a git submodule + register it in the uv workspace. `helpdesk` → `frappe/helpdesk`; `owner/repo` and full URLs also work. |
@@ -685,6 +720,7 @@ frappe-nix/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
 │   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
+│   ├── lock-audit.nix        # names a stale uv.lock before uv2nix trips over it
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
 │   ├── devguard/             # frappe_devguard — guards against reaching production
 │   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)

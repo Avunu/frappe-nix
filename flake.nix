@@ -118,6 +118,8 @@
               2>&1 | tee "$out"
           '';
         }
+        # The stale-uv.lock preflight, over a fixture workspace.
+        // import ./tests/lock-audit.nix { inherit pkgs; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
         # is cheap enough to gate PRs on.
         // import ./tests/migrate-classic.nix {

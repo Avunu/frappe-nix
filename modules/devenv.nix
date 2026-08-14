@@ -659,6 +659,26 @@ in
         # upstream hole it fills.
         benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
 
+        # `nix run .#relock` — the way out of a stale uv.lock.
+        #
+        # A stale lock fails at *evaluation*, so the dev shell that carries `uv`
+        # is exactly what you cannot open; without this the fix needs a uv from
+        # somewhere else entirely. nixpkgs' uv rather than the workspace's own
+        # because the workspace's lives in the virtualenv that will not build.
+        relockTool = pkgs.writeShellApplication {
+          name = "frappe-nix-relock";
+          runtimeInputs = [ pkgs.uv ];
+          text = ''
+            if [ ! -f pyproject.toml ] || [ ! -d apps ]; then
+              echo "frappe-nix-relock: run this from the bench root (pyproject.toml + apps/)" >&2
+              exit 1
+            fi
+            echo "Re-locking the Python workspace with $(uv --version)…"
+            uv lock "$@"
+            echo "✅ uv.lock updated — commit it, then re-enter the shell."
+          '';
+        };
+
         # The patch list frappe-bench ships. Resolved from the interpreter's own
         # sitePackages rather than globbed at runtime, so a python bump moves
         # this path loudly instead of silently turning the reconcile into a
@@ -676,6 +696,13 @@ in
         # Production-ready bench with compiled assets + passthru interpreters.
         packages.builtBench = benchInfra.builtBench;
         packages.default = benchInfra.builtBench;
+
+        # Deliberately outside every other output's dependency graph: it has to
+        # evaluate when nothing that touches the Python workspace can.
+        apps.relock = {
+          type = "app";
+          program = "${relockTool}/bin/frappe-nix-relock";
+        };
 
         devenv.shells.default =
           { config, pkgs, ... }:

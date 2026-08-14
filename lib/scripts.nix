@@ -164,10 +164,14 @@ in
 
     if $PULL; then
       echo "── Pulling latest commits for all app submodules ────────────"
-      declare -A _before_lock
+      declare -A _before_lock _before_py
       for lock in apps/*/yarn.lock; do
         [ -e "$lock" ] || continue
         _before_lock["$lock"]=$(git hash-object "$lock" 2>/dev/null || echo none)
+      done
+      for pp in apps/*/pyproject.toml; do
+        [ -e "$pp" ] || continue
+        _before_py["$pp"]=$(git hash-object "$pp" 2>/dev/null || echo none)
       done
 
       git submodule foreach '
@@ -214,6 +218,31 @@ in
       done
       _regen_hashes "''${changed[@]}"
       echo ""
+
+      # Re-lock when an app's pyproject.toml moved. The Python half of this used
+      # to be missing while the Node half above was not, and the asymmetry is
+      # what made a stale uv.lock the routine outcome of a pull: an app that
+      # declares a new dependency leaves uv2nix resolving a name that is in no
+      # lock, which fails at *evaluation* — so the next shell entry breaks rather
+      # than the update that caused it. Do it here, where the cause is on screen.
+      py_changed=()
+      for pp in apps/*/pyproject.toml; do
+        [ -e "$pp" ] || continue
+        if [ "''${_before_py["$pp"]:-none}" != "$(git hash-object "$pp" 2>/dev/null || echo none)" ]; then
+          py_changed+=("$(basename "$(dirname "$pp")")")
+        fi
+      done
+      if [ ''${#py_changed[@]} -gt 0 ]; then
+        echo "── Re-locking the Python workspace (pyproject.toml changed:$(printf ' %s' "''${py_changed[@]}")) ──"
+        if ! uv lock; then
+          echo "  ⚠  uv lock failed — the dev shell will not evaluate until this resolves." >&2
+          echo "     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;" >&2
+          echo "     for one against [dependency-groups], relax the pin there. Then re-run 'uv lock'." >&2
+          exit 1
+        fi
+        echo "  commit uv.lock along with the submodule bumps"
+        echo ""
+      fi
     fi
 
     if $FORCE_NODE_HASHES; then

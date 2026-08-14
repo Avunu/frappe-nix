@@ -1,0 +1,21 @@
+# Fixture bench root for the lib/lock-audit.nix check. Not a real workspace —
+# nothing resolves it; only its declarations are read.
+[project]
+name = "fixture-bench"
+version = "0.1.0"
+dependencies = [
+    "frappe-bench>=5.29.0",
+    "setuptools",
+    "root-only-gap>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    { include-group = "extra" },
+]
+extra = ["pytest"]
+
+[tool.uv.workspace]
+# A glob and a literal path, so both expansions are exercised.
+members = ["apps/*", "vendor/legacy", "apps/gone"]
