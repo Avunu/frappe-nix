@@ -161,6 +161,16 @@
             mv "$SITE_DIR/site_config.json.tmp2" "$SITE_DIR/site_config.json.tmp"
           fi
 
+          # Likewise the realtime socket. node_utils.js reads FRAPPE_SOCKETIO_UDS
+          # directly, so this is only for anything that reads the config instead
+          # — but it keeps the two in step, and a socketio container sharing a
+          # volume with nginx needs no published port at all.
+          if [ -n "''${FRAPPE_SOCKETIO_UDS:-}" ]; then
+            ${pkgs.jq}/bin/jq --arg s "$FRAPPE_SOCKETIO_UDS" '. + {socketio_uds: $s}' \
+              "$SITE_DIR/site_config.json.tmp" > "$SITE_DIR/site_config.json.tmp2"
+            mv "$SITE_DIR/site_config.json.tmp2" "$SITE_DIR/site_config.json.tmp"
+          fi
+
           mv "$SITE_DIR/site_config.json.tmp" "$SITE_DIR/site_config.json"
           chmod 0600 "$SITE_DIR/site_config.json"
 

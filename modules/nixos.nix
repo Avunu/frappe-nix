@@ -113,6 +113,16 @@ let
 
       FRAPPE_SOCKETIO_PORT = toString siteCfg.socketio.port;
     }
+    // optionalAttrs (siteCfg.socketio.socketPath != "") {
+      # realtime/index.js does `server.listen(uds || port)`, so this wins.
+      FRAPPE_SOCKETIO_UDS = siteCfg.socketio.socketPath;
+    }
+    // optionalAttrs (siteCfg.web.socketPath != "") {
+      # Read by frappe_unixsock. gunicorn takes --bind unix: natively and does
+      # not need it, but a `bench serve` run by hand on this host would
+      # otherwise open a surprise port on 0.0.0.0.
+      FRAPPE_WEB_SOCKET = siteCfg.web.socketPath;
+    }
     // optionalAttrs (siteCfg.database.socket != "") {
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
     }
@@ -203,6 +213,12 @@ let
         redis_queue = siteCfg.redis.queueUrl;
         redis_socketio = siteCfg.redis.socketioUrl;
         socketio_port = siteCfg.socketio.port;
+      }
+      // optionalAttrs (siteCfg.socketio.socketPath != "") {
+        # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
+        # merges this file too, so the realtime server still finds the socket if
+        # it is ever started outside the unit.
+        socketio_uds = siteCfg.socketio.socketPath;
       }
       // optionalAttrs (siteCfg.database.socket != "") {
         db_socket = siteCfg.database.socket;
@@ -681,6 +697,7 @@ let
   # nginx upstream names are used as a host in proxy_pass, so a site's FQDN has
   # to be flattened to keep it unambiguous.
   upstreamName = name: "frappe-web-${lib.replaceStrings [ "." ] [ "_" ] name}";
+  socketioUpstreamName = name: "frappe-socketio-${lib.replaceStrings [ "." ] [ "_" ] name}";
 
   # Per-site nginx virtualHost config.
   mkSiteNginxVhost = name: siteCfg:
@@ -693,6 +710,12 @@ let
           "http://${upstreamName name}"
         else
           "http://127.0.0.1:${toString siteCfg.web.port}";
+
+      socketioUpstream =
+        if siteCfg.socketio.socketPath != "" then
+          "http://${socketioUpstreamName name}"
+        else
+          "http://127.0.0.1:${toString siteCfg.socketio.port}";
 
       # Over a unix socket $scheme is "http", but TLS was terminated at the edge
       # in front of us, so the public scheme is https.
@@ -743,7 +766,7 @@ let
           '';
         };
         "/socket.io" = {
-          proxyPass = "http://127.0.0.1:${toString siteCfg.socketio.port}";
+          proxyPass = socketioUpstream;
           proxyWebsockets = true;
           recommendedProxySettings = !viaSocket;
           extraConfig = ''
@@ -804,7 +827,29 @@ let
       socketio.port = mkOption {
         type = types.port;
         default = 9000;
-        description = "SocketIO listen port for this site.";
+        description = "SocketIO listen port for this site (ignored when socketio.socketPath is set).";
+      };
+
+      socketio.socketPath = mkOption {
+        type = types.str;
+        default = "";
+        example = "/run/frappe-mysite/socketio.sock";
+        description = ''
+          Unix socket for the realtime server, the counterpart of web.socketPath.
+          When set, socketio.port is unused and the site has no TCP listener on
+          9000 at all — nginx reaches it through a generated upstream block.
+
+          Frappe reads this as `socketio_uds`; support landed in v15.46 and every
+          v16, so an older bench must leave this empty.
+
+          The same directory rules as web.socketPath apply: access is governed by
+          the socket's directory, so give it its own.
+
+          Note this does not remove nginx's loopback :80 listener in socket mode.
+          That is there because the realtime server validates sessions by making
+          an HTTP request back to the site's own FQDN, and node's fetch cannot
+          speak unix — so the callback still needs a TCP way in.
+        '';
       };
 
       database = {
@@ -1032,6 +1077,7 @@ in
         let
           paths = filterAttrs (_: p: p != "") {
             "web.socketPath" = siteCfg.web.socketPath;
+            "socketio.socketPath" = siteCfg.socketio.socketPath;
             "nginx.socketPath" = siteCfg.nginx.socketPath;
           };
         in
@@ -1080,6 +1126,7 @@ in
           map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -")
             (lib.filter (p: p != "") [
               siteCfg.web.socketPath
+              siteCfg.socketio.socketPath
               siteCfg.nginx.socketPath
             ]))
           (builtins.attrValues enabledSites));
@@ -1135,12 +1182,18 @@ in
         recommendedProxySettings = true;
         recommendedGzipSettings = true;
 
-        # One upstream per site whose gunicorn listens on a unix socket.
-        upstreams = lib.mapAttrs' (name: siteCfg:
-          nameValuePair (upstreamName name) {
-            servers."unix:${siteCfg.web.socketPath}" = { };
-          })
-          (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites);
+        # One upstream per site process that listens on a unix socket.
+        upstreams =
+          lib.mapAttrs' (name: siteCfg:
+            nameValuePair (upstreamName name) {
+              servers."unix:${siteCfg.web.socketPath}" = { };
+            })
+            (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites)
+          // lib.mapAttrs' (name: siteCfg:
+            nameValuePair (socketioUpstreamName name) {
+              servers."unix:${siteCfg.socketio.socketPath}" = { };
+            })
+            (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites);
 
         virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg)
           (filterAttrs (_: s: s.nginx.enable) enabledSites);

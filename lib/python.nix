@@ -29,6 +29,9 @@
   # Derivation containing a `frappe_devguard/` package to graft into the
   # development virtualenv, or null. See lib/devguard.
   devguard ? null,
+  # Derivation containing a `frappe_unixsock/` package to graft into *both*
+  # virtualenvs, or null. See lib/unixsock.
+  unixsock ? null,
 }:
 
 let
@@ -71,9 +74,63 @@ let
         ]
       );
 
+  # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap,
+  # so the interpreter runs them at startup — *below* the Frappe app layer, and
+  # without an app install or a site_config.json edit.
+  #
+  # Grafted rather than put on PYTHONPATH because `apps/*` reach sys.path through
+  # uv2nix's editable `.pth` files inside the same venv: an interpreter started
+  # outside the devenv environment (an editor terminal, `nix run`, CI, a stray
+  # `sudo -u`) still imports Frappe, and would otherwise run unpatched.
+  #
+  # `zzz-` orders them last. install() is called from the `.pth` line rather than
+  # the package body so that importing a single submodule cannot re-enter a
+  # partially initialised package.
+  graftFor =
+    kind:
+    # frappe_devguard is DEVELOPMENT ONLY, by construction: it stops a dev bench
+    # reaching production services, so reaching production is exactly what it
+    # must never be able to do. Do not add it to the prod list.
+    lib.optional (kind == "dev" && devguard != null) {
+      src = devguard;
+      module = "frappe_devguard";
+    }
+    # frappe_unixsock ships to BOTH, deliberately. It carries no policy — only
+    # transport corrections for sockets Frappe half-supports — and a socket-mode
+    # deployment needs them precisely because it is production. It shares no code
+    # with devguard, so this does not weaken the rule above.
+    ++ lib.optional (unixsock != null) {
+      src = unixsock;
+      module = "frappe_unixsock";
+    };
+
+  withGrafts =
+    kind: env:
+    let
+      grafts = graftFor kind;
+    in
+    if grafts == [ ] then
+      env
+    else
+      # postInstall, not postBuild: mkVirtualEnv sets dontBuild and creates the
+      # tree from pyprojectMakeVenvHook's installPhase.
+      env.overrideAttrs (old: {
+        postInstall =
+          (old.postInstall or "")
+          + lib.concatMapStrings (graft: ''
+            cp -r ${graft.src}/${graft.module} "$out/${python.sitePackages}/"
+            printf 'import %s; %s.install()\n' ${graft.module} ${graft.module} \
+              > "$out/${python.sitePackages}/zzz-${
+                lib.replaceStrings [ "_" ] [ "-" ] graft.module
+              }.pth"
+          '') grafts;
+      });
+
   # Production: workspace members + runtime deps, no dev tools
-  prodPythonEnv = pythonSet.mkVirtualEnv "${benchName}-bench-prod-env" (
-    lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
+  prodPythonEnv = withGrafts "prod" (
+    pythonSet.mkVirtualEnv "${benchName}-bench-prod-env" (
+      lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
+    )
   );
 
   # Development: adds editable overlay so workspace packages resolve from source
@@ -100,31 +157,10 @@ let
     // rootDevDepsAttr
   );
 
-  # The guards are grafted into the virtualenv rather than put on
-  # PYTHONPATH: `apps/*` reach sys.path through the editable `.pth` files
-  # installed here, so an interpreter started without the devenv environment
-  # (an editor terminal, `nix run`, CI) still imports Frappe — and would send
-  # mail for real if the interception hung off PYTHONPATH.
-  #
-  # Development only. prodPythonEnv never sees this, so the interception code
-  # cannot reach production by construction.
-  devPythonEnv =
-    if devguard == null then
-      baseDevPythonEnv
-    else
-      # postInstall, not postBuild: mkVirtualEnv sets dontBuild and creates the
-      # tree from pyprojectMakeVenvHook's installPhase.
-      baseDevPythonEnv.overrideAttrs (old: {
-        postInstall = (old.postInstall or "") + ''
-          cp -r ${devguard}/frappe_devguard "$out/${python.sitePackages}/"
-          # `.pth` lines starting with `import` are executed by site.py during
-          # interpreter startup, before any user code runs. install() is called
-          # here rather than from the package body so that importing a single
-          # guard module cannot re-enter a partially initialised package.
-          printf 'import frappe_devguard; frappe_devguard.install()\n' \
-            > "$out/${python.sitePackages}/zzz-frappe-devguard.pth"
-        '';
-      });
+  # Development: the guards (frappe_devguard) plus the socket corrections
+  # (frappe_unixsock). See graftFor above for why only one of those two is also
+  # in prodPythonEnv.
+  devPythonEnv = withGrafts "dev" baseDevPythonEnv;
 
 in
 {

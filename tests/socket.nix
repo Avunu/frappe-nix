@@ -1,5 +1,5 @@
 # NixOS VM test for unix-socket mode (sites.<name>.nginx.socketPath +
-# sites.<name>.web.socketPath).
+# sites.<name>.web.socketPath + sites.<name>.socketio.socketPath).
 #
 # Frappe itself is out of scope — like migrate-rollback.nix this stubs the bench.
 # What is under test is the request path this module generates:
@@ -85,7 +85,26 @@ let
       fakeGunicorn
     ];
   };
-  stubNode = pkgs.writeShellScriptBin "node" "exec sleep infinity";
+  # The realtime server reads socketio_uds and does `server.listen(uds || port)`.
+  # Stub that: bind the socket so the test can prove nothing reached TCP 9000.
+  stubNode = pkgs.writeShellScriptBin "node" ''
+    if [ -n "''${FRAPPE_SOCKETIO_UDS:-}" ]; then
+      exec ${pkgs.python3}/bin/python3 -c '
+    import os, socket, sys
+    path = os.environ["FRAPPE_SOCKETIO_UDS"]
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(path)
+    s.listen(8)
+    while True:
+        s.accept()[0].close()
+    '
+    fi
+    exec sleep infinity
+  '';
 
   stubBench =
     pkgs.runCommand "stub-bench"
@@ -114,6 +133,7 @@ in
     {
       imports = [ self.nixosModules.default ];
       virtualisation.memorySize = 2048;
+      environment.systemPackages = [ pkgs.jq ];
 
       services.frappe = {
         enable = true;
@@ -124,6 +144,7 @@ in
           nginx.enable = true;
           nginx.socketPath = "${sockDir}/nginx.sock";
           web.socketPath = "${sockDir}/web.sock";
+          socketio.socketPath = "${sockDir}/socketio.sock";
         };
       };
     };
@@ -134,8 +155,10 @@ in
     start_all()
     machine.wait_for_unit("nginx.service")
     machine.wait_for_unit("frappe-web-${siteName}.service")
+    machine.wait_for_unit("frappe-socketio-${siteName}.service")
     machine.wait_for_file("${sockDir}/web.sock")
     machine.wait_for_file("${sockDir}/nginx.sock")
+    machine.wait_for_file("${sockDir}/socketio.sock")
 
     # The directory is the access gate — both sockets are permissive by design
     # (nginx chmods its own to 0666; gunicorn's follows its umask). 0770 rather
@@ -159,12 +182,22 @@ in
     # The site name header the module injects still arrives.
     assert hdrs["x-frappe-site-name"] == "${siteName}", hdrs
 
+    # socketio_uds reached the config as well as the unit environment, so the
+    # realtime server finds the socket even started outside its unit.
+    machine.succeed(
+        "jq -e '.socketio_uds == \"${sockDir}/socketio.sock\"'"
+        " /var/lib/frappe/${siteName}/sites/${siteName}/site_config.json"
+    )
+
     # The loopback listener is intentional (socketio's session-validation
-    # callback resolves the site FQDN to 127.0.0.1) but must not be public.
+    # callback resolves the site FQDN to 127.0.0.1, and node's fetch cannot
+    # speak unix) but must not be public.
     machine.succeed("ss -HltnO | grep -qE '127\\.0\\.0\\.1:80\\s'")
     machine.fail("ss -HltnO | grep -qE '(0\\.0\\.0\\.0|\\*):80\\s'")
 
-    # gunicorn is not on TCP at all in this mode.
+    # Neither gunicorn nor the realtime server is on TCP in this mode: the
+    # loopback :80 above is the only listener the site has.
     machine.fail("ss -HltnO | grep -qE ':8000\\s'")
+    machine.fail("ss -HltnO | grep -qE ':9000\\s'")
   '';
 }

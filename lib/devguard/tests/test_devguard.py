@@ -124,6 +124,56 @@ check("settings read from env", frappe_devguard.settings().mail_port == SMTP_POR
 check("mail guard enabled by default", frappe_devguard.settings().guard_enabled("mail"))
 check("incoming blocked by default", frappe_devguard.settings().block_incoming)
 
+# The runtime file carries Mailpit's *allocated* ports, which only `devenv up`
+# knows. It has to sit below env (so a single command can still be re-pointed)
+# and above baked (so it wins when present) — but crucially it must NOT be the
+# only source, or a bench outside devenv would fall back to the stock 1025 and
+# mail into another project's catcher.
+import json  # noqa: E402
+import tempfile  # noqa: E402
+
+from frappe_devguard import _settings as _dgs  # noqa: E402
+
+_runtime_dir = tempfile.mkdtemp()
+_runtime_file = os.path.join(_runtime_dir, "devguard-runtime.json")
+with open(_runtime_file, "w") as _handle:
+    json.dump({"guards": {"mail": {"port": 24680, "http_port": 24681}}}, _handle)
+
+_saved_port = os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT", None)
+os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
+_dgs._RUNTIME_CACHE.clear()
+check("runtime file supplies the allocated port", frappe_devguard.settings().mail_port == 24680)
+check("runtime file supplies the UI port", frappe_devguard.settings().mail_http_port == 24681)
+check(
+    "settings not in the runtime file still fall through",
+    frappe_devguard.settings().mail_sender == "notifications@example.com",
+)
+
+os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = "24999"
+check("env still outranks the runtime file", frappe_devguard.settings().mail_port == 24999)
+os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT")
+
+os.environ["FRAPPE_DEVGUARD_RUNTIME"] = os.path.join(_runtime_dir, "does-not-exist.json")
+_dgs._RUNTIME_CACHE.clear()
+check(
+    "a missing runtime file falls back rather than raising",
+    frappe_devguard.settings().mail_port == 1025,
+)
+
+with open(_runtime_file, "w") as _handle:
+    _handle.write("{not json")
+os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
+_dgs._RUNTIME_CACHE.clear()
+check(
+    "an unreadable runtime file falls back rather than raising",
+    frappe_devguard.settings().mail_port == 1025,
+)
+
+os.environ.pop("FRAPPE_DEVGUARD_RUNTIME")
+_dgs._RUNTIME_CACHE.clear()
+if _saved_port is not None:
+    os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = _saved_port
+
 
 # --------------------------------------------------------------------------
 # SMTP is redirected

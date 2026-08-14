@@ -97,6 +97,15 @@
             chmod -R u+w ./devguard
             ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
           '';
+
+          # Likewise Frappe-independent: stub modules stand in for frappe.app,
+          # frappe.database and werkzeug.serving, and the assertions are about
+          # which address the server was told to bind.
+          unixsock = pkgs.runCommand "frappe-unixsock-check" { } ''
+            cp -r ${./lib/unixsock} ./unixsock
+            chmod -R u+w ./unixsock
+            ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
+          '';
         }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
         # is cheap enough to gate PRs on.

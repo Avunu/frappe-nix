@@ -129,12 +129,32 @@ PY
 then ok "pyproject.toml workspace is complete"; else no "pyproject.toml workspace"; fi
 
 # common_site_config: forced where the runtime demands it, preserved otherwise.
-check "redis_queue forced to :13000" \
-  jq -e '.redis_queue == "redis://localhost:13000"' sites/common_site_config.json
-check "redis_socketio forced to :13000" \
-  jq -e '.redis_socketio == "redis://localhost:13000"' sites/common_site_config.json
+#
+# The redis URLs are dropped rather than rewritten: in the dev shell Redis is on
+# a unix socket under $DEVENV_RUNTIME, whose path is a hash of the project
+# directory and so cannot be committed. FRAPPE_REDIS_* carries it instead.
+check "bench-init's redis_queue is dropped" \
+  jq -e 'has("redis_queue") | not' sites/common_site_config.json
+check "redis_cache is dropped" \
+  jq -e 'has("redis_cache") | not' sites/common_site_config.json
+check "redis_socketio is dropped (nothing reads it any more)" \
+  jq -e 'has("redis_socketio") | not' sites/common_site_config.json
+check "file_watcher_port is dropped (nothing binds it)" \
+  jq -e 'has("file_watcher_port") | not' sites/common_site_config.json
+check "db_host is dropped in favour of the socket" \
+  jq -e 'has("db_host") | not' sites/common_site_config.json
 check "use_redis_auth forced off" \
   jq -e '.use_redis_auth == false' sites/common_site_config.json
+
+# Ports are per-bench so several benches can run at once, and derived from the
+# bench *name* so every clone of one bench agrees — otherwise this committed
+# file would carry a machine-specific value and never stop conflicting.
+# 8662 is 8000 + sha256("bench")[0:4] % 900; keep in step with frappe_web_port
+# in lib/sh/template.sh and portOffsetFor in modules/devenv.nix.
+check "webserver_port is derived from the bench name" \
+  jq -e '.webserver_port == 8662' sites/common_site_config.json
+check "socketio_port matches it, so the browser reaches nginx at one origin" \
+  jq -e '.socketio_port == .webserver_port' sites/common_site_config.json
 check "default_site preserved" \
   jq -e '.default_site == "mysite.local"' sites/common_site_config.json
 check "an unknown user key is preserved" \
@@ -196,6 +216,8 @@ check "--dry-run does not create flake.nix" test '!' -e flake.nix
 check "--dry-run stages nothing" diff -q "$ROOT/drystatus.1" "$ROOT/drystatus.2"
 check "--dry-run does not rewrite the config" \
   jq -e '.redis_queue == "redis://localhost:11000"' sites/common_site_config.json
+check "--dry-run does not renumber the ports" \
+  jq -e '.webserver_port == 8000' sites/common_site_config.json
 
 echo "── guard rails ──────────────────────────────────────────────"
 mkdir -p "$ROOT/junk" && echo x > "$ROOT/junk/a"

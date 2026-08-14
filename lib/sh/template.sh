@@ -107,9 +107,31 @@ verify_not_ignored() {
 
 # ── sites/common_site_config.json ─────────────────────────────────────────
 
-# Forced keys are the ones the devenv shell physically contradicts: it runs a
-# single Redis on 13000 and fixed web/socketio/watcher ports, so a bench that
-# keeps bench-init's 11000/12000 split hangs its workers on connection refusals.
+# Per-bench web port, 8000..8899. Must stay byte-identical to portOffsetFor in
+# modules/devenv.nix — Nix's builtins.hashString "sha256" is the same digest of
+# the same bytes — so a bench scaffolded here is already correct before its
+# first `devenv up` and the shell's config task is a no-op.
+#
+# Derived from the bench *name* rather than its path precisely because this file
+# is committed: a path-derived port would differ in every clone.
+frappe_web_port() {
+  local hex
+  hex="$(printf '%s' "$1" | sha256sum | cut -c1-4)"
+  echo $(( 8000 + 0x$hex % 900 ))
+}
+
+# Forced keys are the ones the devenv shell physically contradicts. Two classes:
+#
+#   - the web/socketio ports, which are per-bench so several benches can run at
+#     once, and which have to live here because realtime/utils.js reads
+#     webserver_port straight out of this JSON with no env override available;
+#   - the redis URLs, which are *deleted* rather than set. In the dev shell Redis
+#     is on a unix socket under $DEVENV_RUNTIME, and that path is a hash of the
+#     project directory — it cannot be committed, because it differs in every
+#     clone. FRAPPE_REDIS_CACHE/_QUEUE carry it instead, and a bench that keeps
+#     bench-init's 11000/12000 split would otherwise hang its workers on
+#     connection refusals.
+#
 # Everything else the bench had is preserved.
 reconcile_common_site_config() {
   local f=sites/common_site_config.json cur='{}' defaults forced tmp
@@ -124,37 +146,45 @@ reconcile_common_site_config() {
     db_host="$(jq -r '.db_host // ""' "$f")"
     case "$db_host" in
       '' | localhost | 127.0.0.1) : ;;
-      *) warn "db_host is '$db_host'; the devenv MariaDB is local — set it to 127.0.0.1 or expect connections to the old host" ;;
+      *) warn "db_host was '$db_host' and has been dropped; the devenv MariaDB is local and reached over the unix socket in FRAPPE_DB_SOCKET" ;;
     esac
   fi
 
+  local web_port
+  web_port="$(frappe_web_port "$name")"
+
   defaults="$(jq -n --arg site "$site" \
-    '{default_site: $site, background_workers: 1, gunicorn_workers: 1, db_host: "127.0.0.1"}')"
-  forced="$(jq -n --argjson keep "$KEEP_DB_ROOT_PW" '
-    {redis_cache: "redis://localhost:13000",
-     redis_queue: "redis://localhost:13000",
-     redis_socketio: "redis://localhost:13000",
-     use_redis_auth: false,
-     webserver_port: 8000,
-     socketio_port: 9000,
-     file_watcher_port: 6787,
+    '{default_site: $site, background_workers: 1, gunicorn_workers: 1}')"
+  forced="$(jq -n --argjson keep "$KEEP_DB_ROOT_PW" --argjson port "$web_port" '
+    {use_redis_auth: false,
+     webserver_port: $port,
+     socketio_port: $port,
      developer_mode: 1,
      live_reload: true,
      serve_default_site: true,
      shallow_clone: true}
     + (if $keep then {} else {mariadb_root_password: ""} end)')"
 
-  # Production-only keys that are actively harmful in a dev bench: host_name and
-  # http_port make Frappe mint absolute URLs pointing at the production host
-  # (in emails, in redirects), and the restart_* hooks try to drive a supervisor
-  # or systemd that is not there. The original is kept as .orig.
+  # Keys that are actively harmful in a dev bench. Two groups:
+  #
+  #   - production-only: host_name and http_port make Frappe mint absolute URLs
+  #     pointing at the production host (in emails, in redirects), and the
+  #     restart_* hooks try to drive a supervisor or systemd that is not there;
+  #   - stale transport: db_host/db_port are superseded by the unix socket in
+  #     FRAPPE_DB_SOCKET, the redis URLs by FRAPPE_REDIS_* (see above), and
+  #     redis_socketio/file_watcher_port are read by nothing at all — realtime
+  #     publishes over redis_queue now, and the file watcher has no listener.
+  #
+  # The original is kept as .orig.
   local dropped
   dropped="$(printf '%s' "$cur" | jq -r '
     [ "host_name", "http_port", "frappe_user",
-      "restart_supervisor_on_update", "restart_systemd_on_update" ]
+      "restart_supervisor_on_update", "restart_systemd_on_update",
+      "db_host", "db_port",
+      "redis_cache", "redis_queue", "redis_socketio", "file_watcher_port" ]
     | map(select(. as $k | $ARGS.named.cur | has($k))) | join(", ")
   ' --argjson cur "$cur")"
-  [ -n "$dropped" ] && info "dropping production-only keys: $dropped"
+  [ -n "$dropped" ] && info "dropping superseded keys: $dropped"
 
   tmp="$(mktemp)"
   # `$d * . * $f` reads as: defaults, overridden by the bench's own file,
@@ -162,7 +192,9 @@ reconcile_common_site_config() {
   printf '%s' "$cur" | jq --argjson d "$defaults" --argjson f "$forced" '
     ($d * . * $f)
     | del(.host_name, .http_port, .frappe_user,
-          .restart_supervisor_on_update, .restart_systemd_on_update)
+          .restart_supervisor_on_update, .restart_systemd_on_update,
+          .db_host, .db_port,
+          .redis_cache, .redis_queue, .redis_socketio, .file_watcher_port)
   ' > "$tmp"
   mkdir -p sites
   if [ -f "$f" ] && cmp -s "$tmp" "$f"; then
