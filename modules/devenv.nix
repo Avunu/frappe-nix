@@ -1,6 +1,12 @@
 # devenv shell module for Frappe bench projects.
 # Configures services, processes, environment, and scripts.
-{
+#
+# `topLevel@` captures the flake-level module arguments so the perSystem body
+# below can reach `topLevel.config.frappe-nix.secrets` — declared in
+# ./secrets.nix, which has to be top-level because agenix-shell's own secret
+# options are. The inner functions rebind `config` to the perSystem config, so
+# the outer one needs a name of its own.
+topLevel@{
   lib,
   flake-parts-lib,
   inputs,
@@ -649,10 +655,21 @@ in
           inherit (pythonEnvs) prodPythonEnv;
         };
 
+        # Declared in modules/secrets.nix, which is top-level because
+        # agenix-shell's own secret options are. Empty when secrets are off.
+        secretsCfg = topLevel.config.frappe-nix.secrets;
+
+        secretsTools = import ../lib/secrets-tools.nix {
+          inherit lib pkgs;
+          cfg = secretsCfg;
+          schema = import ../lib/secrets-schema.nix { inherit lib; };
+        };
+
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
+          secrets = secretsTools;
         };
 
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
@@ -801,6 +818,8 @@ in
                 pv
               ]
               ++ lib.optional mailEnabled pkgs.mailpit
+              # ragenix + the recipient checker, once the bench declares secrets.
+              ++ secretsTools.packages
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 

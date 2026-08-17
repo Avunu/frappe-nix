@@ -28,6 +28,19 @@
       url = "github:dauliac/nix-oci";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Decrypts age secrets into a dev shell. Imported by
+    # modules/flake-module.nix, so consumers do not declare it themselves.
+    #
+    # The agenix *CLI* is deliberately not an input: ryantm/agenix destructures
+    # `darwin` and `home-manager` positionally in its outputs, so they cannot be
+    # `follows = ""`-ed away and would land in every consumer's lock. `ragenix`
+    # is in nixpkgs, is a drop-in (same RULES / -e / -r / -d / -i), and ships an
+    # `agenix` symlink.
+    agenix-shell = {
+      url = "github:aciceri/agenix-shell";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+    };
   };
 
   nixConfig = {
@@ -96,6 +109,23 @@
             cp -r ${./lib/devguard} ./devguard
             chmod -R u+w ./devguard
             ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
+          '';
+
+          # The recipient-drift check, tested against real age ciphertext:
+          # throwaway SSH keys, `rage` encrypts to a subset of them, and the
+          # assertions are about the verdict. No network and no identity of the
+          # builder's — an age header names its recipients in the clear, which
+          # is the whole reason the check can run offline.
+          agecheck = pkgs.runCommand "frappe-nix-agecheck-check" {
+            nativeBuildInputs = [ pkgs.rage pkgs.openssh pkgs.python3 ];
+          } ''
+            cat > agecheck <<EOF
+            #!${pkgs.runtimeShell}
+            exec ${pkgs.python3}/bin/python3 ${./lib/agecheck.py} "\$@"
+            EOF
+            chmod +x agecheck
+            bash ${./tests/agecheck.sh} "$PWD/agecheck" \
+              ${pkgs.rage}/bin/rage ${pkgs.openssh}/bin/ssh-keygen | tee "$out"
           '';
 
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
