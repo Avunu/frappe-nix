@@ -290,7 +290,7 @@ devenv gives each project uniquely, and the ports that remain are per-bench.
 | `nginx` | **TCP `8000` + a hash of `benchName`** — the only port a browser sees |
 | `web` (`bench serve`) | `$DEVENV_RUNTIME/web.sock` |
 | `socketio` (Node) | `$DEVENV_RUNTIME/socketio.sock` |
-| MariaDB | `$DEVENV_RUNTIME/mysql.sock` |
+| MariaDB | `$DEVENV_RUNTIME/mysql.sock` — **and loopback TCP `3306` + the same hash** |
 | Redis (cache + queue) | `$DEVENV_RUNTIME/redis.sock` |
 | Mailpit (SMTP / HTTP / POP3) | TCP `19000` / `20000` / `21000` + the same hash |
 | `scheduler`, `worker`, `watch` | — |
@@ -300,6 +300,16 @@ socket — the same shape [`services.frappe`](#nixos-module--servicesfrappe) use
 in production. `webserver_port` and `socketio_port` in
 `sites/common_site_config.json` are both set to the nginx port, which is what
 lets the browser reach both over one origin.
+
+MariaDB is the one service that keeps a TCP listener, on loopback and on its own
+per-bench port, which `FRAPPE_DB_HOST`/`FRAPPE_DB_PORT` name. Frappe never uses
+it — `db_socket` wins over host/port in `get_connection_settings` — but an app
+that opens its own connection to `frappe.conf.db_host:db_port` does, and with no
+listener of this bench's there it silently reaches whichever *other* bench holds
+3306. Insights' "Site DB" data source is one such app (ibis rewrites host
+`localhost` back to `127.0.0.1`, so libmysqlclient's socket shortcut does not
+save it), and a `bench update` that lands in a neighbour's database fails
+mid-migrate with an access-denied for a user that server has never heard of.
 
 The ports are hashed from `benchName` rather than the project path so that every
 *clone* of a bench derives the same number and the committed
@@ -321,6 +331,15 @@ use more ports and no nginx.
 edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) so
 `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` /
 `yarn.lock` are then consumed declaratively for production builds.
+
+Each app's `node_modules` is a real `yarn install`, not the Nix-built one — nested
+vite frontends (`erpnext/banking`, `hrms/frontend`, `helpdesk/desk`, …) get their
+deps from a postinstall that needs the network. It is skipped for an app whose
+`package.json`/`yarn.lock` — its own and every nested one — are unchanged since the
+last successful install, and re-run when any of them moves. `bench build` re-runs it
+too, and refuses to build if it fails: pull an app that added a dependency, build
+without reinstalling, and what you get is a missing-package error from a vite config
+several apps deep, naming nothing that leads back to the install.
 
 ### Development guard rails
 
@@ -433,12 +452,13 @@ subcommands that need frappe-nix handling — so you just run normal `bench` com
 | You run | Redirected to | Why |
 | --- | --- | --- |
 | `bench update …` | `bench-update` | vanilla update pip-installs / assumes `upstream` remotes |
+| `bench build …` | `bench-build` | brings `node_modules` back in step with the apps first |
 | `bench get-app <url\|alias>` | `bench-get-app` | git submodule + uv workspace instead of pip |
 | `bench new-app <name>` | `bench-new-app` | scaffold + uv workspace (skips the failing pip step) |
 | `bench restore <sql>` | `bench-restore` | injects the MariaDB root credentials |
 | `bench new-site <site>` | real bench + injected `--db-socket`/`--db-root-username root` | non-interactive site creation |
 | `bench migrate` / `console` / `clear-cache` | `bench-*` | inject `--site $FRAPPE_SITE` |
-| everything else (`build`, `serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
+| everything else (`serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
 
 Recursion is avoided with a `_FRAPPE_BENCH_RAW` env guard the specialized scripts export and
 the wrapper checks, so a script's own nested `bench …` calls reach the real CLI — whether you

@@ -147,6 +147,17 @@
               ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
               2>&1 | tee "$out"
           '';
+
+          # Node-independent in the same spirit: a stub yarn stands in for the
+          # install, and the assertions are about when a pulled app is judged to
+          # have outgrown its node_modules.
+          node-modules = pkgs.runCommand "frappe-nix-node-modules-check" {
+            nativeBuildInputs = [ pkgs.findutils ];
+          } ''
+            bash ${./tests/node-modules.sh} \
+              ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
+              2>&1 | tee "$out"
+          '';
         }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }

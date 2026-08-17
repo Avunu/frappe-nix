@@ -14,6 +14,10 @@
   # in which case the secret scripts are omitted entirely rather than shipped as
   # stubs that fail late.
   secrets ? { enabled = false; },
+  # Absolute path to lib/node-modules.nix's tool. Left as a bare name for a
+  # consumer that instantiates this file on its own; the dev shell passes the
+  # store path.
+  nodeModulesBin ? "frappe-nix-node-modules",
 }:
 
 let
@@ -38,6 +42,21 @@ let
   registerWorkspaceMember = ''
     echo "Registering $APP_NAME in pyproject.toml workspace..."
     ${workspaceBin} add-app --pyproject pyproject.toml --app "$APP_NAME"
+  '';
+
+  # Shell snippet: bring every app's node_modules back in step with its
+  # manifests. A no-op when nothing moved, so it is cheap enough to run in front
+  # of every build — which is the point: `bench update` pulls the app commit that
+  # adds a dependency and then builds in the same breath, and only this stands
+  # between those two steps. Expects cwd at the bench root.
+  refreshNodeModules = lib.optionalString (appsWithNode != [ ]) ''
+    ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode}
+  '';
+
+  # The same, downgraded to a warning — for the paths where node_modules is not
+  # what the command is about and a yarn failure should not abort it.
+  refreshNodeModulesSoft = lib.optionalString (appsWithNode != [ ]) ''
+    ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
   '';
 
   # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent. Frappe writes
@@ -148,6 +167,7 @@ secretScripts
     fi
     case "''${1:-}" in
       update)      shift; exec bench-update "$@" ;;
+      build)       shift; exec bench-build "$@" ;;
       get-app)     shift; exec bench-get-app "$@" ;;
       new-app)     shift; exec bench-new-app "$@" ;;
       restore)     shift; exec bench-restore "$@" ;;
@@ -181,8 +201,18 @@ secretScripts
     bench $SITE_FLAG clear-cache "$@"
   '';
 
+  # The one entry point to a build, for `bench build` too — the umbrella wrapper
+  # redirects it here. frappe's esbuild pipeline shells out to each app's own
+  # `yarn build`, so a node_modules that predates the app's current package.json
+  # surfaces as a missing-package error from a vite config, several apps deep,
+  # naming nothing that would lead you back to the install. Refresh first, and
+  # refuse to build if that fails rather than compiling half the assets against
+  # the previous install.
   bench-build.exec = ''
+    set -euo pipefail
     export _FRAPPE_BENCH_RAW=1
+    cd "$FRAPPE_BENCH_ROOT"
+    ${refreshNodeModules}
     bench build "$@"
   '';
 
@@ -335,6 +365,14 @@ secretScripts
         echo "  commit uv.lock along with the submodule bumps"
         echo ""
       fi
+
+      # `--pull` stops here, so this is its only chance to bring node_modules
+      # back in step with what was just pulled. A full update reaches the same
+      # refresh through bench-build below, where a failure is fatal because the
+      # build is what it would break; here it is only a warning.
+      if ! $BUILD; then
+        ${refreshNodeModulesSoft}
+      fi
     fi
 
     if $FORCE_NODE_HASHES; then
@@ -355,7 +393,10 @@ secretScripts
 
     if $BUILD; then
       echo "── Building assets ──────────────────────────────────────────"
-      bench build
+      # bench-build, not `bench build`: _FRAPPE_BENCH_RAW is exported here, so
+      # the latter would go straight to the real bench and skip the
+      # node_modules refresh that the pull above is the whole reason for.
+      bench-build
       echo ""
     fi
 
