@@ -100,10 +100,16 @@ in
               /socket.io to the realtime socket and everything else to the web
               socket — the same shape services.frappe uses in production.
 
-              That leaves exactly one TCP listener per bench (plus Mailpit's,
-              which is Go and has no unix listener). Set false to keep every
-              service on TCP; ports are still allocated dynamically, so benches
-              still do not collide — they just use more ports and no nginx.
+              That leaves one public TCP listener per bench, nginx's. MariaDB
+              also keeps a loopback one on a per-bench port — frappe reaches it
+              over the socket, but an app that opens its own connection to
+              conf.db_host:db_port would otherwise land in a neighbouring
+              bench's database. Mailpit's ports stay too: it is Go and has no
+              unix listener.
+
+              Set false to keep every service on TCP; ports are still allocated
+              dynamically, so benches still do not collide — they just use more
+              ports and no nginx.
 
               Needs frappe >= 15.46 (or any v16), which is where the realtime
               server learned `socketio_uds` and the node redis client learned
@@ -526,6 +532,13 @@ in
         # reservation: it walks forward if something is genuinely in the way.
         webBase = if cfg.ports.base != null then cfg.ports.base else 8000 + portOffset;
 
+        # Per-bench, for the same reason every other port here is: the allocator
+        # that would move a second bench off a taken port only runs under
+        # `devenv up`, so a shared base means two benches both *resolve* to 3306
+        # and whichever answers first wins. See the mysqld settings below for
+        # what connects over TCP at all when the socket is right there.
+        dbBase = 3306 + portOffset;
+
         # These carry the per-bench offset through their option defaults, so a
         # consumer overriding devguard.mail.smtpPort still drives both Mailpit
         # and the address Frappe is redirected to, exactly as before.
@@ -738,6 +751,11 @@ in
             # other users without any per-socket permission work.
             runtime = config.env.DEVENV_RUNTIME;
 
+            # The TCP port devenv settled on for mysqld, starting from dbBase —
+            # the same value it exports as MYSQL_TCP_PORT, so frappe's conf and
+            # every other client agree on where this bench's database is.
+            dbPort = config.processes.mysql.ports.main.value;
+
             mysqlSocket = "${runtime}/mysql.sock";
             redisSocket = "${runtime}/redis.sock";
             socketioSocket = "${runtime}/socketio.sock";
@@ -877,6 +895,17 @@ in
                   ++ cfg.extraLibraryPaths
                 );
               }
+              // {
+                # frappe.db reads neither of these — db_socket is set, and
+                # get_connection_settings drops host/port the moment it is. They
+                # are here for everything that connects to `conf.db_host:db_port`
+                # on its own (Insights' "Site DB", any app handed a data source),
+                # which otherwise inherits frappe/config.py's 127.0.0.1:3306
+                # default and lands in whichever bench happens to hold 3306.
+                # Naming this bench's own listener is what keeps that honest.
+                FRAPPE_DB_HOST = "127.0.0.1";
+                FRAPPE_DB_PORT = toString dbPort;
+              }
               // (
                 if sockets then
                   {
@@ -893,7 +922,6 @@ in
                 else
                   {
                     # Fallback mode: still no fixed ports, just more of them.
-                    FRAPPE_DB_HOST = "127.0.0.1";
                     FRAPPE_REDIS_CACHE = "redis://127.0.0.1:${toString config.services.redis.port}";
                     FRAPPE_REDIS_QUEUE = "redis://127.0.0.1:${toString config.services.redis.port}";
                   }
@@ -1015,21 +1043,29 @@ in
                   max-connections = 200;
                   innodb-read-only-compressed = "OFF";
                 }
-                // (
-                  if sockets then
-                    {
-                      # devenv puts the socket at $DEVENV_RUNTIME/mysql.sock
-                      # (MYSQL_UNIX_PORT) either way; this drops the listener the
-                      # clients were never using. The module still reserves an
-                      # unused TCP port — harmless, and not worth patching around.
-                      skip-networking = true;
-                    }
-                  else
-                    {
-                      port = 3306; # allocator base, not a reservation
-                      bind-address = "127.0.0.1";
-                    }
-                );
+                // {
+                  # Frappe reaches the database over $DEVENV_RUNTIME/mysql.sock
+                  # in both modes — get_connection_settings drops host/port
+                  # entirely once db_socket is set — so the TCP listener is not
+                  # for frappe. It is for everything else.
+                  #
+                  # This used to be `skip-networking` under sockets.enable, on
+                  # the reasoning that it dropped a listener no client was using.
+                  # Clients do use it: an app that goes to
+                  # `frappe.conf.db_host:db_port` rather than through frappe.db
+                  # gets the 127.0.0.1:3306 default from frappe/config.py, and on
+                  # a machine running a second bench that is *its* MariaDB.
+                  # Insights' "Site DB" data source is one — ibis even rewrites
+                  # host "localhost" back to 127.0.0.1 to force TCP past
+                  # libmysqlclient's socket shortcut — and the neighbour it lands
+                  # in fails `bench update` mid-migrate with an access-denied for
+                  # a user it has never heard of.
+                  #
+                  # So: keep the listener, on loopback, on this bench's own port,
+                  # which FRAPPE_DB_HOST/FRAPPE_DB_PORT then name.
+                  port = dbBase; # allocator base, not a reservation
+                  bind-address = "127.0.0.1";
+                };
               };
               initialDatabases = cfg.mariadb.initialDatabases;
             };
