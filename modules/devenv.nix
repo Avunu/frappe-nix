@@ -670,11 +670,16 @@ in
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           secrets = secretsTools;
+          nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
         };
 
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.
         benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
+
+        # Keeps `bench build` buildable — see lib/node-modules.nix for why the
+        # install cannot simply be skipped once it has run.
+        nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
 
         # `nix run .#relock` — the way out of a stale uv.lock.
         #
@@ -944,34 +949,18 @@ in
 
               # Install node_modules for each app (mutable, dev-friendly).
               #
-              # A `.frappe-nix-installed` sentinel inside node_modules is written
-              # ONLY after a fully-successful `yarn install` — including the app's
-              # postinstall, which is where nested vite frontends get their deps
-              # (erpnext/banking, hrms/frontend+roster, helpdesk/frontend, …).
-              # So if a postinstall fails (or the app gained a nested frontend
-              # after the first install), the app is retried on the next shell
-              # entry instead of being silently left without `vite` on PATH.
-              ${lib.concatStringsSep "\n" (
-                map (app: ''
-                  _nm="apps/${app}/node_modules"
-                  if [ -L "$_nm" ] && readlink "$_nm" | grep -q '/nix/store'; then
-                    echo "Replacing Nix store node_modules symlink for ${app}..."
-                    rm "$_nm"
-                  fi
-                  if [ ! -e "$_nm/.frappe-nix-installed" ]; then
-                    echo "Installing node_modules for ${app} (incl. nested frontends)..."
-                    _log=$(mktemp)
-                    if (cd "apps/${app}" && yarn install --frozen-lockfile) > "$_log" 2>&1; then
-                      touch "$_nm/.frappe-nix-installed"
-                      echo "  ✓ ${app}"
-                    else
-                      echo "  ⚠  yarn install failed for ${app} (will retry next shell entry):" >&2
-                      tail -20 "$_log" >&2
-                    fi
-                    rm -f "$_log"
-                  fi
-                '') benchInfra.appsWithNode
-              )}
+              # The install is skipped for an app whose manifests are unchanged
+              # since the last successful one — including the nested vite
+              # frontends its postinstall installs (erpnext/banking,
+              # hrms/frontend+roster, helpdesk/desk, …), which is where the
+              # interesting churn is. A failure here is a warning, not a dead
+              # shell: it is `bench build` that needs node_modules, and it
+              # re-runs this and refuses to build against a stale one.
+              ${lib.optionalString (benchInfra.appsWithNode != [ ]) ''
+                ${nodeModulesTool}/bin/frappe-nix-node-modules . ${
+                  lib.escapeShellArgs benchInfra.appsWithNode
+                } || true
+              ''}
 
               echo ""
               echo "╔════════════════════════════════════════════════════════════╗"

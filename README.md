@@ -322,6 +322,15 @@ edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) 
 `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` /
 `yarn.lock` are then consumed declaratively for production builds.
 
+Each app's `node_modules` is a real `yarn install`, not the Nix-built one — nested
+vite frontends (`erpnext/banking`, `hrms/frontend`, `helpdesk/desk`, …) get their
+deps from a postinstall that needs the network. It is skipped for an app whose
+`package.json`/`yarn.lock` — its own and every nested one — are unchanged since the
+last successful install, and re-run when any of them moves. `bench build` re-runs it
+too, and refuses to build if it fails: pull an app that added a dependency, build
+without reinstalling, and what you get is a missing-package error from a vite config
+several apps deep, naming nothing that leads back to the install.
+
 ### Development guard rails
 
 A bench restored from a production backup carries working production credentials in its
@@ -433,12 +442,13 @@ subcommands that need frappe-nix handling — so you just run normal `bench` com
 | You run | Redirected to | Why |
 | --- | --- | --- |
 | `bench update …` | `bench-update` | vanilla update pip-installs / assumes `upstream` remotes |
+| `bench build …` | `bench-build` | brings `node_modules` back in step with the apps first |
 | `bench get-app <url\|alias>` | `bench-get-app` | git submodule + uv workspace instead of pip |
 | `bench new-app <name>` | `bench-new-app` | scaffold + uv workspace (skips the failing pip step) |
 | `bench restore <sql>` | `bench-restore` | injects the MariaDB root credentials |
 | `bench new-site <site>` | real bench + injected `--db-socket`/`--db-root-username root` | non-interactive site creation |
 | `bench migrate` / `console` / `clear-cache` | `bench-*` | inject `--site $FRAPPE_SITE` |
-| everything else (`build`, `serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
+| everything else (`serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
 
 Recursion is avoided with a `_FRAPPE_BENCH_RAW` env guard the specialized scripts export and
 the wrapper checks, so a script's own nested `bench …` calls reach the real CLI — whether you
