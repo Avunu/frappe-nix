@@ -173,6 +173,9 @@
               2>&1 | tee "$out"
           '';
         }
+        # The `bench restore` script itself, rendered and driven against a
+        # fixture bucket and a stub bench.
+        // import ./tests/bench-restore.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it

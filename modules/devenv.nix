@@ -772,6 +772,11 @@ in
           secrets = secretsTools;
           restore = cfg.restore // {
             fetch = "${backupFetch}/bin/frappe-nix-backup-fetch";
+            # Sourced by bench-restore at the moment it needs the credentials,
+            # not by enterShell — see lib/secrets-tools.nix for why.
+            loadSecrets = lib.optionalString secretsTools.enabled (
+              secretsTools.loadSecrets config.agenix-shell.installationScript
+            );
             # Nix-time, not $FRAPPE_DEVGUARD_ENABLED: `devguard.enable = false`
             # is a persistent property of the bench, so every later `devenv up`
             # is unguarded too. A per-command disable is scoped to that command

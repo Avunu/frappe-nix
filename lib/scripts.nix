@@ -407,36 +407,276 @@ secretScripts
     echo "✅ bench-update complete"
   '';
 
+  # Restore this bench from a Frappe backup — an explicit file, or the latest
+  # one in the object store.
+  #
+  # Reached both directly and as `bench restore`, via the umbrella wrapper
+  # above. Overridable wholesale through `extraScripts.bench-restore`, which is
+  # how the consuming repos kept their own version while this one was built.
   bench-restore.exec = ''
     set -euo pipefail
     export _FRAPPE_BENCH_RAW=1
+    cd "$FRAPPE_BENCH_ROOT"
 
-    if [ -z "''${1:-}" ]; then
-      echo "Usage: bench-restore <sql-file-path> [options]"
-      echo ""
-      echo "Restores the Frappe site from a SQL backup file."
-      echo ""
-      echo "Options (passed to bench restore):"
-      echo "  --with-public-files <path>   Restore public files from tar"
-      echo "  --with-private-files <path>  Restore private files from tar"
-      echo "  --encryption-key <key>       Backup encryption key"
-      echo "  --force                      Ignore validations and warnings"
+    FETCH_ENABLED=${if restore.enable or false then "true" else "false"}
+    WANT_PUBLIC=${if (restore.withFiles or "none") == "all" then "true" else "false"}
+    WANT_PRIVATE=${if builtins.elem (restore.withFiles or "none") [ "private" "all" ] then "true" else "false"}
+    DO_MIGRATE=${if restore.migrate or false then "true" else "false"}
+    SEED_CONFIG=true
+    FORCE=true
+    AT=""
+    NO_CACHE=false
+    SQL_FILE=""
+    CARRY_KEYS=${lib.escapeShellArg (lib.concatStringsSep " " (restore.carryConfigKeys or [ ]))}
+    declare -a PASSTHRU=()
+
+    usage() {
+      cat <<'USAGE'
+    Usage: bench restore [<sql-file>] [options]
+
+    With no file, fetches the most recent backup from the object store and
+    restores it into $FRAPPE_SITE, creating the site if it does not exist.
+
+      --list                 Show available backups and exit
+      --at <YYYYMMDD_HHMMSS> Restore a specific backup instead of the newest
+      --files                Also restore the public files archive
+      --private-files        Also restore the private files archive
+      --no-cache             Re-download even if the cached copy is intact
+      --no-site-config       Do not carry any key from production's site config
+      --no-migrate           Skip `bench migrate` afterwards
+      --no-force             Fail instead of replacing an existing database
+      --encryption-key <k>   Override the backup encryption key
+
+    Anything else is passed through to `bench restore`.
+    USAGE
+    }
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --list)            LIST=true; shift ;;
+        --at)              AT="$2"; shift 2 ;;
+        --files)           WANT_PUBLIC=true; shift ;;
+        --private-files)   WANT_PRIVATE=true; shift ;;
+        --no-cache)        NO_CACHE=true; shift ;;
+        --no-site-config)  SEED_CONFIG=false; shift ;;
+        --no-migrate)      DO_MIGRATE=false; shift ;;
+        --no-force)        FORCE=false; shift ;;
+        -h|--help)         usage; exit 0 ;;
+        --)                shift; PASSTHRU+=("$@"); break ;;
+        -*)                PASSTHRU+=("$1"); shift ;;
+        *)
+          if [ -n "$SQL_FILE" ]; then
+            echo "bench restore: unexpected argument '$1'" >&2; exit 1
+          fi
+          SQL_FILE="$1"; shift ;;
+      esac
+    done
+
+    ${siteFlag}
+
+    # ── an explicit file: unchanged behaviour ──────────────────────────────
+    # No --db-socket: unlike `new-site`, `bench restore` has no such option
+    # (frappe/commands/site.py), so the socket arrives the other way — from the
+    # site's own site_config.json, or from FRAPPE_DB_SOCKET via frappe/config.py.
+    # Both are set by the dev shell.
+    if [ -n "$SQL_FILE" ]; then
+      echo "Restoring ''${FRAPPE_SITE:-all sites} from $SQL_FILE…"
+      exec bench $SITE_FLAG restore "$SQL_FILE" \
+        --db-root-username "root" --db-root-password "" "''${PASSTHRU[@]}"
+    fi
+
+    if [ "$FETCH_ENABLED" != true ]; then
+      echo "bench restore: no backup source is configured for this bench." >&2
+      echo >&2
+      echo "  Pass a file:   bench restore <dump.sql.gz>" >&2
+      echo "  Or enable fetching by declaring the backup-access secret:" >&2
+      echo "      frappe-nix.secrets.recipients.<you> = \"ssh-ed25519 …\";" >&2
+      echo "  then: edit-secret backup-access" >&2
       exit 1
     fi
 
-    SQL_FILE="$1"
-    shift
+    if [ -z "''${FRAPPE_SITE:-}" ]; then
+      echo "bench restore: this bench is multi-tenant (siteName = \"\") and" >&2
+      echo "FRAPPE_SITE is unset, so there is no site to restore into." >&2
+      echo "Set FRAPPE_SITE in .env, or pass a file to restore explicitly." >&2
+      exit 1
+    fi
 
-    ${siteFlag}
-    echo "Restoring site ''${FRAPPE_SITE:-all sites} from $SQL_FILE..."
-    # No --db-socket here: unlike `new-site`, `bench restore` has no such option
-    # (frappe/commands/site.py), so the socket has to arrive the other way — from
-    # the site's own site_config.json, or from FRAPPE_DB_SOCKET via
-    # frappe/config.py. Both are set by the dev shell.
-    exec bench $SITE_FLAG restore "$SQL_FILE" \
-      --db-root-username "root" \
-      --db-root-password "" \
-      "$@"
+    # ── credentials, on demand ─────────────────────────────────────────────
+    # Sourced here rather than in enterShell: agenix-shell re-runs rage on every
+    # source and enterShell runs on every direnv reload, so a passphrased key
+    # would prompt on every file save; and it exports the plaintext itself, not
+    # just a path, which at shell entry would put credentials in the environment
+    # of every process in the session — devenv up's children included.
+    ${restore.loadSecrets or ""}
+
+    if [ "''${LIST:-false}" = true ]; then
+      exec ${restore.fetch} list
+    fi
+
+    # ── fetch ──────────────────────────────────────────────────────────────
+    declare -a FETCH_ARGS=(fetch)
+    [ -n "$AT" ] && FETCH_ARGS+=(--at "$AT")
+    [ "$WANT_PUBLIC" = true ] && FETCH_ARGS+=(--files)
+    [ "$WANT_PRIVATE" = true ] && FETCH_ARGS+=(--private-files)
+    [ "$NO_CACHE" = true ] && FETCH_ARGS+=(--no-cache)
+    export FRAPPE_BACKUP_CACHE="''${FRAPPE_BACKUP_CACHE:-$DEVENV_STATE/frappe-nix/restore}"
+    ${lib.optionalString ((restore.prefix or "") != "") ''
+      export BACKUPS_PREFIX="''${BACKUPS_PREFIX:-${restore.prefix}}"
+    ''}
+
+    MANIFEST="$(${restore.fetch} "''${FETCH_ARGS[@]}")"
+    DB_PATH="$(printf '%s' "$MANIFEST"   | ${pkgs.jq}/bin/jq -r '.database')"
+    CONF_PATH="$(printf '%s' "$MANIFEST" | ${pkgs.jq}/bin/jq -r '.site_config // empty')"
+    PUB_PATH="$(printf '%s' "$MANIFEST"  | ${pkgs.jq}/bin/jq -r '.files // empty')"
+    PRIV_PATH="$(printf '%s' "$MANIFEST" | ${pkgs.jq}/bin/jq -r '.private_files // empty')"
+    ENCRYPTED="$(printf '%s' "$MANIFEST" | ${pkgs.jq}/bin/jq -r '.encrypted')"
+    FOLDER="$(printf '%s' "$MANIFEST"    | ${pkgs.jq}/bin/jq -r '.folder')"
+    SLUG="$(printf '%s' "$MANIFEST"      | ${pkgs.jq}/bin/jq -r '.slug')"
+
+    DEV_SLUG="$(printf '%s' "$FRAPPE_SITE" | tr '.:-' '___')"
+    if [ "$SLUG" != "$DEV_SLUG" ]; then
+      echo "  note: the backup is of '$SLUG', this bench is '$DEV_SLUG'."
+      echo "        Restoring across sites is fine — this site keeps its own"
+      echo "        db_name and db_password, and file archives are extracted"
+      echo "        with 'tar --strip 2', which discards the archive's own"
+      echo "        site directory."
+    fi
+
+    # ── make sure the site exists ──────────────────────────────────────────
+    # `bench restore` cannot create one: frappe.init raises IncorrectSitePath
+    # when sites/<site>/site_config.json is absent (frappe/__init__.py), and it
+    # does that before reading the dump.
+    #
+    # But that file is *all* it needs. restore_backup calls _new_site(force=True),
+    # which runs make_site_dirs() and install_db() itself, and make_site_config
+    # only writes when the file does not already exist (frappe/installer.py) —
+    # so a four-key seed both unblocks a fresh clone and survives untouched. A
+    # full `bench new-site` here would install every app into a database that is
+    # dropped seconds later.
+    SITE_CFG="sites/$FRAPPE_SITE/site_config.json"
+    if [ ! -f "$SITE_CFG" ]; then
+      echo "  creating $FRAPPE_SITE (it does not exist yet)"
+      # frappe's own scheme when it picks a database name itself: "_" plus 16
+      # hex, which fits MariaDB's identifier limits and doubles as the DB user.
+      DB_NAME="_$(printf '%s' "$FRAPPE_SITE" | ${pkgs.coreutils}/bin/sha1sum | cut -c1-16)"
+      DB_PASS="$(${pkgs.coreutils}/bin/head -c 24 /dev/urandom | ${pkgs.coreutils}/bin/base64 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
+      mkdir -p "sites/$FRAPPE_SITE/locks"
+      (
+        umask 0077
+        ${pkgs.jq}/bin/jq -n \
+          --arg n "$DB_NAME" --arg p "$DB_PASS" --arg s "''${FRAPPE_DB_SOCKET:-}" \
+          '{db_type: "mariadb", db_name: $n, db_password: $p}
+           + (if $s == "" then {} else {db_socket: $s} end)' > "$SITE_CFG"
+      )
+    else
+      # filelock() runs before _new_site and will not create its own parent
+      # (frappe/utils/synchronization.py), so an older site directory that
+      # predates locks/ would fail there rather than in the restore.
+      mkdir -p "sites/$FRAPPE_SITE/locks"
+    fi
+
+    # ── the encryption keys ────────────────────────────────────────────────
+    # Two different keys, and both matter:
+    #   encryption_key         frappe/utils/password.py — decrypts every stored
+    #                          Password and API-secret field in the dump
+    #   backup_encryption_key  frappe/utils/backups.py  — the gpg passphrase for
+    #                          this dump and the next one
+    # Both live in the backup's own site_config_backup.json, which is readable
+    # even for an "-enc" backup: backup_encryption() encrypts the database and
+    # the two archives, never the config.
+    ENC_KEY=""
+    if [ -n "$CONF_PATH" ] && [ "$SEED_CONFIG" = true ] && [ -n "$CARRY_KEYS" ]; then
+      ${lib.optionalString (!(restore.devguard or true)) ''
+        if [ "''${FRAPPE_RESTORE_ALLOW_UNGUARDED:-0}" != 1 ]; then
+          echo "bench restore: refusing to write production's encryption key into a" >&2
+          echo "bench with frappe-nix.devguard.enable = false." >&2
+          echo >&2
+          echo "That key decrypts every stored production credential in this dump —" >&2
+          echo "mail passwords, payment secrets, API tokens. The guard rails are what" >&2
+          echo "keep a bench holding those from mailing customers or deleting objects" >&2
+          echo "out of the production bucket. They are a large reduction in blast" >&2
+          echo "radius, not an airgap, and turning them off makes this a real risk." >&2
+          echo >&2
+          echo "  re-enable devguard, or" >&2
+          echo "  bench restore --no-site-config     (stored credentials stay opaque), or" >&2
+          echo "  FRAPPE_RESTORE_ALLOW_UNGUARDED=1 bench restore" >&2
+          exit 1
+        fi
+      ''}
+      echo "  carrying from the backup's site config: $CARRY_KEYS"
+      TMP_CFG="$(mktemp)"
+      ${pkgs.jq}/bin/jq -s --arg keys "$CARRY_KEYS" '
+        ($keys | split(" ") | map(select(length > 0))) as $allow
+        | .[0] + (.[1] | with_entries(select(.key as $k | $allow | index($k))))
+      ' "$SITE_CFG" "$CONF_PATH" > "$TMP_CFG"
+      ${pkgs.coreutils}/bin/install -m 0600 "$TMP_CFG" "$SITE_CFG"
+      rm -f "$TMP_CFG"
+    fi
+
+    # Always resolve the key ourselves for an encrypted dump. Left to frappe,
+    # _restore falls back to get_or_generate_backup_encryption_key(), which
+    # *generates a fresh key and writes it into this site's config* before
+    # failing to decrypt — leaving the restore broken and the config wrong.
+    if [ "$ENCRYPTED" = true ]; then
+      for arg in "''${PASSTHRU[@]:-}"; do
+        [ "$arg" = "--encryption-key" ] && ENC_KEY="provided"
+      done
+      if [ "$ENC_KEY" != provided ]; then
+        ENC_KEY="$(${pkgs.jq}/bin/jq -r '.backup_encryption_key // .encryption_key // empty' "$SITE_CFG")"
+        if [ -z "$ENC_KEY" ] && [ -n "$CONF_PATH" ]; then
+          ENC_KEY="$(${pkgs.jq}/bin/jq -r '.backup_encryption_key // .encryption_key // empty' "$CONF_PATH")"
+        fi
+        if [ -z "$ENC_KEY" ]; then
+          echo "bench restore: this backup is encrypted and no backup_encryption_key" >&2
+          echo "is available — not from the fetched site config, not from this site." >&2
+          echo "Pass one with --encryption-key, or restore an unencrypted backup." >&2
+          exit 1
+        fi
+        PASSTHRU+=(--encryption-key "$ENC_KEY")
+      fi
+    fi
+
+    # ── restore ────────────────────────────────────────────────────────────
+    # --force by default: without it setup_database refuses with "Database …
+    # already exists" (frappe/database/mariadb/setup_db.py), so every restore
+    # after the first one fails. This is the one destructive default here — it
+    # drops and recreates the site's database, which is what "clone production"
+    # means. --no-force opts out.
+    [ "$FORCE" = true ] && PASSTHRU+=(--force)
+    [ -n "$PUB_PATH" ]  && PASSTHRU+=(--with-public-files "$PUB_PATH")
+    [ -n "$PRIV_PATH" ] && PASSTHRU+=(--with-private-files "$PRIV_PATH")
+
+    echo "  restoring $FRAPPE_SITE from $FOLDER…"
+    bench $SITE_FLAG restore "$DB_PATH" \
+      --db-root-username "root" --db-root-password "" "''${PASSTHRU[@]}"
+
+    # ── after ──────────────────────────────────────────────────────────────
+    # The dump carries production's Installed Applications. remove_missing_apps()
+    # only knows two legacy names, so an app production has and this bench does
+    # not survives into the restored database and takes `bench migrate` down with
+    # a bare ModuleNotFoundError. Name them instead.
+    MISSING=""
+    if [ -f sites/apps.txt ]; then
+      for app in $(bench $SITE_FLAG list-apps --format json 2>/dev/null \
+                   | ${pkgs.jq}/bin/jq -r --arg s "$FRAPPE_SITE" '.[$s][]? // empty' || true); do
+        grep -qxF "$app" sites/apps.txt || MISSING="$MISSING $app"
+      done
+    fi
+    if [ -n "$MISSING" ]; then
+      echo >&2
+      echo "  warning: the restored database has apps this bench does not:$MISSING" >&2
+      echo "           \`bench migrate\` will fail on them. Add each with:" >&2
+      for app in $MISSING; do echo "               bench get-app $app" >&2; done
+      DO_MIGRATE=false
+    fi
+
+    if [ "$DO_MIGRATE" = true ]; then
+      echo "  running bench migrate…"
+      bench $SITE_FLAG migrate
+    fi
+
+    echo "✅ restored $FRAPPE_SITE from $FOLDER"
   '';
 
   update-deps.exec = ''

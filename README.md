@@ -206,6 +206,7 @@ provision-site          # (first run, in another shell) create the site + instal
 | --- | --- |
 | `flakeModules.default` | The flake-parts module — `imports` it and configure `perSystem.frappe-nix`. |
 | `nixosModules.default` | Standalone NixOS module exposing `services.frappe` (multi-tenant production systemd). |
+| `lib.frappeSecrets` | *(in a consuming bench)* The declared `.age` paths and recipients, so a deployment can read the same ciphertext — see [Secrets](#secrets). |
 | `lib.mkFlake` | `flake-parts.lib.mkFlake` wrapper that merges frappe-nix's inputs into the consumer's. |
 | `lib.overrides` | Composable Python package overrides for native deps (`mysqlclient`, `pycups`, `python-ldap`, `cairocffi`). |
 
@@ -276,8 +277,33 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `devguard.scheduler.enable` | bool | `true` | Skip scheduled jobs that reach production services. |
 | `devguard.scheduler.blockServerScripts` | bool | `true` | Skip `Scheduled Job Type`s backed by a `Server Script`. |
 | `devguard.scheduler.extraBlockedJobs` | list of str | `[]` | Extra `Scheduled Job Type.method` values to skip (exact match). |
+| `restore.enable` | bool | `secrets.backupAccess.enable` | Let `bench restore` fetch from the object store — see [Restoring from production](#restoring-from-production). |
+| `restore.prefix` | str | `""` | Path inside the bucket. Normally carried in the secret as `BACKUPS_PREFIX` instead. |
+| `restore.withFiles` | `none`/`private`/`all` | `"none"` | File archives to pull by default; they are routinely tens of GB. |
+| `restore.carryConfigKeys` | list of str | `[ "encryption_key" "backup_encryption_key" ]` | Allowlist of keys copied from the backup's site config. |
+| `restore.migrate` | bool | `true` | Run `bench migrate` after restoring. |
+| `restore.requireDevguard` | bool | `true` | Refuse to write production's encryption key into an unguarded bench. |
 | `containers.enable` | bool | `false` | Build the OCI images. |
 | `containers.registry` | str | `""` | Registry URL prefix. |
+
+## Options — top-level `frappe-nix.secrets`
+
+These sit at the flake's top level, not under `perSystem`: recipients and `.age`
+paths are facts about the bench rather than about a platform, and agenix-shell's
+own secret options are top-level for the same reason. See [Secrets](#secrets).
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `enable` | bool | `recipients != {}` | Wire agenix + agenix-shell into this bench. |
+| `dir` | path | *(required)* | Where the `.age` files live, e.g. `./secrets`. |
+| `relDir` | str | `baseNameOf dir` | The same directory relative to the bench root; override only if `dir` is nested. |
+| `recipients` | attrs of str | `{}` | SSH public keys of the people who may decrypt. Attribute names become labels in error messages. |
+| `hostRecipients` | attrs of str | `{}` | Deployment host keys; added to the per-site secrets only. |
+| `identityPaths` | list of str | `[ "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" ]` | Private keys tried when decrypting. |
+| `backupAccess.enable` | bool | `secrets.enable` | Declare `backup-access.age` — the object-store credentials. |
+| `sites.<name>.{encryptionKey,databasePassword,extraConfig}` | bool | `true` | Which per-site secrets to declare. |
+| `sites.<name>.developers` | bool | `true` | Let `recipients`, not just hosts, read this site's secrets. |
+| `extra.<name>.{format,var,hosts}` | — | — | Additional secrets; `format` is `env`, `raw` or `json`. |
 
 ## Development shell
 
@@ -455,7 +481,7 @@ subcommands that need frappe-nix handling — so you just run normal `bench` com
 | `bench build …` | `bench-build` | brings `node_modules` back in step with the apps first |
 | `bench get-app <url\|alias>` | `bench-get-app` | git submodule + uv workspace instead of pip |
 | `bench new-app <name>` | `bench-new-app` | scaffold + uv workspace (skips the failing pip step) |
-| `bench restore <sql>` | `bench-restore` | injects the MariaDB root credentials |
+| `bench restore [<sql>]` | `bench-restore` | injects the MariaDB root credentials; with no file, fetches the latest production backup |
 | `bench new-site <site>` | real bench + injected `--db-socket`/`--db-root-username root` | non-interactive site creation |
 | `bench migrate` / `console` / `clear-cache` | `bench-*` | inject `--site $FRAPPE_SITE` |
 | everything else (`serve`, `install-app`, `--help`, …) | the real `bench` | unchanged |
@@ -519,10 +545,136 @@ These back the wrapper and are also callable directly:
 | `provision-site [admin-pass]` | Create `$FRAPPE_SITE` and install every app from `sites/apps.txt`. |
 | `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also re-locks the workspace (`uv lock`) and refreshes `node-offline-hashes.json` for the apps whose lock files moved. |
 | `bench-migrate` / `bench-build` / `bench-clear-cache` / `bench-console` | Thin `bench` wrappers honoring `$FRAPPE_SITE`. |
-| `bench-restore <sql> [opts]` | Restore the site from a SQL backup. |
+| `bench-restore [<sql>\|--at <ts>\|--list]` | Restore from a SQL backup, or from the latest one in the object store. See [Restoring from production](#restoring-from-production). |
+| `edit-secret <name>` | Decrypt a secret into `$EDITOR` and re-encrypt it to the declared recipients. |
+| `rekey-secrets` | Re-encrypt every secret after changing `recipients`. |
+| `check-secrets [<name>]` | Verify the `.age` files match the declared recipients; with a name, explain why *you* cannot decrypt one. |
 | `bench-get-app <url\|alias>` | Add an app as a git submodule + register it in the uv workspace. `helpdesk` → `frappe/helpdesk`; `owner/repo` and full URLs also work. |
 | `bench-new-app <name>` | Scaffold a new app and register it in the workspace. |
 | `update-deps` | Re-lock + sync Python (uv) and Node (yarn) across all apps. |
+
+## Secrets
+
+A bench's credentials — the site encryption key, the database password, the
+object-store keys — live in `.age` files encrypted with
+[age](https://github.com/FiloSottile/age), committed to the repo, and decrypted
+into the dev shell by [agenix-shell](https://github.com/aciceri/agenix-shell).
+frappe-nix imports agenix-shell itself, so a consuming flake declares only this:
+
+```nix
+frappe-nix.secrets = {
+  dir = ./secrets;
+  recipients = {
+    alice = "ssh-ed25519 AAAAC3Nza…";
+    bob   = "ssh-ed25519 AAAAC3Nza…";
+  };
+  hostRecipients.myserver = "ssh-ed25519 AAAAC3Nza…";
+  sites."erp.example.com" = { };
+};
+```
+
+That declares five secrets, on a fixed layout:
+
+| File | Shape | What consumes it |
+| --- | --- | --- |
+| `secrets/backup-access.age` | env-file | `bench restore`'s fetch |
+| `secrets/<site>/encryption-key.age` | one line | `services.frappe`'s `encryptionKeyFile` |
+| `secrets/<site>/db-password.age` | one line | `database.passwordFile` |
+| `secrets/<site>/site-config.age` | JSON object | `extraConfigFiles` |
+
+The shapes are the ones `services.frappe` already consumes, so the same
+ciphertext can serve the deployment: `flake.lib.frappeSecrets` exposes the
+paths, which beats keeping a second copy in the server repo that has to be
+rotated in lockstep.
+
+`recipients` are the people; `hostRecipients` are deployment hosts, and are
+added to the per-site secrets only. A site can set `developers = false` to keep
+its secrets host-only — a useful tier, since it lets someone restore the
+database without being able to read the credentials stored inside it.
+
+**`.age` files are meant to be committed.** They are ciphertext, and a flake's
+source tree is exactly its git-tracked files — an untracked secret is invisible
+to the build. `edit-secret` stages new ones for you.
+
+### There is no `secrets.nix`
+
+agenix normally reads a committed rules file listing who may decrypt what.
+frappe-nix generates that file into the store instead and points agenix's
+`RULES` at it, because a hand-maintained one can be edited without re-encrypting
+anything and nothing notices. That is not hypothetical: in the bench this was
+built for, a rotated key sat in the rules for months while the ciphertext still
+named the key it replaced, and the person it was rotated for could not decrypt
+anything.
+
+So the recipient list in `flake.nix` is the only place it is written down, and
+`check-secrets` proves the ciphertext agrees:
+
+```
+$ check-secrets
+secrets/backup-access.age: not encrypted to 1 declared recipient(s):
+      KATJVw  bob
+    Someone who can still decrypt it must run:  rekey-secrets
+```
+
+It works offline and needs no private key — an age header names its recipients
+in the clear, and an SSH recipient's tag is derivable from the public key alone.
+`check-secrets <name>` turns that around and explains why *your* key cannot open
+a particular secret.
+
+After changing `recipients`, run `rekey-secrets` and commit the result.
+
+### Restoring from production
+
+```sh
+bench restore                       # the newest backup
+bench restore --list                # what is available
+bench restore --at 20260814_000042  # a specific one
+bench restore --files               # also the public files archive
+bench restore ./dump.sql.gz         # an explicit file, no object store
+```
+
+With no file, `bench restore` reads the `backup-access` secret, finds the newest
+backup folder, downloads the database and the site-config backup, and restores
+them — **creating the site first if it does not exist**, so a fresh clone needs
+nothing but `direnv allow`, `devenv up`, `bench restore`.
+
+It reads Frappe's own layout: `S3 Backup Settings` writes one folder per backup
+named `YYYYMMDD_HHMMSS`, holding the database, a verbatim copy of production's
+`site_config.json`, and optionally the two file archives. Downloads are cached
+under `$DEVENV_STATE`, keyed by folder — the name is a timestamp, so it is also
+the version, and a re-run of the same restore re-downloads nothing.
+
+The credentials are decrypted at the moment they are used, not at shell entry.
+agenix-shell re-runs `rage` every time its script is sourced and `enterShell`
+runs on every direnv reload, so loading them there would prompt for a
+passphrase on every file save — and it exports the plaintext itself, not just a
+path, which would put credentials in the environment of every process in the
+session, `devenv up`'s children included.
+
+#### The encryption key
+
+The backup folder contains production's `site_config.json` verbatim, which is
+how `restore.carryConfigKeys` gets `encryption_key` and `backup_encryption_key`.
+Without the first, every stored password and API secret in the dump decrypts to
+nothing; the second opens the next encrypted backup. Both are written into the
+dev site's `site_config.json` at mode 0600.
+
+It is an allowlist rather than a denylist, because a denylist loses to the next
+app that invents `foo_api_secret`. Everything else production had — `host_name`,
+`db_*`, `mail_*`, `cloud_storage_settings`, `maintenance_mode` — is left behind.
+
+**This is a real capability, not a formality.** A bench holding that key can
+decrypt every stored production credential in the dump: mail passwords, payment
+secrets, API tokens. It is what makes a restore a clone rather than a shell, and
+it is precisely what [the guard rails](#development-guard-rails) exist to
+survive. `bench restore` therefore refuses to write it into a bench with
+`devguard.enable = false`; `--no-site-config` restores without it, and the site
+still works with its stored credentials opaque.
+
+One consequence worth stating plainly: the backup's site-config copy is **never
+encrypted**, even when the database beside it is (`backup_encryption()` covers
+the dump and the two archives, not the config). Anyone who can read your backup
+bucket can read production's encryption key. Keep the bucket private.
 
 ## Production containers
 
@@ -742,6 +894,10 @@ frappe-nix/
 │   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
 │   ├── lock-audit.nix        # names a stale uv.lock before uv2nix trips over it
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
+│   ├── secrets-schema.nix    # the one derivation of a bench's secret set
+│   ├── secrets-tools.nix     # generated agenix rules + the recipient checker
+│   ├── agecheck.py           # are the .age files encrypted to who we think?
+│   ├── backup-fetch.nix      # → sh/backup-fetch.sh, shellchecked
 │   ├── devguard/             # frappe_devguard — guards against reaching production
 │   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)
 │   ├── init.nix              # `nix run` entry point: builds frappe-init from sh/*
