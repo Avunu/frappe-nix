@@ -91,6 +91,19 @@ check_eq "apps/hrms contributes only a gitlink" 1 "$(git ls-files apps/hrms | wc
 
 # Vendoring: history preserved, source tracked.
 check "localapp .git moved to the backup" test -f .frappe-nix-backup/localapp.git/HEAD
+
+# A committed site_config.json holds the site's encryption key, db password and
+# object-storage credentials. The managed .gitignore block excludes the path,
+# but git keeps honouring an index entry regardless — so the exclusion alone
+# changes nothing and the migrator has to say so.
+check "the migrator warns about a tracked site_config.json" \
+  grep -q 'sites/mysite.local/site_config.json is tracked by git' "$ROOT/run1.log"
+check "…and names the fix" grep -q 'git rm --cached' "$ROOT/run1.log"
+# Never fixed for you: `git rm --cached` stages a deletion of a file the bench
+# is actively reading, and the migrator's contract is that it never deletes.
+check "…but does not untrack it itself" \
+  git ls-files --error-unmatch -- sites/mysite.local/site_config.json
+check "…and leaves the file on disk" test -f sites/mysite.local/site_config.json
 check "localapp provenance recorded" \
   jq -e '.commit != "" and .branch == "main"' .frappe-nix-backup/localapp.json
 check "localapp hooks.py is tracked" \
@@ -175,11 +188,22 @@ check "config/redis_cache.conf still on disk" test -f config/redis_cache.conf
 for p in Procfile patches.txt config/redis_cache.conf .frappe-nix-backup; do
   check "$p is gitignored" git check-ignore -q "$p"
 done
-check "site_config.json (db password) is gitignored" \
-  git check-ignore -q sites/mysite.local/site_config.json
+# The .gitignore rule covers site_config.json — but this fixture has it
+# committed, the way a classic bench routinely does, and `git check-ignore`
+# without --no-index deliberately reports a tracked file as *not* ignored.
+# That is the whole reason audit_tracked_site_configs exists: adding the rule
+# changes nothing until the file is removed from the index, and nothing else
+# would ever tell you.
+check "the .gitignore rule covers site_config.json" \
+  git check-ignore -q --no-index sites/mysite.local/site_config.json
+check "…but it is still tracked, so the rule is inert for it" \
+  git ls-files --error-unmatch -- sites/mysite.local/site_config.json
 check "site private files are gitignored" \
   git check-ignore -q sites/mysite.local/private/files/big.bin
-check_eq "no site data reached the index" "" "$(git ls-files sites/mysite.local)"
+# Everything else under the site stays out; only the pre-existing tracked file
+# remains, and the migrator never deletes.
+check_eq "no new site data reached the index" "sites/mysite.local/site_config.json" \
+  "$(git ls-files sites/mysite.local)"
 check_eq "no node_modules reached the index" "" "$(git ls-files -- '*node_modules*')"
 
 # env/ is a real directory in a classic bench, and `ln -sfn` cannot replace one.

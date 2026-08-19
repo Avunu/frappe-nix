@@ -56,6 +56,14 @@ archived/
 archived_sites/
 .frappe-nix-backup/
 
+# devenv reads .env (dotenv.enable), so it is where a bench's local overrides
+# land — FRAPPE_SITE for a multi-tenant bench, ad-hoc credentials while
+# debugging. Committed by accident more often than not. Secrets proper belong
+# in secrets/*.age, which IS tracked: age ciphertext is meant to be.
+.env
+.env.*
+!.env.example
+
 # shell history
 .bash_history
 .mariadb_history

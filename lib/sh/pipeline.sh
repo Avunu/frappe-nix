@@ -34,6 +34,11 @@ print_plan() {
     app_has_flag "$app" branch-unverified &&
       warn "apps/$app: '${APP_BRANCH[$app]}' is a guess — no such branch on remote '${APP_REMOTE[$app]}'. Check .gitmodules before running 'bench-update --pull'."
   done
+  # Pure inspection, so it belongs in the plan too — --dry-run's contract is
+  # that it prints the warnings, and a committed site_config is the one most
+  # worth seeing before deciding whether to migrate at all.
+  audit_tracked_site_configs
+
   if $STRICT; then
     for app in "${APP_ORDER[@]}"; do
       if app_has_flag "$app" unpushed || app_has_flag "$app" dirty; then
@@ -62,6 +67,8 @@ run_pipeline() {
   shim_legacy_apps
   compute_membership
   verify_not_ignored
+  verify_secrets_visible
+  audit_tracked_site_configs
 
   step "Workspace"
   reconcile_workspace
@@ -134,7 +141,15 @@ Next steps:
   bench-update --node-hashes   # generate node-offline-hashes.json before 'nix build'
 EOF
   if [ ! -e sites/"$site" ]; then
-    printf '  provision-site               # (in another shell) create %s + install apps\n' "$site"
+    if grep -q 'frappe-nix\.secrets' flake.nix 2>/dev/null &&
+      ! grep -qE '^\s*#.*frappe-nix\.secrets' flake.nix 2>/dev/null; then
+      printf '  bench restore                # (in another shell) clone %s from the latest production backup\n' "$site"
+    else
+      printf '  provision-site               # (in another shell) create %s + install apps\n' "$site"
+    fi
+  fi
+  if ! grep -q 'frappe-nix\.secrets' flake.nix 2>/dev/null; then
+    printf '\nTo restore this bench from production backups, declare its secrets —\nsee "Secrets" in the frappe-nix README, or the commented block in flake.nix.\n'
   fi
   for app in "${APP_ORDER[@]}"; do
     if [ "${APP_DISP[$app]}" = skip ]; then

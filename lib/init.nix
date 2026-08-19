@@ -19,6 +19,7 @@ let
     ./sh/common.sh
     ./sh/detect.sh
     ./sh/template.sh
+    ./sh/secrets.sh
     ./sh/apps.sh
     ./sh/pipeline.sh
     ./sh/init.sh

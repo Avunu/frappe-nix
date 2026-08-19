@@ -111,6 +111,13 @@ is a no-op. Concretely it:
 - moves a classic `env/` virtualenv to `.frappe-nix-backup/` (a real `env/` directory
   silently defeats the dev shell's `ln -sfn` and leaves `bench` on the stale interpreter).
 
+It also **reports a tracked `sites/*/site_config.json`** — the file holding the site's
+encryption key, database password and object-storage credentials. The managed `.gitignore`
+block excludes that path, but git keeps honouring an index entry regardless, so adding the
+rule changes nothing until the file is untracked. The migrator never deletes, so it prints
+the `git rm --cached` and leaves the decision (and the rotation the disclosure implies) to
+you.
+
 Nothing is committed — the result is staged, so `git diff --cached` is the review. Add
 `--commit` to commit it.
 

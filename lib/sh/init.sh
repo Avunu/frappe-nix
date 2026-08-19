@@ -97,5 +97,8 @@ cmd_init() {
   done
 
   classify_apps
+  # Only on a fresh scaffold: an existing bench that keeps its secrets
+  # elsewhere should not grow an empty directory it never asked for.
+  scaffold_secrets_dir
   run_pipeline
 }

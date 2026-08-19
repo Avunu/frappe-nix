@@ -38,6 +38,24 @@
           "x86_64-linux"
         ];
 
+        # ── Secrets ──────────────────────────────────────────────────────
+        # Uncomment and add your SSH public key, then `edit-secret
+        # backup-access` in the dev shell — after that, `bench restore` pulls
+        # the latest production backup and restores it, creating the site if it
+        # does not exist yet.
+        #
+        # Top-level, not under perSystem: who may decrypt is a fact about the
+        # bench, not about a platform. `.age` files are committed; there is no
+        # secrets.nix to maintain. See the frappe-nix README, "Secrets".
+        #
+        # frappe-nix.secrets = {
+        #   dir = ./secrets;
+        #   recipients.you = "ssh-ed25519 AAAA… you@host";
+        #   # Deployment host keys, added to the per-site secrets only:
+        #   # hostRecipients.myserver = "ssh-ed25519 AAAA… root@myserver";
+        #   sites."@SITE_NAME@" = { };
+        # };
+
         perSystem =
           { pkgs, ... }:
           {

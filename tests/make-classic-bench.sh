@@ -174,5 +174,9 @@ EOF
 mkdir -p sites/mysite.local/private/files sites/mysite.local/public/files
 printf '{"db_name":"x","db_password":"hunter2","encryption_key":"k"}\n' \
   > sites/mysite.local/site_config.json
+# Committed, the way a classic bench routinely has it — this is what the
+# migrator has to notice.
+git add -f sites/mysite.local/site_config.json
+git commit -q -m "site config"
 printf 'backup\n' > sites/mysite.local/private/files/big.bin
 printf 'png\n' > sites/mysite.local/public/files/x.png
