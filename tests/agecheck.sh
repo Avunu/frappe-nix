@@ -150,5 +150,36 @@ else
   printf '  skip age-native recipient (rage-keygen unavailable)\n'
 fi
 
+# ── 8. armored ciphertext is read the same as binary ─────────────────────
+# ryantm/agenix writes a binary age file; ragenix wraps it in base64 PEM armor.
+# A checker that only understands the binary form sees no recipients at all in
+# anything ragenix wrote, reports "not encrypted to any declared recipient",
+# and never clears no matter how many times you rekey.
+"$RAGE" --encrypt --armor -R "$WORK/alice.pub" -R "$WORK/bob.pub" \
+  -o secrets/armored.age plain.txt
+head -n1 secrets/armored.age | grep -q 'BEGIN AGE ENCRYPTED FILE' ||
+  no "fixture is actually armored" "rage did not armor it"
+cat >r.json <<EOF
+{"secrets/armored.age": ["$alice", "$bob"]}
+EOF
+check r.json --root .
+if [ "$CHECK_RC" -eq 0 ]; then
+  ok "an armored file's recipients are read"
+else
+  no "an armored file's recipients are read" "$(printf '%s' "$CHECK_OUT" | head -3)"
+fi
+
+rules "$alice" "$bob" "$carol" >/dev/null
+cat >r.json <<EOF
+{"secrets/armored.age": ["$alice", "$bob", "$carol"]}
+EOF
+check r.json --root .
+if [ "$CHECK_RC" -ne 0 ] && says carol; then
+  ok "drift is still caught in an armored file"
+else
+  no "drift is still caught in an armored file" "rc=$CHECK_RC"
+fi
+rm -f secrets/armored.age
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

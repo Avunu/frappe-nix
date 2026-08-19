@@ -104,15 +104,17 @@ let
       REL="${secrets.relDir}/$1.age"
       shift
 
-      # RULES is how agenix finds the recipients. Pointing it at the generated
-      # store file is what removes the committed rules file — and with it the
-      # whole class of "the rules changed but the ciphertext did not".
-      export RULES=${secrets.rulesFile}
+      # The rules are rendered here rather than committed, so the recipient
+      # list in flake.nix is the only place it is written down. They carry
+      # absolute paths and the file below is passed absolute to match — see
+      # lib/secrets-tools.nix for why a store-path rules file with relative
+      # keys silently does nothing.
+      ${secrets.writeRules}
 
       if [ -n "''${1:-}" ]; then
-        ${lib.getExe' secrets.cli "agenix"} -e "$REL" -i "$1"
+        ${lib.getExe' secrets.cli "agenix"} -e "$FRAPPE_BENCH_ROOT/$REL" -i "$1"
       else
-        ${lib.getExe' secrets.cli "agenix"} -e "$REL"
+        ${lib.getExe' secrets.cli "agenix"} -e "$FRAPPE_BENCH_ROOT/$REL"
       fi
 
       # A new .age is untracked, and a flake's source tree is only its tracked
@@ -135,8 +137,8 @@ let
       echo "(you need to be able to decrypt them, so this cannot run in CI)"
       echo
 
-      export RULES=${secrets.rulesFile}
-      ${lib.getExe' secrets.cli "agenix"} -r
+      ${secrets.writeRules}
+      ${lib.getExe' secrets.cli "agenix"} -r "$@"
 
       echo
       ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check ${secrets.rulesJSON} --root .

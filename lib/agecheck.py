@@ -48,6 +48,35 @@ def label(pubkey: str) -> str:
     return (parts[1][:12] + "…") if len(parts) > 1 else pubkey
 
 
+ARMOR_BEGIN = "-----BEGIN AGE ENCRYPTED FILE-----"
+ARMOR_END = "-----END AGE ENCRYPTED FILE-----"
+
+
+def _dearmor(data: bytes) -> bytes:
+    """Return the binary age file, unwrapping PEM armor if present.
+
+    Necessary because the two CLIs disagree: ryantm/agenix writes a binary age
+    file, whose header stanzas are plain ASCII, while ragenix wraps the whole
+    thing in base64 PEM armor. Reading only the binary form means every file a
+    rekey has touched looks like it has no recipients at all — which reports as
+    "not encrypted to any declared recipient" and never clears, no matter how
+    many times you rekey.
+    """
+    if not data.startswith(ARMOR_BEGIN.encode()):
+        return data
+    body = []
+    for line in data.decode("ascii", "replace").splitlines():
+        if line.startswith("-----BEGIN"):
+            continue
+        if line.startswith("-----END"):
+            break
+        body.append(line.strip())
+    try:
+        return base64.b64decode("".join(body))
+    except Exception:
+        return data
+
+
 def header_tags(path: str) -> tuple[set[str], list[str]]:
     """(SSH stanza tags, other *recognised* stanza types).
 
@@ -62,18 +91,21 @@ def header_tags(path: str) -> tuple[set[str], list[str]]:
     tags: set[str] = set()
     known_other: list[str] = []
     with open(path, "rb") as fh:
-        for raw in fh:
-            line = raw.decode("ascii", "replace").rstrip("\r\n")
-            if line.startswith("---"):
-                break
-            m = STANZA.match(line)
-            if not m:
-                continue
-            kind, value = m.group(1), m.group(2)
-            if kind in SSH_TYPES and value:
-                tags.add(value)
-            elif kind in ("X25519", "scrypt"):
-                known_other.append(kind)
+        # The header is small; the payload may not be. Read enough to cover any
+        # plausible recipient list without pulling a whole secret into memory.
+        head = fh.read(1 << 16)
+    for raw in _dearmor(head).split(b"\n"):
+        line = raw.decode("ascii", "replace").rstrip("\r")
+        if line.startswith("---"):
+            break
+        m = STANZA.match(line)
+        if not m:
+            continue
+        kind, value = m.group(1), m.group(2)
+        if kind in SSH_TYPES and value:
+            tags.add(value)
+        elif kind in ("X25519", "scrypt"):
+            known_other.append(kind)
     return tags, known_other
 
 
