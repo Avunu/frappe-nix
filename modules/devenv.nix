@@ -13,7 +13,7 @@ topLevel@{
   ...
 }:
 let
-  inherit (lib) mkOption mkEnableOption types;
+  inherit (lib) mkOption mkEnableOption types literalExpression;
   inherit (flake-parts-lib) mkPerSystemOption;
 
   # Per-bench port offset, 0..899, hashed from the bench name.
@@ -452,6 +452,93 @@ in
           description = "Additional packages to add to LD_LIBRARY_PATH.";
         };
 
+        restore = {
+          enable = mkOption {
+            type = types.bool;
+            default = topLevel.config.frappe-nix.secrets.backupAccess.enable;
+            defaultText = literalExpression "frappe-nix.secrets.backupAccess.enable";
+            description = ''
+              Let `bench restore` fetch the latest production backup when it is
+              run with no file argument. Needs object-store credentials — by
+              default, the bench's `backup-access` agenix secret.
+            '';
+          };
+
+          prefix = mkOption {
+            type = types.str;
+            default = "";
+            example = "Backups";
+            description = ''
+              Path inside the bucket that the backup folders sit under —
+              Frappe's own `S3 Backup Settings.backup_path`.
+
+              Normally left empty and carried in the `backup-access` secret as
+              `BACKUPS_PREFIX` instead, alongside the bucket it belongs to:
+              both are per-deployment facts that change together with the
+              credentials, and keeping them together means a bench needs no Nix
+              configuration to restore at all. `BACKUPS_PREFIX` wins over this.
+            '';
+          };
+
+          withFiles = mkOption {
+            type = types.enum [ "none" "private" "all" ];
+            default = "none";
+            description = ''
+              Which file archives to pull down alongside the database.
+
+              Off by default because they are routinely tens of gigabytes,
+              while the database that makes a bench usable is a fraction of
+              that. `bench restore --files` / `--private-files` override
+              per-invocation.
+            '';
+          };
+
+          carryConfigKeys = mkOption {
+            type = types.listOf types.str;
+            default = [ "encryption_key" "backup_encryption_key" ];
+            description = ''
+              Keys copied from the backup's own `site_config_backup.json` into
+              the restored dev site.
+
+              This is an allowlist, not a denylist: a denylist loses to the
+              next app that invents `foo_api_secret`. The two defaults are the
+              ones that make a restore usable rather than merely present —
+              without `encryption_key` every stored password and API secret in
+              the dump decrypts to nothing, and `backup_encryption_key` is what
+              opens the next encrypted dump. Everything else production had
+              (`host_name`, `db_*`, `mail_*`, `cloud_storage_settings`,
+              `maintenance_mode`) is deliberately dropped.
+            '';
+          };
+
+          migrate = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Run `bench migrate` after a successful restore.";
+          };
+
+          requireDevguard = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Refuse to write production's `encryption_key` into a bench whose
+              guard rails are switched off.
+
+              Carrying that key is what makes a restore a real clone, and it is
+              also what lets the bench decrypt every stored production
+              credential in the dump. `devguard` is what keeps a bench holding
+              those from mailing customers or deleting objects out of the
+              production bucket — the README is explicit that it is a large
+              reduction in blast radius, not an airgap. Failing closed here
+              costs nothing and is the difference between a considered
+              tradeoff and an accident.
+
+              `bench restore --no-site-config` restores without the key
+              instead; the site works, its stored credentials stay opaque.
+            '';
+          };
+        };
+
         extraScripts = mkOption {
           type = types.attrsOf types.anything;
           default = { };
@@ -683,8 +770,21 @@ in
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           secrets = secretsTools;
+          restore = cfg.restore // {
+            fetch = "${backupFetch}/bin/frappe-nix-backup-fetch";
+            # Nix-time, not $FRAPPE_DEVGUARD_ENABLED: `devguard.enable = false`
+            # is a persistent property of the bench, so every later `devenv up`
+            # is unguarded too. A per-command disable is scoped to that command
+            # and is nobody's problem.
+            devguard = dg.enable;
+          };
           nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
         };
+
+        # The object-store half of `bench restore`, kept separate so shellcheck
+        # sees it (devenv script bodies are never linted) and so the NixOS-side
+        # restore can call the same discovery instead of copying it.
+        backupFetch = import ../lib/backup-fetch.nix { inherit pkgs; };
 
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.
@@ -843,6 +943,11 @@ in
               ++ lib.optional mailEnabled pkgs.mailpit
               # ragenix + the recipient checker, once the bench declares secrets.
               ++ secretsTools.packages
+              # The fetcher, plus gnupg for backups Frappe encrypted: it shells
+              # out to gpg to decrypt those, and frappe-nix otherwise leaves
+              # gnupg out of the closure (modules/nixos.nix's servicePath makes
+              # the same call).
+              ++ lib.optionals cfg.restore.enable [ backupFetch pkgs.gnupg ]
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 

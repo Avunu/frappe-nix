@@ -18,6 +18,10 @@
   # consumer that instantiates this file on its own; the dev shell passes the
   # store path.
   nodeModulesBin ? "frappe-nix-node-modules",
+  # perSystem.frappe-nix.restore, plus `fetch` (the frappe-nix-backup-fetch
+  # binary) and `devguard` (whether this bench's guard rails are on).
+  # `enable = false` leaves `bench restore` with its explicit-file behaviour.
+  restore ? { enable = false; },
 }:
 
 let

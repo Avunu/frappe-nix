@@ -128,6 +128,20 @@
               ${pkgs.rage}/bin/rage ${pkgs.openssh}/bin/ssh-keygen | tee "$out"
           '';
 
+          # A directory tree stands in for a bucket: `mc ls --json` emits the
+          # same shape for a local path as for S3, so folder selection, the
+          # -partial and -enc cases, the public/private archive split, the
+          # download cache and its retention all run with no server and no
+          # network.
+          backup-fetch = pkgs.runCommand "frappe-nix-backup-fetch-check" {
+            nativeBuildInputs = [ pkgs.jq pkgs.minio-client ];
+          } ''
+            export HOME="$PWD"
+            bash ${./tests/backup-fetch.sh} \
+              ${import ./lib/backup-fetch.nix { inherit pkgs; }}/bin/frappe-nix-backup-fetch \
+              | tee "$out"
+          '';
+
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
           # frappe.database and werkzeug.serving, and the assertions are about
           # which address the server was told to bind.
