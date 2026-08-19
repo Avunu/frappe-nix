@@ -87,6 +87,14 @@
       packages = forAllSystems (pkgs: rec {
         frappe-init = frappeInit pkgs;
         default = frappe-init;
+
+        # The object-store half of `bench restore`, standalone. Exposed because
+        # a production host restores too, and its NixOS module otherwise keeps
+        # its own copy of the same folder-selection and download logic — which
+        # is how the three copies of this got out of step in the first place.
+        # `--fetch-only` style use: it prints a JSON manifest and touches no
+        # database, so the deployment keeps its own restore half.
+        backup-fetch = import ./lib/backup-fetch.nix { inherit pkgs; };
       });
 
       apps = forAllSystems (pkgs: let
