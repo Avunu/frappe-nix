@@ -154,6 +154,17 @@ rec {
   # `name` is set explicitly rather than left to agenix-shell's toShellVar,
   # which maps every hyphen to "__" — the variable a script reads would
   # otherwise depend on the attribute key's punctuation.
+  #
+  # Secrets whose .age file does not exist yet are left out, deliberately.
+  # agenix-shell types `file` as a path, so Nix copies it into the store during
+  # evaluation and a missing one is an *evaluation* error — which would make a
+  # freshly declared secret break the whole flake, and with it `edit-secret`,
+  # the command that creates the file. Declaring a secret and then creating it
+  # is the documented first run, so it has to work.
+  #
+  # They stay in `declared`, so `check-secrets` still reports them as missing
+  # and says which command writes them. This is the one place the two lists
+  # differ.
   agenixShellSecrets =
     cfg:
     lib.listToAttrs (
@@ -164,7 +175,7 @@ rec {
           inherit (s) file;
           mode = "0400";
         }
-      ) (secretList cfg)
+      ) (filter (s: builtins.pathExists s.file) (secretList cfg))
     );
 
   # The agenix rules file, rendered. Generated rather than committed: a
