@@ -30,13 +30,28 @@ cd "${FRAPPE_BENCH_ROOT:?run this from the dev shell}"
 # ── identities ────────────────────────────────────────────────────────────
 # Same list agenix-shell decrypts with, so "it worked in the shell" and "I can
 # write the secret" cannot disagree.
+#
+# Two arrays, because the two tools spell this differently and getting it wrong
+# is a hard error, not a fallback:
+#   ragenix  -i takes multiple values  (-i a b)   — repeating the flag is
+#            rejected with "cannot be used multiple times"
+#   rage     -i takes one value        (-i a -i b)
+# ryantm/agenix matches rage here, which is why the repeated form looks right.
 # shellcheck disable=SC2206  # deliberate word splitting: IDENTITY_PATHS is a list
 candidates=($IDENTITY_PATHS)
-identity_args=()
+readable=()
 for path in "${candidates[@]}"; do
-  [ -r "$path" ] && identity_args+=(-i "$path")
+  [ -r "$path" ] && readable+=("$path")
 done
-if [ "${#identity_args[@]}" -eq 0 ]; then
+identity_args=()
+rage_args=()
+if [ "${#readable[@]}" -gt 0 ]; then
+  identity_args=(-i "${readable[@]}")
+  for path in "${readable[@]}"; do
+    rage_args+=(-i "$path")
+  done
+fi
+if [ "${#readable[@]}" -eq 0 ]; then
   gum style --foreground 1 "No readable SSH key among: ${candidates[*]}"
   echo
   echo "agenix needs one of those to encrypt to itself, so that you can read"
@@ -58,7 +73,9 @@ gum style --border rounded --padding "0 1" --border-foreground 4 \
 # of five fields — so pre-fill from whatever is already there.
 URL="" ; ACCESS="" ; SECRET="" ; BUCKET="" ; PREFIX=""
 if [ -f "$SECRET_REL" ]; then
-  if existing="$("$AGENIX" -d "$SECRET_REL" "${identity_args[@]}" 2>/dev/null)"; then
+  # rage, not agenix: ragenix implements only --edit/--rekey/--schema, so there
+  # is no `agenix -d` to read the current values back with.
+  if existing="$(rage --decrypt "${rage_args[@]}" "$SECRET_REL" 2>/dev/null)"; then
     # Parsed, not sourced: this is ciphertext someone else may have written,
     # and sourcing it would execute whatever is in it.
     while IFS='=' read -r key value; do

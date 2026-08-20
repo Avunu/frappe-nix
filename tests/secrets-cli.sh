@@ -129,6 +129,10 @@ fi
 # "does not exist, ignored", and changed nothing.
 before="$(tags "$ROOT/secrets/backup-access.age")"
 bash "$REKEY" -i "$WORK/alice" >"$WORK/rekey.log" 2>&1 || true
+# The rules rekey-secrets generated name both keys and use absolute paths; keep
+# a copy so the multi-identity cases below have something to encrypt against.
+printf '{ "%s/secrets/backup-access.age".publicKeys = [ %s %s ]; }\n' \
+  "$ROOT" "\"$(cat "$KEYS/alice.pub")\"" "\"$(cat "$KEYS/bob.pub")\"" >"$WORK/rules-abs.nix"
 after="$(tags "$ROOT/secrets/backup-access.age")"
 
 if grep -qi "does not exist, ignored" "$WORK/rekey.log"; then
@@ -157,6 +161,38 @@ if bash "$CHECK" >"$WORK/check.log" 2>&1; then
   ok "check-secrets passes after a successful rekey"
 else
   no "check-secrets passes after a rekey" "$(tail -4 "$WORK/check.log")"
+fi
+
+# ── 8. several identities at once ────────────────────────────────────────
+# setup-backup-access offers every readable key in identityPaths, because the
+# one that can decrypt is not knowable in advance. The two tools spell that
+# differently and the wrong spelling is a hard error, not a fallback:
+#
+#   ragenix  -i is variadic       (-i a b)      — repeating it is rejected with
+#                                                 "cannot be used multiple times"
+#   rage     -i takes one value   (-i a -i b)
+#
+# ryantm/agenix agrees with rage, which is why the repeated form looks correct.
+readable=("$WORK/bob" "$WORK/alice")   # bob first, and bob cannot decrypt
+identity_args=(-i "${readable[@]}")
+rage_args=()
+for p in "${readable[@]}"; do rage_args+=(-i "$p"); done
+
+if printf 'BACKUPS_URL=https://multi.invalid\n' |
+  EDITOR="cp /dev/stdin" RULES="$WORK/rules-abs.nix" \
+    agenix -e "$ROOT/secrets/backup-access.age" "${identity_args[@]}" 2>"$WORK/multi.log"; then
+  ok "agenix accepts every readable identity in one go"
+else
+  no "agenix accepts every readable identity in one go" "$(tail -2 "$WORK/multi.log")"
+fi
+
+# And reading one back uses rage, because ragenix implements only
+# --edit/--rekey/--schema — there is no `agenix -d` to pre-fill an edit with.
+if [ "$(rage --decrypt "${rage_args[@]}" "$ROOT/secrets/backup-access.age" 2>/dev/null)" \
+  = "BACKUPS_URL=https://multi.invalid" ]; then
+  ok "rage reads it back with the repeated-flag form"
+else
+  no "rage reads it back with the repeated-flag form" "$(tail -2 "$WORK/multi.log")"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

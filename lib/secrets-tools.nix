@@ -86,6 +86,9 @@ let
         coreutils
         gnugrep
         cli
+        # For reading an existing secret back: ragenix implements only
+        # --edit/--rekey/--schema, so there is no `agenix -d`.
+        rage
       ];
       text =
         ''
