@@ -553,7 +553,8 @@ These back the wrapper and are also callable directly:
 | `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also re-locks the workspace (`uv lock`) and refreshes `node-offline-hashes.json` for the apps whose lock files moved. |
 | `bench-migrate` / `bench-build` / `bench-clear-cache` / `bench-console` | Thin `bench` wrappers honoring `$FRAPPE_SITE`. |
 | `bench-restore [<sql>\|--at <ts>\|--list]` | Restore from a SQL backup, or from the latest one in the object store. See [Restoring from production](#restoring-from-production). |
-| `edit-secret <name>` | Decrypt a secret into `$EDITOR` and re-encrypt it to the declared recipients. |
+| `setup-backup-access` | Prompt for the object-store credentials, test them against the bucket, and write `backup-access.age`. |
+| `edit-secret <name>` | Decrypt a secret into `$EDITOR` and re-encrypt it to the declared recipients. Reads stdin when it is not a terminal, so a secret can be piped in. |
 | `rekey-secrets` | Re-encrypt every secret after changing `recipients`. |
 | `check-secrets [<name>]` | Verify the `.age` files match the declared recipients; with a name, explain why *you* cannot decrypt one. |
 | `bench-get-app <url\|alias>` | Add an app as a git submodule + register it in the uv workspace. `helpdesk` → `frappe/helpdesk`; `owner/repo` and full URLs also work. |
@@ -629,6 +630,44 @@ in the clear, and an SSH recipient's tag is derivable from the public key alone.
 a particular secret.
 
 After changing `recipients`, run `rekey-secrets` and commit the result.
+
+### Setting up backup access
+
+`setup-backup-access` asks five questions instead of making you remember five
+variable names and the quoting rules for a file the shell will source:
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Backup access for mybench                              │
+│                                                        │
+│ These are the object-store credentials `bench restore` │
+│ uses to find and download production backups.          │
+└────────────────────────────────────────────────────────┘
+
+Endpoint URL
+> https://s3.us-east-005.backblazeb2.com
+…
+Test these against the bucket now? [Yes]
+✓ 34 backup(s) found; newest is 20260814_000042
+```
+
+It offers to list the bucket before encrypting anything, because a typo in an
+access key is otherwise a mystery several minutes into the first restore. Run
+it again to edit: existing values are pre-filled, and a blank secret key keeps
+the stored one, so rotating an access key does not mean re-typing a secret that
+has not changed.
+
+For anything scripted, pipe the env-file in instead:
+
+```sh
+edit-secret backup-access <<'ENV'
+BACKUPS_URL=https://s3.us-east-005.backblazeb2.com
+BACKUPS_ACCESS_KEY=…
+BACKUPS_SECRET_KEY=…
+BACKUPS_BUCKET=MyERPBackups
+BACKUPS_PREFIX=
+ENV
+```
 
 ### Restoring from production
 

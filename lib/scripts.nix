@@ -111,6 +111,20 @@ let
       # keys silently does nothing.
       ${secrets.writeRules}
 
+      # ryantm/agenix substitutes `cp -- /dev/stdin` for $EDITOR when stdin is
+      # not a terminal, so `edit-secret foo <<EOF … EOF` just works there.
+      # ragenix does not — it refuses with "Standard output is not a terminal"
+      # — which would make every secret in this bench hand-typed only. Restore
+      # the documented behaviour.
+      # Unconditional, not "only if EDITOR is unset": EDITOR is nano on most
+      # machines, and an interactive editor cannot work without a terminal
+      # anyway, so honouring it here just fails. ryantm/agenix makes the same
+      # unconditional substitution.
+      if [ ! -t 0 ]; then
+        EDITOR="cp /dev/stdin"
+        export EDITOR
+      fi
+
       if [ -n "''${1:-}" ]; then
         ${lib.getExe' secrets.cli "agenix"} -e "$FRAPPE_BENCH_ROOT/$REL" -i "$1"
       else
@@ -156,6 +170,10 @@ let
       fi
       exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check \
         ${secrets.rulesJSON} --root .
+    '';
+  } // lib.optionalAttrs ((secrets.enabled or false) && (restore.enable or false)) {
+    setup-backup-access.exec = ''
+      exec ${secrets.setupBackupAccess restore.fetch}/bin/frappe-nix-setup-backup-access "$@"
     '';
   };
 in

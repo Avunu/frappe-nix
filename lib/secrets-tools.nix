@@ -68,6 +68,43 @@ let
     text = "#!${pkgs.python3}/bin/python3\n" + builtins.readFile ./agecheck.py;
   };
 
+  # `setup-backup-access` — five prompts instead of five variable names and the
+  # quoting rules for a file the shell will source.
+  #
+  # A writeShellApplication rather than a devenv script body so shellcheck sees
+  # it (devenv never lints those) and so the baked paths are resolved once. It
+  # is offered only when the bench declares the backup-access secret; there is
+  # nothing to prompt for otherwise.
+  setupBackupAccess =
+    fetch:
+    pkgs.writeShellApplication {
+      name = "frappe-nix-setup-backup-access";
+      runtimeInputs = with pkgs; [
+        gum
+        git
+        gnused
+        coreutils
+        gnugrep
+        cli
+      ];
+      text =
+        ''
+          AGENIX=${lib.getExe' cli "agenix"}
+          AGECHECK=${lib.getExe' agecheck "frappe-nix-agecheck"}
+          RULES_JSON=${rulesJSON}
+          SECRET_REL="${cfg.relDir}/backup-access.age"
+          FETCH=${fetch}
+          # Assigned rather than interpolated into the loop: these are shell
+          # strings holding $HOME, so they expand here and nowhere else.
+          IDENTITY_PATHS="${toString cfg.identityPaths}"
+
+          write_rules() {
+            ${writeRules}
+          }
+        ''
+        + builtins.readFile ./sh/backup-access.sh;
+    };
+
   # Shell fragment: decrypt every declared secret and make it usable.
   #
   # Sourced on demand by the scripts that need it, NOT from enterShell. Three
@@ -137,6 +174,7 @@ in
     cli
     writeRules
     rulesJSON
+    setupBackupAccess
     agecheck
     loadSecrets
     requireSecret

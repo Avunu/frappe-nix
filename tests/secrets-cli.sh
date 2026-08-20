@@ -86,7 +86,12 @@ A="$(tag_of "$WORK/alice.pub")"
 B="$(tag_of "$WORK/bob.pub")"
 
 # ── 1. edit-secret creates the file, where it belongs ────────────────────
-export EDITOR="cp /dev/stdin"
+# EDITOR is deliberately a real interactive editor, as it is on most machines.
+# edit-secret has to override it when stdin is not a terminal: ryantm/agenix
+# substitutes `cp -- /dev/stdin` itself, ragenix does not and fails with
+# "Editor 'nano' exited with non-zero status code", which would make every
+# secret in a bench hand-typed only.
+export EDITOR="nano"
 if printf 'BACKUPS_URL=https://example.invalid\n' | bash "$EDIT" backup-access >"$WORK/edit.log" 2>&1; then
   if [ -f "$ROOT/secrets/backup-access.age" ]; then
     ok "edit-secret writes secrets/backup-access.age in the bench, not the store"
