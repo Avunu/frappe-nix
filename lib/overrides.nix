@@ -82,10 +82,21 @@
       });
     };
 
-  # cairocffi needs cairo headers. Only needed if not using
-  # [tool.uv.extra-build-dependencies] for the pure-Python deps.
+  # cairocffi is a cffi wrapper, not a compiled extension: it calls
+  # ffi.dlopen('libcairo.so.2') at *import* time, by bare filename. Nix has
+  # no ldconfig cache and nothing on LD_LIBRARY_PATH by default, so that
+  # dlopen fails outright unless libcairo is put on the loader's path somehow.
+  #
+  # Putting cairo's whole /lib on LD_LIBRARY_PATH is a trap: it also carries
+  # cairo's own libexpat, which shadows the interpreter's ABI-incompatible
+  # one and breaks Python's built-in XML parsing everywhere, not just cairo.
+  # Nix already bakes a RUNPATH into libcairo.so.2 for its own dependencies
+  # (libpng, freetype, fontconfig, pixman, X11 libs), so patching the dlopen
+  # call to the absolute store path resolves everything through that
+  # self-contained RUNPATH with nothing added to LD_LIBRARY_PATH - same fix
+  # shape as pyvips above, for the same underlying reason.
   cairocffi =
-    _:
+    { pkgs }:
     final: prev: {
       cairocffi = prev.cairocffi.overrideAttrs (old: {
         nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
@@ -93,6 +104,11 @@
           final.cffi
           final.pycparser
         ];
+        buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.cairo ];
+        postPatch = ''
+          substituteInPlace cairocffi/__init__.py \
+            --replace "'libcairo.so.2'" "'${pkgs.lib.getLib pkgs.cairo}/lib/libcairo.so.2'"
+        '';
       });
     };
 }
