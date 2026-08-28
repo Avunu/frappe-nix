@@ -845,7 +845,7 @@ in
         };
 
         devenv.shells.default =
-          { config, pkgs, ... }:
+          { config, lib, pkgs, ... }:
           let
             # Every socket lives here, not in $DEVENV_STATE. DEVENV_RUNTIME is
             # ~27 bytes ($XDG_RUNTIME_DIR/devenv-<7 hex>, or /tmp/devenv-<7 hex>)
@@ -912,7 +912,14 @@ in
             };
           in
           {
-            dotenv.enable = true;
+            # devenv's dotenv integration is loaded by the devenv CLI and
+            # asserts against being combined with the flake integration
+            # (`nix develop`, as opposed to `devenv shell`) — enabling it
+            # unconditionally breaks every flake-based consumer of this
+            # module. `mkDefault` keeps `.env` loading for `devenv shell`
+            # while a flake-integrated shell falls back to off, and a
+            # consumer can still override either way.
+            dotenv.enable = lib.mkDefault (!config.devenv.flakesIntegration);
 
             packages =
               with pkgs;
