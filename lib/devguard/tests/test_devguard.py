@@ -463,19 +463,53 @@ check(
     "core backup jobs are blocked",
     "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
 )
+# Frappe 16 moved these three integrations into the standalone
+# `frappe/offsite_backups` app, which re-registers the same seven jobs under
+# its own dotted paths. blocked_jobs is exact-match, so the old spellings alone
+# would leave a bench with that app installed pushing to production nightly.
+check(
+    "the standalone app's jobs are blocked too",
+    "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily"
+    in jobs,
+)
+check(
+    "including google drive's, which is spelled differently",
+    "offsite_backups.offsite_backups.doctype.google_drive.google_drive.daily_backup" in jobs,
+)
 check(
     "the local retention reaper is NOT blocked",
     "frappe.desk.page.backups.backups.delete_downloadable_backups" not in jobs,
 )
-check("all seven core entries are listed", len(jobs) == 7, len(jobs))
+check("seven entries per layout are listed", len(jobs) == 14, len(jobs))
 
 os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.push_backup"
 check(
     "extra jobs are unioned in, not replacing",
-    "myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 8,
+    "myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 15,
     len(blocked_jobs()),
 )
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
+
+# override_whitelisted_methods is consulted before get_attr, so the cmd strings
+# assert_not_overridden watches have to name both layouts as well.
+from frappe_devguard.guards.backups import _BACKUP_PREFIXES, _PROTECTED_CMDS  # noqa: E402
+
+check(
+    "both backup layouts are guarded",
+    _BACKUP_PREFIXES == ("frappe.integrations", "offsite_backups.offsite_backups"),
+    _BACKUP_PREFIXES,
+)
+check(
+    "protected endpoints cover core",
+    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3"
+    in _PROTECTED_CMDS,
+)
+check(
+    "protected endpoints cover the standalone app",
+    "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3"
+    in _PROTECTED_CMDS,
+)
+check("four endpoints per layout", len(_PROTECTED_CMDS) == 8, len(_PROTECTED_CMDS))
 
 # --------------------------------------------------------------------------
 # the Email Queue outgoing-transport patch

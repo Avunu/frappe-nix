@@ -16,6 +16,10 @@ is not covered. `require()` makes such a drift loud rather than silent, and the
 `scheduler` guard catches scheduled jobs by name, but neither is the same
 guarantee. Do not read the ``offsite_backup_utils`` patch below as one either:
 two paths reach an upload without ever calling it.
+
+Frappe 16 moved all three integrations out of core into the standalone
+`frappe/offsite_backups` app. Both layouts are guarded, because frappe-nix's
+presets span both: see ``_BACKUP_PREFIXES``.
 """
 
 from .._hook import on_import
@@ -28,13 +32,33 @@ _UPLOAD_BLOCKED = (
     "destination is production's. Local backups still work: use `bench backup`."
 )
 
+#: Where the three integrations live, oldest first. Frappe 16 lifted them out
+#: of core into `frappe/offsite_backups` unchanged — same module leaves, same
+#: function names — so one set of patches serves both and both are registered.
+#: Only whichever layout the bench actually has is ever imported, and an
+#: ``on_import`` for a module nobody imports simply never fires.
+#:
+#: Registering the absent one is not the same as it being guarded, and the
+#: distinction is the whole reason this list exists. A module that *vanished*
+#: leaves a callback that never runs, which is fail-safe. A module that *moved*
+#: leaves the same silence while the uploader is still there under a new name —
+#: and `require()` cannot make that loud, because it never gets to run.
+_BACKUP_PREFIXES = (
+    "frappe.integrations",  # <= v15, frappe core
+    "offsite_backups.offsite_backups",  # >= v16, the standalone app
+)
+
 #: Endpoints we replace. Checked against override_whitelisted_methods, which is
 #: consulted before get_attr and would otherwise route around the patch.
-_PROTECTED_CMDS = (
-    "frappe.integrations.doctype.dropbox_settings.dropbox_settings.take_backup",
-    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backup",
-    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3",
-    "frappe.integrations.doctype.google_drive.google_drive.take_backup",
+_PROTECTED_ENDPOINTS = (
+    "doctype.dropbox_settings.dropbox_settings.take_backup",
+    "doctype.s3_backup_settings.s3_backup_settings.take_backup",
+    "doctype.s3_backup_settings.s3_backup_settings.take_backups_s3",
+    "doctype.google_drive.google_drive.take_backup",
+)
+
+_PROTECTED_CMDS = tuple(
+    f"{prefix}.{endpoint}" for prefix in _BACKUP_PREFIXES for endpoint in _PROTECTED_ENDPOINTS
 )
 
 _INSTALLED = False
@@ -46,12 +70,13 @@ def install():
         return
     _INSTALLED = True
 
-    on_import("frappe.integrations.offsite_backup_utils", _patch_offsite_utils)
-    on_import(
-        "frappe.integrations.doctype.dropbox_settings.dropbox_settings", _patch_dropbox
-    )
-    on_import("frappe.integrations.doctype.s3_backup_settings.s3_backup_settings", _patch_s3)
-    on_import("frappe.integrations.doctype.google_drive.google_drive", _patch_google_drive)
+    for prefix in _BACKUP_PREFIXES:
+        on_import(f"{prefix}.offsite_backup_utils", _patch_offsite_utils)
+        on_import(f"{prefix}.doctype.dropbox_settings.dropbox_settings", _patch_dropbox)
+        on_import(f"{prefix}.doctype.s3_backup_settings.s3_backup_settings", _patch_s3)
+        on_import(f"{prefix}.doctype.google_drive.google_drive", _patch_google_drive)
+
+    # Not part of the move: frappecloud is still in core on both branches.
     on_import("frappe.integrations.frappe_providers.frappecloud", _patch_frappecloud)
     on_import("frappe.integrations.frappe_providers", _rebind_frappe_providers)
 

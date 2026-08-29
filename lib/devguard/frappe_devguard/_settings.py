@@ -66,7 +66,13 @@ DEFAULTS = {
             # frappe.desk.page.backups.backups.delete_downloadable_backups,
             # a purely local retention reaper, and matching "backup" loosely
             # would disable it and fill the disk.
+            # Both layouts, because exact-matching means a moved module is not
+            # merely unguarded, it is unguarded *silently*: Frappe 16 lifted
+            # these three integrations out of core into the standalone
+            # `frappe/offsite_backups` app, whose hooks.py registers the same
+            # seven jobs under its own dotted paths. See guards/backups.py.
             "blocked_jobs": [
+                # <= v15, frappe core
                 "frappe.integrations.doctype.dropbox_settings.dropbox_settings.take_backups_daily",
                 "frappe.integrations.doctype.dropbox_settings.dropbox_settings.take_backups_weekly",
                 "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily",
@@ -74,6 +80,14 @@ DEFAULTS = {
                 "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_monthly",
                 "frappe.integrations.doctype.google_drive.google_drive.daily_backup",
                 "frappe.integrations.doctype.google_drive.google_drive.weekly_backup",
+                # >= v16, the standalone app
+                "offsite_backups.offsite_backups.doctype.dropbox_settings.dropbox_settings.take_backups_daily",
+                "offsite_backups.offsite_backups.doctype.dropbox_settings.dropbox_settings.take_backups_weekly",
+                "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily",
+                "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_weekly",
+                "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_monthly",
+                "offsite_backups.offsite_backups.doctype.google_drive.google_drive.daily_backup",
+                "offsite_backups.offsite_backups.doctype.google_drive.google_drive.weekly_backup",
             ],
             # Unioned with blocked_jobs, so a consumer adds to the list above
             # rather than restating it.
