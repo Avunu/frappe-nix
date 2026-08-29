@@ -101,11 +101,11 @@ in
               socket — the same shape services.frappe uses in production.
 
               That leaves one public TCP listener per bench, nginx's. MariaDB
-              also keeps a loopback one on a per-bench port — frappe reaches it
-              over the socket, but an app that opens its own connection to
-              conf.db_host:db_port would otherwise land in a neighbouring
-              bench's database. Mailpit's ports stay too: it is Go and has no
-              unix listener.
+              gets `skip-networking` and listens on nothing at all; FRAPPE_DB_HOST
+              and FRAPPE_DB_PORT still name its allocated-but-unbound port, so an
+              app that opens its own connection to conf.db_host:db_port fails
+              against this bench rather than landing in a neighbouring bench's
+              database. Mailpit's ports stay: it is Go and has no unix listener.
 
               Set false to keep every service on TCP; ports are still allocated
               dynamically, so benches still do not collide — they just use more
@@ -856,9 +856,13 @@ in
             # other users without any per-socket permission work.
             runtime = config.env.DEVENV_RUNTIME;
 
-            # The TCP port devenv settled on for mysqld, starting from dbBase —
-            # the same value it exports as MYSQL_TCP_PORT, so frappe's conf and
-            # every other client agree on where this bench's database is.
+            # The port devenv allocated for mysqld, starting from dbBase, and
+            # the same value it exports as MYSQL_TCP_PORT.
+            #
+            # Under sockets.enable nothing listens on it — skip-networking is
+            # set — but it stays this bench's own number, and FRAPPE_DB_HOST/PORT
+            # keep naming it precisely so a TCP client fails against *us* rather
+            # than succeeding against a neighbour's 3306. See services.mysql.
             dbPort = config.processes.mysql.ports.main.value;
 
             mysqlSocket = "${runtime}/mysql.sock";
@@ -889,6 +893,93 @@ in
             redisCli =
               "${config.services.redis.package}/bin/redis-cli "
               + (if sockets then ''-s "${redisSocket}"'' else "-p ${toString config.services.redis.port}");
+
+            # A mariadbd orphaned by a previous `devenv up` — one that outlived
+            # its process-compose and wedged — owns $MYSQL_UNIX_PORT and, in TCP
+            # mode, the allocated port, so the next run can bind neither.
+            # devenv's allocator does not rescue this: on an eval-cache replay it
+            # hands the cached port straight back without probing it
+            # (PortAllocator::allocate_exact under allow_in_use, which
+            # reserve_running_ports sets whenever processes look live). So reap
+            # the corpse rather than hope to be allocated around it.
+            mariadbdReaper = pkgs.writeShellScript "mariadbd-reap" ''
+              set -uo pipefail
+              PATH=${lib.makeBinPath [ pkgs.procps pkgs.coreutils ]}:$PATH
+
+              datadir="''${MYSQL_HOME:-}"
+              sock="''${MYSQL_UNIX_PORT:-}"
+
+              if [ -n "$datadir" ]; then
+                # Selected by --datadir, never by process name alone: a
+                # system MariaDB and a neighbouring bench's server are both
+                # mariadbd, and neither is ours to kill. Same for the uid.
+                # $$ matches too — devenv invokes this wrapper *with* --datadir.
+                for pid in $(pgrep -u "$(id -u)" -f -- "--datadir=$datadir" 2>/dev/null || true); do
+                  [ "$pid" = "$$" ] && continue
+                  [ "$pid" = "$PPID" ] && continue
+                  # pgrep -f matches a command line, so on its own it would also
+                  # match anything that merely mentions the datadir. Require the
+                  # process to actually be a server before signalling it.
+                  comm="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
+                  case "''${comm##*/}" in
+                    mariadbd | mysqld) ;;
+                    *) continue ;;
+                  esac
+                  echo "frappe-nix: reaping orphaned mariadbd (pid $pid) on $datadir" >&2
+                  # SIGTERM is mariadbd's clean-shutdown signal and needs no
+                  # credentials, which `mariadb-admin shutdown` would — and that
+                  # would hang anyway against the wedged server this exists for.
+                  kill -TERM "$pid" 2>/dev/null || true
+                  for _ in $(seq 1 30); do
+                    kill -0 "$pid" 2>/dev/null || break
+                    sleep 1
+                  done
+                  if kill -0 "$pid" 2>/dev/null; then
+                    echo "frappe-nix: pid $pid ignored SIGTERM, sending SIGKILL" >&2
+                    kill -KILL "$pid" 2>/dev/null || true
+                  fi
+                done
+              fi
+
+              # Only after the reap: any live owner is now gone, and
+              # $DEVENV_RUNTIME is per-project so nothing else can hold this
+              # socket. mariadbd refuses to start while the file is still there.
+              if [ -n "$sock" ] && [ -S "$sock" ]; then
+                rm -f "$sock"
+              fi
+            '';
+
+            # devenv builds processes.mysql.exec around ${cfg.package}/bin/mariadbd
+            # and gives us a store path we cannot append to without
+            # re-implementing its first-run logic (mariadb-install-db, the
+            # timezone import), so the hook goes on the binary itself. That also
+            # puts it on the one path process-compose re-runs on *restart* — the
+            # same reason socketio's `rm -f` lives in `exec` and not in a task.
+            #
+            # symlinkJoin rather than an override because devenv passes
+            # --basedir=${cfg.package} to mariadbd: share/ (charsets, errmsg.sys,
+            # the plugin dir) has to travel with bin/.
+            mariadbWrapped = pkgs.symlinkJoin {
+              # Keep the upstream name stem. devenv chooses the mariadb-* over
+              # the mysql-* client spellings with
+              # `getName cfg.package == getName pkgs.mariadb`, and a renamed join
+              # flips it to the Oracle names, none of which exist here.
+              name = "${lib.getName cfg.mariadb.package}-${lib.getVersion cfg.mariadb.package}";
+              paths = [ cfg.mariadb.package ];
+              postBuild = ''
+                rm -f "$out/bin/mariadbd"
+                ln -s ${
+                  pkgs.writeShellScriptBin "mariadbd" ''
+                    ${mariadbdReaper}
+                    exec ${cfg.mariadb.package}/bin/mariadbd "$@"
+                  ''
+                }/bin/mariadbd "$out/bin/mariadbd"
+              '';
+            };
+
+            # Keeps a client out of ~/.my.cnf and /etc/my.cnf, the way devenv's
+            # own empty.cnf does for the probes it owns.
+            emptyCnf = pkgs.writeText "empty.cnf" "";
 
             # Readiness for a process listening on a unix socket.
             #
@@ -1012,7 +1103,11 @@ in
                 # on its own (Insights' "Site DB", any app handed a data source),
                 # which otherwise inherits frappe/config.py's 127.0.0.1:3306
                 # default and lands in whichever bench happens to hold 3306.
-                # Naming this bench's own listener is what keeps that honest.
+                #
+                # Under sockets.enable that port has no listener, so such a
+                # client now gets ECONNREFUSED here instead of a silent success
+                # against the wrong database. Do not drop these to match: an
+                # unset FRAPPE_DB_PORT is what re-opens the 3306 hole.
                 FRAPPE_DB_HOST = "127.0.0.1";
                 FRAPPE_DB_PORT = toString dbPort;
               }
@@ -1142,7 +1237,10 @@ in
 
             services.mysql = {
               enable = true;
-              package = cfg.mariadb.package;
+              # The reaping wrapper, not cfg.mariadb.package: this is the one
+              # that reaches mariadbd. Everything else — the mysqlclient
+              # override, LD_LIBRARY_PATH — keeps using the raw package.
+              package = mariadbWrapped;
               settings = {
                 mysqld = {
                   character-set-server = "utf8mb4";
@@ -1153,29 +1251,54 @@ in
                   max-connections = 200;
                   innodb-read-only-compressed = "OFF";
                 }
-                // {
+                // (
                   # Frappe reaches the database over $DEVENV_RUNTIME/mysql.sock
                   # in both modes — get_connection_settings drops host/port
-                  # entirely once db_socket is set — so the TCP listener is not
-                  # for frappe. It is for everything else.
+                  # entirely once db_socket is set — so the TCP listener was
+                  # never for frappe. Under sockets.enable there is none.
                   #
-                  # This used to be `skip-networking` under sockets.enable, on
-                  # the reasoning that it dropped a listener no client was using.
-                  # Clients do use it: an app that goes to
-                  # `frappe.conf.db_host:db_port` rather than through frappe.db
-                  # gets the 127.0.0.1:3306 default from frappe/config.py, and on
-                  # a machine running a second bench that is *its* MariaDB.
-                  # Insights' "Site DB" data source is one — ibis even rewrites
-                  # host "localhost" back to 127.0.0.1 to force TCP past
-                  # libmysqlclient's socket shortcut — and the neighbour it lands
-                  # in fails `bench update` mid-migrate with an access-denied for
-                  # a user it has never heard of.
+                  # It used to be kept, on loopback, on this bench's own port,
+                  # because an app that goes to `frappe.conf.db_host:db_port`
+                  # rather than through frappe.db gets the 127.0.0.1:3306 default
+                  # from frappe/config.py, and on a machine running a second
+                  # bench that is *its* MariaDB. Insights' "Site DB" data source
+                  # is one — ibis even rewrites host "localhost" back to
+                  # 127.0.0.1 to force TCP past libmysqlclient's socket shortcut
+                  # — and the neighbour it lands in fails `bench update`
+                  # mid-migrate with an access-denied for a user it has never
+                  # heard of.
                   #
-                  # So: keep the listener, on loopback, on this bench's own port,
-                  # which FRAPPE_DB_HOST/FRAPPE_DB_PORT then name.
-                  port = dbBase; # allocator base, not a reservation
-                  bind-address = "127.0.0.1";
-                };
+                  # What actually closes that hole is not the listener, it is
+                  # FRAPPE_DB_HOST/FRAPPE_DB_PORT naming this bench's own
+                  # allocated port (see `env` below). With nothing behind it such
+                  # a client gets ECONNREFUSED on a port that is provably ours,
+                  # instead of a silent connection to a neighbour's database.
+                  # Loud and local beats quiet and wrong.
+                  #
+                  # Dropping it also retires a failure class: the listener was
+                  # the thing an orphaned mariadbd could hold against us, and
+                  # devenv's allocator re-hands a cached port on an eval-cache
+                  # replay rather than walking to the next free one. (The socket
+                  # it can still hold — hence mariadbdReaper.)
+                  #
+                  # `port` stays in both modes, and not because anything binds
+                  # it under sockets.enable. devenv's mysql module reads exactly
+                  # this key — `hasPort` — to seed
+                  # processes.mysql.ports.main.allocate, so dropping it silently
+                  # reverts the allocator base to 3306, which is the one port
+                  # this bench must never name. It is also what dbPort, and so
+                  # FRAPPE_DB_PORT, resolves to. devenv then overwrites the value
+                  # with the port it allocated; skip-networking wins over both.
+                  {
+                    port = dbBase; # allocator base, not a reservation
+                  }
+                  // (
+                    if sockets then
+                      { skip-networking = true; }
+                    else
+                      { bind-address = "127.0.0.1"; }
+                  )
+                );
               };
               initialDatabases = cfg.mariadb.initialDatabases;
             };
@@ -1299,6 +1422,21 @@ in
                 needsConfig = [ "frappe:config" ];
               in
               {
+                # devenv's own probe is `mariadb-admin ping` with no timeout at
+                # either layer. Against a server that accepts the connection and
+                # then never answers — exactly what a wedged orphan does — every
+                # probe blocks forever, and they pile up unbounded until the
+                # readiness deadline kills the process. `timeout` is the hard
+                # guarantee (--connect-timeout only covers the connect, not the
+                # read that actually hangs); probe_timeout lets process-compose
+                # reap it too.
+                mysql.ready = {
+                  exec = lib.mkForce ''MYSQL_PWD="" ${pkgs.coreutils}/bin/timeout 5 ${cfg.mariadb.package}/bin/mariadb-admin --defaults-file=${emptyCnf} --connect-timeout=3 ping -u root --silent'';
+                  probe_timeout = 10;
+                  period = 5;
+                  failure_threshold = 60;
+                };
+
                 web = {
                   # --port is ignored when FRAPPE_WEB_SOCKET is set
                   # (frappe_unixsock rewrites the bind address), but still passed:
