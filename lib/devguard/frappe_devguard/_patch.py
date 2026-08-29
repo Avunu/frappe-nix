@@ -139,6 +139,28 @@ def require(owner, name):
     return value
 
 
+def require_any(owner, *names):
+    """Fetch the first surviving spelling of a renamed target, or fail loudly.
+
+    ``require`` is right for an internal with one name. This is for one Frappe
+    has renamed across the branches frappe-nix's presets span: any known
+    spelling will do, but none of them surviving still has to be loud. Returns
+    the name as well as the value, so the caller patches back the spelling this
+    Frappe actually uses.
+    """
+    for name in names:
+        value = getattr(owner, name, None)
+        if value is not None:
+            STATUS[f"{getattr(owner, '__name__', owner)}.{name}"] = "patched"
+            return name, value
+    label = getattr(owner, "__qualname__", None) or getattr(owner, "__name__", owner)
+    raise DevGuardPatchError(
+        f"frappe_devguard: {label} has none of {', '.join(names)} — Frappe's "
+        "internals have moved and this guard can no longer be relied on. Update "
+        "frappe-nix, or set FRAPPE_DEVGUARD_ENABLED=0 to run without it."
+    )
+
+
 def redirect_kwargs(func, self, args, kwargs, replacements):
     """Rebind a call's arguments, overriding ``replacements`` by name.
 

@@ -13,6 +13,7 @@ from .._patch import (
     disarm_subclasses,
     redirect_kwargs,
     require,
+    require_any,
     with_in_install,
 )
 from .._settings import DevGuardBlocked, settings
@@ -32,6 +33,7 @@ _EMAIL_ACCOUNT_OVERRIDES = (
     "find_default_outgoing",
     "sendmail_config",
     "get_smtp_server",
+    "get_frappe_mail_client",
     "validate",
     "validate_smtp_conn",
     "get_incoming_server",
@@ -155,6 +157,10 @@ def _patch_email_account(module):
     original_incoming = require(email_account, "get_incoming_server")
     original_append = require(email_account, "append_email_to_sent_folder")
     original_pull = require(module, "pull")
+    # Deliberately getattr, not require: "Frappe Mail" postdates the oldest
+    # branch frappe-nix's presets span, and an escape route that does not exist
+    # needs no closing. Its absence is not drift.
+    original_frappe_mail_client = getattr(email_account, "get_frappe_mail_client", None)
 
     def find_default_outgoing(cls):
         doc = original_find_default.__func__(cls)
@@ -252,6 +258,19 @@ def _patch_email_account(module):
         # Would IMAP-APPEND every dev-sent mail into the production Sent folder.
         return None
 
+    def get_frappe_mail_client(self):
+        if not enabled():
+            return original_frappe_mail_client(self)
+        announce_mail()
+        # Frappe Mail is a second outgoing transport that posts the message to
+        # a remote Frappe site over HTTP (frappe.email.frappemail), so neither
+        # the SMTPServer patch above nor mail_stdlib's smtplib guard sits on
+        # its path. Returning None keeps the client from being built at all —
+        # the OAuth branch of it calls get_access_token(), which dials out on
+        # its own — and the queue forces the SMTP transport regardless, see
+        # _patch_email_queue.
+        return None
+
     def pull(*args, **kwargs):
         if enabled() and settings().block_incoming:
             # Scheduled every 10 minutes; left alone it marks production mail
@@ -265,6 +284,8 @@ def _patch_email_account(module):
     email_account.validate_smtp_conn = validate_smtp_conn
     email_account.get_incoming_server = get_incoming_server
     email_account.append_email_to_sent_folder = append_email_to_sent_folder
+    if original_frappe_mail_client is not None:
+        email_account.get_frappe_mail_client = get_frappe_mail_client
     module.pull = pull
 
     disarm_subclasses(email_account, _EMAIL_ACCOUNT_OVERRIDES)
@@ -313,7 +334,12 @@ def _patch_email_queue(module):
     original_get_hook_method = require(module, "get_hook_method")
     smtp_server = require(module, "SMTPServer")
     send_mail_context = require(module, "SendMailContext")
-    original_fetch = require(send_mail_context, "fetch_smtp_server")
+    # Renamed in Frappe 16 when a second outgoing transport landed beside SMTP;
+    # older branches still spell it fetch_smtp_server. Patch back whichever
+    # spelling this Frappe actually uses.
+    fetch_name, original_fetch = require_any(
+        send_mail_context, "fetch_outgoing_server", "fetch_smtp_server"
+    )
 
     def get_hook_method(hook_name, fallback=None):
         if enabled() and hook_name == "override_email_send":
@@ -322,10 +348,25 @@ def _patch_email_queue(module):
             return fallback
         return original_get_hook_method(hook_name, fallback=fallback)
 
-    def fetch_smtp_server(self):
+    def fetch_outgoing_server(self):
         if not enabled():
             return original_fetch(self)
         self.email_account_doc = self.queue_doc.get_email_account(raise_error=True)
+        # Both send paths — EmailQueue.send and the bulk EmailQueue.send_emails
+        # — choose their transport by reading this one field, and "Frappe Mail"
+        # routes the message over HTTP to a remote Frappe site instead of SMTP,
+        # clean past the catcher. Clearing it is what puts every queue entry
+        # back on the road to Mailpit; clearing the client alone would not,
+        # because the branch tests the field and would then call send_raw() on
+        # None.
+        #
+        # get_email_account returns a cached doc, so this edits the copy the
+        # rest of the process shares. That is the intent — on a dev bench no
+        # consumer should reach Frappe Mail — and nothing on the send path
+        # saves the account.
+        if self.email_account_doc.get("service") == "Frappe Mail":
+            self.email_account_doc.service = ""
+        self.frappe_mail_client = None
         if not self.smtp_server:
             st = settings()
             self.smtp_server = smtp_server(server=st.mail_host, port=st.mail_port)
@@ -334,7 +375,7 @@ def _patch_email_queue(module):
     # and resolved from module globals at call time, so patching frappe.utils
     # would have no effect here.
     module.get_hook_method = get_hook_method
-    send_mail_context.fetch_smtp_server = fetch_smtp_server
+    setattr(send_mail_context, fetch_name, fetch_outgoing_server)
 
 
 # --------------------------------------------------------------------------

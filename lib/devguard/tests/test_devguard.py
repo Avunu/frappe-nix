@@ -477,6 +477,97 @@ check(
 )
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
 
+# --------------------------------------------------------------------------
+# the Email Queue outgoing-transport patch
+#
+# `bench new-site` imports this module while installing the Email Queue DocType
+# (on_doctype_update -> load_doctype_module), which is the first thing in a
+# bench's life that reliably reaches this guard - post-install, nothing imports
+# it until mail is actually sent. Frappe 16 renamed fetch_smtp_server to
+# fetch_outgoing_server and added "Frappe Mail" beside SMTP, an HTTP transport
+# to a remote site that smtplib never sees.
+# --------------------------------------------------------------------------
+
+from frappe_devguard.guards.mail import _patch_email_queue  # noqa: E402
+
+
+class FakeSMTPServer:
+    def __init__(self, server=None, port=None, **_kwargs):
+        self.server = server
+        self.port = port
+
+
+class FakeAccount:
+    """Enough of a Document: ``.get()`` reads the attribute."""
+
+    def __init__(self, service=""):
+        self.service = service
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+
+class FakeQueueDoc:
+    def __init__(self, account):
+        self.account = account
+
+    def get_email_account(self, raise_error=False):
+        return self.account
+
+
+def email_queue_module(fetch_name):
+    module = types.ModuleType("frappe.email.doctype.email_queue.email_queue")
+
+    class SendMailContext:
+        def __init__(self, account):
+            self.queue_doc = FakeQueueDoc(account)
+            self.smtp_server = None
+            self.frappe_mail_client = "a real Frappe Mail client"
+            self.email_account_doc = None
+
+    def original(self):
+        raise AssertionError("the original transport lookup must not run")
+
+    if fetch_name:
+        setattr(SendMailContext, fetch_name, original)
+    module.SendMailContext = SendMailContext
+    module.SMTPServer = FakeSMTPServer
+    module.get_hook_method = lambda _name, fallback=None: fallback
+    return module
+
+
+check("mail guard still enabled here", frappe_devguard.settings().guard_enabled("mail"))
+
+_st = frappe_devguard.settings()
+
+_mod16 = email_queue_module("fetch_outgoing_server")
+_patch_email_queue(_mod16)
+_ctx = _mod16.SendMailContext(FakeAccount(service="Frappe Mail"))
+_ctx.fetch_outgoing_server()
+
+check("frappe 16's outgoing-server lookup is patched", _ctx.smtp_server is not None)
+check("the queue is pointed at the catcher", _ctx.smtp_server.server == _st.mail_host)
+check("on the catcher's port", _ctx.smtp_server.port == _st.mail_port)
+check(
+    "the Frappe Mail HTTP transport is disarmed",
+    _ctx.email_account_doc.service == "",
+    _ctx.email_account_doc.service,
+)
+check("and its client is dropped", _ctx.frappe_mail_client is None)
+
+_mod15 = email_queue_module("fetch_smtp_server")
+_patch_email_queue(_mod15)
+_ctx15 = _mod15.SendMailContext(FakeAccount())
+_ctx15.fetch_smtp_server()
+check("the pre-16 spelling is still patched", _ctx15.smtp_server.server == _st.mail_host)
+
+expect_raises(
+    "neither spelling surviving fails loudly",
+    DevGuardPatchError,
+    lambda: _patch_email_queue(email_queue_module(None)),
+)
+
+
 del sys.modules["frappe"]
 
 smtp_server.shutdown()
