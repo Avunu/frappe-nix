@@ -32,6 +32,21 @@
   # Derivation containing a `frappe_unixsock/` package to graft into *both*
   # virtualenvs, or null. See lib/unixsock.
   unixsock ? null,
+  # Overrides the "how to re-lock" half of the stale-lock message. See
+  # lib/lock-audit.nix; null keeps its bench-mode default.
+  lockAuditRelock ? null,
+  # `{ <normalized distribution name> = <source>; }` — where a workspace member's
+  # sources actually are, when that is not `workspaceRoot/apps/<name>`.
+  #
+  # App mode's workspace is assembled in the store and its apps/ are mirrors:
+  # real directories whose files are symlinks back into the inputs. uv2nix builds
+  # each member from its directory, and a *source* path added to the store keeps
+  # no references — so those symlinks would dangle inside the sandbox and the
+  # build would fail on a pyproject.toml it can plainly see. Pointing src at the
+  # input the mirror was made from avoids the import entirely, and keeps the
+  # assembled workspace free of the framework's bytes: it is rebuilt every time
+  # the app's own source moves, i.e. on every commit.
+  srcOverrides ? { },
 }:
 
 let
@@ -62,6 +77,14 @@ let
     sourcePreference = "wheel";
   };
 
+  # Last, so it wins over uv2nix's own src and over anything extraOverrides did.
+  # Applied to the editable set as well, below.
+  srcOverlay =
+    _final: prev:
+    lib.mapAttrs (name: src: prev.${name}.overrideAttrs (_: { inherit src; })) (
+      lib.filterAttrs (name: _: prev ? ${name}) srcOverrides
+    );
+
   pythonSet =
     (pkgs.callPackage pyproject-nix.build.packages {
       inherit python;
@@ -71,16 +94,22 @@ let
           pyproject-build-systems.overlays.default
           overlay
           extraOverrides
+          srcOverlay
         ]
       );
 
   # Turn a stale uv.lock into a sentence instead of an "attribute 'x' missing"
   # deep inside uv2nix's resolver. Membership is tested against `pythonSet`
   # because that is precisely the set resolvers.nix indexes.
-  lockAudit = import ./lock-audit.nix { inherit lib; } {
-    inherit workspaceRoot rootPyproject;
-    hasPackage = name: pythonSet ? ${name};
-  };
+  lockAudit =
+    import ./lock-audit.nix { inherit lib; }
+      (
+        {
+          inherit workspaceRoot rootPyproject;
+          hasPackage = name: pythonSet ? ${name};
+        }
+        // lib.optionalAttrs (lockAuditRelock != null) { relock = lockAuditRelock; }
+      );
 
   # Wraps both virtualenvs: every consumer — the dev shell, benchRoot, the
   # containers, the NixOS module — reaches uv2nix's resolver through one of them.
@@ -151,7 +180,12 @@ let
   editablePythonSet = pythonSet.overrideScope (
     lib.composeManyExtensions [
       (workspace.mkEditablePyprojectOverlay {
-        root = "$REPO_ROOT";
+        # The *bench*, not the git worktree. In a bench repo the two are the same
+        # directory, so this is a no-op there; in app mode they are not, and the
+        # editable finder resolves `<root>/apps/<name>`, which is a bench path by
+        # construction. REPO_ROOT keeps its literal meaning — the worktree where
+        # secrets/*.age are tracked and `git add` has to run.
+        root = "$FRAPPE_BENCH_ROOT";
       })
       (final: prev: {
         ${rootPkgName} = prev.${rootPkgName}.overrideAttrs (old: {
@@ -160,6 +194,9 @@ let
           ];
         });
       })
+      # After the editable overlay, which rewrites each member's build phases but
+      # keeps reading its sources from src.
+      srcOverlay
     ]
   );
 

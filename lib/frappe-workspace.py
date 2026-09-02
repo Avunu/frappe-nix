@@ -62,6 +62,17 @@ def app_dist_name(app_dir):
 # ── subcommands ───────────────────────────────────────────────────────────
 
 
+def cmd_dist_name(args):
+    """Print an app directory's [project].name.
+
+    Shell has no TOML parser, and `frappe-init --app` needs this to tell a Frappe
+    app repository from any other directory: an app is a pyproject.toml whose
+    [project].name matches a sibling package holding hooks.py.
+    """
+    print(app_dist_name(Path(args.app_dir)))
+    return 0
+
+
 def cmd_ensure_root(args):
     """Fill in the root-level keys the Nix side reads directly.
 
@@ -281,6 +292,10 @@ def cmd_shim_app(args):
 def main():
     parser = argparse.ArgumentParser(prog="frappe-nix-workspace")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("dist-name")
+    p.add_argument("--app-dir", required=True)
+    p.set_defaults(func=cmd_dist_name)
 
     p = sub.add_parser("ensure-root")
     p.add_argument("--pyproject", required=True)

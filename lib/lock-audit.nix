@@ -20,6 +20,24 @@
   workspaceRoot,
   rootPyproject,
   hasPackage,
+  # How this project re-locks, and why it drifted.
+  #
+  # Bench mode's answer is `uv lock` in a bench root the user owns. App mode has
+  # no such root: its pyproject.toml is generated into the store, and the lock it
+  # produces is a committed file somewhere else entirely. Sending an app-mode
+  # user to `uv lock` sends them to edit a file that is not on their disk.
+  relock ? ''
+    This is what an app bump looks like: a submodule moved to a commit whose
+    pyproject.toml declares something new, and uv.lock was not regenerated.
+    Re-lock the workspace from the bench root:
+
+        uv lock
+
+    This error blocks the dev shell, so `uv` is not on PATH unless you are
+    already in one. Without it:
+
+        nix run .#relock
+  '',
 }:
 
 let
@@ -100,16 +118,6 @@ in
     ${lib.concatMapStringsSep "\n" (
       d: "  ${d.where} requires ${d.req}, but '${d.name}' is not in uv.lock"
     ) missing}
-
-    This is what an app bump looks like: a submodule moved to a commit whose
-    pyproject.toml declares something new, and uv.lock was not regenerated.
-    Re-lock the workspace from the bench root:
-
-        uv lock
-
-    This error blocks the dev shell, so `uv` is not on PATH unless you are
-    already in one. Without it:
-
-        nix run .#relock
+    ${relock}
   '';
 }

@@ -7,10 +7,11 @@
 # Baked at build time by lib/init.nix.
 PRESETS="@PRESETS@"
 TEMPLATE="@TEMPLATE@"
+APP_TEMPLATE="@APP_TEMPLATE@"
 
 # ── globals ───────────────────────────────────────────────────────────────
 # Declared up front because the script runs under `set -o nounset`.
-MODE="auto"          # auto | init | migrate
+MODE="auto"          # auto | init | migrate | app
 FORCE=false
 DRY_RUN=false
 ASSUME_YES=false
@@ -30,6 +31,10 @@ apps_csv=""
 name=""
 site=""
 target=""
+
+# App mode: the Frappe app this repository *is*, read from its own
+# pyproject.toml by cmd_app_init.
+app_name=""
 
 # Preset fields, filled by resolve_preset.
 branch=""

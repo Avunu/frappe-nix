@@ -38,6 +38,20 @@ let
     hasPackage = name: builtins.elem name resolved;
   };
 
+  # App mode has no bench root to run `uv lock` in — its workspace root is
+  # generated into the store — so it supplies its own advice. The gap analysis
+  # must be identical and only the closing paragraph different.
+  appMode = audit {
+    workspaceRoot = ./fixtures/lock-audit;
+    rootPyproject = builtins.fromTOML (builtins.readFile ./fixtures/lock-audit/pyproject.toml);
+    hasPackage = name: builtins.elem name resolved;
+    relock = ''
+      `nix flake update` moved a pin. Re-lock from this repository:
+
+          nix run .#relock
+    '';
+  };
+
   found = map (d: "${d.where}\t${d.name}") result.missing;
 
   # Every gap, and only the gaps: the marker-gated and direct-URL requirements
@@ -75,6 +89,24 @@ in
             "yes"
           else
             result.message
+        )}
+
+      eq "the same gaps are found however the advice is worded" \
+        ${lib.escapeShellArg (lib.concatStringsSep "\n" found)} \
+        ${lib.escapeShellArg (
+          lib.concatStringsSep "\n" (map (d: "${d.where}\t${d.name}") appMode.missing)
+        )}
+
+      eq "app mode does not send you to a bench root it does not have" \
+        "yes" ${lib.escapeShellArg (
+          if
+            lib.hasInfix "apps/alpha/pyproject.toml requires json-repair>=0.30" appMode.message
+            && lib.hasInfix "nix run .#relock" appMode.message
+            && !(lib.hasInfix "uv lock" appMode.message)
+          then
+            "yes"
+          else
+            appMode.message
         )}
     ''}
 

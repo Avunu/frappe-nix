@@ -14,22 +14,44 @@
   nodeOverrides ? { },
   nodeOfflineHashes ? { },
   extraPackages ? [ ],
+  # App mode hands both of these over instead of letting them be discovered.
+  #
+  # Discovery is right for a bench, where apps/ is the checkout and readDir is the
+  # only thing that knows what is in it. For an assembled workspace the list is
+  # known exactly, so the readDir is pure cost — it forces that workspace to be
+  # built during evaluation.
+  #
+  # `appSrcs` matters more, and names the *original* sources rather than anything
+  # under `workspaceRoot`. lib/app-workspace.nix mirrors each app — real
+  # directories, symlinked files — and a path added to the store as a *source*
+  # keeps no references, so copying one of those mirrors into a derivation gives
+  # it links whose targets are not in the sandbox. Which fails as a missing file
+  # the build can plainly see on disk. Everything below that reaches an app's
+  # bytes goes through appSrcOf for that reason.
+  appNames ? null,
+  appSrcs ? null,
 }:
 
 let
   # Directories only: readDir also reports files, and a stray tracked file under
   # apps/ would otherwise become an "app" on PYTHONPATH and in benchRoot.
-  appNames = builtins.attrNames (
+  discoveredAppNames = builtins.attrNames (
     lib.filterAttrs (_: type: type == "directory") (builtins.readDir (workspaceRoot + "/apps"))
   );
 
-  appsPath = root: lib.concatMapStringsSep ":" (app: "${root}/apps/${app}") appNames;
+  names = if appNames != null then appNames else discoveredAppNames;
+
+  # Where an app's source actually lives, which is not necessarily where the
+  # workspace says it does. See the argument comment above.
+  appSrcOf = app: if appSrcs != null then appSrcs.${app} else workspaceRoot + "/apps/${app}";
+
+  appsPath = root: lib.concatMapStringsSep ":" (app: "${root}/apps/${app}") names;
 
   appsWithNode = lib.filter (
     app:
-    builtins.pathExists (workspaceRoot + "/apps/${app}/package.json")
-    && builtins.pathExists (workspaceRoot + "/apps/${app}/yarn.lock")
-  ) appNames;
+    builtins.pathExists (appSrcOf app + "/package.json")
+    && builtins.pathExists (appSrcOf app + "/yarn.lock")
+  ) names;
 
   # Per-app fetchYarnDeps offline-cache hashes. The committed
   # node-offline-hashes.json (kept current by `bench-update`) is the source of
@@ -56,7 +78,7 @@ let
     app:
     let
       appOverrides = nodeOverrides.${app} or { };
-      appSrc = workspaceRoot + "/apps/${app}";
+      appSrc = appSrcOf app;
       offlineCache = pkgs.fetchYarnDeps {
         yarnLock = appSrc + "/yarn.lock";
         hash = offlineHashes.${app} or lib.fakeHash;
@@ -91,7 +113,7 @@ let
   # Hash keys in node-offline-hashes.json use "app/subdir" format.
   nestedFrontends = lib.concatMap (app:
     let
-      appDir = workspaceRoot + "/apps/${app}";
+      appDir = appSrcOf app;
       subdirs = builtins.attrNames (
         lib.filterAttrs (_: type: type == "directory")
           (builtins.readDir appDir)
@@ -127,13 +149,13 @@ let
     mkdir -p $out/bench/apps
     ${lib.concatStringsSep "\n" (
       map (app: ''
-        cp -r ${workspaceRoot + "/apps/${app}"} $out/bench/apps/${app}
+        cp -r ${appSrcOf app} $out/bench/apps/${app}
         chmod -R u+w $out/bench/apps/${app}
         ${lib.optionalString (builtins.elem app appsWithNode) ''
           rm -rf $out/bench/apps/${app}/node_modules
           ln -s ${nodeModules.${app}}/node_modules $out/bench/apps/${app}/node_modules
         ''}
-      '') appNames
+      '') names
     )}
 
     ${lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.json")) ''
@@ -236,7 +258,7 @@ let
             rm -rf $out/bench/apps/${app}/${app}/public/dist
             cp -a $TMPDIR/bench/apps/${app}/${app}/public/dist $out/bench/apps/${app}/${app}/public/dist
           fi
-        '') appNames
+        '') names
       )}
 
       # bench build creates sites/assets/ with symlinks to each app's public dir
@@ -264,7 +286,8 @@ let
 
     passthru = {
       pythonEnv = prodPythonEnv;
-      inherit nodejs appNames extraPackages;
+      inherit nodejs extraPackages;
+      appNames = names;
       # Function: root -> colon-separated PYTHONPATH of apps under root.
       # Usage: pkg.passthru.appsPath "${pkg}/bench"
       inherit appsPath;
@@ -273,8 +296,8 @@ let
 
 in
 {
+  appNames = names;
   inherit
-    appNames
     appsWithNode
     appsPath
     nodeModules

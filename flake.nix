@@ -188,6 +188,8 @@
         // import ./tests/bench-restore.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
+        # The bench workspace app mode assembles around a single app.
+        // import ./tests/app-workspace.nix { inherit pkgs; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
         # is cheap enough to gate PRs on.
         // import ./tests/migrate-classic.nix {
