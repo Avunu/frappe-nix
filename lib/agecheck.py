@@ -279,7 +279,9 @@ def main(argv: list[str]) -> int:
         return 2
 
     mode, rest = argv[1], argv[2:]
-    root = os.environ.get("FRAPPE_BENCH_ROOT", ".")
+    # The git worktree the .age files are tracked in, which in app mode is
+    # not the bench root.
+    root = os.environ.get("REPO_ROOT", ".")
     if "--root" in rest:
         i = rest.index("--root")
         root = rest[i + 1]

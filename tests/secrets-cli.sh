@@ -38,7 +38,16 @@ ROOT="$WORK/bench"
 mkdir -p "$ROOT/secrets"
 cd "$ROOT"
 git init -q .
-export FRAPPE_BENCH_ROOT="$ROOT"
+
+# Deliberately different directories. The secret scripts work in the git
+# worktree, because that is where the .age files are tracked and where `git add`
+# has to run; in app mode the bench is a generated directory *under* it. Pointing
+# the scripts at the bench instead is not a loud failure — agenix reports "no
+# rule for this file" on an edit and skips it as "does not exist, ignored" on a
+# rekey, exiting 0 having done nothing. So the two are split here on purpose.
+export REPO_ROOT="$ROOT"
+export FRAPPE_BENCH_ROOT="$ROOT/.frappe-nix/bench"
+mkdir -p "$FRAPPE_BENCH_ROOT"
 
 install -m 0600 "$KEYS/alice" "$WORK/alice"
 install -m 0600 "$KEYS/bob" "$WORK/bob"

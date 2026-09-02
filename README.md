@@ -19,7 +19,10 @@ declaratively, so a consuming project's flake stays a thin wrapper instead of a
 - a multi-tenant **NixOS module** (`services.frappe`) with per-site systemd units;
 - a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …).
 
-It is consumed as a [flake-parts](https://flake.parts/) module.
+It is consumed as a [flake-parts](https://flake.parts/) module, from a bench
+repository or — see [Develop a single app](#develop-a-single-app) — from one
+Frappe app's own repository, where the bench around it is generated from flake
+inputs instead of committed.
 
 ## Requirements
 
@@ -38,6 +41,19 @@ laid out the way a Frappe bench is:
 └── sites/
     ├── apps.txt              # apps installed into the site
     └── apps.json             # (optional) app metadata for the bench
+```
+
+In [app mode](#develop-a-single-app) frappe-nix builds that layout itself, and the
+repository is a Frappe app instead:
+
+```
+.
+├── flake.nix                 # your thin wrapper
+├── pyproject.toml            # the APP's own — frappe-nix never touches it
+├── <app_name>/hooks.py       # what makes this directory a Frappe app
+└── nix/
+    ├── uv.lock                     # committed lock — drives the Nix Python env
+    └── node-offline-hashes.json    # committed fetchYarnDeps hashes
 ```
 
 ## Create a new bench
@@ -71,6 +87,112 @@ else the repo default. Flags: `--frappe-version`, `--apps` (names → `frappe/<n
 `owner/repo`, or full git URLs), `--name`, `--site`, and a positional target dir. Bump the
 presets file as frappe's requirements move; the python/node defaults are overridable in the
 generated `flake.nix`.
+
+## Develop a single app
+
+A bench repository *is* the uv workspace: a committed `pyproject.toml`, a committed
+`uv.lock`, `apps/*` as git submodules. An app repository has none of that — it is one
+app, and the bench around it is an implementation detail of developing it. **App mode**
+inverts the relationship: the app repo commits a small `flake.nix`, and frappe-nix
+assembles the bench from flake inputs.
+
+```sh
+cd ~/Development/carbon_frappe          # an existing Frappe app, in git
+nix run github:Avunu/frappe-nix         # detects an app repo and sets up app mode
+direnv allow                            # or: nix develop --no-pure-eval
+devenv up                               # then `provision-site` in another shell
+```
+
+The scaffolder writes three files — `flake.nix`, `.envrc` and a managed `.gitignore`
+block — then runs `nix run .#relock` to produce `nix/uv.lock`. It never touches the app's
+own `pyproject.toml`: that file is the app's packaging metadata, and the workspace root
+frappe-nix generates is a different file that lives in the Nix store.
+
+The flake it writes:
+
+```nix
+inputs = {
+  frappe-nix.url = "github:Avunu/frappe-nix";
+  nixpkgs.follows = "frappe-nix/nixpkgs";
+  frappe = { url = "github:frappe/frappe/version-16"; flake = false; };
+  # erpnext = { url = "github:frappe/erpnext/version-16"; flake = false; };
+};
+# …
+perSystem = _: {
+  frappe-nix = {
+    enable = true;
+    siteName = "carbon.localhost";
+    app = {
+      enable = true;
+      frappeVersion = "version-16";
+      frappe = inputs.frappe;
+      # siblings = [ { name = "erpnext"; src = inputs.erpnext; } ];
+    };
+  };
+};
+```
+
+Everything else is inferred: `app.src` from `self`, `app.name` from the repo's
+`[project].name`, `benchName` from that normalized, `python`/`nodejs` from the
+`frappeVersion` preset.
+
+### What you get, and where it lives
+
+| | Bench mode | App mode |
+| --- | --- | --- |
+| the uv workspace | the repo | a derivation assembled from the flake inputs |
+| `apps/*` | git submodules | flake inputs, pinned by `flake.lock` |
+| the app under development | one of the submodules | **this repo**, symlinked into the bench so edits are live |
+| the bench you run | the repo | `.frappe-nix/bench/`, generated on shell entry, gitignored |
+| what is committed | `pyproject.toml`, `uv.lock`, `sites/` | `flake.nix`, `nix/uv.lock`, `nix/node-offline-hashes.json` |
+
+`FRAPPE_BENCH_ROOT`, `SITES_PATH` and `PYTHONPATH` name the generated bench;
+`REPO_ROOT` stays the git worktree, which is where `secrets/*.age` live. devenv's own
+root is deliberately not moved, so `$DEVENV_STATE` — and with it the MariaDB datadir —
+stays outside the generated tree: `rm -rf .frappe-nix` costs a re-copy of the apps, not
+the database.
+
+`FRAPPE_PATH` is exported (`$FRAPPE_BENCH_ROOT/apps/frappe`) because a Frappe app's build
+scripts conventionally look for the framework at `<app>/../frappe`, and in app mode that
+sibling lookup does not work: `apps/<app>` is a symlink and Node realpaths `__dirname`.
+An app that wants a *different* sibling by path needs `extraEnv`:
+
+```nix
+frappe-nix.extraEnv.ERPNEXT_PATH = "…";   # see `extraEnv` in the options table
+```
+
+### Moving the pins
+
+There are no submodules to pull, so `bench-update --pull` and `bench-get-app` are
+replaced by the flake-input equivalents:
+
+```sh
+nix flake update frappe      # or `nix flake update` for all pins
+nix run .#relock             # re-resolve, rewriting nix/uv.lock + nix/node-offline-hashes.json
+```
+
+`relock` is deliberately reachable without a dev shell, because a missing or stale
+`uv.lock` fails at *evaluation* — the shell that carries `uv` is exactly what refuses to
+open. It stages both files for you: a flake's source tree is only its tracked files, so
+an untracked lock is invisible to the build and reads as still missing.
+
+Re-entering the shell after a pin moves re-copies `apps/*` out of the store and tells you
+the compiled assets are stale. Each app's `node_modules` is carried across, so a bump does
+not cost a full `yarn install` per app. Edits made *inside* `.frappe-nix/bench/apps/frappe`
+are in a copy, and the next bump discards them.
+
+### Production parity
+
+App mode is not dev-only. `nix build` produces the same `builtBench` a bench does — frappe,
+the siblings and this app, with `bench build` run over all of them — so it is a real check
+that the app compiles in a clean bench:
+
+```sh
+nix run .#relock             # nix/node-offline-hashes.json is needed for this, not for the shell
+nix build                    # → result/bench, assets compiled
+```
+
+`containers.enable` and the [NixOS module](#nixos-module--servicesfrappe) work unchanged.
 
 ## Migrate an existing bench
 
@@ -148,7 +270,11 @@ would sit outside the pinned commit — so vendor it (`--vendor <app>`) or fix i
 
 A complete consuming flake is just a configured module. Because `frappe-nix.lib.mkFlake`
 merges frappe-nix's own inputs (nixpkgs, devenv, uv2nix, …) into yours, you don't
-re-declare them:
+re-declare them.
+
+This is the **bench** shape — a repository that holds `apps/*`. For a single app's own
+repository, see [Develop a single app](#develop-a-single-app); the module is the same,
+but `workspaceRoot` is replaced by `app.*` and frappe-nix builds the workspace itself.
 
 ```nix
 {
@@ -231,7 +357,7 @@ and one **app** (`nix run .#<name>`):
 
 | App | What it does |
 | --- | --- |
-| `relock` | `uv lock` in the bench root, from a uv that does not come from the workspace. See [stale `uv.lock`](#a-stale-uvlock-is-an-evaluation-error) — it exists for the case where the shell that carries `uv` is what refuses to open. |
+| `relock` | `uv lock` in the bench root, from a uv that does not come from the workspace. See [stale `uv.lock`](#a-stale-uvlock-is-an-evaluation-error) — it exists for the case where the shell that carries `uv` is what refuses to open. In [app mode](#develop-a-single-app) it assembles the workspace itself and writes `nix/uv.lock` + `nix/node-offline-hashes.json` back into the repo; `--uv-only` and `--node-hashes` do one half each. |
 
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}` so
 the NixOS module and containers can discover interpreters from the package itself —
@@ -246,11 +372,19 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `enable` | bool | `false` | Enable the dev shell + packages. |
-| `benchName` | str | *(required)* | Identifier for env names and container image prefix. |
+| `benchName` | str | *(required; the normalized `app.name` in app mode)* | Identifier for env names and container image prefix. |
 | `siteName` | str | `""` | `FRAPPE_SITE`. Empty = multi-tenancy (set per-shell via `.env`). |
-| `workspaceRoot` | path | *(required)* | Bench root (where `pyproject.toml` + `apps/` live). Usually `./.`. |
-| `python` | package | `pkgs.python312` | Python interpreter. |
-| `nodejs` | package | `pkgs.nodejs_22` | Node.js for frontend builds + socketio. |
+| `workspaceRoot` | path or null | `null` | Bench root (where `pyproject.toml` + `apps/` live). Usually `./.`. Required in bench mode; must stay null in app mode, where frappe-nix assembles the workspace itself. |
+| `app.enable` | bool | `false` | [App mode](#develop-a-single-app): this flake is one Frappe app's repository, not a bench. |
+| `app.frappe` | path | *(required in app mode)* | The Frappe source, as a `flake = false` input. |
+| `app.siblings` | list of `{ name; src; }` | `[]` | The other apps the bench should carry, in install order — a list, not an attrset, because that order becomes `sites/apps.txt`. |
+| `app.frappeVersion` | preset name | `"version-16"` | Row of `lib/frappe-presets.json` driving `python`, `nodejs`, `requires-python` and `override-dependencies`. Does *not* pin frappe; `app.frappe` does. |
+| `app.src` | path | `inputs.self` | The app's own source, which becomes `apps/<name>`. Do not filter it — `app.lockDir` is read out of it. |
+| `app.name` | str | `[project].name` of `app.src` | The app's directory name under `apps/`, i.e. Frappe's own app name. |
+| `app.lockDir` | str | `"nix"` | Where the generated-but-committed `uv.lock` and `node-offline-hashes.json` live, relative to the repo root. |
+| `app.benchDir` | str | `".frappe-nix/bench"` | Where the dev shell materialises the writable bench, relative to the repo root. Gitignore it. |
+| `python` | package | `pkgs.python312` | Python interpreter. In app mode, the `app.frappeVersion` preset's. |
+| `nodejs` | package | `pkgs.nodejs_22` | Node.js for frontend builds + socketio. In app mode, the `app.frappeVersion` preset's. |
 | `mariadb.package` | package | `pkgs.mariadb` | MariaDB package. |
 | `mariadb.initialDatabases` | list of `{ name }` | `[]` | Databases created on first `devenv up`. |
 | `nodeOfflineHashes` | attrs of str | `{}` | Per-app `fetchYarnDeps` hash overrides (see [Node offline hashes](#node-offline-hashes); normally generated into `node-offline-hashes.json`). |
@@ -543,6 +677,13 @@ Three things keep that from being a puzzle:
   `relock` app is deliberately outside every other output's dependency graph and
   takes its `uv` from nixpkgs, so it still runs.
 
+In [app mode](#develop-a-single-app) the cause is `nix flake update` rather than a
+submodule bump, and the fix is `nix run .#relock` rather than `uv lock` — the workspace
+root there is generated into the store, so there is no bench root of yours to run `uv`
+in. The audit says that instead. `relock` is also how the *first* lock is produced: a
+repository with no `nix/uv.lock` cannot evaluate the dev shell either, and the error
+names the command.
+
 ### Bench scripts
 
 These back the wrapper and are also callable directly:
@@ -550,7 +691,7 @@ These back the wrapper and are also callable directly:
 | Script | Description |
 | --- | --- |
 | `provision-site [admin-pass]` | Create `$FRAPPE_SITE` and install every app from `sites/apps.txt`. |
-| `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also re-locks the workspace (`uv lock`) and refreshes `node-offline-hashes.json` for the apps whose lock files moved. |
+| `bench-update [--pull\|--migrate\|--build\|--node-hashes]` | Submodule-aware replacement for `bench update`; also re-locks the workspace (`uv lock`) and refreshes `node-offline-hashes.json` for the apps whose lock files moved. In app mode, `--migrate` and `--build` only. |
 | `bench-migrate` / `bench-build` / `bench-clear-cache` / `bench-console` | Thin `bench` wrappers honoring `$FRAPPE_SITE`. |
 | `bench-restore [<sql>\|--at <ts>\|--list]` | Restore from a SQL backup, or from the latest one in the object store. See [Restoring from production](#restoring-from-production). |
 | `setup-backup-access` | Prompt for the object-store credentials, test them against the bucket, and write `backup-access.age`. |
@@ -560,6 +701,14 @@ These back the wrapper and are also callable directly:
 | `bench-get-app <url\|alias>` | Add an app as a git submodule + register it in the uv workspace. `helpdesk` → `frappe/helpdesk`; `owner/repo` and full URLs also work. |
 | `bench-new-app <name>` | Scaffold a new app and register it in the workspace. |
 | `update-deps` | Re-lock + sync Python (uv) and Node (yarn) across all apps. |
+
+In [app mode](#develop-a-single-app) the three that edit the bench as if it were a
+checkout have no checkout to edit — there are no submodules, and anything written into
+the generated bench is discarded on the next pin bump. They refuse with the flake-input
+equivalent instead: `bench-update --pull` and `--node-hashes` point at `nix flake update`
++ `nix run .#relock`, and `bench-get-app` / `bench-new-app` at declaring the app as an
+input. `--migrate` and `--build` are unaffected, and everything else in the table works
+exactly as it does in a bench.
 
 ## Secrets
 
@@ -912,6 +1061,14 @@ packages that need C headers/system libraries.
 Commit `uv.lock` and each app's `yarn.lock`; the production env, node_modules, compiled
 assets, containers, and NixOS deployment are all rebuilt from them.
 
+In [app mode](#develop-a-single-app) the left column is the same but the right one reads
+the *inputs* rather than the checkout: `nix/uv.lock` and `nix/node-offline-hashes.json`
+are what you commit, `nix run .#relock` is what writes them, and the source `builtBench`
+copies is the pinned flake input — not the writable copy the dev shell put in
+`.frappe-nix/bench/apps/`. So an edit made inside that copy is a dev-only edit by
+construction; the app you are developing is the one exception, because it is your
+repository and `nix build` reads it the same way the shell does.
+
 ### Node offline hashes
 
 Because the node_modules build went off the (removed) `mkYarnPackage` to the yarn-v1 hooks,
@@ -937,6 +1094,7 @@ frappe-nix/
 ├── lib/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn hooks), benchRoot
+│   ├── app-workspace.nix     # app mode: the bench workspace, assembled in the store
 │   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
 │   ├── lock-audit.nix        # names a stale uv.lock before uv2nix trips over it
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
@@ -954,12 +1112,15 @@ frappe-nix/
 │   │   ├── apps.sh           #   submodule registration / vendoring / workspace sync
 │   │   ├── pipeline.sh       #   the phases both modes share
 │   │   ├── init.sh           #   scaffold mode
+│   │   ├── app-init.sh       #   app mode — set up an app's own repository
 │   │   ├── migrate.sh        #   migrate mode
 │   │   └── main.sh           #   flags + mode dispatch (must be concatenated last)
 │   ├── frappe-workspace.py   # apps/ ⇄ pyproject.toml ⇄ apps.txt reconciler (tomlkit)
 │   ├── frappe-presets.json   # frappe version → python / node / branch matrix
 │   └── scripts.nix           # portable bench shell scripts
-├── templates/bench/          # what a new bench is laid down from
+├── templates/
+│   ├── bench/                # what a new bench is laid down from
+│   └── app/                  # what an app repository is laid down from
 ├── tests/                    # flake checks (see `nix flake check`)
 └── modules/
     ├── flake-module.nix      # imports devenv.flakeModule + devenv.nix + containers.nix

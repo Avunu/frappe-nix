@@ -22,9 +22,37 @@
   # binary) and `devguard` (whether this bench's guard rails are on).
   # `enable = false` leaves `bench restore` with its explicit-file behaviour.
   restore ? { enable = false; },
+  # App mode: this project is one Frappe app and the bench under it is
+  # generated. Everything that edits the bench as if it were a checkout — a
+  # submodule pull, a workspace member, a scaffolded app — has no meaning here
+  # and is replaced by the flake-input equivalent rather than left to fail
+  # obscurely, or worse, succeed into a tree the next refresh deletes.
+  appMode ? false,
+  # App mode: where the generated-but-committed lock files live, relative to
+  # the repo root. Only used in messages.
+  lockDir ? "nix",
 }:
 
 let
+  # Every bench command runs from the bench root. Not a convenience: the bench
+  # CLI resolves its bench by walking *up* from cwd (bench/cli.py's
+  # change_working_directory → find_parent_bench), so from anywhere else it
+  # either finds nothing and stops dispatching frappe commands entirely, or — if
+  # this repo happens to sit inside another bench's apps/ — finds that one and
+  # runs against its database.
+  #
+  # A relative path argument is therefore resolved from the bench root, not from
+  # where you typed it. That is not new — `bench` chdirs to the bench root itself
+  # before it runs anything — and every script here that takes a file already
+  # cd'd first for the same reason.
+  atBench = ''cd "$FRAPPE_BENCH_ROOT"'';
+
+  # Secrets are tracked files in the git worktree, which in app mode is not the
+  # bench. A rules file naming a path under the generated bench makes `agenix -e`
+  # report "no rule for file" and `agenix -r` skip it as "does not exist,
+  # ignored" — exit 0, nothing rekeyed. See lib/secrets-tools.nix.
+  atRepo = ''cd "$REPO_ROOT"'';
+
   siteFlag = ''
     SITE_FLAG=""
     if [ -n "''${FRAPPE_SITE:-}" ]; then
@@ -82,7 +110,7 @@ let
   secretScripts = lib.optionalAttrs (secrets.enabled or false) {
     edit-secret.exec = ''
       set -euo pipefail
-      cd "$FRAPPE_BENCH_ROOT"
+      ${atRepo}
 
       if [ -z "''${1:-}" ] || [ "''${1:-}" = "--help" ] || [ "''${1:-}" = "-h" ]; then
         cat <<'EOF'
@@ -126,9 +154,9 @@ let
       fi
 
       if [ -n "''${1:-}" ]; then
-        ${lib.getExe' secrets.cli "agenix"} -e "$FRAPPE_BENCH_ROOT/$REL" -i "$1"
+        ${lib.getExe' secrets.cli "agenix"} -e "$REPO_ROOT/$REL" -i "$1"
       else
-        ${lib.getExe' secrets.cli "agenix"} -e "$FRAPPE_BENCH_ROOT/$REL"
+        ${lib.getExe' secrets.cli "agenix"} -e "$REPO_ROOT/$REL"
       fi
 
       # A new .age is untracked, and a flake's source tree is only its tracked
@@ -145,7 +173,7 @@ let
 
     rekey-secrets.exec = ''
       set -euo pipefail
-      cd "$FRAPPE_BENCH_ROOT"
+      ${atRepo}
 
       echo "Re-encrypting every declared secret to the current recipient list…"
       echo "(you need to be able to decrypt them, so this cannot run in CI)"
@@ -163,7 +191,7 @@ let
 
     check-secrets.exec = ''
       set -euo pipefail
-      cd "$FRAPPE_BENCH_ROOT"
+      ${atRepo}
       if [ -n "''${1:-}" ]; then
         exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} explain \
           ${secrets.rulesJSON} "$1" --root .
@@ -176,6 +204,46 @@ let
       exec ${secrets.setupBackupAccess restore.fetch}/bin/frappe-nix-setup-backup-access "$@"
     '';
   };
+  # App mode replaces the two scripts whose whole job is to edit the bench as if
+  # it were a checkout. Replaced rather than dropped: the `bench` umbrella
+  # wrapper dispatches `get-app`/`new-app` to them, and a missing script would
+  # surface as `command not found` instead of the one sentence that says what to
+  # do instead.
+  appModeOverrides = {
+    bench-get-app = {
+      exec = ''
+        cat >&2 <<'EOF'
+        bench-get-app: this is an app repository, not a bench — there is no apps/
+        of yours to add to, and anything written into the generated bench is
+        discarded the next time a pin moves.
+
+        Add the app as a flake input and a sibling instead:
+
+            inputs.hrms = { url = "github:frappe/hrms/version-16"; flake = false; };
+            ...
+            frappe-nix.app.siblings = [ { name = "hrms"; src = inputs.hrms; } ];
+
+        then: nix run .#relock
+        EOF
+        exit 1
+      '';
+      description = "Not available in app mode — declare the app as a flake input instead.";
+    };
+
+    bench-new-app = {
+      exec = ''
+        cat >&2 <<'EOF'
+        bench-new-app: this is an app repository, not a bench. A new app scaffolded
+        into the generated bench would be deleted the next time a pin moves.
+
+        Create it in its own repository — `nix run github:Avunu/frappe-nix` in an
+        app's directory sets one up — or add it to a bench.
+        EOF
+        exit 1
+      '';
+      description = "Not available in app mode — new apps get their own repository.";
+    };
+  };
 in
 secretScripts
 // {
@@ -187,8 +255,12 @@ secretScripts
   # recursing — true whether a command is run via `bench update` or `bench-update`.
   bench.exec = ''
     if [ -n "''${_FRAPPE_BENCH_RAW:-}" ]; then
+      ${atBench}
       exec ${benchBin} "$@"
     fi
+    # Before the dispatch, so the specialised scripts and the fall-through both
+    # get it — and after the raw guard, which has already run it.
+    ${atBench}
     case "''${1:-}" in
       update)      shift; exec bench-update "$@" ;;
       build)       shift; exec bench-build "$@" ;;
@@ -209,18 +281,21 @@ secretScripts
 
   bench-console.exec = ''
     export _FRAPPE_BENCH_RAW=1
+    ${atBench}
     ${siteFlag}
     bench $SITE_FLAG console "$@"
   '';
 
   bench-migrate.exec = ''
     export _FRAPPE_BENCH_RAW=1
+    ${atBench}
     ${siteFlag}
     bench $SITE_FLAG migrate "$@"
   '';
 
   bench-clear-cache.exec = ''
     export _FRAPPE_BENCH_RAW=1
+    ${atBench}
     ${siteFlag}
     bench $SITE_FLAG clear-cache "$@"
   '';
@@ -244,25 +319,56 @@ secretScripts
     set -euo pipefail
     export _FRAPPE_BENCH_RAW=1
 
-    PULL=true
+    # In app mode there is nothing here to pull and nothing here to write: the
+    # apps are pinned by flake.lock and the hashes belong to the repository, not
+    # to a bench directory the next refresh replaces.
+    PULL=${if appMode then "false" else "true"}
     MIGRATE=true
     BUILD=true
     FORCE_NODE_HASHES=false
 
     for arg in "$@"; do
       case "$arg" in
-        --pull)        MIGRATE=false; BUILD=false ;;
+${
+      if appMode then
+        ''
+              --pull | --node-hashes)
+                echo "bench-update: $arg has no meaning in app mode — the apps are pinned by" >&2
+                echo "flake.lock, not pulled, and ${lockDir}/node-offline-hashes.json is" >&2
+                echo "generated from those pins. Use:" >&2
+                echo "" >&2
+                echo "    nix flake update        # move the pins" >&2
+                echo "    nix run .#relock        # re-resolve and rewrite ${lockDir}/" >&2
+                exit 1
+                ;;''
+      else
+        ''
+              --pull)        MIGRATE=false; BUILD=false ;;
+              --node-hashes) PULL=false;   MIGRATE=false; BUILD=false; FORCE_NODE_HASHES=true ;;''
+    }
         --migrate)     PULL=false;   BUILD=false  ;;
         --build)       PULL=false;   MIGRATE=false ;;
-        --node-hashes) PULL=false;   MIGRATE=false; BUILD=false; FORCE_NODE_HASHES=true ;;
         --help|-h)
-          echo "Usage: bench-update [--pull | --migrate | --build | --node-hashes]"
-          echo ""
-          echo "  (no flags)     Pull apps, refresh node hashes, migrate, build"
-          echo "  --pull         Pull latest commits + refresh changed node hashes"
-          echo "  --migrate      Run DB migrations only"
-          echo "  --build        Build JS/CSS assets only"
-          echo "  --node-hashes  Force-regenerate node-offline-hashes.json (all apps)"
+${
+      if appMode then
+        ''
+              echo "Usage: bench-update [--migrate | --build]"
+              echo ""
+              echo "  (no flags)     Migrate, then build"
+              echo "  --migrate      Run DB migrations only"
+              echo "  --build        Build JS/CSS assets only"
+              echo ""
+              echo "To move the pinned apps: nix flake update && nix run .#relock"''
+      else
+        ''
+              echo "Usage: bench-update [--pull | --migrate | --build | --node-hashes]"
+              echo ""
+              echo "  (no flags)     Pull apps, refresh node hashes, migrate, build"
+              echo "  --pull         Pull latest commits + refresh changed node hashes"
+              echo "  --migrate      Run DB migrations only"
+              echo "  --build        Build JS/CSS assets only"
+              echo "  --node-hashes  Force-regenerate node-offline-hashes.json (all apps)"''
+    }
           exit 0 ;;
         *) echo "Unknown flag: $arg" >&2; exit 1 ;;
       esac
@@ -700,8 +806,20 @@ secretScripts
   '';
 
   update-deps.exec = ''
-    echo "Updating Python dependencies..."
-    uv lock && uv sync
+    ${atBench}
+    ${
+      if appMode then
+        ''
+          echo "Python dependencies are resolved from the flake's pins, not from"
+          echo "this bench — the workspace root it would lock lives in the Nix store."
+          echo "Use:  nix run .#relock"
+        ''
+      else
+        ''
+          echo "Updating Python dependencies..."
+          uv lock && uv sync
+        ''
+    }
     echo ""
     echo "Updating Node dependencies..."
     ${lib.concatStringsSep "\n" (
@@ -711,7 +829,12 @@ secretScripts
       '') appsWithNode
     )}
     echo ""
-    echo "Done! Lock files updated. Commit uv.lock and yarn.lock files."
+    ${
+      if appMode then
+        ''echo "Done! Commit any changed yarn.lock, then: nix run .#relock"''
+      else
+        ''echo "Done! Lock files updated. Commit uv.lock and yarn.lock files."''
+    }
   '';
 
   provision-site.exec = ''
@@ -867,3 +990,4 @@ secretScripts
     description = "Scaffold a new Frappe app and integrate it into the uv workspace.";
   };
 }
+// lib.optionalAttrs appMode appModeOverrides

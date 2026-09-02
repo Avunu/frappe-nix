@@ -25,7 +25,9 @@ EOF
   exit 1
 fi
 
-cd "${FRAPPE_BENCH_ROOT:?run this from the dev shell}"
+# The git worktree, not the bench: this writes and `git add`s an .age file,
+# and in app mode the bench is a generated directory under the repository.
+cd "${REPO_ROOT:?run this from the dev shell}"
 
 # ── identities ────────────────────────────────────────────────────────────
 # Same list agenix-shell decrypts with, so "it worked in the shell" and "I can

@@ -31,6 +31,23 @@ let
   portOffsetFor =
     benchName:
     lib.mod (lib.fromHexString (builtins.substring 0 4 (builtins.hashString "sha256" benchName))) 900;
+
+  # The same python/nodejs/requires-python/override-dependencies matrix
+  # `frappe-init` scaffolds a bench from. App mode picks a row by name rather
+  # than making the consumer restate all four.
+  presets = builtins.fromJSON (builtins.readFile ../lib/frappe-presets.json);
+
+  # PEP 503: a run of `-`, `_` or `.` collapses to a single `-`. Used for names
+  # frappe-nix derives itself; the keys that land in [tool.uv.sources] are
+  # written by lib/frappe-workspace.py, whose normaliser is the one uv's
+  # resolution has to agree with.
+  normalizeDist =
+    n:
+    lib.toLower (
+      lib.concatStringsSep "-" (
+        lib.filter (s: s != "") (lib.filter builtins.isString (builtins.split "[-_.]+" n))
+      )
+    );
 in
 {
   options.perSystem = mkPerSystemOption (
@@ -41,6 +58,12 @@ in
 
         benchName = mkOption {
           type = types.str;
+          default =
+            if config.frappe-nix.app.enable then
+              normalizeDist config.frappe-nix.app.name
+            else
+              throw "frappe-nix: `benchName` is required — it fixes this bench's port range and its container image prefix.";
+          defaultText = lib.literalMD "the normalized `app.name` in app mode; required otherwise";
           description = "Project identifier used for environment names and container prefixes.";
           example = "pequea";
         };
@@ -53,19 +76,200 @@ in
         };
 
         workspaceRoot = mkOption {
-          type = types.path;
-          description = "Path to the bench workspace root (where pyproject.toml and apps/ live).";
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            Path to the bench workspace root (where pyproject.toml and apps/ live).
+
+            Required in bench mode, and must stay null in app mode — there the
+            workspace root is a derivation frappe-nix assembles from `app.frappe`,
+            `app.siblings` and `app.src`.
+          '';
+        };
+
+        app = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              App mode: this flake is one Frappe app's repository, not a bench.
+
+              A bench repo *is* a uv workspace — a committed pyproject.toml, a
+              committed uv.lock, apps/* as git submodules — and `workspaceRoot`
+              points at it. An app repo has none of that. It is one app, and the
+              bench around it is an implementation detail of developing that app.
+
+              So frappe-nix builds the bench instead: apps/frappe from
+              `app.frappe`, apps/<sibling> from each `app.siblings` entry,
+              apps/<app.name> from `app.src`, and a root pyproject.toml rendered
+              from the same template and reconciled by the same tool
+              `frappe-init` uses, so the two modes cannot drift. Everything past
+              that point is the bench-mode code path: uv2nix, benchRoot,
+              builtBench, the containers, the NixOS module.
+
+              What the repo commits on frappe-nix's behalf is two generated files
+              under `app.lockDir`: uv.lock and node-offline-hashes.json, both
+              written by `nix run .#relock`. The root pyproject.toml is not one of
+              them — it is generated into the store and there is nothing there to
+              edit.
+            '';
+          };
+
+          src = mkOption {
+            type = types.path;
+            default = inputs.self;
+            defaultText = literalExpression "inputs.self";
+            description = ''
+              The app's own source, which becomes apps/<name>.
+
+              `inputs.self` essentially always: a flake's source tree is exactly
+              its tracked files plus dirty working-tree edits, which is what
+              belongs under apps/. Reachable as a default because `lib.mkFlake`
+              merges the consumer's inputs over frappe-nix's own.
+
+              Do not filter it. `app.lockDir` is read out of this path, and a
+              filter that drops the lock directory takes uv.lock with it — which
+              surfaces as "uv.lock is missing" for a file you can see on disk.
+            '';
+          };
+
+          name = mkOption {
+            type = types.str;
+            default =
+              (builtins.fromTOML (builtins.readFile (config.frappe-nix.app.src + "/pyproject.toml")))
+              .project.name;
+            defaultText = lib.literalMD "`[project].name` from `app.src`'s pyproject.toml";
+            description = ''
+              The app's *directory* name under apps/ — Frappe's own app name, the
+              one in hooks.py's `app_name` and in sites/apps.txt.
+
+              Not its distribution name. The two differ often enough to matter
+              (print_designer lives at apps/print_designer and resolves as
+              print-designer) and both spellings are needed: this one for the
+              directory, PYTHONPATH and apps.txt, the normalized one for
+              [tool.uv.sources]. The default reads [project].name because for a
+              conforming Frappe app they are the same string.
+            '';
+            example = "carbon_frappe";
+          };
+
+          frappeVersion = mkOption {
+            type = types.enum (builtins.attrNames presets);
+            default = "version-16";
+            description = ''
+              Which row of lib/frappe-presets.json this app targets. Drives the
+              defaults for `python` and `nodejs`, and the generated root
+              pyproject.toml's requires-python and [tool.uv] override-dependencies.
+
+              It does not pin frappe — `app.frappe` does, through flake.lock.
+            '';
+          };
+
+          frappe = mkOption {
+            type = types.path;
+            description = ''
+              The Frappe source, as a non-flake input:
+
+                  inputs.frappe = { url = "github:frappe/frappe/version-16"; flake = false; };
+                  ...
+                  frappe-nix.app.frappe = inputs.frappe;
+
+              An input rather than a submodule because an app repo has no business
+              carrying the framework in its history, and because flake.lock is
+              already the file that pins it, updates it (`nix flake update
+              frappe`) and travels with the app.
+            '';
+          };
+
+          siblings = mkOption {
+            type = types.listOf (
+              types.submodule {
+                options = {
+                  name = mkOption {
+                    type = types.str;
+                    description = "Directory name under apps/.";
+                  };
+                  src = mkOption {
+                    type = types.path;
+                    description = "A `flake = false` input.";
+                  };
+                };
+              }
+            );
+            default = [ ];
+            description = ''
+              The other apps this one needs beside frappe — its hooks.py
+              `required_apps`, and anything else the dev bench should carry.
+
+              A list rather than an attrset because the order is load-bearing: it
+              becomes sites/apps.txt, which is the order `provision-site` installs
+              in, and erpnext has to land before hrms. Nix sorts attribute names,
+              which would silently reorder that. `frappe` is always first and
+              `app.name` always last; these sit in between, in the order written.
+            '';
+            example = literalExpression ''
+              [
+                { name = "erpnext"; src = inputs.erpnext; }
+                { name = "hrms"; src = inputs.hrms; }
+              ]
+            '';
+          };
+
+          lockDir = mkOption {
+            type = types.str;
+            default = "nix";
+            description = ''
+              Directory in the app repo, relative to its root, holding the two
+              generated-but-committed files: uv.lock and
+              node-offline-hashes.json. `nix run .#relock` writes and stages both.
+
+              The staging is not a courtesy: a flake's source tree is only its
+              tracked files, so an unstaged uv.lock is invisible to evaluation and
+              reads as still missing.
+            '';
+          };
+
+          benchDir = mkOption {
+            type = types.str;
+            default = ".frappe-nix/bench";
+            description = ''
+              Where the dev shell materialises a writable bench, relative to the
+              repo root. Gitignore it.
+
+              The assembled workspace is what Nix evaluates and builds from, and
+              it is read-only. A bench is not: `bench build` writes into
+              apps/*/*/public/dist, yarn writes node_modules, and sites/ holds the
+              dev site's database credentials. So the shell lays a real bench down
+              here on entry, with apps/<app.name> pointing back at the working
+              tree so edits are live, and FRAPPE_BENCH_ROOT / SITES_PATH /
+              PYTHONPATH all name it instead of the repo root.
+
+              devenv's own root is deliberately left alone, so $DEVENV_STATE — and
+              with it the MariaDB datadir — stays outside this directory: `rm -rf`
+              here costs you a re-copy of the apps, not the database.
+            '';
+          };
         };
 
         python = mkOption {
           type = types.package;
-          default = pkgs.python312;
+          default =
+            if config.frappe-nix.app.enable then
+              pkgs.${presets.${config.frappe-nix.app.frappeVersion}.python}
+            else
+              pkgs.python312;
+          defaultText = lib.literalMD "`pkgs.python312`, or the `app.frappeVersion` preset's interpreter in app mode";
           description = "Python interpreter package.";
         };
 
         nodejs = mkOption {
           type = types.package;
-          default = pkgs.nodejs_22;
+          default =
+            if config.frappe-nix.app.enable then
+              pkgs.${presets.${config.frappe-nix.app.frappeVersion}.nodejs}
+            else
+              pkgs.nodejs_22;
+          defaultText = lib.literalMD "`pkgs.nodejs_22`, or the `app.frappeVersion` preset's Node in app mode";
           description = "Node.js package for frontend builds and socketio.";
         };
 
@@ -598,6 +802,217 @@ in
       let
         cfg = config.frappe-nix;
 
+        appMode = cfg.app.enable;
+
+        # frappe first (bench installs it first and every other app imports it),
+        # then the declared siblings in declaration order, then the app under
+        # development. This list *is* sites/apps.txt, so the order is the
+        # install order.
+        appList =
+          [
+            {
+              name = "frappe";
+              src = cfg.app.frappe;
+            }
+          ]
+          ++ cfg.app.siblings
+          ++ [
+            {
+              name = cfg.app.name;
+              src = cfg.app.src;
+            }
+          ];
+
+        lockRel = "${cfg.app.lockDir}/uv.lock";
+        hashesRel = "${cfg.app.lockDir}/node-offline-hashes.json";
+        lockPath = cfg.app.src + "/${lockRel}";
+        hashesPath = cfg.app.src + "/${hashesRel}";
+        lockPresent = appMode && builtins.pathExists lockPath;
+
+        missingLockMessage = ''
+          frappe-nix: ${lockRel} is missing, so the Python workspace for
+          ${cfg.app.name} cannot be resolved.
+
+          In app mode the bench root's pyproject.toml is generated by Nix — there
+          is nothing there for you to edit — but the resolution it produces is a
+          fact about this repository, so it is committed here. Generate it:
+
+              nix run .#relock
+
+          That assembles the same workspace this flake does, runs `uv lock` in it,
+          writes ${lockRel} and ${hashesRel} back here, and stages them. The
+          staging matters: a flake's source tree is exactly its tracked files, so
+          an untracked lock is invisible to evaluation and you would see this
+          message again.
+        '';
+
+        mkAppWorkspace =
+          { withLock }:
+          import ../lib/app-workspace.nix {
+            inherit pkgs lib;
+            apps = appList;
+            projectName = "${normalizeDist cfg.app.name}-bench";
+            preset = presets.${cfg.app.frappeVersion};
+            lockFile = if withLock then lockPath else null;
+            nodeHashesFile = if builtins.pathExists hashesPath then hashesPath else null;
+          };
+
+        # Two of them, and the difference matters: `relock` exists precisely for
+        # the case where there is no lock yet, so it cannot reach a workspace
+        # that throws without one.
+        appWorkspace = mkAppWorkspace { withLock = true; };
+        appWorkspaceSkeleton = mkAppWorkspace { withLock = false; };
+
+        workspaceTool = import ../lib/workspace-tool.nix { inherit pkgs; };
+
+        # Lays a real, writable bench down under the app repo.
+        #
+        # The assembled workspace is what Nix evaluates from and it is read-only,
+        # but a bench is a thing that gets written to: `bench build` writes into
+        # apps/*/*/public/dist, yarn writes node_modules, and sites/ holds the dev
+        # site's credentials. And bench's own is_bench_directory() wants apps/,
+        # sites/, config/, logs/ and config/pids to all exist before it will
+        # dispatch a single frappe command.
+        #
+        # Idempotent, and on the common path one `cat` and a string compare: the
+        # stamp holds the workspace's store path, which is exactly what changes
+        # when a pin moves.
+        appBenchMaterialize = ''
+          _bench="$FRAPPE_BENCH_ROOT"
+          _want="${appWorkspace}"
+          _stamp="$_bench/.frappe-nix-workspace"
+
+          mkdir -p "$_bench/apps" "$_bench/sites" "$_bench/logs" "$_bench/config/pids"
+
+          # Backstop. This tree lives inside the repository, and a copy of the
+          # framework that leaked into the flake's source would change `self` on
+          # every evaluation and grow without bound.
+          [ -f "$_bench/.gitignore" ] || printf '*\n' > "$_bench/.gitignore"
+
+          if [ "$(cat "$_stamp" 2>/dev/null || true)" != "$_want" ]; then
+            echo "frappe-nix: refreshing ${cfg.app.benchDir}/apps from the flake pins…"
+
+            # Cleared first and written last, so an interrupted refresh is
+            # retried on the next entry rather than remembered as done.
+            rm -f "$_stamp"
+
+            _new="$_bench/.apps.new"
+            rm -rf "$_new"
+            mkdir -p "$_new"
+
+            # Named apps, not `cp -R "$_want/apps"`: this skips the app under
+            # development (about to become a symlink), and it makes an app that
+            # was *removed* from the pins actually disappear, which merging into
+            # the existing tree would not. Copied from the sources rather than
+            # through the assembled workspace, whose apps/ hold symlinked files —
+            # `cp -R` would reproduce the links and hand the developer a tree
+            # whose every file is read-only and lives in the store.
+            ${lib.concatMapStrings (a: ''
+              ${pkgs.coreutils}/bin/cp -R --reflink=auto ${a.src} "$_new/${a.name}"
+              chmod -R u+w "$_new/${a.name}"
+            '') (lib.filter (a: a.name != cfg.app.name) appList)}
+
+            # Carry each app's node_modules across. It is not an output of the
+            # pin — the install runs outside Nix because nested frontends'
+            # postinstall needs network the sandbox does not have — and
+            # re-fetching it on every bump would make `nix flake update` cost
+            # minutes per app. frappe-nix-node-modules re-checks each app's
+            # manifest fingerprint immediately after this and reinstalls only
+            # what genuinely moved.
+            for _old in "$_bench"/apps/*/node_modules; do
+              [ -e "$_old" ] || continue
+              _app="$(basename "$(dirname "$_old")")"
+              [ -d "$_new/$_app" ] || continue
+              rm -rf "''${_new:?}/$_app/node_modules"
+              mv "$_old" "$_new/$_app/node_modules"
+            done
+
+            # Swap, then delete: a crash between the two leaves a complete old
+            # tree and no stamp, which the next entry redoes from scratch.
+            rm -rf "$_bench/.apps.old"
+            [ -d "$_bench/apps" ] && mv "$_bench/apps" "$_bench/.apps.old"
+            mv "$_new" "$_bench/apps"
+            rm -rf "$_bench/.apps.old"
+
+            printf '%s\n' "$_want" > "$_stamp"
+            echo "frappe-nix: apps refreshed — compiled assets are stale, run 'bench-build'"
+          fi
+
+          # Outside the stamped block on purpose. It costs one readlink, and it
+          # is the one thing that has to be true even when the stamp says the
+          # tree is current: deleting apps/${cfg.app.name} by hand is a plausible
+          # accident and this is what heals it.
+          if [ "$(readlink "$_bench/apps/${cfg.app.name}" 2>/dev/null)" != "$DEVENV_ROOT" ]; then
+            rm -rf "$_bench/apps/${cfg.app.name}"
+            ln -s "$DEVENV_ROOT" "$_bench/apps/${cfg.app.name}"
+          fi
+
+          # Union, never truncate: apps.txt encodes the install order a live site
+          # was built with, and frappe writes it without a trailing newline.
+          ${workspaceTool}/bin/frappe-nix-workspace apps-txt \
+            --file "$_bench/sites/apps.txt" --add ${lib.escapeShellArgs (map (a: a.name) appList)}
+
+          # The dev defaults a scaffolded bench commits, which app mode has no
+          # committed file to carry — the same set lib/sh/template.sh's
+          # reconcile_common_site_config writes, minus the ports, which
+          # tasks."frappe:config" owns. Written once and never reconciled: after
+          # this the file is the developer's.
+          #
+          # `mariadb_root_password: ""` is carried for parity, not because it
+          # spares you the prompt. frappe reads it as
+          # `conf.get("mariadb_root_password") or ... or getpass(...)`
+          # (frappe/database/mariadb/setup_db.py), and an empty string is falsy,
+          # so `bench new-site` asks anyway. The empty answer is the right one —
+          # this MariaDB's root has no password — which is why provision-site
+          # says to press Enter.
+          if [ ! -f "$_bench/sites/common_site_config.json" ]; then
+            ${pkgs.jq}/bin/jq -n ${
+              lib.escapeShellArg (
+                builtins.toJSON (
+                  {
+                    developer_mode = 1;
+                    live_reload = true;
+                    serve_default_site = true;
+                    shallow_clone = true;
+                    use_redis_auth = false;
+                    background_workers = 1;
+                    gunicorn_workers = 1;
+                    mariadb_root_password = "";
+                  }
+                  // lib.optionalAttrs (cfg.siteName != "") { default_site = cfg.siteName; }
+                )
+              )
+            } > "$_bench/sites/common_site_config.json"
+          fi
+        '';
+
+        # The assembled workspace as a genuine `path` value.
+        #
+        # Import-from-derivation, and unavoidable: uv2nix's loadWorkspace takes
+        # one directory, and Nix has no pure way to synthesise a directory. Kept
+        # cheap by making that derivation a symlink farm rather than a copy of
+        # the framework — see lib/app-workspace.nix.
+        #
+        # The dance is forced by two separate rules. uv2nix reaches for
+        # lib.path.splitRoot, which rejects anything that is not a `path`, so the
+        # derivation and its outPath string are both out. And a string carrying
+        # store-path context cannot be appended to a path. So: read it once
+        # through the string *with* context, which is what makes Nix realise it,
+        # and only then drop the context to build the path.
+        appWorkspacePath =
+          let
+            realized = builtins.readDir "${appWorkspace}";
+          in
+          builtins.seq realized (/. + builtins.unsafeDiscardStringContext "${appWorkspace}");
+
+        effectiveWorkspaceRoot =
+          if appMode then
+            (if lockPresent then appWorkspacePath else throw missingLockMessage)
+          else if cfg.workspaceRoot != null then
+            cfg.workspaceRoot
+          else
+            throw "frappe-nix: set either `workspaceRoot` (a bench repo) or `app.enable` (a single app's repo).";
+
         overrides = import ../lib/overrides.nix;
 
         builtinOverrides = overrides.mysqlclient {
@@ -734,7 +1149,22 @@ in
 
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
-          inherit (cfg) python workspaceRoot benchName;
+          inherit (cfg) python benchName;
+          workspaceRoot = effectiveWorkspaceRoot;
+          lockAuditRelock = if appMode then appRelockAdvice else null;
+          # Keyed on the distribution name uv resolved the member to, which is
+          # what the package set is indexed by — the app's own [project].name,
+          # PEP 503 normalized.
+          srcOverrides = lib.optionalAttrs appMode (
+            lib.listToAttrs (
+              map (
+                a:
+                lib.nameValuePair (normalizeDist
+                  (builtins.fromTOML (builtins.readFile (a.src + "/pyproject.toml"))).project.name
+                ) a.src
+              ) (lib.filter (a: builtins.pathExists (a.src + "/pyproject.toml")) appList)
+            )
+          );
           pyproject-nix = inputs.pyproject-nix;
           pyproject-build-systems = inputs.pyproject-build-systems;
           uv2nix = inputs.uv2nix;
@@ -751,9 +1181,35 @@ in
 
         benchInfra = import ../lib/bench.nix {
           inherit pkgs lib;
-          inherit (cfg) workspaceRoot nodejs nodeOverrides nodeOfflineHashes extraPackages;
+          inherit (cfg) nodejs nodeOverrides nodeOfflineHashes extraPackages;
           inherit (pythonEnvs) prodPythonEnv;
+          workspaceRoot = effectiveWorkspaceRoot;
+          # In app mode the list is known exactly and the sources are wanted
+          # unmirrored — benchRoot copies them into a tree `bench build` writes
+          # into, and the workspace's own apps/ are symlinks. See lib/bench.nix.
+          appNames = if appMode then map (a: a.name) appList else null;
+          appSrcs =
+            if appMode then
+              lib.listToAttrs (map (a: lib.nameValuePair a.name a.src) appList)
+            else
+              null;
         };
+
+        # The "how to re-lock" half of the stale-lock message. Bench mode's
+        # points at `uv lock` in a bench root the user owns; there is no such
+        # root here.
+        appRelockAdvice = ''
+          This is what a pin bump looks like: `nix flake update` moved one of
+          ${lib.concatMapStringsSep ", " (a: "apps/${a.name}") appList}, or this
+          app's own pyproject.toml gained a requirement, and ${lockRel} was not
+          regenerated with it.
+
+          The workspace root named above is *generated* — it lives in the Nix
+          store and there is nothing of yours to run `uv lock` in. Re-lock from
+          this repository instead:
+
+              nix run .#relock
+        '';
 
         # Declared in modules/secrets.nix, which is top-level because
         # agenix-shell's own secret options are. Empty when secrets are off.
@@ -784,6 +1240,8 @@ in
             devguard = dg.enable;
           };
           nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
+          inherit appMode;
+          lockDir = cfg.app.lockDir;
         };
 
         # The object-store half of `bench restore`, kept separate so shellcheck
@@ -799,24 +1257,197 @@ in
         # install cannot simply be skipped once it has run.
         nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
 
+        # Every yarn.lock the Nix node_modules builds will need a hash for: each
+        # app that has one, plus the nested frontends inside it. The same
+        # discovery lib/bench.nix does, but over the *sources* rather than the
+        # assembled workspace, so it costs no import-from-derivation and the
+        # paths it bakes in are the real inputs.
+        yarnTargets =
+          let
+            direct = lib.filter (
+              a:
+              builtins.pathExists (a.src + "/package.json") && builtins.pathExists (a.src + "/yarn.lock")
+            ) appList;
+            nested = lib.concatMap (
+              a:
+              lib.concatMap (
+                sub:
+                let
+                  d = a.src + "/${sub}";
+                in
+                lib.optional (
+                  sub != "node_modules"
+                  && builtins.pathExists (d + "/yarn.lock")
+                  && builtins.pathExists (d + "/package.json")
+                ) { key = "${a.name}/${sub}"; lock = d + "/yarn.lock"; }
+              ) (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir a.src)))
+            ) direct;
+          in
+          map (a: {
+            key = a.name;
+            lock = a.src + "/yarn.lock";
+          }) direct
+          ++ nested;
+
+        # bench-update's `_offline_hash` (lib/scripts.nix), with the yarn.lock
+        # baked in as a store path instead of read out of a bench, and with a
+        # cheap "is the recorded hash still right?" pass in front: a
+        # fixed-output derivation with the correct hash is a store hit, whereas
+        # re-running it with lib.fakeHash re-downloads the whole offline mirror
+        # to learn nothing.
+        appNodeHashRegen = ''
+          echo "── Regenerating ${hashesRel} ──"
+
+          # One line each. A multi-line Nix expression inside a double-quoted
+          # shell string reads as an unterminated string to shellcheck, which
+          # writeShellApplication runs as a build step.
+          _yarn_expr_pre="let p = import ${pkgs.path} { system = builtins.currentSystem; }; in p.fetchYarnDeps { yarnLock = "
+
+          _hash_matches() { # $1 = yarn.lock store path, $2 = recorded hash
+            nix build --impure --no-link --no-warn-dirty \
+              --expr "$_yarn_expr_pre$1; hash = \"$2\"; }" > /dev/null 2>&1
+          }
+
+          _hash_of() { # $1 = yarn.lock store path
+            nix build --impure --no-link --no-warn-dirty \
+              --expr "$_yarn_expr_pre$1; hash = p.lib.fakeHash; }" 2>&1 |
+              awk '/got:/ { print $NF; exit }' || true
+          }
+
+          _h='{}'
+          if [ -f "$LOCKDIR/node-offline-hashes.json" ]; then
+            _h="$(cat "$LOCKDIR/node-offline-hashes.json")"
+          fi
+
+          ${lib.concatMapStrings (t: ''
+            _key=${lib.escapeShellArg t.key}
+            _lock=${lib.escapeShellArg (toString t.lock)}
+            _have="$(printf '%s' "$_h" | jq -r --arg a "$_key" '.[$a] // empty')"
+            # Try the recorded hash first: a fixed-output derivation with the
+            # right hash is a store hit, whereas re-running it with fakeHash
+            # re-downloads the whole offline mirror to learn nothing.
+            if [ -n "$_have" ] && _hash_matches "$_lock" "$_have"; then
+              echo "  $_key unchanged"
+            else
+              echo "  prefetching $_key (downloads yarn deps)…"
+              _got="$(_hash_of "$_lock")"
+              if [ -n "$_got" ]; then
+                _h="$(printf '%s' "$_h" | jq --sort-keys --arg a "$_key" --arg v "$_got" '.[$a] = $v')"
+                echo "  $_key = $_got"
+              else
+                echo "  ⚠  could not compute a hash for $_key" >&2
+              fi
+            fi
+          '') yarnTargets}
+
+          printf '%s\n' "$_h" > "$LOCKDIR/node-offline-hashes.json"
+        '';
+
         # `nix run .#relock` — the way out of a stale uv.lock.
         #
         # A stale lock fails at *evaluation*, so the dev shell that carries `uv`
         # is exactly what you cannot open; without this the fix needs a uv from
         # somewhere else entirely. nixpkgs' uv rather than the workspace's own
         # because the workspace's lives in the virtualenv that will not build.
+        #
+        # In app mode it reaches the workspace through `appWorkspaceSkeleton`,
+        # which carries no uv.lock: the case this exists for is not having one.
         relockTool = pkgs.writeShellApplication {
           name = "frappe-nix-relock";
-          runtimeInputs = [ pkgs.uv ];
-          text = ''
-            if [ ! -f pyproject.toml ] || [ ! -d apps ]; then
-              echo "frappe-nix-relock: run this from the bench root (pyproject.toml + apps/)" >&2
-              exit 1
-            fi
-            echo "Re-locking the Python workspace with $(uv --version)…"
-            uv lock "$@"
-            echo "✅ uv.lock updated — commit it, then re-enter the shell."
-          '';
+          runtimeInputs =
+            [ pkgs.uv ] ++ lib.optionals appMode (with pkgs; [ jq git gawk nix ]);
+          text =
+            if !appMode then
+              ''
+                if [ ! -f pyproject.toml ] || [ ! -d apps ]; then
+                  echo "frappe-nix-relock: run this from the bench root (pyproject.toml + apps/)" >&2
+                  exit 1
+                fi
+                echo "Re-locking the Python workspace with $(uv --version)…"
+                uv lock "$@"
+                echo "✅ uv.lock updated — commit it, then re-enter the shell."
+              ''
+            else
+              ''
+                DO_UV=true
+                DO_HASHES=true
+                declare -a UV_ARGS=()
+                for arg in "$@"; do
+                  case "$arg" in
+                    --uv-only) DO_HASHES=false ;;
+                    --node-hashes) DO_UV=false ;;
+                    -h | --help)
+                      cat <<'EOF'
+                Usage: nix run .#relock [--uv-only | --node-hashes] [uv lock flags…]
+
+                Regenerates the two generated files this app repo commits:
+
+                  ${lockRel}    the resolved Python workspace
+                  ${hashesRel}  fetchYarnDeps offline-cache hashes
+
+                Run it after `nix flake update`, after editing pyproject.toml, and
+                after any pinned app's yarn.lock moves. Both files are staged for
+                you: a flake's source tree is only its tracked files, so an
+                unstaged lock is still invisible to evaluation.
+                EOF
+                      exit 0
+                      ;;
+                    *) UV_ARGS+=("$arg") ;;
+                  esac
+                done
+
+                ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+                LOCKDIR="$ROOT/${cfg.app.lockDir}"
+                mkdir -p "$LOCKDIR"
+
+                if $DO_UV; then
+                  # A writable copy of the workspace this flake assembles, minus
+                  # uv.lock. Everything uv reads — the generated root
+                  # pyproject.toml, every apps/*/pyproject.toml — is already
+                  # exactly what evaluation will see, so what resolves here is
+                  # what the build would have resolved.
+                  #
+                  # The result travels: uv.lock records workspace members by
+                  # relative path (`source = { editable = "apps/frappe" }`) and
+                  # carries no hash for them, so a lock produced in a temp
+                  # directory is usable verbatim from the store workspace.
+                  WORK="$(mktemp -d)"
+                  trap 'chmod -R u+w "$WORK" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+                  cp -a ${appWorkspaceSkeleton}/. "$WORK/"
+                  chmod -R u+w "$WORK"
+
+                  # Seed the previous resolution so uv only moves what has to
+                  # move; without it every relock is a fresh resolution and the
+                  # diff is the whole file.
+                  if [ -f "$LOCKDIR/uv.lock" ]; then
+                    install -m 0644 "$LOCKDIR/uv.lock" "$WORK/uv.lock"
+                  fi
+
+                  export UV_CACHE_DIR="''${UV_CACHE_DIR:-''${XDG_CACHE_HOME:-$HOME/.cache}/uv}"
+                  echo "Re-locking the Python workspace with $(uv --version)…"
+                  (cd "$WORK" && uv lock "''${UV_ARGS[@]}")
+
+                  if [ -f "$LOCKDIR/uv.lock" ] && cmp -s "$WORK/uv.lock" "$LOCKDIR/uv.lock"; then
+                    echo "  ${lockRel} already current"
+                  else
+                    install -m 0644 "$WORK/uv.lock" "$LOCKDIR/uv.lock"
+                    echo "  + ${lockRel}"
+                  fi
+                fi
+
+                if $DO_HASHES; then
+                  ${appNodeHashRegen}
+                fi
+
+                for f in uv.lock node-offline-hashes.json; do
+                  [ -f "$LOCKDIR/$f" ] || continue
+                  git -C "$ROOT" ls-files --error-unmatch -- "${cfg.app.lockDir}/$f" > /dev/null 2>&1 && continue
+                  git -C "$ROOT" add -- "${cfg.app.lockDir}/$f" &&
+                    echo "  staged ${cfg.app.lockDir}/$f (untracked, it is invisible to the flake)"
+                done
+
+                echo "✅ commit ${cfg.app.lockDir}/, then re-enter the shell."
+              '';
         };
 
         # The patch list frappe-bench ships. Resolved from the interpreter's own
@@ -847,6 +1478,17 @@ in
         devenv.shells.default =
           { config, pkgs, ... }:
           let
+            # The bench tree. In a bench repo the project *is* the bench; in app
+            # mode it is materialised under the project by enterShell.
+            #
+            # devenv's own root is deliberately NOT moved with it. $DEVENV_STATE
+            # and $DEVENV_RUNTIME are both derived from it, so moving it would
+            # drag the MariaDB datadir into the generated directory — making
+            # `rm -rf` there destroy the dev database — and would lengthen every
+            # socket path for no reason. Leaving it alone keeps the generated
+            # tree disposable, which is the point of generating it.
+            benchPath = if appMode then "${config.devenv.root}/${cfg.app.benchDir}" else config.devenv.root;
+
             # Every socket lives here, not in $DEVENV_STATE. DEVENV_RUNTIME is
             # ~27 bytes ($XDG_RUNTIME_DIR/devenv-<7 hex>, or /tmp/devenv-<7 hex>)
             # whereas $DEVENV_STATE is <project>/.devenv/state — which fits for a
@@ -1076,10 +1718,26 @@ in
                 # into every site_config.json — so it needs no `sockets` guard.
                 FRAPPE_DB_SOCKET = mysqlSocket;
 
-                FRAPPE_BENCH_ROOT = config.devenv.root;
-                SITES_PATH = config.devenv.root + "/sites";
+                FRAPPE_BENCH_ROOT = benchPath;
+                SITES_PATH = benchPath + "/sites";
 
-                PYTHONPATH = benchInfra.appsPath config.devenv.root;
+                PYTHONPATH = benchInfra.appsPath benchPath;
+
+                # Frappe app build scripts conventionally look for the framework
+                # beside themselves, at <app>/../frappe. In app mode that is not
+                # where it is — apps/<app> is a symlink and Node realpaths
+                # __dirname, so the sibling lookup lands outside the bench
+                # entirely. Exported in both modes so the two agree; it is inert
+                # for anything that does not read it.
+                FRAPPE_PATH = benchPath + "/apps/frappe";
+
+                # The git worktree this flake lives in, which in app mode is NOT
+                # the bench. Read by the secrets scripts and agecheck, where a
+                # path under the generated bench would make `agenix -e` report
+                # "no rule for file" and `agenix -r` skip it as "does not exist,
+                # ignored" — exit 0, nothing rekeyed. uv2nix's editable finder
+                # used to read this and now reads FRAPPE_BENCH_ROOT instead; see
+                # lib/python.nix.
                 REPO_ROOT = config.devenv.root;
 
                 UV_PROJECT_ENVIRONMENT = config.env.DEVENV_STATE + "/uv-env";
@@ -1137,23 +1795,27 @@ in
               // cfg.extraEnv;
 
             enterShell = ''
-              # Initialize the bench's direct app submodules (apps/*) if needed.
-              #
-              # NOT --recursive: Frappe apps frequently ship nested submodules
-              # with broken/missing .gitmodules refs. Those have no role in
-              # production, and recursing into them fails the init and breaks
-              # shell startup. We only init the direct submodules of this bench.
-              if git submodule status 2>/dev/null | grep -q '^-'; then
-                echo "Initializing git submodules..."
-                git submodule update --init
-              fi
+              ${lib.optionalString (!appMode) ''
+                # Initialize the bench's direct app submodules (apps/*) if needed.
+                #
+                # NOT --recursive: Frappe apps frequently ship nested submodules
+                # with broken/missing .gitmodules refs. Those have no role in
+                # production, and recursing into them fails the init and breaks
+                # shell startup. We only init the direct submodules of this bench.
+                if git submodule status 2>/dev/null | grep -q '^-'; then
+                  echo "Initializing git submodules..."
+                  git submodule update --init
+                fi
+              ''}
+
+              ${lib.optionalString appMode appBenchMaterialize}
 
               # Create required directories. Frappe writes pids and lock files
               # into config/ and logs/, so both must be real and writable.
               # (No socket dir: every socket lives in $DEVENV_RUNTIME, which
               # devenv creates 0700 for us. And no $DEVENV_STATE/mariadb —
               # devenv's mysql module uses $DEVENV_STATE/mysql.)
-              mkdir -p logs config/pids
+              mkdir -p "$FRAPPE_BENCH_ROOT/logs" "$FRAPPE_BENCH_ROOT/config/pids"
 
               # Symlink the Nix-built Python env to ./env where bench expects it.
               #
@@ -1162,14 +1824,14 @@ in
               # env/<store-path> *inside* it — so the guard below would never be
               # satisfied and bench would keep resolving env/bin/python to the
               # stale virtualenv, silently. Move it aside first.
-              if [ -e env ] && [ ! -L env ]; then
-                echo "⚠  ./env is a real directory (a classic bench virtualenv)."
-                mkdir -p .frappe-nix-backup
-                mv env ".frappe-nix-backup/env-$(date +%s)"
+              if [ -e "$FRAPPE_BENCH_ROOT/env" ] && [ ! -L "$FRAPPE_BENCH_ROOT/env" ]; then
+                echo "⚠  $FRAPPE_BENCH_ROOT/env is a real directory (a classic bench virtualenv)."
+                mkdir -p "$FRAPPE_BENCH_ROOT/.frappe-nix-backup"
+                mv "$FRAPPE_BENCH_ROOT/env" "$FRAPPE_BENCH_ROOT/.frappe-nix-backup/env-$(date +%s)"
                 echo "   moved to .frappe-nix-backup/ — frappe-nix symlinks env/ to the Nix venv"
               fi
-              if [ "$(readlink env 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
-                ln -sfn "${pythonEnvs.devPythonEnv}" env
+              if [ "$(readlink "$FRAPPE_BENCH_ROOT/env" 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
+                ln -sfn "${pythonEnvs.devPythonEnv}" "$FRAPPE_BENCH_ROOT/env"
               fi
 
               # Record bench's own patches as already done, so `bench update`
@@ -1178,7 +1840,7 @@ in
               # `bench init` writes and frappe-nix otherwise never would; see
               # lib/bench-patches.nix. Quiet unless it changes something.
               ${benchPatchesTool}/bin/frappe-nix-bench-patches \
-                "${shippedBenchPatches}" .
+                "${shippedBenchPatches}" "$FRAPPE_BENCH_ROOT"
 
               # Install node_modules for each app (mutable, dev-friendly).
               #
@@ -1190,7 +1852,7 @@ in
               # shell: it is `bench build` that needs node_modules, and it
               # re-runs this and refuses to build against a stale one.
               ${lib.optionalString (benchInfra.appsWithNode != [ ]) ''
-                ${nodeModulesTool}/bin/frappe-nix-node-modules . ${
+                ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${
                   lib.escapeShellArgs benchInfra.appsWithNode
                 } || true
               ''}
@@ -1205,8 +1867,19 @@ in
               ''}
               echo "║                                                            ║"
               echo "║  Common commands:                                          ║"
-              echo "║    bench-update         # pull + migrate + build           ║"
-              echo "║    bench-update --pull  # pull app submodules only         ║"
+              ${
+                if appMode then
+                  ''
+                    echo "║    bench-update         # migrate + build                  ║"
+                    echo "║    nix flake update     # move the pinned apps             ║"
+                    echo "║    nix run .#relock     # after any pin or manifest change ║"
+                  ''
+                else
+                  ''
+                    echo "║    bench-update         # pull + migrate + build           ║"
+                    echo "║    bench-update --pull  # pull app submodules only         ║"
+                  ''
+              }
               echo "║    bench-migrate        # run DB migrations                ║"
               echo "║    bench-build          # build JS/CSS assets              ║"
               echo "║    bench-clear-cache    # clear Frappe cache               ║"
@@ -1214,11 +1887,15 @@ in
               echo "╚════════════════════════════════════════════════════════════╝"
               echo ""
               echo "  Python: ${pythonEnvs.devPythonEnv}/bin/python"
-              echo "  Bench root: $PWD"
+              echo "  Bench root: $FRAPPE_BENCH_ROOT"
+              ${lib.optionalString appMode ''
+                echo "  App: apps/${cfg.app.name} → this repository (edits are live)"
+                echo "        the bench is generated; deleting it costs a re-copy, not the database"
+              ''}
               # Read back rather than interpolate: the port allocator only runs
               # for `devenv up`, so a value baked in here would be the base while
               # the running nginx might have moved on.
-              _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' sites/common_site_config.json 2>/dev/null || true)"
+              _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
               echo "  URL: http://127.0.0.1:''${_port:-${toString webBase}}"
               ${lib.optionalString sockets ''
                 echo "  Sockets: $DEVENV_RUNTIME/{mysql,redis,socketio,web}.sock"
@@ -1438,6 +2115,13 @@ in
                 };
 
                 web = {
+                  # bench resolves its bench by walking *up* from cwd
+                  # (bench/cli.py's change_working_directory → find_parent_bench),
+                  # so a process started anywhere else either finds nothing and
+                  # silently stops dispatching frappe commands, or — if this repo
+                  # happens to sit inside another bench's apps/ — finds that one
+                  # and runs against its database.
+                  cwd = benchPath;
                   # --port is ignored when FRAPPE_WEB_SOCKET is set
                   # (frappe_unixsock rewrites the bind address), but still passed:
                   # it is the port the site is actually reachable on, and it is
@@ -1455,6 +2139,13 @@ in
                 // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_WEB_SOCKET" "/"; };
 
                 scheduler = {
+                  # bench resolves its bench by walking *up* from cwd
+                  # (bench/cli.py's change_working_directory → find_parent_bench),
+                  # so a process started anywhere else either finds nothing and
+                  # silently stops dispatching frappe commands, or — if this repo
+                  # happens to sit inside another bench's apps/ — finds that one
+                  # and runs against its database.
+                  cwd = benchPath;
                   exec = ''
                     exec ${pythonEnvs.devPythonEnv}/bin/bench schedule
                   '';
@@ -1467,6 +2158,13 @@ in
                 };
 
                 worker = {
+                  # bench resolves its bench by walking *up* from cwd
+                  # (bench/cli.py's change_working_directory → find_parent_bench),
+                  # so a process started anywhere else either finds nothing and
+                  # silently stops dispatching frappe commands, or — if this repo
+                  # happens to sit inside another bench's apps/ — finds that one
+                  # and runs against its database.
+                  cwd = benchPath;
                   exec = ''
                     exec ${pythonEnvs.devPythonEnv}/bin/bench worker
                   '';
@@ -1477,6 +2175,7 @@ in
                 };
 
                 socketio = {
+                  cwd = benchPath;
                   # node's server.listen() does not unlink a stale socket, so a
                   # crashed run would otherwise leave EADDRINUSE behind forever.
                   # This has to be in exec rather than a task: the manager re-runs
@@ -1486,7 +2185,7 @@ in
                   exec = lib.optionalString sockets ''
                     rm -f "$FRAPPE_SOCKETIO_UDS"
                   '' + ''
-                    exec ${cfg.nodejs}/bin/node apps/frappe/socketio.js
+                    exec ${cfg.nodejs}/bin/node "$FRAPPE_BENCH_ROOT/apps/frappe/socketio.js"
                   '';
                   after = needsConfig ++ [ "devenv:processes:redis" ];
                 }
@@ -1499,6 +2198,13 @@ in
                 };
 
                 watch = {
+                  # bench resolves its bench by walking *up* from cwd
+                  # (bench/cli.py's change_working_directory → find_parent_bench),
+                  # so a process started anywhere else either finds nothing and
+                  # silently stops dispatching frappe commands, or — if this repo
+                  # happens to sit inside another bench's apps/ — finds that one
+                  # and runs against its database.
+                  cwd = benchPath;
                   exec = ''
                     exec ${pythonEnvs.devPythonEnv}/bin/bench watch
                   '';

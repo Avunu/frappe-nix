@@ -158,6 +158,40 @@ before=$(calls)
 "$TOOL" "$BENCH" alpha beta > /dev/null 2>&1
 check_eq "and a second pass reinstalls neither" "$before" "$(calls)"
 
+echo "── the app is a symlink to its own repository (app mode) ────────"
+# In app mode the app under development lives outside the bench and apps/<app>
+# is a symlink to it. find's default -P mode prints a symlinked start point and
+# does not descend, so the fingerprint would see *nothing* — and sha256sum of an
+# empty stream is a constant, so the sentinel would match forever and the
+# install would be skipped no matter what package.json did.
+REPO="$ROOT/gamma-repo"
+mkdir -p "$REPO/desk"
+echo '{"name":"gamma"}' > "$REPO/package.json"
+echo '# yarn lockfile v1' > "$REPO/yarn.lock"
+echo '{"name":"gamma-ui"}' > "$REPO/desk/package.json"
+echo '# yarn lockfile v1' > "$REPO/desk/yarn.lock"
+ln -s "$REPO" "$BENCH/apps/gamma"
+
+before=$(calls)
+"$TOOL" "$BENCH" gamma > /dev/null 2>&1
+check_eq "the first install runs" "$((before + 1))" "$(calls)"
+check "in the repository the symlink points at" grep -qxF "$BENCH/apps/gamma" "$YARN_CALLS"
+before=$(calls)
+"$TOOL" "$BENCH" gamma > /dev/null 2>&1
+check_eq "an unchanged app is skipped" "$before" "$(calls)"
+echo '{"name":"gamma-ui","dependencies":{"@framework/ui":"link:x"}}' > "$REPO/desk/package.json"
+"$TOOL" "$BENCH" gamma > /dev/null 2>&1
+check_eq "a change through the symlink still triggers a reinstall" "$((before + 1))" "$(calls)"
+
+# The materialized bench lives *inside* the app repository, so following the
+# symlink walks straight back into a full copy of frappe. Pruned by name.
+mkdir -p "$REPO/.frappe-nix/bench/apps/frappe"
+echo '{"name":"frappe"}' > "$REPO/.frappe-nix/bench/apps/frappe/package.json"
+echo '# yarn lockfile v1' > "$REPO/.frappe-nix/bench/apps/frappe/yarn.lock"
+before=$(calls)
+"$TOOL" "$BENCH" gamma > /dev/null 2>&1
+check_eq "the generated bench under the app is not part of its fingerprint" "$before" "$(calls)"
+
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
 check_not "a bench root with no apps is an error" "$TOOL" "$BENCH"

@@ -45,8 +45,24 @@ pkgs.writeShellApplication {
     # node_modules is pruned: it holds thousands of package.json files, all of
     # them outputs of the very install this is deciding whether to run. .git is
     # pruned because nothing under it is an input to yarn.
+    #
+    # -H, because in app mode `apps/<the app under development>` is a symlink to
+    # the repository, and find's default -P mode prints a symlinked start point
+    # and does not descend. That would fingerprint *nothing* — and sha256sum of
+    # an empty stream is a constant, so the sentinel would match forever and the
+    # install would be skipped no matter what package.json did. Which is exactly
+    # the silent staleness this whole file exists to prevent. -H follows the
+    # argument only, so symlinks *inside* an app are still not traversed.
+    #
+    # And the extra prunes are what -H then makes necessary: the app-mode bench is
+    # materialised *inside* the repository, so descending through the symlink
+    # reaches a full copy of frappe at
+    # `apps/<app>/.frappe-nix/bench/apps/frappe` and fingerprints the framework's
+    # manifests as if they were the app's.
     _fingerprint() {
-      find "apps/$1" \( -name node_modules -o -name .git \) -prune -o \
+      find -H "apps/$1" \
+        \( -name node_modules -o -name .git \
+           -o -name .frappe-nix -o -name .devenv -o -name .direnv \) -prune -o \
         \( -name package.json -o -name yarn.lock \) -print0 \
         | LC_ALL=C sort -z \
         | xargs -0 -r sha256sum \

@@ -26,8 +26,22 @@ render_template() {
       -e "s|@NODEJS@|$nodejs|g" \
       -e "s|@REQUIRES_PYTHON@|$requires_python|g" \
       -e "s|@PYTAG@|$pytag|g" \
-      -e "s|@PYVER@|$pyver|g"
-    sed -i -e "s|@OVERRIDES@|$overrides|" pyproject.toml
+      -e "s|@PYVER@|$pyver|g" \
+      -e "s|@APP_NAME@|$app_name|g" \
+      -e "s|@FRAPPE_VERSION@|$frappe_version|g" \
+      -e "s|@FRAPPE_BRANCH@|$branch|g"
+    # The bench template's pyproject.toml only. @OVERRIDES@ is a bare TOML array
+    # rather than a quoted string, so it cannot go through the pass above without
+    # `|` in an override specifier splitting the sed expression; and the app
+    # template has no pyproject.toml of its own to render — an app repo's project
+    # file is its packaging metadata, not a workspace root.
+    #
+    # An `if`, not `[ -f … ] &&`: this is the last command in the subshell, so
+    # under `set -e` a false test would exit the whole script — which is exactly
+    # what the app template, having no pyproject.toml, would do.
+    if [ -f pyproject.toml ]; then
+      sed -i -e "s|@OVERRIDES@|$overrides|" pyproject.toml
+    fi
   )
 }
 

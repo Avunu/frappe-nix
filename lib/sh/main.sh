@@ -9,13 +9,16 @@ usage() {
   cat <<'EOF'
 Usage: frappe-init [options] [target-dir]
 
-Scaffold a new frappe-nix bench, or migrate an existing `bench init` bench in
-place. The mode is detected from the target directory (default: the current
-directory when it is a bench, otherwise a new one).
+Scaffold a new frappe-nix bench, migrate an existing `bench init` bench in
+place, or put a dev environment in a single Frappe app's own repository. The
+mode is detected from the target directory (default: the current directory when
+it is a bench or a Frappe app, otherwise a new bench).
 
 Mode:
   --init                   Force scaffold mode
   --migrate                Force migration mode (also re-syncs a frappe-nix bench)
+  --app                    Force app mode: this repo is one Frappe app, and the
+                           bench around it is generated from flake inputs
   --force                  Relax the mode guard; never overwrites an existing file
   --dry-run                Print the plan and exit without changing anything
   -y, --yes                Assume yes (required to migrate in a non-TTY)
@@ -63,6 +66,7 @@ parse_args() {
       --commit=*) DO_COMMIT=true; COMMIT_MSG="${1#*=}"; shift ;;
       --init) MODE=init; shift ;;
       --migrate) MODE=migrate; shift ;;
+      --app) MODE=app; shift ;;
       --force) FORCE=true; shift ;;
       --dry-run) DRY_RUN=true; shift ;;
       -y | --yes) ASSUME_YES=true; shift ;;
@@ -95,6 +99,12 @@ decide_mode() {
       RESOLVED_MODE=migrate
       return 0
       ;;
+    app)
+      looks_like_frappe_app || $FORCE ||
+        die "'$(pwd -P)' does not look like a Frappe app (no pyproject.toml whose [project].name names a package with hooks.py). Re-run with --app --force to try anyway." 6
+      RESOLVED_MODE=app
+      return 0
+      ;;
   esac
 
   if is_frappe_nix_bench; then
@@ -104,6 +114,11 @@ decide_mode() {
     die "'$(pwd -P)' is a bench, but its flake.nix is not a frappe-nix wrapper. Re-run with --migrate --force: the wrapper will be written to flake.nix.frappe-nix for you to merge." 4
   elif looks_like_bench; then
     RESOLVED_MODE=migrate
+  elif looks_like_frappe_app; then
+    # An app repository, not a bench: nothing here to reconcile, so this writes a
+    # flake that generates a bench around it instead.
+    info "this is a Frappe app, not a bench — setting up app mode"
+    RESOLVED_MODE=app
   elif looks_like_empty_bench; then
     die "'$(pwd -P)' has apps/ and sites/ but no Frappe app (nothing matches apps/*/*/hooks.py). Nothing to migrate." 7
   else
@@ -118,9 +133,16 @@ main() {
 
   parse_args "$@"
 
-  # No target given: migrate the current directory when it is a bench, else fall
-  # through to scaffolding (which prompts for a directory).
-  if [ -z "$target" ] && { looks_like_bench || is_frappe_nix_bench || looks_like_empty_bench; }; then
+  # No target given: work on the current directory when it is a bench or a Frappe
+  # app, else fall through to scaffolding (which prompts for a directory).
+  #
+  # A forced --migrate or --app means the current directory too, whatever it
+  # looks like — otherwise the guard below reports it as "empty or does not
+  # exist" when the real complaint is about its shape, which decide_mode is the
+  # one that can say.
+  if [ -z "$target" ] &&
+    { [ "$MODE" = migrate ] || [ "$MODE" = app ] ||
+      looks_like_bench || is_frappe_nix_bench || looks_like_empty_bench || looks_like_frappe_app; }; then
     target="."
   fi
 
@@ -131,12 +153,15 @@ main() {
   else
     [ "$MODE" = migrate ] &&
       die "'${target:-.}' is empty or does not exist — there is nothing to migrate." 1
+    [ "$MODE" = app ] &&
+      die "'${target:-.}' is empty or does not exist — app mode sets up an existing Frappe app's repository." 1
     RESOLVED_MODE=init
   fi
 
   case "$RESOLVED_MODE" in
     init) cmd_init ;;
     migrate) cmd_migrate ;;
+    app) cmd_app_init ;;
     *) die "internal: unresolved mode" ;;
   esac
 }
