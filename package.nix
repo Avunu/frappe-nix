@@ -7,6 +7,7 @@
   uvicorn,
   a2wsgi,
   httpx,
+  watchdog,
 }:
 
 buildPythonPackage {
@@ -35,6 +36,7 @@ buildPythonPackage {
     uvicorn
     a2wsgi
     httpx
+    watchdog
   ];
 
   # `import frappe_runtime` reaches frappe (the compat shim, and auth.py), which
