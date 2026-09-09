@@ -13,7 +13,7 @@
     "python": "python314",
     "nodejs": "nodejs_24",
     "requiresPython": ">=3.14",
-    "overrideDependencies": ["click~=8.3.1", "requests>=2.34.2"]
+    "overrideDependencies": ["click~=8.3.1", "requests>=2.34.2", "google-api-python-client~=2.188.0"]
   },
   "version-15": {
     "label": "version-15 — previous release (python 3.12 / node 20)",
