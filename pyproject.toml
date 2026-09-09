@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 
-# Only what Frappe does not already bring. The runtime also imports frappe,
-# redis, werkzeug, rq and watchdog — all of them Frappe's own dependencies, and
-# all of them resolved from the bench environment this package is installed
-# into. Declaring `frappe` here would make uv try to resolve it from PyPI.
+# Only what Frappe does not already bring. The runtime also imports frappe, redis,
+# werkzeug and rq — all of them Frappe's own dependencies, resolved from the bench
+# environment this package is installed into. Declaring `frappe` here would make
+# uv try to resolve it from PyPI.
 dependencies = [
     # Socket.IO v5 / Engine.IO v4, wire-compatible with the browser's
     # socket.io-client ^4.7.1. The WebSocket transport underneath is uvicorn's,
@@ -29,6 +29,11 @@ dependencies = [
     "a2wsgi~=1.10.10",
     # Async HTTP client for the realtime connect/auth path when not embedded.
     "httpx~=0.28.0",
+    # runner --dev watches the Python sources and reloads. Frappe keeps watchdog in
+    # a dev dependency group, so it is absent from a plain bench environment and
+    # --dev would exit with "needs watchdog" -- a flag this package advertises in
+    # its own --help.
+    "watchdog~=6.0.0",
 ]
 
 [project.scripts]
