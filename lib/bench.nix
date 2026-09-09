@@ -125,10 +125,11 @@ let
   #         in our cache (possible versions are "")
   #
   # No hash refresh fixes that; the lockfile itself is wrong. Excluding the
-  # frontend skips building its assets, which costs only whatever routes that
-  # frontend serves -- the rest of `bench build` is unaffected. Prefer it to
-  # forking the app when the frontend is optional, and drop the entry once
-  # upstream repairs the lock.
+  # frontend skips building its assets, which costs whatever routes that
+  # frontend serves -- plus, if the parent app's own `build` script is what
+  # builds it, that script (see dropNestedFrontendScripts below, which is what
+  # keeps the rest of `bench build` working). Prefer it to forking the app when
+  # the frontend is optional, and drop the entry once upstream repairs the lock.
   nestedFrontends = lib.concatMap (app:
     let
       appDir = appSrcOf app;
@@ -160,7 +161,23 @@ let
     })
   ) nestedFrontends);
 
-  benchRoot = pkgs.runCommand "bench-root" { } ''
+  # The excluded subdirs belonging to one app, from the flat "app/subdir" list.
+  excludedSubdirsOf =
+    app:
+    map (lib.removePrefix "${app}/") (
+      lib.filter (lib.hasPrefix "${app}/") nodeNestedFrontendExcludes
+    );
+
+  # Excluding a nested frontend also has to disarm whatever in the *parent* app
+  # builds it -- see lib/js/drop-nested-frontend-scripts.js for why skipping the
+  # install alone is not enough. Done here, in benchRoot, rather than in
+  # builtBench's buildPhase, so a later `bench build` over a dev bench or the
+  # deployed tree walks into the same repaired package.json.
+  dropNestedFrontendScripts = ./js/drop-nested-frontend-scripts.js;
+
+  benchRoot = pkgs.runCommand "bench-root" {
+    nativeBuildInputs = lib.optionals (nodeNestedFrontendExcludes != [ ]) [ nodejs ];
+  } ''
     mkdir -p $out/bench/{sites,logs,config/pids}
 
     ln -s ${prodPythonEnv} $out/bench/env
@@ -173,6 +190,11 @@ let
         ${lib.optionalString (builtins.elem app appsWithNode) ''
           rm -rf $out/bench/apps/${app}/node_modules
           ln -s ${nodeModules.${app}}/node_modules $out/bench/apps/${app}/node_modules
+        ''}
+        ${lib.optionalString (excludedSubdirsOf app != [ ]) ''
+          node ${dropNestedFrontendScripts} \
+            $out/bench/apps/${app}/package.json \
+            ${lib.escapeShellArgs (excludedSubdirsOf app)}
         ''}
       '') names
     )}

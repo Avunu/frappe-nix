@@ -180,6 +180,18 @@
               ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
               2>&1 | tee "$out"
           '';
+
+          # The other half of an exclusion: a nested frontend that is not
+          # installed must also not be reachable from its parent app's build
+          # script, or `bench build` fails on the missing binary instead of
+          # just missing the frontend's routes.
+          nested-frontend-scripts =
+            pkgs.runCommand "frappe-nix-nested-frontend-scripts-check" { } ''
+              bash ${./tests/nested-frontend-scripts.sh} \
+                ${pkgs.nodejs}/bin/node \
+                ${./lib/js/drop-nested-frontend-scripts.js} \
+                2>&1 | tee "$out"
+            '';
         }
         # edit-secret / rekey-secrets against a real ragenix and real keys.
         // import ./tests/secrets-cli.nix { inherit pkgs; }

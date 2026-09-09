@@ -821,9 +821,27 @@ frappe-nix.nodeNestedFrontendExcludes = [ "erpnext/banking" ];
 ```
 
 The frontend's assets are not built and no offline cache is fetched for it — `bench-update`
-skips its hash too, so it costs no mirror download. The blast radius is whatever routes that
-frontend serves; the rest of `bench build` is unaffected. Drop the entry once upstream
-repairs the lock.
+skips its hash too, so it costs no mirror download. Drop the entry once upstream repairs the
+lock.
+
+The blast radius is whatever routes that frontend serves, plus one thing more. A nested
+frontend is often built by its *parent* app rather than on its own — erpnext v16's entire
+build script is `cd banking && yarn build` — and frappe's esbuild runs `yarn build` in every
+app that declares one (`run_build_command_for_apps`, behind `--run-build-command`), with no
+opt-out. Excluding the frontend without touching that script trades a failure you chose for
+one you didn't:
+
+```
+Running build command for erpnext
+$ cd banking && yarn build
+/bin/sh: vite: not found
+error Command failed with exit code 127.
+```
+
+So an exclusion also drops the parent app's `build` and `postinstall` scripts, if they name
+the excluded subdir, from that app's package.json in the bench tree. They could only fail
+there. Anything else those scripts did is dropped with them, and the build log says so per
+script. With that, the rest of `bench build` really is unaffected.
 
 Forking the app is the alternative, and the trade is maintenance: a fork must carry the
 lockfile patch forward across every version bump, whereas an exclusion is one list entry
