@@ -387,6 +387,7 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | `nodejs` | package | `pkgs.nodejs_22` | Node.js for frontend builds + socketio. In app mode, the `app.frappeVersion` preset's. |
 | `mariadb.package` | package | `pkgs.mariadb` | MariaDB package. |
 | `mariadb.initialDatabases` | list of `{ name }` | `[]` | Databases created on first `devenv up`. |
+| `nodeNestedFrontendExcludes` | list of str | `[]` | Nested frontends to skip, keyed `"app/subdir"` (see [Skipping a nested frontend](#skipping-a-nested-frontend)). |
 | `nodeOfflineHashes` | attrs of str | `{}` | Per-app `fetchYarnDeps` hash overrides (see [Node offline hashes](#node-offline-hashes); normally generated into `node-offline-hashes.json`). |
 | `nodeOverrides` | attrs of attrs | `{}` | Per-app attrs merged into the node_modules `stdenv.mkDerivation`. |
 | `pythonOverrides` | overlay | no-op | Extra Python package set overlay (compose with `lib.overrides`). |
@@ -1085,6 +1086,53 @@ You don't manage that file by hand — **`bench-update` keeps it current**:
 (`bench-get-app` also adds new apps; run `bench-update --node-hashes` afterwards, or it will
 be picked up on the next pull.) The `nodeOfflineHashes` option still exists as a manual
 override for individual apps and takes precedence over the file.
+
+### Skipping a nested frontend
+
+A **nested frontend** is a subdirectory of an app carrying its own `package.json` and
+`yarn.lock` — `erpnext/banking`, `frappe/ui`, `commit/dashboard`. `bench.nix` discovers
+these automatically and gives each its own offline cache, keyed `"app/subdir"`, because
+the app's own `postinstall` (`cd banking && yarn install`) is suppressed by the
+`--ignore-scripts` the yarn hooks pass.
+
+Sometimes an upstream app ships a `yarn.lock` that **cannot resolve offline at all**. The
+usual cause is a dependency bump that did not regenerate the transitive entries, leaving a
+requirement no entry in the lockfile satisfies:
+
+```
+axios@^1.18.1:                  follow-redirects@^1.15.11:   ← the only entry present
+  dependencies:                   version "1.15.11"
+    follow-redirects "^1.16.0"  ← nothing satisfies this
+```
+
+This fails in a way that points at the wrong thing. `fetchYarnDeps` **succeeds** — it
+mirrors exactly what the lock lists, so the recorded hash is correct — and the build dies
+much later, inside `builtBench`, with:
+
+```
+error Couldn't find any versions for "follow-redirects" that matches "^1.16.0"
+      in our cache (possible versions are "")
+```
+
+`possible versions are ""` means *zero entries in the mirror*, not a corrupt mirror. A
+plain `yarn install` never shows this, because online yarn just resolves the missing range
+from the registry. **Refreshing the offline hash cannot fix it** — the hash already matches;
+the lockfile is what's wrong.
+
+When the frontend is optional, exclude it rather than forking the app:
+
+```nix
+frappe-nix.nodeNestedFrontendExcludes = [ "erpnext/banking" ];
+```
+
+The frontend's assets are not built and no offline cache is fetched for it — `bench-update`
+skips its hash too, so it costs no mirror download. The blast radius is whatever routes that
+frontend serves; the rest of `bench build` is unaffected. Drop the entry once upstream
+repairs the lock.
+
+Forking the app is the alternative, and the trade is maintenance: a fork must carry the
+lockfile patch forward across every version bump, whereas an exclusion is one list entry
+that reverts by deletion.
 
 ## Layout
 
