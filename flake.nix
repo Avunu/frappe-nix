@@ -41,6 +41,20 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
     };
+
+    # The source frappe-runtime is built from, pinned here rather than in each
+    # bench's uv.lock. `flake = false` because only the tree is wanted — building
+    # it is uv2nix's job, using the bench's own interpreter and package set.
+    #
+    # A bench still declares frappe-runtime in its pyproject.toml: uv2nix indexes
+    # pythonSet by uv.lock, and srcOverrides can only swap the src of a package
+    # already in that set. What this input controls is which code that package is
+    # built from, so a version bump is `nix flake update frappe-nix` rather than
+    # a relock in every bench.
+    frappe-runtime = {
+      url = "github:Avunu/frappe-runtime";
+      flake = false;
+    };
   };
 
   nixConfig = {
@@ -200,6 +214,9 @@
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (
             import ./tests/migrate-rollback.nix { inherit self pkgs; }
+          );
+          socket-runtime = pkgs.testers.runNixOSTest (
+            import ./tests/socket-runtime.nix { inherit self pkgs; }
           );
           socket = pkgs.testers.runNixOSTest (
             import ./tests/socket.nix { inherit self pkgs; }

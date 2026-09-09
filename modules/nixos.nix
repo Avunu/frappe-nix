@@ -113,8 +113,10 @@ let
 
       FRAPPE_SOCKETIO_PORT = toString siteCfg.socketio.port;
     }
-    // optionalAttrs (siteCfg.socketio.socketPath != "") {
+    // optionalAttrs (!cfg.runtime.enable && siteCfg.socketio.socketPath != "") {
       # realtime/index.js does `server.listen(uds || port)`, so this wins.
+      # Unset under the unified runtime, which takes its listen address from
+      # --uds and would otherwise read this as a second, unbound one.
       FRAPPE_SOCKETIO_UDS = siteCfg.socketio.socketPath;
     }
     // optionalAttrs (siteCfg.web.socketPath != "") {
@@ -214,10 +216,14 @@ let
         redis_socketio = siteCfg.redis.socketioUrl;
         socketio_port = siteCfg.socketio.port;
       }
-      // optionalAttrs (siteCfg.socketio.socketPath != "") {
+      // optionalAttrs (!cfg.runtime.enable && siteCfg.socketio.socketPath != "") {
         # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
         # merges this file too, so the realtime server still finds the socket if
         # it is ever started outside the unit.
+        #
+        # Not written under the unified runtime: nothing binds a separate realtime
+        # socket there, and a stale socketio_uds would point anything that reads it
+        # (a hand-run `frappe-realtime`, say) at a path with no listener.
         socketio_uds = siteCfg.socketio.socketPath;
       }
       // optionalAttrs (siteCfg.database.socket != "") {
@@ -485,7 +491,7 @@ let
         requires = [ "${initName}.service" ];
       };
 
-      mkService = { description, execStart, extra ? {} }:
+      mkService = { description, execStart, extra ? {}, stopTimeout ? null }:
         {
           inherit description;
           after = [ "network.target" ] ++ (extra.after or []);
@@ -500,6 +506,8 @@ let
             ExecStart = execStart;
             Restart = "always";
             RestartSec = "5";
+          } // optionalAttrs (stopTimeout != null) {
+            TimeoutStopSec = toString stopTimeout;
           };
         };
 
@@ -513,6 +521,74 @@ let
           }
         )) cfg.workers
       );
+
+      # One process for the whole site: the web app, realtime, the jobs and the
+      # scheduler. Listens where gunicorn used to, so nginx keeps one upstream and
+      # /socket.io is just another location on it.
+      runtimeUnits = {
+        "frappe-${name}" = mkService {
+          description = "Frappe runtime (web, realtime, jobs, scheduler) for ${name}";
+          execStart = mkExec pkg "runtime-${name}" (concatStringsSep " " (
+            [ "${pyEnv}/bin/frappe-runtime" ]
+            ++ (if siteCfg.web.socketPath != "" then
+                  [ "--uds" siteCfg.web.socketPath ]
+                else
+                  [ "--host" "0.0.0.0" "--port" (toString siteCfg.web.port) ])
+            ++ [
+              "--job-threads" (toString cfg.runtime.jobThreads)
+              "--restart-after-requests" (toString cfg.runtime.restartAfterRequests)
+              "--restart-after-jobs" (toString cfg.runtime.restartAfterJobs)
+              "--restart-idle-seconds" (toString cfg.runtime.restartIdleSeconds)
+              "--request-drain-seconds" (toString cfg.runtime.requestDrainSeconds)
+              "--job-drain-seconds" (toString cfg.runtime.jobDrainSeconds)
+            ]
+            # Same queues the split workers took, as one comma-separated list.
+            ++ lib.optionals (cfg.workers != [ ]) [ "--queue" (concatStringsSep "," cfg.workers) ]
+            ++ lib.optionals (cfg.runtime.webThreads != 0) [ "--web-threads" (toString cfg.runtime.webThreads) ]
+            ++ cfg.runtime.extraArgs
+          ));
+          extra = dependsOn;
+          # The runner drains web requests and then background jobs on SIGTERM.
+          # systemd's 90s default would SIGKILL it partway through, so give it the
+          # whole window the runner was told to use, plus a margin for the final
+          # ASGI lifespan shutdown.
+          stopTimeout = cfg.runtime.requestDrainSeconds + cfg.runtime.jobDrainSeconds + 30;
+        };
+      };
+
+      # gunicorn + node socket.io + scheduler + one unit per queue.
+      splitUnits = {
+        "frappe-web-${name}" = mkService {
+          description = "Frappe web (gunicorn) for ${name}";
+          execStart = mkExec pkg "web-${name}" ''
+            ${pyEnv}/bin/gunicorn \
+              --bind ${webBind siteCfg} \
+              --workers ${toString cfg.web.workers} \
+              --max-requests 5000 \
+              --max-requests-jitter 500 \
+              --timeout 120 \
+              --preload \
+              --graceful-timeout 30 \
+              --keep-alive 5 \
+              --access-logfile - \
+              --error-logfile - \
+              frappe.app:application'';
+          extra = dependsOn;
+        };
+
+        "frappe-scheduler-${name}" = mkService {
+          description = "Frappe scheduler for ${name}";
+          execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
+          extra = dependsOn;
+        };
+
+        "frappe-socketio-${name}" = mkService {
+          description = "Frappe SocketIO for ${name}";
+          execStart = mkExec pkg "socketio-${name}"
+            "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
+          extra = dependsOn;
+        };
+      } // workerUnits;
     in
     {
       "${initName}" = {
@@ -533,38 +609,8 @@ let
         };
       };
 
-      "frappe-web-${name}" = mkService {
-        description = "Frappe web (gunicorn) for ${name}";
-        execStart = mkExec pkg "web-${name}" ''
-          ${pyEnv}/bin/gunicorn \
-            --bind ${webBind siteCfg} \
-            --workers ${toString cfg.web.workers} \
-            --max-requests 5000 \
-            --max-requests-jitter 500 \
-            --timeout 120 \
-            --preload \
-            --graceful-timeout 30 \
-            --keep-alive 5 \
-            --access-logfile - \
-            --error-logfile - \
-            frappe.app:application'';
-        extra = dependsOn;
-      };
-
-      "frappe-scheduler-${name}" = mkService {
-        description = "Frappe scheduler for ${name}";
-        execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
-        extra = dependsOn;
-      };
-
-      "frappe-socketio-${name}" = mkService {
-        description = "Frappe SocketIO for ${name}";
-        execStart = mkExec pkg "socketio-${name}"
-          "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
-        extra = dependsOn;
-      };
     }
-    // workerUnits
+    // (if cfg.runtime.enable then runtimeUnits else splitUnits)
     // optionalAttrs cfg.migrate.enable {
       "${migrateName}" = {
         description = "Frappe schema migration for ${name}";
@@ -711,8 +757,12 @@ let
         else
           "http://127.0.0.1:${toString siteCfg.web.port}";
 
+      # Under the unified runtime one process answers both, so /socket.io points at
+      # the web upstream and there is no separate socketio upstream at all.
       socketioUpstream =
-        if siteCfg.socketio.socketPath != "" then
+        if cfg.runtime.enable then
+          webUpstream
+        else if siteCfg.socketio.socketPath != "" then
           "http://${socketioUpstreamName name}"
         else
           "http://127.0.0.1:${toString siteCfg.socketio.port}";
@@ -737,17 +787,20 @@ let
     {
       root = "${siteCfg.siteDir}/sites";
 
-      # Socket mode listens on BOTH the unix socket (for the proxy or tunnel in
-      # front) and loopback: the socketio session-validation callback resolves
-      # this site's FQDN to 127.0.0.1 (see networking.hosts below) and must still
-      # reach nginx over TCP.
-      listen = lib.optionals viaSocket [
-        { addr = "unix:${siteCfg.nginx.socketPath}"; }
-        {
+      # Socket mode listens on the unix socket for the proxy or tunnel in front.
+      #
+      # It used to also listen on loopback:80, because node's realtime server
+      # validated sessions by making an HTTP request back to this site's own FQDN
+      # (pinned to 127.0.0.1 in networking.hosts below) and node's fetch cannot
+      # speak unix. The Python runtime validates in-process against the WSGI app,
+      # so under runtime.enable that hop -- and the host pin -- are gone.
+      listen = lib.optionals viaSocket (
+        [ { addr = "unix:${siteCfg.nginx.socketPath}"; } ]
+        ++ lib.optional (!cfg.runtime.enable) {
           addr = "127.0.0.1";
           port = 80;
         }
-      ];
+      );
 
       # A unix socket has no peer address, so $remote_addr is meaningless and
       # recommendedProxySettings would forward it as the client IP. Trust the
@@ -845,10 +898,14 @@ let
           The same directory rules as web.socketPath apply: access is governed by
           the socket's directory, so give it its own.
 
-          Note this does not remove nginx's loopback :80 listener in socket mode.
-          That is there because the realtime server validates sessions by making
-          an HTTP request back to the site's own FQDN, and node's fetch cannot
-          speak unix — so the callback still needs a TCP way in.
+          Only used when services.frappe.runtime.enable is false. The unified
+          runtime serves /socket.io from the same process — and the same socket —
+          as the web app, so it has no separate realtime listener.
+
+          In that legacy mode this does not remove nginx's loopback :80 listener.
+          That is there because the node realtime server validates sessions by
+          making an HTTP request back to the site's own FQDN, and node's fetch
+          cannot speak unix — so the callback still needs a TCP way in.
         '';
       };
 
@@ -971,7 +1028,95 @@ in
     workers = mkOption {
       type = types.listOf types.str;
       default = [ "default" "short" "long" ];
-      description = "Background worker queues to run per site.";
+      description = ''
+        Background worker queues to run per site. Under the unified runtime these
+        are passed to the runner as --queue instead of becoming one unit each.
+      '';
+    };
+
+    # The unified Python runtime (github:Avunu/frappe-runtime): one process per
+    # site serving the web app, realtime, the background jobs and the scheduler,
+    # in place of gunicorn + node socket.io + N workers + the scheduler.
+    #
+    # It also removes the reason nginx needed a loopback :80 listener and a
+    # networking.hosts pin: realtime validates sessions in-process against the
+    # WSGI app rather than making an HTTP request back to the site's own FQDN.
+    runtime = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Run each site as a single frappe-runtime process instead of separate
+          gunicorn, node socket.io, worker and scheduler units.
+
+          Requires the frappe-runtime package in the bench's Python environment;
+          see the frappe-nix README for the uv.lock entry. Set false to keep the
+          split units and the Node realtime server.
+        '';
+      };
+
+      jobThreads = mkOption {
+        type = types.int;
+        default = 4;
+        description = "Concurrent background jobs inside the runtime process.";
+      };
+
+      webThreads = mkOption {
+        type = types.int;
+        default = 0;
+        description = ''
+          Concurrent web requests. 0 leaves the default of frappe_runtime.asgi
+          (FRAPPE_WEB_THREADS, itself defaulting to 8). Size the database pool
+          against whatever this ends up being.
+        '';
+      };
+
+      restartAfterRequests = mkOption {
+        type = types.int;
+        default = 5000;
+        description = "Web requests before a graceful restart (0 = never).";
+      };
+
+      restartAfterJobs = mkOption {
+        type = types.int;
+        default = 500;
+        description = "Background jobs before a graceful restart (0 = never).";
+      };
+
+      restartIdleSeconds = mkOption {
+        type = types.int;
+        default = 300;
+        description = "Idle time before a graceful restart (0 = never).";
+      };
+
+      # These are options rather than extraArgs because the unit's TimeoutStopSec
+      # is derived from them. systemd's built-in default is 90s; the runner's own
+      # default job drain is 600s, so left alone systemd SIGKILLs the process
+      # mid-drain and the graceful shutdown this runtime exists for never
+      # completes.
+      requestDrainSeconds = mkOption {
+        type = types.int;
+        default = 60;
+        description = "How long a graceful stop waits for in-flight web requests.";
+      };
+
+      jobDrainSeconds = mkOption {
+        type = types.int;
+        default = 600;
+        description = ''
+          How long a graceful stop waits for a background job in progress.
+
+          TimeoutStopSec is derived from this, so raising it also gives systemd
+          the patience to let the drain finish.
+        '';
+      };
+
+      extraArgs = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "--request-drain-seconds" "120" ];
+        description = "Extra arguments appended to the frappe-runtime command line.";
+      };
     };
 
     database = {
@@ -1094,6 +1239,22 @@ in
         }
       ) enabledSites);
 
+      # The unified runtime has no separate realtime process and no gunicorn, so
+      # these configure nothing. Say so rather than letting a set value quietly
+      # do nothing.
+      warnings = lib.optionals cfg.runtime.enable (
+        lib.concatLists (mapAttrsToList (name: siteCfg:
+          lib.optional (siteCfg.socketio.socketPath != "")
+            ("services.frappe.sites.\"${name}\".socketio.socketPath is ignored when"
+             + " services.frappe.runtime.enable is true: the runtime serves /socket.io"
+             + " on web.socketPath. Remove it, or set runtime.enable = false.")
+        ) enabledSites)
+        ++ lib.optional (cfg.web.workers != 4)
+          ("services.frappe.web.workers is ignored when services.frappe.runtime.enable"
+           + " is true: the runtime sizes web concurrency with"
+           + " services.frappe.runtime.webThreads instead.")
+      );
+
       environment.systemPackages = [ benchCli pkgs.git ] ++ (cfg.package.passthru.extraPackages or [ ]);
 
       users.users = mkIf (cfg.user == "frappe") {
@@ -1124,11 +1285,10 @@ in
         # Deduplicated — both sockets of a site normally share one directory.
         ++ lib.unique (lib.concatMap (siteCfg:
           map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -")
-            (lib.filter (p: p != "") [
+            (lib.filter (p: p != "") ([
               siteCfg.web.socketPath
-              siteCfg.socketio.socketPath
               siteCfg.nginx.socketPath
-            ]))
+            ] ++ lib.optional (!cfg.runtime.enable) siteCfg.socketio.socketPath)))
           (builtins.attrValues enabledSites));
     }
 
@@ -1170,12 +1330,19 @@ in
       # nginx needs group membership to traverse the 0750 site directories.
       users.users.nginx.extraGroups = [ cfg.group ];
 
-      # Pin each site's FQDN to loopback so the socketio server's session-
-      # validation callback (Origin -> /api/method/frappe.realtime.get_user_info)
-      # hits local nginx directly instead of round-tripping through a public
-      # reverse proxy / tunnel in front of this host.
-      networking.hosts."127.0.0.1" =
-        mapAttrsToList (name: _: name) (filterAttrs (_: s: s.nginx.enable) enabledSites);
+      # Only the node realtime server needed this. It validated sessions with an
+      # HTTP request to the site's own FQDN, so that name had to resolve to local
+      # nginx rather than to the public reverse proxy in front of this host. The
+      # Python runtime calls the WSGI app in-process and makes no such request.
+      # optionalAttrs rather than mkIf on the key: mkIf false would leave
+      # "127.0.0.1" declared with no definition of ours, which only works because
+      # NixOS itself always defines that key. Selecting the whole attrset does not
+      # depend on that.
+      networking.hosts = lib.optionalAttrs (!cfg.runtime.enable) {
+        "127.0.0.1" = mapAttrsToList (name: _: name) (
+          filterAttrs (_: s: s.nginx.enable) enabledSites
+        );
+      };
 
       services.nginx = {
         enable = true;
@@ -1189,11 +1356,11 @@ in
               servers."unix:${siteCfg.web.socketPath}" = { };
             })
             (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites)
-          // lib.mapAttrs' (name: siteCfg:
+          // lib.optionalAttrs (!cfg.runtime.enable) (lib.mapAttrs' (name: siteCfg:
             nameValuePair (socketioUpstreamName name) {
               servers."unix:${siteCfg.socketio.socketPath}" = { };
             })
-            (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites);
+            (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites));
 
         virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg)
           (filterAttrs (_: s: s.nginx.enable) enabledSites);
