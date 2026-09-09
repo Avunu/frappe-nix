@@ -2228,6 +2228,43 @@ in
                     "devenv:processes:web"
                     "devenv:processes:socketio"
                   ];
+                  # Load-bearing, and not for the health reporting.
+                  #
+                  # devenv picks a supervisor per process
+                  # (src/modules/processes.nix, `supervisionMode`):
+                  # process-compose keeps the lifecycle only when it can also
+                  # run the readiness check, which for a `ready = null` process
+                  # means it must have no allocated ports and no tcp `listen`.
+                  # nginx has a port and had no probe, so it — alone of our
+                  # processes — fell back to `native`, meaning the wrapper
+                  # process-compose execs supervises nginx itself.
+                  #
+                  # That flips one more switch in devenv-tasks: `native` clears
+                  # `ignore_process_deps` (devenv-tasks/src/tasks.rs), so the
+                  # wrapper stops trusting process-compose's `depends_on` and
+                  # walks nginx's own dependency graph — web, socketio,
+                  # frappe:config, and through them redis, mysql, mailpit —
+                  # trying to *start* each one. Those are already running under
+                  # their own wrappers, which hold the flocks in
+                  # $DEVENV_RUNTIME/processes/guardians, so every claim comes
+                  # back "process redis is already managed" and the failures
+                  # cascade back up to nginx as `Dependency failed`. Result: the
+                  # one process that owns the public port is the one that never
+                  # starts.
+                  #
+                  # A probe of any kind puts nginx back on the `external` path
+                  # with everything else. Deliberately not `curl -f`, for the
+                  # reason socketReady spells out — and here it also keeps the
+                  # probe about *nginx*: a 502 from a still-warming upstream is
+                  # an answer, so this reports on the listener we own rather
+                  # than re-testing the dependencies we already waited for.
+                  ready = {
+                    exec = ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 http://127.0.0.1:${toString webPort}/'';
+                    initial_delay = 1;
+                    period = 5;
+                    probe_timeout = 5;
+                    failure_threshold = 60;
+                  };
                 };
               }
               // lib.optionalAttrs mailEnabled {
