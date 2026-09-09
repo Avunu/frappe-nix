@@ -11,6 +11,7 @@
   prodPythonEnv,
   workspaceRoot,
   nodejs,
+  nodeNestedFrontendExcludes ? [ ],
   nodeOverrides ? { },
   nodeOfflineHashes ? { },
   extraPackages ? [ ],
@@ -111,6 +112,23 @@ let
   # (e.g. commit/dashboard, commit/docs). These need separate offline caches
   # because their postinstall-driven `yarn install` is skipped in the sandbox.
   # Hash keys in node-offline-hashes.json use "app/subdir" format.
+  #
+  # `nodeNestedFrontendExcludes` drops a frontend from discovery entirely, by
+  # that same "app/subdir" key. It exists for the case where an upstream app
+  # ships a yarn.lock that cannot resolve offline at all -- typically a
+  # dependency bump that did not regenerate the transitive entries, leaving a
+  # range no lockfile entry satisfies. `fetchYarnDeps` still succeeds there
+  # (it mirrors exactly what the lock lists, so the hash is *correct*), and the
+  # failure lands later, in builtBench's `yarn install --offline`, as
+  #
+  #   error Couldn't find any versions for "<pkg>" that matches "<range>"
+  #         in our cache (possible versions are "")
+  #
+  # No hash refresh fixes that; the lockfile itself is wrong. Excluding the
+  # frontend skips building its assets, which costs only whatever routes that
+  # frontend serves -- the rest of `bench build` is unaffected. Prefer it to
+  # forking the app when the frontend is optional, and drop the entry once
+  # upstream repairs the lock.
   nestedFrontends = lib.concatMap (app:
     let
       appDir = appSrcOf app;
@@ -124,6 +142,7 @@ let
       if builtins.pathExists (subDir + "/yarn.lock")
          && builtins.pathExists (subDir + "/package.json")
          && sub != "node_modules"
+         && !(lib.elem "${app}/${sub}" nodeNestedFrontendExcludes)
       then [{
         app = app;
         subdir = sub;

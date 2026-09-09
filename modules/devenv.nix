@@ -755,6 +755,31 @@ in
           description = "Additional environment variables for the dev shell.";
         };
 
+        nodeNestedFrontendExcludes = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            Nested frontends to drop from discovery, keyed "app/subdir" (the
+            same key `node-offline-hashes.json` uses). Their assets are not
+            built and no offline cache is fetched for them.
+
+            The case this is for is an upstream app shipping a yarn.lock that
+            cannot resolve offline: a dependency bump that did not regenerate
+            the transitive entries, leaving a range no entry in the lockfile
+            satisfies. `fetchYarnDeps` still succeeds (its hash is correct --
+            it mirrors what the lock lists), and the build fails later in
+            `yarn install --offline` with
+
+                error Couldn't find any versions for "<pkg>" that matches
+                      "<range>" in our cache (possible versions are "")
+
+            Refreshing the offline hash cannot fix that. Excluding the frontend
+            costs only the routes it serves, and beats forking the app when the
+            frontend is optional. Drop the entry once upstream repairs the lock.
+          '';
+          example = [ "erpnext/banking" ];
+        };
+
         nodeOverrides = mkOption {
           type = types.attrsOf types.attrs;
           default = { };
@@ -1181,7 +1206,13 @@ in
 
         benchInfra = import ../lib/bench.nix {
           inherit pkgs lib;
-          inherit (cfg) nodejs nodeOverrides nodeOfflineHashes extraPackages;
+          inherit (cfg)
+            nodejs
+            nodeNestedFrontendExcludes
+            nodeOverrides
+            nodeOfflineHashes
+            extraPackages
+            ;
           inherit (pythonEnvs) prodPythonEnv;
           workspaceRoot = effectiveWorkspaceRoot;
           # In app mode the list is known exactly and the sources are wanted
@@ -1262,6 +1293,10 @@ in
         # discovery lib/bench.nix does, but over the *sources* rather than the
         # assembled workspace, so it costs no import-from-derivation and the
         # paths it bakes in are the real inputs.
+        #
+        # `nodeNestedFrontendExcludes` is honoured here too: a frontend the
+        # build skips needs no hash, and prefetching one costs a full mirror
+        # download to record a value nothing reads.
         yarnTargets =
           let
             direct = lib.filter (
@@ -1279,6 +1314,7 @@ in
                   sub != "node_modules"
                   && builtins.pathExists (d + "/yarn.lock")
                   && builtins.pathExists (d + "/package.json")
+                  && !(lib.elem "${a.name}/${sub}" cfg.nodeNestedFrontendExcludes)
                 ) { key = "${a.name}/${sub}"; lock = d + "/yarn.lock"; }
               ) (builtins.attrNames (lib.filterAttrs (_: t: t == "directory") (builtins.readDir a.src)))
             ) direct;
