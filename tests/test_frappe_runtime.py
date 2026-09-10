@@ -896,7 +896,9 @@ class TestBridge(unittest.IsolatedAsyncioTestCase):
 		await self.bridge._handle(
 			'{"namespace": "s1", "room": "user:a", "event": "msg", "message": {"k": 1}}'
 		)
-		self.sio.emit.assert_called_once_with("msg", {"k": 1}, room="user:a", namespace="/s1")
+		self.sio.emit.assert_called_once_with(
+			"msg", {"k": 1}, room="user:a", namespace="/s1", ignore_queue=True
+		)
 
 	async def test_no_room_broadcast(self):
 		self.sio.manager.rooms = {"/s1": {}, "/s2": {}}

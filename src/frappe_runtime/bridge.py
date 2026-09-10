@@ -109,12 +109,23 @@ class RedisBridge:
 			logger.warning("Redis bridge skipping malformed message (%s): %r", e, raw)
 			return
 
+		# ignore_queue: deliver to this process's own sockets and stop there. Every
+		# process runs a bridge, so each already receives this message from redis
+		# directly; letting it through a redis-backed client manager as well would
+		# re-publish it N times and every client would see the event N times. The
+		# base manager ignores the flag, so this is a no-op without one.
 		if evt.room:
 			if not evt.namespace:
 				logger.warning("Redis bridge skipping room message with no namespace: %r", raw)
 				return
-			await self.sio.emit(evt.event, evt.message, room=evt.room, namespace="/" + evt.namespace)
+			await self.sio.emit(
+				evt.event,
+				evt.message,
+				room=evt.room,
+				namespace="/" + evt.namespace,
+				ignore_queue=True,
+			)
 		else:
 			# No room -> broadcast to every connected site namespace (build events).
 			for ns in list(self.sio.manager.rooms.keys()):
-				await self.sio.emit(evt.event, evt.message, namespace=ns)
+				await self.sio.emit(evt.event, evt.message, namespace=ns, ignore_queue=True)

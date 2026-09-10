@@ -45,30 +45,50 @@ if packet_logger.level == logging.NOTSET:
 	packet_logger.setLevel(logging.WARNING)
 
 
-class TolerantManager(socketio.AsyncManager):
+class _TolerantConnect:
 	"""Re-ack a duplicate namespace connect instead of rejecting it.
 
 	Default connect() returns None when the eio session is already on the namespace,
 	which makes the server send CONNECT_ERROR ("Unable to connect") and poisons the
 	live socket. Clients do reconnect redundantly (transport blips, StrictMode); the
 	old Node server tolerated it. Reuse the existing sid so the connect is idempotent.
+
+	A mixin so the behaviour survives whichever manager is in play -- it would be a
+	silent regression to get it only in the single-process case.
 	"""
 
 	async def connect(self, eio_sid: str, namespace: str) -> str | None:
 		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)
 
 
-def create_sio() -> socketio.AsyncServer:
+class TolerantManager(_TolerantConnect, socketio.AsyncManager):
+	"""Per-process rooms. Correct while one process serves the site."""
+
+
+class TolerantRedisManager(_TolerantConnect, socketio.AsyncRedisManager):
+	"""Rooms shared through redis, so an emit reaches sockets on every process.
+
+	Note this is not on its own enough to run more than one process: engine.io keeps
+	its session table in memory, and the browser's socket.io-client opens on HTTP
+	long-polling, so the load balancer must also pin a client to one process. Without
+	that, the polling handshake lands on a process that has never heard of the sid.
+	"""
+
+
+def create_sio(config: RealtimeConfig) -> socketio.AsyncServer:
 	"""Build the asgi-mode Socket.IO server.
 
 	Origin / namespace / auth enforcement lives in auth.py; CORS is left open here
 	so python-socketio does not pre-reject before that gate runs."""
+	manager = (
+		TolerantRedisManager(config.redis_queue) if config.redis_manager else TolerantManager()
+	)
 	return socketio.AsyncServer(
 		async_mode="asgi",
 		cors_allowed_origins="*",
 		cors_credentials=True,
 		namespaces="*",
-		client_manager=TolerantManager(),
+		client_manager=manager,
 		logger=packet_logger,
 		engineio_logger=packet_logger,
 	)
@@ -97,7 +117,7 @@ class RealtimeServer:
 
 	def __init__(self, config: RealtimeConfig | None = None, other_asgi_app=None):
 		self.config = config or get_config()
-		self.sio = create_sio()
+		self.sio = create_sio(self.config)
 		self.bridge = RedisBridge(self.sio, self.config.redis_queue)
 		self.app = socketio.ASGIApp(
 			self.sio,

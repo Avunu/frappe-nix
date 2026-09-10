@@ -42,6 +42,12 @@ class RealtimeConfig:
 	# HTTP back into ourselves. This is a property of the process, not of the site
 	# config; the process that embeds realtime sets it. See frappe.asgi.
 	embedded: bool = False
+	# Back rooms and cross-server emits with redis instead of per-process memory.
+	# Off by default: with a single realtime process it only adds a redis round trip
+	# to every handler emit, and rooms are already correct. Turn it on when more than
+	# one process serves the same site -- without it each process sees only its own
+	# sockets, so a doc_viewers broadcast reaches the viewers on that process alone.
+	redis_manager: bool = False
 
 
 def _env_or_conf(conf, env_var: str, key: str):
@@ -81,4 +87,5 @@ def get_config(sites_path: str | None = None, embedded: bool = False) -> Realtim
 		worker_threads=int(conf.get("socketio_worker_threads") or DEFAULT_WORKER_THREADS),
 		sites_path=sites_path,
 		embedded=embedded,
+		redis_manager=bool(conf.get("socketio_redis_manager")),
 	)

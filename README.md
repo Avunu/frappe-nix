@@ -56,6 +56,25 @@ frappe-realtime
 
 Run either from the bench root. `--uds` is local to this package (see `patches/0001-runner-uds.patch`); everything else is upstream's.
 
+## Running more than one process
+
+By default rooms live in the process's own memory, which is correct while one
+process serves a site. Set `socketio_redis_manager: true` in
+`common_site_config.json` to back them with redis instead, so a handler's
+`socket.emit(room=...)` reaches sockets on every process rather than only its own.
+Off by default: with a single process it buys nothing and adds a redis round trip
+to every handler emit.
+
+Events published by Frappe are unaffected either way. Every process runs its own
+redis bridge and already receives them directly, so the bridge emits with
+`ignore_queue=True` — without that, a shared manager would re-publish each event
+once per process and every client would see it N times.
+
+The manager is necessary but **not sufficient** to actually run several processes.
+Engine.IO keeps its session table in memory and the browser's `socket.io-client`
+opens on HTTP long-polling, so the load balancer must also pin a client to one
+process for the handshake to complete. Solve that before raising the process count.
+
 ## Dependencies
 
 Five beyond what Frappe already brings: `python-socketio`, `python-engineio`, `uvicorn`, `a2wsgi`, `httpx`. `frappe`, `redis`, `werkzeug`, `rq` and `watchdog` come from the bench environment.

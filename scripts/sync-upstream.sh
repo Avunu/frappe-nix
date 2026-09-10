@@ -31,4 +31,13 @@ OVERLAY="$HERE/overlay/frappe_runtime" PATCHES="$HERE/patches" \
 git -C "$SRC_REPO" show "$REF:frappe/tests/test_realtime_py.py" > "$WORK/test_in.py"
 python3 "$HERE/scripts/rewrite_tests.py" "$WORK/test_in.py" "$HERE/tests/test_frappe_runtime.py"
 
+# Upstream tests that assert exact call arguments have to move when one of our
+# patches changes those arguments. Only for the generated file -- tests we write
+# ourselves live beside it and are never regenerated.
+for t in "$HERE"/patches/tests/*.patch; do
+	[ -e "$t" ] || continue
+	echo "sync-upstream.sh: applying tests/$(basename "$t")"
+	patch -p1 -d "$HERE/tests" --no-backup-if-mismatch < "$t"
+done
+
 echo "sync-upstream.sh: src/ and tests/ regenerated from $REF"
