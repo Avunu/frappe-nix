@@ -191,34 +191,56 @@ def with_in_install(doc, original):
         frappe.local.flags.in_install = previous
 
 
+def _swap_in_registry(registry, original, replacement, *, register_if_missing):
+    """Replace ``original`` with ``replacement`` in one Frappe method registry.
+
+    ``whitelisted``/``guest_methods``/``xss_safe_methods`` are lists on Frappe
+    v15 and sets from v16 on, so handle both rather than pinning devguard to a
+    framework version — on a set, ``.index()`` raises ``AttributeError`` at
+    import time and takes the whole bench command down with it.
+    """
+    present = original in registry
+    if not (present or register_if_missing):
+        return
+
+    if isinstance(registry, list):
+        if present:
+            registry[registry.index(original)] = replacement
+        else:
+            registry.append(replacement)
+        return
+
+    registry.discard(original)
+    registry.add(replacement)
+
+
 def rewhitelist(original, replacement):
     """Swap a ``@frappe.whitelist()`` function for ``replacement``, in place.
 
-    ``frappe.whitelisted`` is a list of function *objects* and
+    ``frappe.whitelisted`` is a collection of function *objects* and
     ``allowed_http_methods_for_whitelisted_func`` is a dict keyed on them, so
     simply reassigning the module attribute would leave the endpoint resolving
     to a function the framework does not recognise: ``is_whitelisted`` throws a
     misleading "not whitelisted" 403, and ``handler.py`` subscripts the methods
     dict directly, giving a raw KeyError. Swapping in place — rather than
-    appending — also stops the original object lingering as a live entry.
+    adding — also stops the original object lingering as a live entry.
     """
     import frappe
 
     functools.update_wrapper(replacement, original)
     mark(replacement, f"{original.__module__}.{original.__name__}")
 
-    if original in frappe.whitelisted:
-        frappe.whitelisted[frappe.whitelisted.index(original)] = replacement
-    else:  # not decorated the way we expected; register rather than lose the endpoint
-        frappe.whitelisted.append(replacement)
+    # register_if_missing: not decorated the way we expected; register rather
+    # than lose the endpoint. The guest registries get no such fallback — adding
+    # there would *widen* access instead of preserving it.
+    _swap_in_registry(frappe.whitelisted, original, replacement, register_if_missing=True)
 
     methods = frappe.allowed_http_methods_for_whitelisted_func.pop(original, None)
     if methods is not None:
         frappe.allowed_http_methods_for_whitelisted_func[replacement] = methods
 
     for registry in (frappe.guest_methods, frappe.xss_safe_methods):
-        if original in registry:
-            registry[registry.index(original)] = replacement
+        _swap_in_registry(registry, original, replacement, register_if_missing=False)
 
     return replacement
 
