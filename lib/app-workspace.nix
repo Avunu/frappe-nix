@@ -46,9 +46,10 @@
   pkgs,
   lib,
   # Ordered [{ name; src; }] — frappe first, the app under development last.
-  # Ordered, not an attrset, because this becomes sites/apps.txt and therefore
-  # the order provision-site installs in: erpnext has to land before hrms, and
-  # Nix sorts attribute names.
+  # Ordered, not an attrset, because this becomes the order of the workspace
+  # members, which is the order of sites/apps.txt and therefore the order
+  # provision-site installs in: erpnext has to land before hrms, and Nix sorts
+  # attribute names.
   apps,
   # [project].name for the workspace root. uv refuses a root whose name collides
   # with a member's distribution name, and in app mode it always would — the
@@ -101,7 +102,7 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
     };
   }
   ''
-    mkdir -p "$out/apps" "$out/sites"
+    mkdir -p "$out/apps"
 
     # Interpolation, not `toString`: `toString` on a path yields the store path
     # with its *context stripped*, so the source never becomes an input of this
@@ -126,12 +127,11 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
       --replace-fail '@PYVER@'           ${lib.escapeShellArg pyver}
 
     cd "$out"
-    # The same two calls reconcile_workspace makes (lib/sh/apps.sh). sync-apps
-    # keys [tool.uv.sources] on each app's own distribution name; apps-txt hoists
-    # frappe first on its own, so a `frappe` declared out of order still lands
-    # where bench needs it.
+    # The same call reconcile_workspace makes (lib/sh/apps.sh): sync-apps keys
+    # [tool.uv.sources] on each app's own distribution name. No sites/ here —
+    # the registry (sites/apps.txt, sites/apps.json) is generated from these
+    # members by lib/bench.nix, and by modules/devenv.nix for the dev bench.
     frappe-nix-workspace sync-apps --pyproject pyproject.toml ${lib.escapeShellArgs memberNames}
-    frappe-nix-workspace apps-txt --file sites/apps.txt --add ${lib.escapeShellArgs appNames}
 
     ${lib.optionalString (lockFile != null) ''
       install -m 0644 ${lockFile} "$out/uv.lock"

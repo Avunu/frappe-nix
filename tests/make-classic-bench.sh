@@ -59,6 +59,8 @@ for app in frappe erpnext hrms; do
     erpnext) seed_app "seed/$app" erpnext 15.30.0 ;;
     hrms) seed_app "seed/$app" hrms 15.10.0 ;;
   esac
+  # hrms declares erpnext, as the real one does; sites/apps.json records it.
+  [ "$app" = hrms ] && printf 'required_apps = ["frappe/erpnext"]\n' >> "seed/$app/hrms/hooks.py"
   printf '{"dependencies":{}}\n' > "seed/$app/package.json"
   printf '# yarn lockfile v1\n' > "seed/$app/yarn.lock"
   (

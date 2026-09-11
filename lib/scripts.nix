@@ -60,9 +60,10 @@ let
     fi
   '';
 
-  # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.txt
-  # contract, shared with the `frappe-init` scaffolder/migrator so the two
-  # cannot drift apart. Idempotent and comment-preserving (tomlkit).
+  # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json}
+  # contract, shared with the `frappe-init` scaffolder/migrator and the bench
+  # package build so none of them can drift apart. Idempotent and
+  # comment-preserving (tomlkit).
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
   workspaceBin = "${workspaceTool}/bin/frappe-nix-workspace";
 
@@ -91,11 +92,12 @@ let
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
   '';
 
-  # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent. Frappe writes
-  # that file without a trailing newline, so a naive `echo >>` would concatenate
-  # onto the last app; the tool rewrites the whole list instead.
-  addToAppsTxt = ''
-    ${workspaceBin} apps-txt --file sites/apps.txt --add "$APP_NAME"
+  # Shell snippet: regenerate sites/apps.txt and sites/apps.json from the
+  # workspace members. Run from the bench root, after registerWorkspaceMember
+  # or a submodule pull — the registry is derived from pyproject.toml and the
+  # checkouts, never edited in place.
+  syncRegistry = ''
+    ${workspaceBin} sync-registry --pyproject pyproject.toml --apps-dir apps --sites-dir sites
   '';
 
   # ── secrets ───────────────────────────────────────────────────────────────
@@ -455,6 +457,13 @@ ${
         git checkout -B "$branch" "FETCH_HEAD"
         find . -name "*.pyc" -delete
       '
+      echo ""
+
+      # The pins just moved; sites/apps.json records them. Before the node
+      # hashes, which can be slow or fail on a network hiccup — the registry
+      # must not be left describing the old commits because of that.
+      ${syncRegistry}
+      echo "  commit sites/apps.json along with the submodule bumps"
       echo ""
 
       # Refresh node hashes for apps whose yarn.lock changed or are not yet recorded.
@@ -926,7 +935,7 @@ ${
 
       ${registerWorkspaceMember}
 
-      ${addToAppsTxt}
+      ${syncRegistry}
 
       echo "Syncing Python dependencies..."
       uv sync
@@ -976,7 +985,7 @@ ${
 
       ${registerWorkspaceMember}
 
-      ${addToAppsTxt}
+      ${syncRegistry}
 
       echo "Syncing Python dependencies..."
       uv sync

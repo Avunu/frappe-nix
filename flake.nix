@@ -186,6 +186,19 @@
               2>&1 | tee "$out"
           '';
 
+          # The registry writer over a fixture bench: which apps land in
+          # sites/apps.txt, and what apps.json records about each. Real git
+          # repositories stand in for the checkouts, so the provenance
+          # precedence is tested against git's answers rather than a stub's.
+          apps-registry = pkgs.runCommand "frappe-nix-apps-registry-check" {
+            nativeBuildInputs = [ pkgs.git pkgs.jq pkgs.python3 ];
+          } ''
+            export HOME="$PWD"
+            bash ${./tests/apps-registry.sh} \
+              ${import ./lib/workspace-tool.nix { inherit pkgs; }}/bin/frappe-nix-workspace \
+              2>&1 | tee "$out"
+          '';
+
           # The other half of an exclusion: a nested frontend that is not
           # installed must also not be reachable from its parent app's build
           # script, or `bench build` fails on the missing binary instead of

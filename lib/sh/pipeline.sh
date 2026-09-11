@@ -99,8 +99,8 @@ finalize() {
       die "aborted; nothing was staged (the working tree changes above are already applied)"
   fi
   git add -A
-  git ls-files --error-unmatch -- flake.nix pyproject.toml sites/apps.txt >/dev/null ||
-    die "flake.nix / pyproject.toml / sites/apps.txt did not reach the git index"
+  git ls-files --error-unmatch -- flake.nix pyproject.toml sites/apps.txt sites/apps.json >/dev/null ||
+    die "flake.nix / pyproject.toml / sites/apps.{txt,json} did not reach the git index"
   for app in "${VENDORED[@]}"; do
     [ "$(git ls-files -- "apps/$app" | wc -l)" -gt 0 ] ||
       die "vendored app $app has no tracked files"

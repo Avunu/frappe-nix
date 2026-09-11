@@ -99,7 +99,7 @@ install_gitignore_block() {
 # Turn it into an error here instead.
 verify_not_ignored() {
   local bad=0 p app
-  for p in flake.nix pyproject.toml .envrc sites/apps.txt sites/common_site_config.json apps; do
+  for p in flake.nix pyproject.toml .envrc sites/apps.txt sites/apps.json sites/common_site_config.json apps; do
     [ -e "$p" ] || continue
     if git check-ignore -q -- "$p"; then
       err "$p is excluded by .gitignore"

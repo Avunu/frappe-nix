@@ -202,10 +202,15 @@ in
               `required_apps`, and anything else the dev bench should carry.
 
               A list rather than an attrset because the order is load-bearing: it
-              becomes sites/apps.txt, which is the order `provision-site` installs
-              in, and erpnext has to land before hrms. Nix sorts attribute names,
-              which would silently reorder that. `frappe` is always first and
+              is the order of the workspace members, and therefore of
+              sites/apps.txt, which is the order `provision-site` installs in —
+              erpnext has to land before hrms. Nix sorts attribute names, which
+              would silently reorder that. `frappe` is always first and
               `app.name` always last; these sit in between, in the order written.
+
+              Registration follows membership: a sibling with no pyproject.toml
+              cannot be a uv workspace member, so it lands in apps/ and on
+              PYTHONPATH but not in sites/apps.txt.
             '';
             example = literalExpression ''
               [
@@ -910,6 +915,61 @@ in
             }
           ];
 
+        # What sites/apps.json should say about where each app came from, for
+        # the facts only the flake knows: a pinned input's commit, and the ref
+        # it was pinned at. The tree alone cannot say either — the assembled
+        # workspace has no .git, and a flake input carries its rev but not its
+        # ref. The ref is in the app repo's own flake.lock, keyed by input name,
+        # which a `{ name; src; }` entry does not carry; the narHash is on both
+        # sides, so match on that. Anything still unknown is left null and the
+        # tool fills it from the checkout where there is one (the dev bench's
+        # apps/<app> symlink), or leaves it null (the package build).
+        appLock =
+          let
+            path = cfg.app.src + "/flake.lock";
+          in
+          if appMode && builtins.pathExists path then
+            (builtins.fromJSON (builtins.readFile path)).nodes or { }
+          else
+            { };
+        refByNarHash =
+          narHash:
+          let
+            hits = lib.filter (node: (node.locked.narHash or null) == narHash) (lib.attrValues appLock);
+          in
+          if hits == [ ] then null else (lib.head hits).original.ref or null;
+        provenanceOf =
+          a:
+          let
+            src = a.src;
+            # A plain path (the app under development as `./.`) has no metadata.
+            isInput = builtins.isAttrs src;
+            rev =
+              if !isInput then
+                null
+              else
+                src.rev or (if src ? dirtyRev then lib.removeSuffix "-dirty" src.dirtyRev else null);
+            ref = if isInput && src ? narHash then refByNarHash src.narHash else null;
+            branch =
+              if ref != null then
+                ref
+              # frappe is pinned by the preset, so the preset's branch is the
+              # ref it was fetched at unless the lock says otherwise.
+              else if a.name == "frappe" then
+                presets.${cfg.app.frappeVersion}.branch
+              else
+                null;
+          in
+          {
+            commit_hash = rev;
+            inherit branch;
+            is_repo = isInput && (src ? rev || src ? dirtyRev);
+          };
+        appProvenance = lib.optionalAttrs appMode (
+          lib.listToAttrs (map (a: lib.nameValuePair a.name (provenanceOf a)) appList)
+        );
+        provenanceFile = pkgs.writeText "apps-provenance.json" (builtins.toJSON appProvenance);
+
         lockRel = "${cfg.app.lockDir}/uv.lock";
         hashesRel = "${cfg.app.lockDir}/node-offline-hashes.json";
         lockPath = cfg.app.src + "/${lockRel}";
@@ -1034,10 +1094,15 @@ in
             ln -s "$DEVENV_ROOT" "$_bench/apps/${cfg.app.name}"
           fi
 
-          # Union, never truncate: apps.txt encodes the install order a live site
-          # was built with, and frappe writes it without a trailing newline.
-          ${workspaceTool}/bin/frappe-nix-workspace apps-txt \
-            --file "$_bench/sites/apps.txt" --add ${lib.escapeShellArgs (map (a: a.name) appList)}
+          # sites/apps.txt and sites/apps.json, from the workspace's members —
+          # the same call, on the same pyproject.toml, as the package build.
+          # The provenance file carries what the flake knows (each pin's
+          # commit and ref); apps/${cfg.app.name} is a symlink to this
+          # checkout, which has a .git, so the tool reads the rest from there.
+          ${workspaceTool}/bin/frappe-nix-workspace sync-registry \
+            --pyproject ${appWorkspace}/pyproject.toml \
+            --apps-dir "$_bench/apps" --sites-dir "$_bench/sites" \
+            --provenance ${provenanceFile}
 
           # The dev defaults a scaffolded bench commits, which app mode has no
           # committed file to carry — the same set lib/sh/template.sh's
@@ -1282,7 +1347,7 @@ in
             nodeOfflineHashes
             extraPackages
             ;
-          inherit (pythonEnvs) prodPythonEnv;
+          inherit (pythonEnvs) prodPythonEnv rootPyproject;
           workspaceRoot = effectiveWorkspaceRoot;
           # In app mode the list is known exactly and the sources are wanted
           # unmirrored — benchRoot copies them into a tree `bench build` writes
@@ -1293,6 +1358,7 @@ in
               lib.listToAttrs (map (a: lib.nameValuePair a.name a.src) appList)
             else
               null;
+          provenance = appProvenance;
         };
 
         # The "how to re-lock" half of the stale-lock message. Bench mode's
@@ -1928,6 +1994,21 @@ in
                   echo "Initializing git submodules..."
                   git submodule update --init
                 fi
+
+                # sites/apps.txt and sites/apps.json are generated from the
+                # workspace members and the submodule checkouts — and committed,
+                # because `nix build` reads the committed apps.json for the
+                # commits it cannot see from a source tree without .git. Every
+                # frappe-nix command that moves a pin regenerates them; this is
+                # the one hook that also sees a pin moved by hand (`git
+                # submodule update --remote`, a checkout inside apps/<x>). A
+                # dirty sites/apps.json afterwards is the signal to commit it
+                # with the bump. Cheap: a git rev-parse per app, a write only
+                # when the content changed.
+                ${workspaceTool}/bin/frappe-nix-workspace sync-registry \
+                  --pyproject "$FRAPPE_BENCH_ROOT/pyproject.toml" \
+                  --apps-dir "$FRAPPE_BENCH_ROOT/apps" \
+                  --sites-dir "$FRAPPE_BENCH_ROOT/sites" || true
               ''}
 
               ${lib.optionalString appMode appBenchMaterialize}

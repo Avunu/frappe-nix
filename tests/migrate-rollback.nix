@@ -86,6 +86,9 @@ let
   } ''
     mkdir -p $out/bench/apps $out/bench/env $out/bench/config $out/bench/sites
     echo '{}' > $out/bench/sites/common_site_config.json
+    # The registry a real package carries (lib/bench.nix).
+    printf 'frappe\n' > $out/bench/sites/apps.txt
+    printf '{"frappe": {"idx": 1}}\n' > $out/bench/sites/apps.json
     : > $out/bench/config/.keep
   '';
 

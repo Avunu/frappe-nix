@@ -103,13 +103,22 @@
 
           mkdir -p /bench/logs /bench/config/pids "$SITE_DIR"
 
-          # Seed sites directory from the package.
+          # The app registry is the package's: links into the image, refreshed
+          # on every start, like the assets below. A stale copy would hide an
+          # app from frappe.get_all_apps(); `ln -sfn` also replaces the regular
+          # file an older image's copy-once seed left in the volume.
           PKG_SITES="${builtBench}/bench/sites"
-          for f in apps.json apps.txt common_site_config.json; do
-            if [ ! -e "$SITES_DIR/$f" ] && [ -e "$PKG_SITES/$f" ]; then
-              cp "$PKG_SITES/$f" "$SITES_DIR/$f"
+          for f in apps.txt apps.json; do
+            if [ -e "$PKG_SITES/$f" ]; then
+              ln -sfn "$PKG_SITES/$f" "$SITES_DIR/$f"
             fi
           done
+
+          # common_site_config.json is the operator's once seeded.
+          if [ ! -e "$SITES_DIR/common_site_config.json" ] \
+             && [ -e "$PKG_SITES/common_site_config.json" ]; then
+            cp "$PKG_SITES/common_site_config.json" "$SITES_DIR/common_site_config.json"
+          fi
 
           # Symlink compiled assets from the package into the mounted volume.
           if [ -d "$PKG_SITES/assets" ]; then

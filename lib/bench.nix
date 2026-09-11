@@ -1,9 +1,13 @@
 # Bench infrastructure: app discovery, node_modules, benchRoot, and builtBench.
 #
-# benchRoot  — unbuilt /bench tree for dev shells and as a build input.
+# benchRoot  — unbuilt /bench tree for dev shells and as a build input. Also
+#              where sites/apps.txt and sites/apps.json are generated: the
+#              registry is an output of the package, never a copy of what the
+#              bench happens to have committed.
 # builtBench — benchRoot + compiled assets (`bench build`), the deployable
-#              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames}
-#              so the NixOS module can discover interpreters from the package.
+#              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames,
+#              registeredApps} so the NixOS module can discover interpreters
+#              and the registered apps from the package.
 
 {
   pkgs,
@@ -31,6 +35,14 @@
   # bytes goes through appSrcOf for that reason.
   appNames ? null,
   appSrcs ? null,
+  # The bench root's pyproject.toml, parsed. lib/python.nix reads the same
+  # file; the default here is for callers that do not go through it.
+  rootPyproject ? builtins.fromTOML (builtins.readFile (workspaceRoot + "/pyproject.toml")),
+  # `{ <app> = { commit_hash; branch; is_repo; }; }` — what the caller knows
+  # about where each app came from that the source tree cannot say. App mode
+  # fills this from its flake inputs; a bench repo has nothing to add (its
+  # .gitmodules is in the tree, and the tool reads that itself).
+  provenance ? { },
 }:
 
 let
@@ -47,6 +59,61 @@ let
   appSrcOf = app: if appSrcs != null then appSrcs.${app} else workspaceRoot + "/apps/${app}";
 
   appsPath = root: lib.concatMapStringsSep ":" (app: "${root}/apps/${app}") names;
+
+  # ── the registry ────────────────────────────────────────────────────────
+  #
+  # sites/apps.txt is what frappe.get_all_apps() returns and what `install-app`
+  # checks a name against; sites/apps.json is bench's record of each app's
+  # version and pin. Both are written by `frappe-nix-workspace sync-registry`
+  # (lib/frappe-workspace.py) — the same tool the dev shell and frappe-init run
+  # — from one rule: the registered apps are the [tool.uv.workspace].members,
+  # in declared order, frappe first. Members, because that is what the
+  # virtualenv actually installs; a directory under apps/ that is not one is
+  # on PYTHONPATH and nothing more.
+  #
+  # The rule is mirrored here, in Nix, for two things the build cannot do: an
+  # evaluation-time warning about an app that will silently not be registered,
+  # and passthru.registeredApps for the NixOS module and tests. benchRoot diffs
+  # this list against what the tool wrote, so the two cannot drift.
+  workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
+
+  # Explicit `apps/<x>` entries only, like the tool: a glob would need a second
+  # matcher here that agrees with Python's, so neither side accepts one.
+  memberNames = lib.unique (
+    lib.concatMap (
+      member:
+      let
+        parts = lib.splitString "/" (lib.removeSuffix "/" member);
+      in
+      if builtins.length parts == 2 && builtins.head parts == "apps" && builtins.match ".*[*?[].*" member == null then
+        [ (lib.last parts) ]
+      else
+        [ ]
+    ) (rootPyproject.tool.uv.workspace.members or [ ])
+  );
+
+  isFrappeApp = app: builtins.pathExists (appSrcOf app + "/${app}/hooks.py");
+
+  presentMembers = lib.filter (app: lib.elem app names && isFrappeApp app) memberNames;
+
+  registeredApps =
+    let
+      apps = lib.optional (lib.elem "frappe" presentMembers) "frappe"
+        ++ lib.filter (app: app != "frappe") presentMembers;
+      unregistered = lib.filter (app: isFrappeApp app && !(lib.elem app apps)) names;
+    in
+    lib.warnIf (unregistered != [ ]) (
+      "frappe-nix: not registered — a hooks.py but no [tool.uv.workspace] member, "
+      + "so on PYTHONPATH only and invisible to frappe: "
+      + lib.concatMapStringsSep ", " (a: "apps/${a}") unregistered
+      + ". Register with bench-get-app / `frappe-nix-workspace add-app`, or remove the directory."
+    ) apps;
+
+  registryExpected = pkgs.writeText "apps.txt.expected" (
+    lib.concatMapStrings (app: app + "\n") registeredApps
+  );
+
+  provenanceFile = pkgs.writeText "apps-provenance.json" (builtins.toJSON provenance);
 
   appsWithNode = lib.filter (
     app:
@@ -176,7 +243,10 @@ let
   dropNestedFrontendScripts = ./js/drop-nested-frontend-scripts.js;
 
   benchRoot = pkgs.runCommand "bench-root" {
-    nativeBuildInputs = lib.optionals (nodeNestedFrontendExcludes != [ ]) [ nodejs ];
+    # Not pkgs.git: sync-registry reads a checkout's .git when there is one,
+    # and a store copy that happened to carry one must not change the output.
+    # Without git on PATH the tool falls through to .gitmodules and the seed.
+    nativeBuildInputs = [ workspaceTool ] ++ lib.optionals (nodeNestedFrontendExcludes != [ ]) [ nodejs ];
   } ''
     mkdir -p $out/bench/{sites,logs,config/pids}
 
@@ -199,12 +269,23 @@ let
       '') names
     )}
 
-    ${lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.json")) ''
-      cp ${workspaceRoot + "/sites/apps.json"} $out/bench/sites/apps.json
-    ''}
-    ${lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.txt")) ''
-      cp ${workspaceRoot + "/sites/apps.txt"} $out/bench/sites/apps.txt
-    ''}
+    # The registry. The committed apps.json, if any, is only a *seed*: the
+    # lowest-ranked source, consulted for a commit hash the sandbox cannot
+    # read (a bench repo's apps/ are submodules, and the flake's source tree
+    # carries their files but not their .git). Versions, order and required
+    # apps are always recomputed from the sources.
+    frappe-nix-workspace sync-registry \
+      --pyproject ${workspaceRoot + "/pyproject.toml"} \
+      --apps-dir $out/bench/apps \
+      --sites-dir $out/bench/sites \
+      ${lib.optionalString (builtins.pathExists (workspaceRoot + "/.gitmodules"))
+        "--gitmodules ${workspaceRoot + "/.gitmodules"}"} \
+      ${lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.json"))
+        "--seed ${workspaceRoot + "/sites/apps.json"}"} \
+      ${lib.optionalString (provenance != { }) "--provenance ${provenanceFile}"}
+    # The Nix mirror of the membership rule (registeredApps) must agree with
+    # what the tool wrote, or passthru would describe a different bench.
+    diff ${registryExpected} $out/bench/sites/apps.txt
 
     ${lib.optionalString (builtins.pathExists (workspaceRoot + "/config")) ''
       cp -r ${workspaceRoot + "/config"}/* $out/bench/config/ 2>/dev/null || true
@@ -329,6 +410,9 @@ let
       pythonEnv = prodPythonEnv;
       inherit nodejs extraPackages;
       appNames = names;
+      # The contents of sites/apps.txt, in order: the workspace members that
+      # are Frappe apps. A subset of appNames, which is every apps/ directory.
+      inherit registeredApps;
       # Function: root -> colon-separated PYTHONPATH of apps under root.
       # Usage: pkg.passthru.appsPath "${pkg}/bench"
       inherit appsPath;
@@ -339,6 +423,7 @@ in
 {
   appNames = names;
   inherit
+    registeredApps
     appsWithNode
     appsPath
     nodeModules

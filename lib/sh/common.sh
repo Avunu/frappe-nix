@@ -49,7 +49,6 @@ pyver=""
 declare -a WARNINGS=()
 declare -a VENDORED=()
 declare -a MEMBER_APPS=()
-declare -a APPS_TXT_ADD=()
 
 # [project].name for the workspace root. Usually $name, but see
 # resolve_project_name: it must not collide with a workspace member.
