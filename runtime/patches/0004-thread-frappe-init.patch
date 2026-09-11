@@ -1,0 +1,46 @@
+--- a/frappe_runtime/runner.py
++++ b/frappe_runtime/runner.py
+@@ -260,6 +260,22 @@
+ 			thread.wait(max(0.0, deadline - time.monotonic()))
+ 
+ 
++def _init_frappe_for_thread() -> None:
++	"""Initialize frappe in the calling thread.
++
++	frappe.local is a ContextVar-backed frappe.utils.local.Local, and a worker
++	thread does not inherit the main thread's context: hasattr(frappe.local,
++	"conf") is False inside the thread even though it is created after
++	frappe.init() ran on the main thread. get_redis_conn() then raises
++	"You need to call frappe.init" and the thread dies before it takes a job.
++
++	frappe's own `bench worker` and `bench schedule` are separate processes that
++	each initialize; a thread has to do the same. Matches the sites_path
++	resolution in TrafficMiddleware.load.
++	"""
++	frappe.init(site="", sites_path=os.environ.get("SITES_PATH") or ".")
++
++
+ class JobThread:
+ 	"""One no-fork worker of frappe on a daemon thread. It stops between two jobs."""
+ 
+@@ -286,6 +302,7 @@
+ 			logger.warning("the job continues after %.0fs: the runner stops without it", timeout)
+ 
+ 	def _work(self) -> None:
++		_init_frappe_for_thread()
+ 		# work() returns after RQ_MAX_JOBS jobs. Thus make a new worker and continue.
+ 		while not self.stopping.is_set():
+ 			queues = get_queue_list(self.config.queue_names, build_queue_name=True)
+@@ -302,7 +319,11 @@
+ 	"""
+ 
+ 	def __init__(self):
+-		self.thread = threading.Thread(target=start_scheduler, name="scheduler", daemon=True)
++		self.thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
++
++	def _run(self) -> None:
++		_init_frappe_for_thread()
++		start_scheduler()
+ 
+ 	def start(self) -> None:
+ 		self.thread.start()

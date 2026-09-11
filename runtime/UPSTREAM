@@ -1,0 +1,7 @@
+# The Frappe commit this package is extracted from.
+# Re-pin with: scripts/sync-upstream.sh <frappe-checkout> <ref>
+FRAPPE_REPO=https://github.com/frappe/frappe
+FRAPPE_REF=757f127a10
+# 2026-08-25, reachable from origin/develop. The branch this work was originally
+# written on (perf/realtime_async_server) was deleted after its rebase-merge, so
+# only a SHA is durable here.

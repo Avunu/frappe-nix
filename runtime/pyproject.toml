@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "frappe-runtime"
+version = "0.1.0"
+description = "Frappe's Python runtime: Socket.IO realtime server, ASGI adapter, and unified process runner"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Only what Frappe does not already bring. The runtime also imports frappe, redis,
+# werkzeug and rq — all of them Frappe's own dependencies, resolved from the bench
+# environment this package is installed into. Declaring `frappe` here would make
+# uv try to resolve it from PyPI.
+dependencies = [
+    # Socket.IO v5 / Engine.IO v4, wire-compatible with the browser's
+    # socket.io-client ^4.7.1. The WebSocket transport underneath is uvicorn's,
+    # which is the `websockets` library Frappe already depends on.
+    "python-socketio~=5.16.2",
+    "python-engineio~=4.13.2",
+    # ASGI server. Upstream pins ~=0.52.1; we relax the floor because nixpkgs
+    # ships 0.51.0 and a Frappe v16 bench ships 0.42.0, and the only Config
+    # options used here (uds, host/port, log_config, access_log,
+    # timeout_graceful_shutdown) have been stable for far longer than that.
+    "uvicorn>=0.42,<1.0",
+    # Runs Frappe's WSGI app inside the ASGI process.
+    "a2wsgi~=1.10.10",
+    # Async HTTP client for the realtime connect/auth path when not embedded.
+    "httpx~=0.28.0",
+    # runner --dev watches the Python sources and reloads. Frappe keeps watchdog in
+    # a dev dependency group, so it is absent from a plain bench environment and
+    # --dev would exit with "needs watchdog" -- a flag this package advertises in
+    # its own --help.
+    "watchdog~=6.0.0",
+]
+
+[project.scripts]
+# The unified runner: web + realtime + background jobs + scheduler.
+frappe-runtime = "frappe_runtime.runner:main"
+# Realtime only, as a separate process, for a stack that keeps gunicorn.
+frappe-realtime = "frappe_runtime.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/frappe_runtime"]
