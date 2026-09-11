@@ -266,11 +266,15 @@ def _init_frappe_for_thread() -> None:
 	frappe.local is a ContextVar-backed frappe.utils.local.Local, and a worker
 	thread does not inherit the main thread's context: hasattr(frappe.local,
 	"conf") is False inside the thread even though it is created after
-	frappe.init() ran on the main thread. get_redis_conn() then raises
-	"You need to call frappe.init" and the thread dies before it takes a job.
+	frappe.init() ran on the main thread.
 
-	frappe's own `bench worker` and `bench schedule` are separate processes that
-	each initialize; a thread has to do the same. Matches the sites_path
+	Whether that matters depends on the Frappe version. Up to v16.10.9,
+	get_redis_conn() guarded on frappe.local.conf and raised "You need to call
+	frappe.init", so the thread died before it took a job. From v16.20.0 it goes
+	through frappe.get_conf(), which falls back to SITES_PATH when the thread has
+	no local, and the init here is redundant. It stays because this package
+	supports the older releases, and because an explicit init is what frappe's own
+	`bench worker` and `bench schedule` processes do. Matches the sites_path
 	resolution in TrafficMiddleware.load.
 	"""
 	frappe.init(site="", sites_path=os.environ.get("SITES_PATH") or ".")

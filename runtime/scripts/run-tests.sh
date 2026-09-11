@@ -6,7 +6,7 @@
 # The suite mocks socketio and most of Frappe, but `frappe` itself must be
 # importable: auth.py imports it, and the compat shim in __init__.py attaches to
 # frappe.realtime. That is why this needs a bench rather than a bare interpreter,
-# and why `nix flake check` verifies extraction drift instead of running these.
+# and why `nix flake check` only builds the package instead of running these.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

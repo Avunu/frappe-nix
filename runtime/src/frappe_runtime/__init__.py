@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""Frappe's Python runtime, extracted from upstream as a standalone package.
+"""Frappe's Python runtime, forked from upstream as a standalone package.
+
+Forked from frappe/frappe at 757f127a10 (frappe/realtime/, frappe/asgi.py,
+frappe/runner.py), MIT. This is a hard fork: the source here is canonical and is
+edited directly. The per-file Frappe copyright headers are retained.
 
 `frappe_runtime` carries three things lifted out of the Frappe tree:
 

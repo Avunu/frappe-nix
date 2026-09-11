@@ -285,11 +285,13 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 
 ## The unified runtime
 
-By default each bench runs a single [`frappe-runtime`](runtime/) process — vendored
-in this repository under `runtime/` — serving the web app, realtime, the background
-jobs and the scheduler together — in place of gunicorn (or `bench serve`), the Node `socket.io` server,
-one worker per queue, and `bench schedule`. It is upstream Frappe's own
-asyncio/uvicorn port, packaged to run against a released Frappe.
+By default each bench runs a single [`frappe-runtime`](runtime/) process — a hard
+fork maintained in this repository under `runtime/` — serving the web app, realtime,
+the background jobs and the scheduler together, in place of gunicorn (or
+`bench serve`), the Node `socket.io` server, one worker per queue, and
+`bench schedule`. It began as upstream Frappe's own asyncio/uvicorn port, made to
+run against a released Frappe and fixed where the upstream runner did not work
+(see [`runtime/docs/upstream-issues/`](runtime/docs/upstream-issues/)).
 
 Two things follow from it beyond the process count. Node leaves the runtime
 closure entirely — it stays a build-time dependency for `bench build`. And nginx

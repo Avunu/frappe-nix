@@ -57,4 +57,4 @@ If dropping them is deliberate, it is a breaking change for anyone configuring a
 
 ## Workaround
 
-`patches/0002-config-env-overrides.patch` in [https://github.com/Avunu/frappe-nix/tree/main/runtime](https://github.com/Avunu/frappe-nix/tree/main/runtime).
+Fixed in this fork: `_env_or_conf` in `config.py` reads the three variables the Node server honoured — [https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/config.py](https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/config.py).

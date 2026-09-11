@@ -111,10 +111,9 @@
 
       checks = forAllSystems (pkgs:
         {
-          # The vendored Python runtime builds. Only the build: its drift check
-          # pins a whole Frappe tree, so it lives in runtime/flake.nix rather than
-          # here, where every consumer of this flake would have to fetch it.
-          # Run that one with `nix flake check ./runtime`.
+          # The Python runtime under runtime/ builds as a distribution. Its unit
+          # suite needs a bench (it imports frappe), so that runs from
+          # runtime/scripts/run-tests.sh rather than here.
           runtime = pkgs.python3Packages.callPackage ./runtime/package.nix { };
 
           # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and

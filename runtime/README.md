@@ -2,7 +2,7 @@
 
 Frappe's Python runtime, extracted from upstream as a standalone package so it can run against a released Frappe without forking the framework
 
-It lives in this repository because frappe-nix is its only consumer, but it is still a self-contained Python distribution and a flake of its own: `pip install 'git+https://github.com/Avunu/frappe-nix#subdirectory=runtime'` works, and so does `nix flake check ./runtime`. frappe-nix reaches it as a path (`frappe-nix.runtime.src`, defaulting to this directory), so there is no flake input and no consumer of frappe-nix has to fetch a Frappe tree.
+It lives in this repository because frappe-nix is its only consumer, but it is still a self-contained Python distribution: `pip install 'git+https://github.com/Avunu/frappe-nix#subdirectory=runtime'` works. frappe-nix reaches it as a path (`frappe-nix.runtime.src`, defaulting to this directory), and the root flake builds it as `checks.runtime`.
 
 It replaces the Node `socket.io` server, and it can go further: one process serving the web app, realtime, the background jobs and the scheduler together.
 
@@ -10,7 +10,7 @@ It replaces the Node `socket.io` server, and it can go further: one process serv
 
 Upstream Frappe rewrote its realtime server in Python and then built on it — an ASGI adapter that serves realtime and the WSGI web app in one application, and a process runner that adds the RQ workers and the scheduler. That work lives on `develop`.
 
-This package vendors it, pinned to a commit (see [`UPSTREAM`](UPSTREAM)), rewritten into a top-level `frappe_runtime` package, so a bench on a released Frappe can use it today.
+This package is a **hard fork** of that work — `frappe/realtime/`, `frappe/asgi.py` and `frappe/runner.py` at commit `757f127a10`, MIT — as a top-level `frappe_runtime` package, so a bench on a released Frappe can use it today. `src/` is canonical and edited directly; the per-file Frappe copyright headers are retained. It is not tracking upstream: Frappe is not taking contributions, and the runner as shipped there does not work outside `sites/` (see [`docs/upstream-issues/`](docs/upstream-issues/)).
 
 | Upstream | Here |
 | --- | --- |
@@ -56,7 +56,7 @@ frappe-runtime --uds /run/frappe/site.sock --job-threads 4
 frappe-realtime
 ```
 
-Run either from the bench root. `--uds` is local to this package (see `patches/0001-runner-uds.patch`); everything else is upstream's.
+Run either from the bench root; the runner changes into `sites/` itself. `--uds` is this fork's addition.
 
 ## Running more than one process
 
@@ -83,16 +83,17 @@ Five beyond what Frappe already brings: `python-socketio`, `python-engineio`, `u
 
 The WebSocket transport is uvicorn's, which is the `websockets` library Frappe already depends on. `python-socketio` supplies only the Socket.IO / Engine.IO framing — which is what keeps the browser's `socket.io-client` working unchanged, long-polling handshake and all.
 
-## Updating the pin
+## Changing it
 
-`src/` is committed rather than generated at build time, because `uv` builds this repo from a git source in a sandbox with no network. To move the pin:
+Edit `src/`. There is no upstream to sync from and no extraction to keep
+byte-identical — this fork diverged on purpose. What this fork changed relative to
+`757f127a10`, and why, is recorded in [`docs/upstream-issues/`](docs/upstream-issues/)
+for the parts that were upstream defects, and in the source comments for the rest.
 
 ```sh
-runtime/scripts/sync-upstream.sh /path/to/frappe <ref>   # regenerates src/ and tests/
-nix flake check ./runtime                        # drift check must pass
-runtime/scripts/run-tests.sh /path/to/bench               # the 69 unit tests
+runtime/scripts/run-tests.sh /path/to/bench   # the unit suite; needs a bench, see the script
+nix flake check                               # from the repository root: builds the package
 ```
 
-Then update `FRAPPE_REF` in `UPSTREAM` and `frappe-upstream` in `flake.nix`.
-
-`nix flake check ./runtime` re-runs the extraction against the pinned upstream and requires byte-identical output, so a hand-edit to `src/` fails the build. Changes belong in `patches/` or `overlay/`.
+The suite needs a real bench because `frappe` must be importable — `auth.py`
+imports it, and the compat shim in `__init__.py` attaches to `frappe.realtime`.

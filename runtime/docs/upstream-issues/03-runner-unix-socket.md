@@ -38,4 +38,4 @@ The `unlink` matters: uvicorn does not remove a stale socket file, so a process 
 
 ## Implementation
 
-`patches/0001-runner-uds.patch` in [https://github.com/Avunu/frappe-nix/tree/main/runtime](https://github.com/Avunu/frappe-nix/tree/main/runtime) — in use and working.
+Implemented in this fork as `--uds` — [https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/runner.py](https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/runner.py), in use and working.

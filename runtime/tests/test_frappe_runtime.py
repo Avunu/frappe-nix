@@ -1,11 +1,13 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # License: MIT. See LICENSE
-"""Unit tests for the Python realtime server (frappe.realtime).
+"""Unit tests for frappe_runtime.
 
-These exercise the contract-critical logic in isolation: auth gates, site
-resolution, the handler registry + install/guest scoping, the typed Socket, the
-redis->emit bridge routing, the ported core handlers (including the doc_close
-fix), and publisher room mapping.
+Forked with the code from frappe/frappe at 757f127a10 (frappe/tests/
+test_realtime_py.py) and maintained here alongside it. Exercises the
+contract-critical logic in isolation: auth gates, site resolution, the handler
+registry + install/guest scoping, the typed Socket, the redis->emit bridge
+routing, the core handlers (including the doc_close fix), client manager
+selection, and the config switches this fork adds.
 
 True transport/wire tests (real Socket.IO handshake, websocket upgrade, redis
 reconnect against a live server + web process) are intentionally out of scope
@@ -46,6 +48,7 @@ if "socketio" not in sys.modules and not _socketio_is_installed():
 	sys.modules["socketio.exceptions"] = _exc_mod
 
 import httpx
+import socketio
 
 from frappe_runtime import auth as auth_mod
 from frappe_runtime import bridge as bridge_mod
@@ -989,9 +992,81 @@ class TestCoreHandlers(unittest.IsolatedAsyncioTestCase):
 		self.assertEqual(sio.emits, [])
 
 
-# NOTE: upstream's TestPublisherHelpers was removed here. It covers the
-# publish helpers in frappe/realtime/__init__.py, which this package does not
-# ship -- Frappe's own frappe/realtime.py remains the publisher.
+# Upstream's TestPublisherHelpers is not carried: it covers the publish helpers
+# in frappe/realtime/__init__.py, which this package does not ship -- Frappe's
+# own frappe/realtime.py remains the publisher.
+
+
+HAS_SOCKETIO = hasattr(socketio, "AsyncServer")
+
+
+def make_config(**kwargs) -> RealtimeConfig:
+	base = {"port": 9000, "redis_queue": "redis://127.0.0.1:11311"}
+	base.update(kwargs)
+	return RealtimeConfig(**base)
+
+
+@unittest.skipUnless(HAS_SOCKETIO, "needs a real python-socketio")
+class TestClientManagerSelection(unittest.TestCase):
+	"""create_sio picks the manager the config asks for."""
+
+	def test_defaults_to_in_process_rooms(self):
+		from frappe_runtime.server import TolerantManager, create_sio
+
+		sio = create_sio(make_config())
+		self.assertIsInstance(sio.manager, TolerantManager)
+		# Not a redis one: the single-process default must not open a connection.
+		self.assertNotIsInstance(sio.manager, socketio.AsyncRedisManager)
+
+	def test_redis_manager_when_asked(self):
+		from frappe_runtime.server import TolerantRedisManager, create_sio
+
+		sio = create_sio(make_config(redis_manager=True))
+		self.assertIsInstance(sio.manager, TolerantRedisManager)
+		self.assertIsInstance(sio.manager, socketio.AsyncRedisManager)
+
+	def test_duplicate_connect_tolerance_survives_both(self):
+		"""The CONNECT_ERROR fix is a mixin precisely so it is not lost with redis."""
+		from frappe_runtime.server import TolerantManager, TolerantRedisManager
+
+		for cls in (TolerantManager, TolerantRedisManager):
+			with self.subTest(manager=cls.__name__):
+				self.assertIs(
+					cls.connect,
+					TolerantManager.connect,
+					"both managers must share the tolerant connect()",
+				)
+
+
+class TestBridgeStaysLocal(unittest.IsolatedAsyncioTestCase):
+	"""Every process runs a bridge, so a bridge emit must not re-enter the queue.
+
+	Without ignore_queue a redis-backed manager would re-publish each frappe event
+	once per process, and every client would see it N times.
+	"""
+
+	def setUp(self):
+		self.sio = MagicMock()
+		self.sio.emit = AsyncMock()
+		self.bridge = bridge_mod.RedisBridge(self.sio, "redis://x")
+
+	async def test_room_emit_ignores_queue(self):
+		await self.bridge._handle(
+			'{"namespace": "s1", "room": "user:a", "event": "msg", "message": {"k": 1}}'
+		)
+		self.assertTrue(self.sio.emit.call_args.kwargs["ignore_queue"])
+
+	async def test_broadcast_ignores_queue(self):
+		self.sio.manager.rooms = {"/s1": {}, "/s2": {}}
+		await self.bridge._handle('{"namespace": "s1", "event": "build", "message": {"k": 1}}')
+		self.assertEqual(self.sio.emit.call_count, 2)
+		for call in self.sio.emit.call_args_list:
+			self.assertTrue(call.kwargs["ignore_queue"])
+
+
+class TestConfigSwitch(unittest.TestCase):
+	def test_redis_manager_defaults_off(self):
+		self.assertFalse(make_config().redis_manager)
 
 
 if __name__ == "__main__":

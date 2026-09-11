@@ -62,4 +62,4 @@ Worth considering separately: `_get_common_site_config` returning `{}` for a mis
 
 ## Workaround
 
-`patches/0003-runner-sites-path.patch` and `patches/0005-runner-chdir-sites.patch` in [https://github.com/Avunu/frappe-nix/tree/main/runtime](https://github.com/Avunu/frappe-nix/tree/main/runtime).
+Fixed in this fork: `runner.py` resolves `sites_path` from `SITES_PATH` in `TrafficMiddleware.load` and changes into `sites/` in `main()` — [https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/runner.py](https://github.com/Avunu/frappe-nix/blob/main/runtime/src/frappe_runtime/runner.py).
