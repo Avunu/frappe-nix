@@ -28,7 +28,13 @@ dependencies = [
     # Runs Frappe's WSGI app inside the ASGI process.
     "a2wsgi~=1.10.10",
     # Async HTTP client for the realtime connect/auth path when not embedded.
-    "httpx~=0.28.0",
+    # Floor relaxed to 0.27: a bench that also ships shipstation-client is
+    # capped at <0.28 by that SDK, which still passes raw JSON strings to
+    # httpx's `data=` -- removed in 0.28, so forcing 0.28 breaks every
+    # ShipStation POST at runtime. Nothing here needs 0.28: the only API used
+    # is AsyncClient(timeout, follow_redirects, cookies) plus .request(), all
+    # unchanged since well before 0.27.
+    "httpx>=0.27,<0.29",
     # runner --dev watches the Python sources and reloads. Frappe keeps watchdog in
     # a dev dependency group, so it is absent from a plain bench environment and
     # --dev would exit with "needs watchdog" -- a flag this package advertises in
