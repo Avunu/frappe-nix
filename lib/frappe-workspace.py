@@ -556,6 +556,66 @@ def cmd_sync_registry(args):
     return 0
 
 
+# ── apps: what each apps/<x> is to git ────────────────────────────────────
+#
+# A bench carries its apps in one of two supported shapes: a registered
+# submodule (.gitmodules names it; `bench-update --pull` moves it, `nix build`
+# fetches it) or committed source — a *local* app, made by `bench-new-app` or
+# by `frappe-init --migrate` vendoring one that had no remote. There is a
+# third shape git will happily produce and nothing else can use: a nested
+# repository that was `git add`ed as-is, which the index records as a gitlink
+# with no .gitmodules entry. `git submodule foreach` / `update --init` die on
+# it ("No url found for submodule path"), and the flake's source tree carries
+# an empty directory, so `nix build` produces a bench without the app.
+#
+# Every consumer that used to iterate `git submodule …` goes through this
+# instead, so a nested repo is reported and stepped around rather than fatal.
+
+APP_KINDS = ("submodule", "submodule-uninitialized", "local", "nested-repo")
+
+
+def classify_apps(apps_dir, gitmodules):
+    """[(name, kind, branch, url)] for every apps/<x>, sorted, plus registered
+    submodules not on disk. `branch` and `url` are .gitmodules' or ""."""
+    apps_dir = Path(apps_dir)
+    registered = {
+        path[len("apps/") :]: entry
+        for path, entry in gitmodules.items()
+        if path.startswith("apps/") and "/" not in path[len("apps/") :]
+    }
+    on_disk = sorted(p.name for p in apps_dir.iterdir() if p.is_dir()) if apps_dir.is_dir() else []
+    rows = []
+    for name in on_disk:
+        has_git = (apps_dir / name / ".git").exists()
+        if name in registered:
+            kind = "submodule" if has_git else "submodule-uninitialized"
+            entry = registered[name]
+            rows.append((name, kind, entry.get("branch", ""), entry.get("url", "")))
+        elif has_git:
+            rows.append((name, "nested-repo", "", ""))
+        else:
+            rows.append((name, "local", "", ""))
+    for name in sorted(set(registered) - set(on_disk)):
+        entry = registered[name]
+        rows.append((name, "submodule-uninitialized", entry.get("branch", ""), entry.get("url", "")))
+    return rows
+
+
+def cmd_apps(args):
+    """Print `<name>\t<kind>\t<branch>\t<url>` per app, for shell loops."""
+    apps_dir = Path(args.apps_dir)
+    gitmodules_path = args.gitmodules
+    if gitmodules_path is None:
+        candidate = apps_dir.resolve().parent / ".gitmodules"
+        gitmodules_path = str(candidate) if candidate.is_file() else ""
+    gitmodules = parse_gitmodules(gitmodules_path) if gitmodules_path else {}
+    for name, kind, branch, url in classify_apps(apps_dir, gitmodules):
+        if args.kind and kind not in args.kind:
+            continue
+        print(f"{name}\t{kind}\t{branch}\t{url}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="frappe-nix-workspace")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -585,6 +645,13 @@ def main():
     p.add_argument("--pyproject", required=True)
     p.add_argument("apps", nargs="*")
     p.set_defaults(func=cmd_sync_apps)
+
+    p = sub.add_parser("apps")
+    p.add_argument("--apps-dir", default="apps")
+    # None: look beside the apps dir. "": look nowhere.
+    p.add_argument("--gitmodules", default=None)
+    p.add_argument("--kind", action="append", choices=APP_KINDS, default=[])
+    p.set_defaults(func=cmd_apps)
 
     p = sub.add_parser("sync-registry")
     p.add_argument("--pyproject", required=True)

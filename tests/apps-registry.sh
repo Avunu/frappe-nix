@@ -255,6 +255,37 @@ check_eq "a glob member is ignored" "erpnext" "$(cat "$ROOT/glob/sites/apps.txt"
 check "and warned about" grep -q 'glob' "$ROOT/glob.err"
 check "frappe missing from the members is warned about" grep -q 'frappe is not a workspace member' "$ROOT/glob.err"
 
+echo "── apps: what each apps/<x> is to git ──────────────────────────"
+# The fixture as it stands: frappe and hrms are in .gitmodules and checked
+# out, erpnext is a repo nobody registered, everything else is plain source.
+cp "$ROOT/elsewhere.gitmodules" "$BENCH/.gitmodules"
+"$TOOL" apps --apps-dir "$BENCH/apps" > "$ROOT/apps.tsv"
+check_eq "registered and checked out → submodule, with its branch and url" \
+  "$(printf 'frappe\tsubmodule\tversion-16\thttps://github.com/frappe/frappe.git')" "$(grep -P '^frappe\t' "$ROOT/apps.tsv")"
+check_eq "a repo with no .gitmodules entry → nested-repo" \
+  "$(printf 'erpnext\tnested-repo\t\t')" "$(grep -P '^erpnext\t' "$ROOT/apps.tsv")"
+check_eq "committed source → local" \
+  "$(printf 'legacy\tlocal\t\t')" "$(grep -P '^legacy\t' "$ROOT/apps.tsv")"
+check_eq "every directory is listed once, sorted" \
+  "$(ls "$BENCH/apps")" "$(cut -f1 "$ROOT/apps.tsv")"
+# A registered submodule that is not checked out yet (fresh clone), and one
+# registered but with an empty directory.
+printf '[submodule "apps/ghost"]\n\tpath = apps/ghost\n\turl = x\n\tbranch = main\n' >> "$BENCH/.gitmodules"
+mkdir -p "$BENCH/apps/hollow"
+printf '[submodule "apps/hollow"]\n\tpath = apps/hollow\n\turl = x\n' >> "$BENCH/.gitmodules"
+"$TOOL" apps --apps-dir "$BENCH/apps" > "$ROOT/apps.tsv"
+check_eq "registered but absent → submodule-uninitialized, listed last" \
+  "$(printf 'ghost\tsubmodule-uninitialized\tmain\tx')" "$(tail -n1 "$ROOT/apps.tsv")"
+check_eq "registered but empty → submodule-uninitialized, no branch" \
+  "$(printf 'hollow\tsubmodule-uninitialized\t\tx')" "$(grep -P '^hollow\t' "$ROOT/apps.tsv")"
+check_eq "--kind filters" "frappe hrms" \
+  "$("$TOOL" apps --apps-dir "$BENCH/apps" --kind submodule | cut -f1 | xargs)"
+check_eq "--kind repeats" "local nested-repo" \
+  "$("$TOOL" apps --apps-dir "$BENCH/apps" --kind nested-repo --kind local | cut -f2 | sort -u | xargs)"
+check_eq "an explicit empty --gitmodules makes every repo a nested-repo" "3" \
+  "$("$TOOL" apps --apps-dir "$BENCH/apps" --gitmodules "" --kind nested-repo | wc -l)"
+rmdir "$BENCH/apps/hollow"
+
 echo "── errors ──────────────────────────────────────────────────────"
 check_not "an unreadable pyproject is an error" \
   "$TOOL" sync-registry --pyproject "$ROOT/nope.toml" --apps-dir "$BENCH/apps" --sites-dir "$BENCH/sites"

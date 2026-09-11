@@ -551,7 +551,7 @@ These back the wrapper and are also callable directly:
 | Script | Description |
 | --- | --- |
 | provision-site [admin-pass] | Create $FRAPPE_SITE and install every app from sites/apps.txt. |
-| bench-update [--pull\|--migrate\|--build\|--node-hashes] | Submodule-aware replacement for bench update; also regenerates sites/apps.json for the new pins, re-locks the workspace (uv lock) and refreshes node-offline-hashes.json for the apps whose lock files moved. In app mode, --migrate and --build only. |
+| bench-update [--pull\|--migrate\|--build\|--node-hashes] | Submodule-aware replacement for bench update. --pull fetches each submodule's .gitmodules branch from the remote that carries its declared URL (origin is often a developer's fork), refuses to discard local commits, skips local apps and reports stray repos; then regenerates sites/apps.json for the new pins, re-locks the workspace (uv lock) and refreshes node-offline-hashes.json for the apps whose lock files moved. In app mode, --migrate and --build only. |
 | bench-migrate / bench-build / bench-clear-cache / bench-console | Thin bench wrappers honoring $FRAPPE_SITE. |
 | bench-restore [<sql>\|--at <ts>\|--list] | Restore from a SQL backup, or from the latest one in the object store. See Restoring from production. |
 | setup-backup-access | Prompt for the object-store credentials, test them against the bucket, and write backup-access.age. |
@@ -559,7 +559,7 @@ These back the wrapper and are also callable directly:
 | rekey-secrets | Re-encrypt every secret after changing recipients. |
 | check-secrets [<name>] | Verify the .age files match the declared recipients; with a name, explain why you cannot decrypt one. |
 | bench-get-app <url\|alias> | Add an app as a git submodule, register it in the uv workspace and in sites/apps.{txt,json}. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. |
-| bench-new-app <name> | Scaffold a new app and register it the same way. |
+| bench-new-app <name> | Scaffold a new app as a local app (committed source, no nested git) and register it the same way. |
 | update-deps | Re-lock + sync Python (uv) and Node (yarn) across all apps. |
 
 In [app mode](#develop-a-single-app) the three that edit the bench as if it were a checkout have no checkout to edit — there are no submodules, and anything written into the generated bench is discarded on the next pin bump. They refuse with the flake-input equivalent instead: `bench-update --pull` and `--node-hashes` point at `nix flake update`
@@ -853,6 +853,21 @@ One tool writes them — `frappe-nix-workspace sync-registry` — and it runs wh
 At runtime the two files are symlinks into the package, like `sites/assets`: `frappe-init-<site>` and the container entrypoint relink them on every start, so a deploy that adds an app registers it, and nothing on the host can drift them (an upstream `bench get-app` run by hand fails on the read-only store, as it should). Only `common_site_config.json` is the operator's — seeded once, never touched again.
 
 The one thing this does not change: `bench build` still compiles assets for every directory under `apps/`, registered or not — esbuild scans the directory, not the registry.
+
+### Local apps
+
+An app lives in a bench in one of two shapes, and everything above works with either:
+
+-   a **git submodule** — `.gitmodules` names it, `bench-update --pull` moves it, `nix build` fetches it. `bench-get-app` makes these.
+-   a **local app** — source committed with the bench, no `.git` of its own. `bench-new-app` makes these (it scaffolds with `--no-git`), and `frappe-init --migrate` turns an app with no usable remote into one by *vendoring* it: the nested `.git` moves to `.frappe-nix-backup/<app>.git`, the source is `git add`ed, and the app becomes a workspace member like any other. `bench-update --pull` reports it as having nothing to pull; `sites/apps.json` records it with `is_repo: false`.
+
+There is a third shape git will happily produce and nothing can use: a nested repository — `bench new-app` without `--no-git`, or a `git clone` into `apps/` — that was `git add`ed as-is. The index records a **gitlink with no `.gitmodules` entry**. `git submodule update --init` and `git submodule foreach` die on it (`No url found for submodule path 'apps/<x>' in .gitmodules`), and the flake's source tree carries an empty directory in its place, so `nix build` silently produces a bench without the app. frappe-nix never iterates `git submodule …` itself for that reason — every dev-shell hook goes through `frappe-nix-workspace apps`, which names what each `apps/<x>` is — and it tells you on shell entry and on `bench-update --pull` when it finds one. Two ways out:
+
+```sh
+frappe-init --migrate          # vendor it: source committed, history kept in .frappe-nix-backup/
+# or, once it has a remote to live at:
+git rm --cached apps/<x> && rm -rf apps/<x> && bench-get-app <owner>/<x>
+```
 
 ### Node offline hashes
 

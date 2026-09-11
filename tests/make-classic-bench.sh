@@ -11,8 +11,13 @@
 #   localapp    git repo with NO remote, has <app>/public/js/   → vendoring
 #   legacyapp   no .git at all, setup.py only                   → vendor + shim
 #   hrms        an ALREADY-registered submodule with an absorbed
-#               gitdir (.git is a gitfile) and a STALE branch
-#               in .gitmodules                                  → repair in place
+#               gitdir (.git is a gitfile), a STALE branch in
+#               .gitmodules, and origin on a FORK (the declared
+#               URL is on upstream)                              → repair in place, keep the URL
+#   strayapp    `bench new-app` made it a nested repo, `git add -A`
+#               recorded it as a gitlink with NO .gitmodules
+#               entry — `git submodule update` dies on it and the
+#               flake source carries an empty directory           → vendoring, gitlink dropped
 #
 # The last one is the half-converted bench: a real-world bench that someone
 # already put under git and partly submodule-ised, but that has no pyproject.toml
@@ -121,6 +126,26 @@ git -c protocol.file.allow=always submodule add -q \
 git config -f .gitmodules submodule.apps/hrms.branch stale-branch
 git add .gitmodules
 git commit -q -m "add hrms"
+# …and the developer's remotes: origin is a fork that only has `develop`, the
+# URL .gitmodules declares is on `upstream`. Preferring origin here would
+# re-record the fork as the app's source.
+git init -q --bare "$root/remotes/hrms-fork.git"
+git -C "$root/remotes/hrms-fork.git" symbolic-ref HEAD refs/heads/develop
+git -C apps/hrms push -q "$root/remotes/hrms-fork.git" HEAD:develop
+git -C apps/hrms remote rename origin upstream
+git -C apps/hrms remote add origin "file://$root/remotes/hrms-fork.git"
+git -C apps/hrms fetch -q origin
+
+# The stray gitlink: a repo with no remote, added as-is to the bench root.
+seed_app apps/strayapp strayapp 0.1.0
+(
+  cd apps/strayapp
+  git init -q -b main
+  git add -A
+  git commit -q -m "feat: Initialize App"
+)
+git -c advice.addEmbeddedRepo=false add apps/strayapp
+git commit -q -m "add strayapp (as a stray gitlink)"
 
 # A pre-PEP-621 app: setup.py, no pyproject.toml, no git.
 mkdir -p apps/legacyapp/legacyapp

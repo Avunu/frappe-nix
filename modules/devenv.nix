@@ -1986,14 +1986,27 @@ in
               ${lib.optionalString (!appMode) ''
                 # Initialize the bench's direct app submodules (apps/*) if needed.
                 #
-                # NOT --recursive: Frappe apps frequently ship nested submodules
-                # with broken/missing .gitmodules refs. Those have no role in
-                # production, and recursing into them fails the init and breaks
-                # shell startup. We only init the direct submodules of this bench.
-                if git submodule status 2>/dev/null | grep -q '^-'; then
-                  echo "Initializing git submodules..."
-                  git submodule update --init
-                fi
+                # One path at a time, from what .gitmodules registers, and NOT
+                # --recursive. A bare `git submodule update --init` dies on the
+                # first gitlink with no .gitmodules entry — a nested repo that
+                # was `git add`ed as-is — and would take shell startup with it;
+                # and Frappe apps frequently ship nested submodules with broken
+                # refs that have no role in production. A local app (committed
+                # source) needs nothing here; a stray repo gets a warning, since
+                # it is the one shape `nix build` silently leaves out.
+                while IFS=$'\t' read -r _app _kind _branch; do
+                  case "$_kind" in
+                    submodule-uninitialized)
+                      echo "Initializing git submodule apps/$_app..."
+                      git submodule update --init -- "apps/$_app"
+                      ;;
+                    nested-repo)
+                      echo "frappe-nix: apps/$_app is a git repository but not a registered submodule —" >&2
+                      echo "  'nix build' will not see it. Vendor it (frappe-init --migrate) or push it" >&2
+                      echo "  and re-add it with bench-get-app; see README, 'Local apps'." >&2
+                      ;;
+                  esac
+                done < <(${workspaceTool}/bin/frappe-nix-workspace apps --apps-dir "$FRAPPE_BENCH_ROOT/apps" 2>/dev/null || true)
 
                 # sites/apps.txt and sites/apps.json are generated from the
                 # workspace members and the submodule checkouts — and committed,

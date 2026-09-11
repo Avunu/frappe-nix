@@ -216,6 +216,8 @@
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
+        # `bench-update --pull` over a submodule, a local app and a stray repo.
+        // import ./tests/bench-update.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # The bench workspace app mode assembles around a single app.

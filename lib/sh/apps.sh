@@ -103,6 +103,16 @@ vendor_app() {
     warn "apps/$app: moved nested repo $rel aside"
   done < <(find "$path" -mindepth 2 -name .git -print0)
 
+  # A nested repo that was `git add`ed as-is sits in the index as a gitlink
+  # (mode 160000) with no .gitmodules entry — the `bench new-app` then
+  # `git add -A` bench. `git add` will not turn a gitlink into a tree even
+  # once the .git is gone, so drop the entry first or the app stays invisible.
+  # update-index, not `git rm --cached`: that one insists on a clean
+  # .gitmodules, which register_submodule has just been editing.
+  if git ls-files -s -- "$path" | grep -q '^160000 '; then
+    git update-index --force-remove -- "$path"
+    info "- apps/$app: dropped the stray gitlink (it had no .gitmodules entry)"
+  fi
   # Deliberately not `git add -f`: forcing past .gitignore would pull in
   # node_modules and public/dist. Correctness therefore rests on the ignore
   # rules, which verify_not_ignored checks.
