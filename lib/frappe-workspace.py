@@ -103,7 +103,11 @@ def cmd_ensure_root(args):
 
     deps = project.setdefault("dependencies", tomlkit.array())
     have = {normalize(re.split(r"[<>=!~\[ ]", str(d))[0]) for d in deps}
-    for required in ("frappe-bench>=5.29.0", "setuptools"):
+    # frappe-runtime is unconditional, like frappe-bench: frappe-nix.runtime is on
+    # by default, and a bench that turns it off merely carries an unused package.
+    # Reconciling it here rather than asking for a hand edit is what lets an
+    # existing bench pick it up by re-running frappe-init.
+    for required in ("frappe-bench>=5.29.0", "frappe-runtime", "setuptools"):
         if normalize(re.split(r"[<>=!~\[ ]", required)[0]) not in have:
             deps.append(required)
             changed.append(f"[project].dependencies += {required}")
@@ -127,9 +131,11 @@ def cmd_ensure_root(args):
         uv["override-dependencies"] = tomlkit.array(args.overrides)
         changed.append("[tool.uv].override-dependencies")
 
-    if args.extra_build_dependencies:
-        template = tomlkit.parse(Path(args.extra_build_dependencies).read_text())
-        wanted = template.get("tool", {}).get("uv", {}).get("extra-build-dependencies", {})
+    if args.template:
+        template = tomlkit.parse(Path(args.template).read_text())
+        template_uv = template.get("tool", {}).get("uv", {})
+
+        wanted = template_uv.get("extra-build-dependencies", {})
         existing = table_at(doc, "tool", "uv", "extra-build-dependencies")
         added = 0
         for key, value in wanted.items():
@@ -138,6 +144,17 @@ def cmd_ensure_root(args):
                 added += 1
         if added:
             changed.append(f"[tool.uv.extra-build-dependencies] += {added} entries")
+
+        # Non-app sources the template ships (frappe-runtime's git source). App
+        # sources are sync-apps' job; this only fills what the template names and
+        # the bench lacks, so a bench that points frappe-runtime somewhere else
+        # keeps its own entry.
+        wanted = template_uv.get("sources", {})
+        existing = table_at(doc, "tool", "uv", "sources")
+        for key, value in wanted.items():
+            if key not in existing:
+                existing[key] = value
+                changed.append(f"[tool.uv.sources].{key}")
 
     if "build-system" not in doc:
         build = tomlkit.table()
@@ -303,7 +320,9 @@ def main():
     p.add_argument("--requires-python", required=True)
     p.add_argument("--overrides", default="")
     p.add_argument("--preset", default="")
-    p.add_argument("--extra-build-dependencies", default="")
+    # The rendered bench template: the source of the extra-build-dependencies
+    # and non-app [tool.uv.sources] entries an existing bench is reconciled to.
+    p.add_argument("--template", default="")
     p.set_defaults(func=cmd_ensure_root)
 
     p = sub.add_parser("add-app")

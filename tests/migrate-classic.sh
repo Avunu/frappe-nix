@@ -136,6 +136,16 @@ for app in ("frappe", "erpnext", "localapp", "legacyapp"):
         bad.append(f"[tool.uv.sources].{app} missing")
 if d["project"]["requires-python"] != ">=3.12":
     bad.append("requires-python not from the preset")
+# frappe-runtime is reconciled in, not hand-edited: the dependency, the git
+# source frappe-nix's srcOverrides will shadow, and the build backend uv needs
+# named because it builds without isolation.
+if not any(x.split("[")[0].strip() == "frappe-runtime" for x in d["project"]["dependencies"]):
+    bad.append("[project].dependencies lacks frappe-runtime")
+src = d["tool"]["uv"]["sources"].get("frappe-runtime", {})
+if src.get("subdirectory") != "runtime" or "frappe-nix" not in src.get("git", ""):
+    bad.append(f"[tool.uv.sources].frappe-runtime wrong: {src}")
+if d["tool"]["uv"]["extra-build-dependencies"].get("frappe-runtime") != ["hatchling"]:
+    bad.append("[tool.uv.extra-build-dependencies].frappe-runtime lacks hatchling")
 print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY

@@ -11,8 +11,14 @@ readme = "README.md"
 # several transitive deps import pkg_resources at runtime. It is left
 # unconstrained so apps that pin an exact setuptools (e.g. payments) win instead
 # of conflicting with a floor here.
+#
+# frappe-runtime is the process that serves the bench under frappe-nix.runtime
+# (web + realtime + jobs + scheduler in one). It has to be a real workspace
+# dependency because uv2nix indexes its package set by uv.lock; which *source*
+# is built comes from frappe-nix itself (see [tool.uv.sources] below).
 dependencies = [
     "frappe-bench>=5.29.0",
+    "frappe-runtime",
     "setuptools",
 ]
 
@@ -39,6 +45,9 @@ override-dependencies = @OVERRIDES@
 # rely on setuptools/pkg_resources. uv2nix consumes this so the Nix build needs
 # no setuptools overlay. Unused entries are ignored, so this is a safe superset.
 [tool.uv.extra-build-dependencies]
+# uv builds without isolation here, so a package's own build-system.requires is
+# not enough -- the backend has to be named again.
+"frappe-runtime" = ["hatchling"]
 "cairocffi" = ["setuptools", "cffi", "pycparser"]
 "backcall" = ["setuptools"]
 "backoff" = ["setuptools"]
@@ -164,6 +173,12 @@ override-dependencies = @OVERRIDES@
 members = []
 
 [tool.uv.sources]
+# A placeholder for uv's resolver, not a version pin: frappe-nix overrides the
+# source it builds with its own runtime/ directory (frappe-nix.runtime.src), so a
+# frappe-runtime bump is `nix flake update frappe-nix`, never an edit here. A
+# plain `uv lock` keeps an already-resolved git revision; if frappe-runtime ever
+# adds a dependency, `nix run .#relock -- --upgrade-package frappe-runtime`.
+frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
 
 [build-system]
 requires = ["hatchling"]
