@@ -156,8 +156,28 @@ resolve_app_branch() {
   printf '%s' "$branch"
 }
 
+# The URL .gitmodules records for a path — by the entry's `path`, not its
+# section name, which a half-converted bench need not have named after it.
+gitmodules_url_for_path() {
+  local path=$1 name
+  [ -f .gitmodules ] || return 0
+  name="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null |
+    awk -v p="$path" '$2 == p { sub(/^submodule\./, "", $1); sub(/\.path$/, "", $1); print $1; exit }')"
+  [ -n "$name" ] || return 0
+  git config -f .gitmodules --get "submodule.$name.url" 2>/dev/null || true
+}
+
+# Two spellings of one repository: a trailing `/` or `.git` is as far as they
+# usually differ.
+same_git_url() {
+  local a=$1 b=$2
+  a="${a%/}"; a="${a%.git}"
+  b="${b%/}"; b="${b%.git}"
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
 classify_app() {
-  local app=$1 dir="apps/$1" real top url="" remote="" br sha flags="" r gitdir
+  local app=$1 dir="apps/$1" real top url="" remote="" br sha flags="" r gitdir declared
   local -a remotes=()
   real="$(cd "$dir" && pwd -P)"
   top="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
@@ -194,9 +214,25 @@ classify_app() {
     return 0
   fi
 
+  # An already-registered submodule keeps the URL the bench declares, when a
+  # remote still carries it. origin is not that URL often enough to matter: a
+  # developer's checkout has origin on a fork and the real repository on
+  # upstream, and re-recording the fork would send `nix build` and
+  # `bench-update --pull` to a repository that has neither the pinned commit
+  # nor the release branch.
+  declared="$(gitmodules_url_for_path "$dir")"
+  if [ -n "$declared" ]; then
+    for r in $(git -C "$dir" remote); do
+      if same_git_url "$(git -C "$dir" remote get-url "$r" 2>/dev/null || true)" "$declared"; then
+        remote="$r"
+        url="$(git -C "$dir" remote get-url "$r")"
+        break
+      fi
+    done
+  fi
   # origin → upstream → sole remote. bench's own get_remote() prefers
   # "upstream", so an origin-only lookup misses real benches.
-  for r in origin upstream; do
+  [ -n "$remote" ] || for r in origin upstream; do
     if url="$(git -C "$dir" remote get-url "$r" 2>/dev/null)"; then
       remote="$r"
       break

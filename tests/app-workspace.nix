@@ -116,9 +116,10 @@ in
     check("no placeholder outlived substitution",
           "@" in (ws / "pyproject.toml").read_text().replace("@example.com", ""), False)
 
-    apps_txt = (ws / "sites" / "apps.txt").read_text().split()
-    check("apps.txt puts frappe first and keeps declaration order",
-          apps_txt, ["frappe", "print_designer", "legacy", "carbon_frappe"])
+    # The registry is generated from the members by lib/bench.nix, not
+    # carried by the workspace: one writer, one rule.
+    check("no sites/ in the workspace — the registry is benchRoot's",
+          (ws / "sites").exists(), False)
 
     # Mirrored, not copied: the derivation is forced at evaluation time and
     # rebuilt whenever the app's source moves, so a real copy of the framework

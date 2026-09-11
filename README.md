@@ -29,8 +29,8 @@ It is consumed as a [flake-parts](https://flake.parts/) module, from a bench rep
 │   ├── erpnext/
 │   └── …                     # each with pyproject.toml; yarn.lock if it has assets
 └── sites/
-    ├── apps.txt              # apps installed into the site
-    └── apps.json             # (optional) app metadata for the bench
+    ├── apps.txt              # generated: the registered apps (the workspace members)
+    └── apps.json             # generated: their versions and pins — commit it
 ```
 
 In [app mode](#develop-a-single-app) frappe-nix builds that layout itself, and the repository is a Frappe app instead:
@@ -162,10 +162,11 @@ nix run github:Avunu/frappe-nix                 # then migrate
 
 It is a **reconciler, not a converter**: it probes what the bench already has, adds only what is missing, repairs drift, and never deletes. Running it on an already-migrated bench is a no-op. Concretely it:
 
--   detects the frappe version (branch → `sites/apps.json` → `frappe.__version__`) and pins python/node from the matching preset;
+-   detects the frappe version (branch → the bench's `sites/apps.json` → `frappe.__version__`) and pins python/node from the matching preset;
 -   `git init`s the bench root if needed and registers each app under `apps/` as a **git submodule pinned at its current commit** — nothing is fast-forwarded — recording the app's _actual_ branch in `.gitmodules` (without which `bench-update --pull` silently skips it) and adding an `origin` alias when the app only has `upstream`;
 -   **vendors** apps with no usable remote: the nested `.git` moves to `.frappe-nix-backup/` (with a provenance JSON) and the source is committed into the bench, because an untracked nested repo is invisible to the flake and would vanish from the build;
 -   writes `flake.nix`, `pyproject.toml`, `.envrc` and the `uv.lock`, merging into an existing `pyproject.toml` rather than replacing it, and shimming a `pyproject.toml` for vendored apps that only ship `setup.py`;
+-   regenerates `sites/apps.txt` and `sites/apps.json` from the workspace members it just registered (see [App registry](#app-registry)) — an app that could not become a member is on PYTHONPATH but not registered, and the report says so;
 -   reconciles `sites/common_site_config.json` — forcing the per-bench web/socketio port the dev shell derives from the bench name, preserving everything else, dropping production-only keys (`host_name`, `http_port`, `restart_*`) and keys the socket setup supersedes (`db_host`, `db_port`, the `redis_*` URLs, `file_watcher_port`), and blanking `mariadb_root_password` since the file is about to be committed;
 -   extends `.gitignore` with a managed block so `sites/*/site_config.json`, site `private/`/`public/` data, `Procfile`, `patches.txt`, `config/*.conf` and `node_modules` stay out of git — then **verifies** with `git check-ignore` that nothing the build needs got excluded;
 -   moves a classic `env/` virtualenv to `.frappe-nix-backup/` (a real `env/` directory silently defeats the dev shell's `ln -sfn` and leaves `bench` on the stale interpreter).
@@ -183,7 +184,7 @@ Nothing is committed — the result is staged, so `git diff --cached` is the rev
 | --vendor <a,b> | Vendor these apps even though they have a remote |
 | --no-vendor | Abort instead of vendoring an app with no usable remote |
 | --allow-file-remotes | Accept filesystem paths as submodule URLs (breaks other clones) |
-| --legacy-apps <policy> | shim \| skip \| abort for apps with only a setup.py |
+| --legacy-apps <policy> | shim \| skip \| abort for apps with only a setup.py. A skipped app is not a workspace member and so not in sites/apps.txt |
 | --strict | Treat dirty / unpushed apps as errors |
 | --keep-db-root-password | Do not blank mariadb_root_password |
 | --commit[=<msg>] | Commit the migration instead of only staging it |
@@ -352,7 +353,7 @@ per-image container set — is still there and still tested
 | workspaceRoot | path or null | null | Bench root (where pyproject.toml + apps/ live). Usually ./.. Required in bench mode; must stay null in app mode, where frappe-nix assembles the workspace itself. |
 | app.enable | bool | false | App mode: this flake is one Frappe app's repository, not a bench. |
 | app.frappe | path | (required in app mode) | The Frappe source, as a flake = false input. |
-| app.siblings | list of { name; src; } | [] | The other apps the bench should carry, in install order — a list, not an attrset, because that order becomes sites/apps.txt. |
+| app.siblings | list of { name; src; } | [] | The other apps the bench should carry, in install order — a list, not an attrset, because that order is the members' order and so sites/apps.txt's. |
 | app.frappeVersion | preset name | "version-16" | Row of lib/frappe-presets.json driving python, nodejs, requires-python and override-dependencies. Does not pin frappe; app.frappe does. |
 | app.src | path | inputs.self | The app's own source, which becomes apps/<name>. Do not filter it — app.lockDir is read out of it. |
 | app.name | str | [project].name of app.src | The app's directory name under apps/, i.e. Frappe's own app name. |
@@ -550,15 +551,15 @@ These back the wrapper and are also callable directly:
 | Script | Description |
 | --- | --- |
 | provision-site [admin-pass] | Create $FRAPPE_SITE and install every app from sites/apps.txt. |
-| bench-update [--pull\|--migrate\|--build\|--node-hashes] | Submodule-aware replacement for bench update; also re-locks the workspace (uv lock) and refreshes node-offline-hashes.json for the apps whose lock files moved. In app mode, --migrate and --build only. |
+| bench-update [--pull\|--migrate\|--build\|--node-hashes] | Submodule-aware replacement for bench update. --pull fetches each submodule's .gitmodules branch from the remote that carries its declared URL (origin is often a developer's fork), refuses to discard local commits, skips local apps and reports stray repos; then regenerates sites/apps.json for the new pins, re-locks the workspace (uv lock) and refreshes node-offline-hashes.json for the apps whose lock files moved. In app mode, --migrate and --build only. |
 | bench-migrate / bench-build / bench-clear-cache / bench-console | Thin bench wrappers honoring $FRAPPE_SITE. |
 | bench-restore [<sql>\|--at <ts>\|--list] | Restore from a SQL backup, or from the latest one in the object store. See Restoring from production. |
 | setup-backup-access | Prompt for the object-store credentials, test them against the bucket, and write backup-access.age. |
 | edit-secret <name> | Decrypt a secret into $EDITOR and re-encrypt it to the declared recipients. Reads stdin when it is not a terminal, so a secret can be piped in. |
 | rekey-secrets | Re-encrypt every secret after changing recipients. |
 | check-secrets [<name>] | Verify the .age files match the declared recipients; with a name, explain why you cannot decrypt one. |
-| bench-get-app <url\|alias> | Add an app as a git submodule + register it in the uv workspace. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. |
-| bench-new-app <name> | Scaffold a new app and register it in the workspace. |
+| bench-get-app <url\|alias> | Add an app as a git submodule, register it in the uv workspace and in sites/apps.{txt,json}. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. |
+| bench-new-app <name> | Scaffold a new app as a local app (committed source, no nested git) and register it the same way. |
 | update-deps | Re-lock + sync Python (uv) and Node (yarn) across all apps. |
 
 In [app mode](#develop-a-single-app) the three that edit the bench as if it were a checkout have no checkout to edit — there are no submodules, and anything written into the generated bench is discarded on the next pin bump. They refuse with the flake-input equivalent instead: `bench-update --pull` and `--node-hashes` point at `nix flake update`
@@ -726,7 +727,7 @@ For each enabled site, the module generates:
 
 | Unit | Role |
 | --- | --- |
-| frappe-init-<site> | Oneshot: assembles runtime bench tree, symlinks assets from the package, synthesizes site_config.json via jq (merging base config + secrets). |
+| frappe-init-<site> | Oneshot: assembles runtime bench tree, links the app registry (sites/apps.txt, sites/apps.json) and assets from the package, synthesizes site_config.json via jq (merging base config + secrets). |
 | frappe-migrate-<site> | Oneshot: runs bench migrate when the build changes. Snapshots the DB first and rolls back on failure (see Safe migrations). |
 | frappe-web-<site> | Gunicorn bound to sites.<name>.web.port. |
 | frappe-scheduler-<site> | Background scheduler. |
@@ -837,10 +838,36 @@ Pure-Python build deps (setuptools, etc.) belong in `pyproject.toml` `[tool.uv.e
 | yarn add / yarn install | fetchYarnDeps reads yarn.lock |
 | bench build | builtBench runs bench build in the sandbox |
 | edits apps/* source | benchRoot / builtBench copies the source tree |
+| bench-get-app / bench-update --pull | benchRoot regenerates sites/apps.{txt,json} from the members |
 
-Commit `uv.lock` and each app's `yarn.lock`; the production env, node\_modules, compiled assets, containers, and NixOS deployment are all rebuilt from them.
+Commit `uv.lock`, each app's `yarn.lock` and `sites/apps.json`; the production env, node\_modules, compiled assets, app registry, containers, and NixOS deployment are all rebuilt from them.
 
 In [app mode](#develop-a-single-app) the left column is the same but the right one reads the _inputs_ rather than the checkout: `nix/uv.lock` and `nix/node-offline-hashes.json` are what you commit, `nix run .#relock` is what writes them, and the source `builtBench` copies is the pinned flake input — not the writable copy the dev shell put in `.frappe-nix/bench/apps/`. So an edit made inside that copy is a dev-only edit by construction; the app you are developing is the one exception, because it is your repository and `nix build` reads it the same way the shell does.
+
+### App registry
+
+`sites/apps.txt` is what `frappe.get_all_apps()` returns — the list every process consults, and the one `install-app` checks a name against. `sites/apps.json` is bench's record of each app's version and pin (`is_repo`, `resolution.{commit_hash,branch}`, `required`, `idx`, `version`), in bench's own shape. frappe-nix generates both, from one rule: **the registered apps are the `[tool.uv.workspace].members`**, in declared order, `frappe` first. Members, because that is what the virtualenv actually installs. A directory under `apps/` that is not a member is on PYTHONPATH and nothing more, and evaluation warns about it.
+
+One tool writes them — `frappe-nix-workspace sync-registry` — and it runs wherever the members or the pins change: `frappe-init`, `bench-get-app`, `bench-new-app`, `bench-update --pull`, on every dev-shell entry (the one hook that also sees a pin moved by hand inside `apps/<x>`), and in `benchRoot` when the package is built. The dev shell's regeneration and the build's are byte-identical when the committed record is current, so a dirty `sites/apps.json` after a pin moves means exactly one thing: commit it with the bump. The build reads the committed file for the one fact the flake's source tree cannot carry — a submodule's commit — and recomputes everything else from the sources; a stale record costs a stale `commit_hash`, nothing more. `version` comes from `[project].version` or the app's `__version__`, `required` from `hooks.py`'s `required_apps`, the branch from `.gitmodules` (or the flake input's ref, in app mode).
+
+At runtime the two files are symlinks into the package, like `sites/assets`: `frappe-init-<site>` and the container entrypoint relink them on every start, so a deploy that adds an app registers it, and nothing on the host can drift them (an upstream `bench get-app` run by hand fails on the read-only store, as it should). Only `common_site_config.json` is the operator's — seeded once, never touched again.
+
+The one thing this does not change: `bench build` still compiles assets for every directory under `apps/`, registered or not — esbuild scans the directory, not the registry.
+
+### Local apps
+
+An app lives in a bench in one of two shapes, and everything above works with either:
+
+-   a **git submodule** — `.gitmodules` names it, `bench-update --pull` moves it, `nix build` fetches it. `bench-get-app` makes these.
+-   a **local app** — source committed with the bench, no `.git` of its own. `bench-new-app` makes these (it scaffolds with `--no-git`), and `frappe-init --migrate` turns an app with no usable remote into one by *vendoring* it: the nested `.git` moves to `.frappe-nix-backup/<app>.git`, the source is `git add`ed, and the app becomes a workspace member like any other. `bench-update --pull` reports it as having nothing to pull; `sites/apps.json` records it with `is_repo: false`.
+
+There is a third shape git will happily produce and nothing can use: a nested repository — `bench new-app` without `--no-git`, or a `git clone` into `apps/` — that was `git add`ed as-is. The index records a **gitlink with no `.gitmodules` entry**. `git submodule update --init` and `git submodule foreach` die on it (`No url found for submodule path 'apps/<x>' in .gitmodules`), and the flake's source tree carries an empty directory in its place, so `nix build` silently produces a bench without the app. frappe-nix never iterates `git submodule …` itself for that reason — every dev-shell hook goes through `frappe-nix-workspace apps`, which names what each `apps/<x>` is — and it tells you on shell entry and on `bench-update --pull` when it finds one. Two ways out:
+
+```sh
+frappe-init --migrate          # vendor it: source committed, history kept in .frappe-nix-backup/
+# or, once it has a remote to live at:
+git rm --cached apps/<x> && rm -rf apps/<x> && bench-get-app <owner>/<x>
+```
 
 ### Node offline hashes
 
@@ -947,7 +974,7 @@ frappe-nix/
 │   │   ├── app-init.sh       #   app mode — set up an app's own repository
 │   │   ├── migrate.sh        #   migrate mode
 │   │   └── main.sh           #   flags + mode dispatch (must be concatenated last)
-│   ├── frappe-workspace.py   # apps/ ⇄ pyproject.toml ⇄ apps.txt reconciler (tomlkit)
+│   ├── frappe-workspace.py   # apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json} reconciler (tomlkit)
 │   ├── frappe-presets.json   # frappe version → python / node / branch matrix
 │   └── scripts.nix           # portable bench shell scripts
 ├── templates/

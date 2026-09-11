@@ -186,6 +186,19 @@
               2>&1 | tee "$out"
           '';
 
+          # The registry writer over a fixture bench: which apps land in
+          # sites/apps.txt, and what apps.json records about each. Real git
+          # repositories stand in for the checkouts, so the provenance
+          # precedence is tested against git's answers rather than a stub's.
+          apps-registry = pkgs.runCommand "frappe-nix-apps-registry-check" {
+            nativeBuildInputs = [ pkgs.git pkgs.jq pkgs.python3 ];
+          } ''
+            export HOME="$PWD"
+            bash ${./tests/apps-registry.sh} \
+              ${import ./lib/workspace-tool.nix { inherit pkgs; }}/bin/frappe-nix-workspace \
+              2>&1 | tee "$out"
+          '';
+
           # The other half of an exclusion: a nested frontend that is not
           # installed must also not be reachable from its parent app's build
           # script, or `bench build` fails on the missing binary instead of
@@ -203,6 +216,8 @@
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
+        # `bench-update --pull` over a submodule, a local app and a stray repo.
+        // import ./tests/bench-update.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # The bench workspace app mode assembles around a single app.

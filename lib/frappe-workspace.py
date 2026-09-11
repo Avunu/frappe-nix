@@ -1,15 +1,18 @@
 """Reconcile a bench's app registration — the one implementation of the
-three-way contract between `apps/`, `pyproject.toml` and `sites/apps.txt`.
+contract between `apps/`, `pyproject.toml` and `sites/apps.{txt,json}`.
 
 Every subcommand is idempotent and format-preserving (tomlkit), so it is safe
 to run against a bench that is already correct: `frappe-init` uses it for both
-scaffolding and migration, and `bench-get-app` / `bench-new-app` use it at
-runtime.
+scaffolding and migration, `bench-get-app` / `bench-new-app` / `bench-update`
+use it at runtime, and lib/bench.nix runs `sync-registry` when it assembles
+the bench package.
 """
 
 import argparse
+import ast
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -226,35 +229,6 @@ def cmd_sync_apps(args):
     return 0
 
 
-def cmd_apps_txt(args):
-    """Order-preserving union into sites/apps.txt, with `frappe` first.
-
-    Never truncates: an existing bench's apps.txt encodes the install order its
-    site was built with. Frappe writes the file without a trailing newline, so a
-    naive append concatenates onto the last entry.
-    """
-    path = Path(args.file)
-    existing = []
-    if path.is_file():
-        existing = [line.strip() for line in path.read_text().splitlines() if line.strip()]
-
-    ordered = []
-    for app in existing + args.add:
-        if app not in ordered:
-            ordered.append(app)
-    # Frappe must install first; everything else keeps the order the bench had.
-    if "frappe" in ordered:
-        ordered.remove("frappe")
-        ordered.insert(0, "frappe")
-
-    for app in ordered:
-        if app not in existing:
-            print(f"  + sites/apps.txt: {app}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(f"{app}\n" for app in ordered))
-    return 0
-
-
 def cmd_shim_app(args):
     """Write a minimal PEP 621 pyproject.toml for a setup.py-only app.
 
@@ -306,6 +280,342 @@ def cmd_shim_app(args):
     return 0
 
 
+# ── registry: sites/apps.txt + sites/apps.json ────────────────────────────
+#
+# The two files bench keeps under sites/ and frappe reads from there. apps.txt
+# is load-bearing: frappe.get_all_apps() is that file, and `install-app`
+# refuses a name it does not list. apps.json is bench's provenance record —
+# nothing in frappe reads it, but bench does, and so does frappe-init's
+# version detection when it migrates a classic bench.
+#
+# Both are outputs here, never inputs: the registered apps are exactly the
+# [tool.uv.workspace].members, i.e. what is actually installed in the
+# virtualenv. A directory under apps/ that is not a member is on PYTHONPATH
+# and nothing more.
+
+_VERSION_RE = r"""^(\s*%s\s*=\s*['"])(.+?)(['"])"""
+
+
+def warn(msg):
+    print(f"  ⚠  {msg}", file=sys.stderr)
+
+
+def member_dirs(doc):
+    """Directory names of the explicit `apps/<x>` workspace members, in order.
+
+    Only two-segment `apps/<x>` entries count. A glob is ignored with a warning:
+    frappe-nix writes explicit entries, and lib/bench.nix mirrors this rule
+    without a glob matcher, so accepting one here would let the two disagree.
+    """
+    members = doc.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+    out = []
+    for member in members:
+        member = str(member).strip("/")
+        parts = member.split("/")
+        if any(c in member for c in "*?["):
+            warn(f"workspace member {member!r} is a glob — register apps explicitly")
+            continue
+        if len(parts) != 2 or parts[0] != "apps":
+            continue
+        if parts[1] not in out:
+            out.append(parts[1])
+    return out
+
+
+def registered_apps(members, apps_dir):
+    """Members that are Frappe apps on disk, `frappe` first."""
+    apps = []
+    for app in members:
+        app_dir = apps_dir / app
+        if not app_dir.is_dir():
+            warn(f"workspace member apps/{app} is not on disk — skipped")
+        elif not (app_dir / app / "hooks.py").is_file():
+            warn(f"workspace member apps/{app} has no {app}/hooks.py — not a Frappe app, skipped")
+        else:
+            apps.append(app)
+    if "frappe" in apps:
+        apps.remove("frappe")
+        apps.insert(0, "frappe")
+    else:
+        warn("frappe is not a workspace member — sites/apps.txt will not list it")
+    return apps
+
+
+def _version_from_text(text, field="__version__"):
+    match = re.search(_VERSION_RE % field, text, flags=re.M)
+    return match.group(2) if match else None
+
+
+def app_version(app_dir):
+    """The app's version, the way bench's get_current_version finds it.
+
+    [project].version first; every real Frappe app declares it dynamic, so the
+    `__version__` assignment in the package's __init__.py is the usual source.
+    setup.py is the pre-PEP 621 fallback. setup.cfg is skipped: reading it
+    needs setuptools.
+    """
+    app = app_dir.name
+    pyproject = app_dir / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            version = tomlkit.parse(pyproject.read_text()).get("project", {}).get("version")
+            if version:
+                return str(version)
+        except Exception:
+            pass
+    init = app_dir / app / "__init__.py"
+    if init.is_file():
+        version = _version_from_text(init.read_text())
+        if version:
+            return version
+    setup = app_dir / "setup.py"
+    if setup.is_file():
+        version = _version_from_text(setup.read_text(), field="version")
+        if version:
+            return version
+    warn(f"apps/{app}: no version found (pyproject.toml, {app}/__init__.py, setup.py)")
+    return None
+
+
+def app_required(app_dir):
+    """hooks.py's top-level `required_apps`, without importing it."""
+    app = app_dir.name
+    hooks = app_dir / app / "hooks.py"
+    try:
+        tree = ast.parse(hooks.read_text(), filename=str(hooks))
+    except (OSError, SyntaxError) as e:
+        warn(f"apps/{app}/{app}/hooks.py could not be parsed ({e}); required = []")
+        return []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "required_apps" for t in targets):
+            continue
+        try:
+            required = ast.literal_eval(value)
+        except (ValueError, TypeError):
+            return []
+        if isinstance(required, (list, tuple)) and all(isinstance(r, str) for r in required):
+            return list(required)
+        return []
+    return []
+
+
+def parse_gitmodules(path):
+    """`{ <path value>: {branch, url, ...} }` from a .gitmodules file.
+
+    Hand-rolled on purpose: configparser reads git's tab-indented keys as
+    continuation lines of the previous value.
+    """
+    entries = {}
+    current = None
+    for line in Path(path).read_text().splitlines():
+        header = re.match(r'^\s*\[submodule\s+"(.+)"\]\s*$', line)
+        if header:
+            current = {}
+            entries[header.group(1)] = current
+            continue
+        kv = re.match(r"^\s*(\w+)\s*=\s*(.*?)\s*$", line)
+        if kv and current is not None:
+            current[kv.group(1)] = kv.group(2)
+    # Key on the recorded path, which is what apps/<x> is looked up by; the
+    # section name usually matches but is not required to.
+    return {e.get("path", name): e for name, e in entries.items()}
+
+
+def _git(app_dir, *args):
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(app_dir), *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out or None
+
+
+def live_git(app_dir):
+    """HEAD's commit and branch from a checkout, or None when there is none.
+
+    Only consulted when `.git` exists (a directory, or a submodule's gitfile),
+    and any failure — no git on PATH included — reads as "unknown". A bench
+    package built in the Nix sandbox has neither, and must not need either.
+    """
+    if not (app_dir / ".git").exists():
+        return None
+    return {
+        "commit_hash": _git(app_dir, "rev-parse", "HEAD"),
+        "branch": _git(app_dir, "symbolic-ref", "--quiet", "--short", "HEAD"),
+    }
+
+
+def _first(*values):
+    for v in values:
+        if v is not None:
+            return v
+    return None
+
+
+def resolve_provenance(app, app_dir, overrides, gitmodules, seed):
+    """`(is_repo, {"commit_hash", "branch"})`, first known source per field.
+
+    commit_hash: --provenance → live git → --seed
+    branch:      --provenance → .gitmodules → live git → --seed
+
+    .gitmodules outranks the live branch so that a dev bench regenerates the
+    same bytes the package build computes — the build sees .gitmodules but no
+    .git — and `git status` then says exactly whether the committed record is
+    current. The live branch still covers a checkout that is not a submodule.
+    """
+    override = overrides.get(app) or {}
+    live = live_git(app_dir) or {}
+    module = gitmodules.get(f"apps/{app}") or {}
+    seeded = seed.get(app) or {}
+    seeded_res = seeded.get("resolution")
+    # bench writes the *string* "not a repo" / "not calculated" there.
+    if not isinstance(seeded_res, dict):
+        seeded_res = {}
+
+    commit = _first(override.get("commit_hash"), live.get("commit_hash"), seeded_res.get("commit_hash"))
+    branch = _first(override.get("branch"), module.get("branch"), live.get("branch"), seeded_res.get("branch"))
+    is_repo = override.get("is_repo")
+    if is_repo is None:
+        is_repo = commit is not None or branch is not None
+    return bool(is_repo), {"commit_hash": commit, "branch": branch}
+
+
+def registry_entries(apps, apps_dir, overrides, gitmodules, seed):
+    """apps.json's content, in apps.txt order, in bench's own shape."""
+    entries = {}
+    for idx, app in enumerate(apps, start=1):
+        app_dir = apps_dir / app
+        is_repo, resolution = resolve_provenance(app, app_dir, overrides, gitmodules, seed)
+        entries[app] = {
+            "is_repo": is_repo,
+            "resolution": resolution,
+            "required": app_required(app_dir),
+            "idx": idx,
+            "version": app_version(app_dir),
+        }
+    return entries
+
+
+def write_if_changed(path, text, label):
+    """Write only when the bytes differ, so a rerun leaves mtimes and git alone."""
+    path = Path(path)
+    if path.is_file() and path.read_text() == text:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(f"  + {label}")
+    return True
+
+
+def _load_json(path, what):
+    if not path:
+        return {}
+    try:
+        data = json.loads(Path(path).read_text() or "{}")
+    except (OSError, ValueError) as e:
+        warn(f"{what} {path} unreadable ({e}) — ignored")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def cmd_sync_registry(args):
+    """Regenerate sites/apps.txt and sites/apps.json from the workspace members."""
+    pyproject = Path(args.pyproject)
+    try:
+        doc = load(pyproject)
+    except (OSError, ValueError) as e:
+        print(f"error: cannot read {pyproject}: {e}", file=sys.stderr)
+        return 1
+    apps_dir = Path(args.apps_dir)
+    sites_dir = Path(args.sites_dir)
+
+    apps = registered_apps(member_dirs(doc), apps_dir)
+
+    gitmodules_path = args.gitmodules
+    if gitmodules_path is None:
+        candidate = pyproject.resolve().parent / ".gitmodules"
+        gitmodules_path = str(candidate) if candidate.is_file() else ""
+    gitmodules = parse_gitmodules(gitmodules_path) if gitmodules_path else {}
+    overrides = _load_json(args.provenance, "--provenance")
+    seed = _load_json(args.seed, "--seed")
+
+    entries = registry_entries(apps, apps_dir, overrides, gitmodules, seed)
+
+    write_if_changed(sites_dir / "apps.txt", "".join(f"{app}\n" for app in apps), "sites/apps.txt")
+    write_if_changed(sites_dir / "apps.json", json.dumps(entries, indent=4) + "\n", "sites/apps.json")
+    return 0
+
+
+# ── apps: what each apps/<x> is to git ────────────────────────────────────
+#
+# A bench carries its apps in one of two supported shapes: a registered
+# submodule (.gitmodules names it; `bench-update --pull` moves it, `nix build`
+# fetches it) or committed source — a *local* app, made by `bench-new-app` or
+# by `frappe-init --migrate` vendoring one that had no remote. There is a
+# third shape git will happily produce and nothing else can use: a nested
+# repository that was `git add`ed as-is, which the index records as a gitlink
+# with no .gitmodules entry. `git submodule foreach` / `update --init` die on
+# it ("No url found for submodule path"), and the flake's source tree carries
+# an empty directory, so `nix build` produces a bench without the app.
+#
+# Every consumer that used to iterate `git submodule …` goes through this
+# instead, so a nested repo is reported and stepped around rather than fatal.
+
+APP_KINDS = ("submodule", "submodule-uninitialized", "local", "nested-repo")
+
+
+def classify_apps(apps_dir, gitmodules):
+    """[(name, kind, branch, url)] for every apps/<x>, sorted, plus registered
+    submodules not on disk. `branch` and `url` are .gitmodules' or ""."""
+    apps_dir = Path(apps_dir)
+    registered = {
+        path[len("apps/") :]: entry
+        for path, entry in gitmodules.items()
+        if path.startswith("apps/") and "/" not in path[len("apps/") :]
+    }
+    on_disk = sorted(p.name for p in apps_dir.iterdir() if p.is_dir()) if apps_dir.is_dir() else []
+    rows = []
+    for name in on_disk:
+        has_git = (apps_dir / name / ".git").exists()
+        if name in registered:
+            kind = "submodule" if has_git else "submodule-uninitialized"
+            entry = registered[name]
+            rows.append((name, kind, entry.get("branch", ""), entry.get("url", "")))
+        elif has_git:
+            rows.append((name, "nested-repo", "", ""))
+        else:
+            rows.append((name, "local", "", ""))
+    for name in sorted(set(registered) - set(on_disk)):
+        entry = registered[name]
+        rows.append((name, "submodule-uninitialized", entry.get("branch", ""), entry.get("url", "")))
+    return rows
+
+
+def cmd_apps(args):
+    """Print `<name>\t<kind>\t<branch>\t<url>` per app, for shell loops."""
+    apps_dir = Path(args.apps_dir)
+    gitmodules_path = args.gitmodules
+    if gitmodules_path is None:
+        candidate = apps_dir.resolve().parent / ".gitmodules"
+        gitmodules_path = str(candidate) if candidate.is_file() else ""
+    gitmodules = parse_gitmodules(gitmodules_path) if gitmodules_path else {}
+    for name, kind, branch, url in classify_apps(apps_dir, gitmodules):
+        if args.kind and kind not in args.kind:
+            continue
+        print(f"{name}\t{kind}\t{branch}\t{url}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="frappe-nix-workspace")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -336,10 +646,27 @@ def main():
     p.add_argument("apps", nargs="*")
     p.set_defaults(func=cmd_sync_apps)
 
-    p = sub.add_parser("apps-txt")
-    p.add_argument("--file", default="sites/apps.txt")
-    p.add_argument("--add", nargs="*", default=[])
-    p.set_defaults(func=cmd_apps_txt)
+    p = sub.add_parser("apps")
+    p.add_argument("--apps-dir", default="apps")
+    # None: look beside the apps dir. "": look nowhere.
+    p.add_argument("--gitmodules", default=None)
+    p.add_argument("--kind", action="append", choices=APP_KINDS, default=[])
+    p.set_defaults(func=cmd_apps)
+
+    p = sub.add_parser("sync-registry")
+    p.add_argument("--pyproject", required=True)
+    p.add_argument("--apps-dir", required=True)
+    p.add_argument("--sites-dir", required=True)
+    # None: look beside the pyproject. "": look nowhere.
+    p.add_argument("--gitmodules", default=None)
+    # {"<app>": {"commit_hash", "branch", "is_repo"}} — facts only the caller
+    # knows (a flake input's rev), ranked above anything read from disk.
+    p.add_argument("--provenance", default="")
+    # A previous apps.json, ranked below everything else. The package build
+    # passes the bench's committed one, so a commit recorded in a dev bench
+    # survives into a sandbox that has no .git to read it from.
+    p.add_argument("--seed", default="")
+    p.set_defaults(func=cmd_sync_registry)
 
     p = sub.add_parser("shim-app")
     p.add_argument("--app-dir", required=True)

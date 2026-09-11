@@ -60,9 +60,10 @@ let
     fi
   '';
 
-  # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.txt
-  # contract, shared with the `frappe-init` scaffolder/migrator so the two
-  # cannot drift apart. Idempotent and comment-preserving (tomlkit).
+  # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json}
+  # contract, shared with the `frappe-init` scaffolder/migrator and the bench
+  # package build so none of them can drift apart. Idempotent and
+  # comment-preserving (tomlkit).
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
   workspaceBin = "${workspaceTool}/bin/frappe-nix-workspace";
 
@@ -91,11 +92,12 @@ let
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
   '';
 
-  # Shell snippet: add "$APP_NAME" to sites/apps.txt if absent. Frappe writes
-  # that file without a trailing newline, so a naive `echo >>` would concatenate
-  # onto the last app; the tool rewrites the whole list instead.
-  addToAppsTxt = ''
-    ${workspaceBin} apps-txt --file sites/apps.txt --add "$APP_NAME"
+  # Shell snippet: regenerate sites/apps.txt and sites/apps.json from the
+  # workspace members. Run from the bench root, after registerWorkspaceMember
+  # or a submodule pull — the registry is derived from pyproject.toml and the
+  # checkouts, never edited in place.
+  syncRegistry = ''
+    ${workspaceBin} sync-registry --pyproject pyproject.toml --apps-dir apps --sites-dir sites
   '';
 
   # ── secrets ───────────────────────────────────────────────────────────────
@@ -426,35 +428,109 @@ ${
         _before_py["$pp"]=$(git hash-object "$pp" 2>/dev/null || echo none)
       done
 
-      git submodule foreach '
-        branch=$(git config -f "$toplevel/.gitmodules" "submodule.$name.branch") || {
-          echo "  ⚠  $name: no branch configured in .gitmodules — skipping."
-          echo "     Fix it with: frappe-init --migrate (or: git config -f .gitmodules submodule.$name.branch <branch>)"
-          exit 0
-        }
-        # Benches built with `bench get-app` often have only an `upstream`
-        # remote — the bench CLI prefers that name in get_remote() — so origin
-        # is not a safe assumption for a migrated bench.
-        remote=origin
-        git remote | grep -qx origin || remote=$(git remote | head -n1)
-        [ -n "$remote" ] || { echo "  ⚠  $name: no git remote — skipping"; exit 0; }
-        echo "  → $name ($branch from $remote)"
-        git fetch "$remote" --depth 1 "$branch"
-        # `checkout -B` discards anything not on the remote branch. Refuse when
-        # this submodule carries commits that are not in what we just fetched.
-        if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
-          if [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
-            echo "     ⚠  local commits will be discarded (FRAPPE_BENCH_UPDATE_FORCE=1)"
-          else
-            echo "  ⚠  $name: HEAD is not an ancestor of $remote/$branch — it has local or"
-            echo "     unpushed commits that checkout -B would discard. Skipping."
-            echo "     Push them, or re-run with FRAPPE_BENCH_UPDATE_FORCE=1 to overwrite."
-            exit 0
+      # Not `git submodule foreach`: it dies on the first gitlink that has no
+      # .gitmodules entry (a nested repo someone `git add`ed as-is), taking
+      # every other app's pull with it. The classifier names what each
+      # apps/<x> is; only registered submodules are pulled, and the rest are
+      # said out loud — a local app has nothing to pull, a stray repo is
+      # invisible to `nix build` and needs the user.
+      # Which remote of a submodule to pull from: the one whose URL is what
+      # .gitmodules declares. That URL is the app's source of truth — it is
+      # what `nix build` fetches the pinned commit from — and `origin` is not
+      # a safe stand-in for it: a developer's checkout commonly has origin on
+      # a fork that does not carry the release branch at all, and upstream on
+      # the real thing. Compared with the trailing `.git` and `/` ignored,
+      # which is as far as two spellings of one GitHub URL usually differ.
+      _remote_for_url() { # <url> → remote name, or nothing
+        local want="$1" r u
+        want="''${want%/}"; want="''${want%.git}"
+        for r in $(git remote); do
+          u="$(git remote get-url "$r" 2>/dev/null || true)"
+          u="''${u%/}"; u="''${u%.git}"
+          if [ -n "$u" ] && [ "$u" = "$want" ]; then
+            printf '%s' "$r"
+            return 0
           fi
-        fi
-        git checkout -B "$branch" "FETCH_HEAD"
-        find . -name "*.pyc" -delete
-      '
+        done
+        return 1
+      }
+
+      while IFS=$'\t' read -r app kind branch url; do
+        case "$kind" in
+          local)
+            echo "  · $app: local app (source committed with the bench) — nothing to pull"
+            continue
+            ;;
+          nested-repo)
+            echo "  ⚠  $app: a git repository that is not a registered submodule — not pulled,"
+            echo "     and NOT in the flake's source tree, so 'nix build' leaves it out. Either"
+            echo "     vendor it (frappe-init --migrate commits its source into the bench and"
+            echo "     keeps its history in .frappe-nix-backup/) or push it somewhere and"
+            echo "     re-add it: git rm --cached apps/$app && rm -rf apps/$app && bench-get-app <url>"
+            continue
+            ;;
+          submodule-uninitialized)
+            echo "  ⚠  $app: registered submodule with no checkout — skipping (re-enter the shell to initialise it)"
+            continue
+            ;;
+        esac
+        [ -n "$branch" ] || {
+          echo "  ⚠  $app: no branch configured in .gitmodules — skipping."
+          echo "     Fix it with: frappe-init --migrate (or: git config -f .gitmodules submodule.apps/$app.branch <branch>)"
+          continue
+        }
+        (
+          cd "apps/$app"
+          # The declared URL's remote when there is one (see _remote_for_url);
+          # else the URL itself, which git fetches just as well — only the
+          # remote-tracking ref goes unrefreshed. The name-based guesses are a
+          # last resort for a submodule registered without a URL.
+          remote="$(_remote_for_url "$url" || true)"
+          if [ -z "$remote" ] && [ -n "$url" ]; then
+            remote="$url"
+            echo "  · $app: no remote has the .gitmodules URL ($url); fetching it directly"
+          fi
+          if [ -z "$remote" ]; then
+            remote=origin
+            git remote | grep -qx origin || remote=$(git remote | head -n1)
+          fi
+          [ -n "$remote" ] || { echo "  ⚠  $app: no git remote — skipping"; exit 0; }
+          echo "  → $app ($branch from $remote)"
+          # No --depth here. A depth-1 fetch grafts the new tip with no parents,
+          # so the ancestry check below could never pass once the remote had
+          # moved — every pull was "skipped" for phantom local commits — and on
+          # a full clone it cut the history down to that tip as a side effect.
+          # A plain fetch on a shallow clone stops at what the clone already
+          # has, so it costs only the new commits and stays shallow.
+          git fetch "$remote" "$branch" || {
+            echo "  ✗ $app: could not fetch '$branch' from $remote" >&2
+            echo "     .gitmodules says apps/$app is $url @ $branch; fix either the entry" >&2
+            echo "     (git config -f .gitmodules submodule.apps/$app.branch <branch>) or the remote." >&2
+            exit 1
+          }
+          # `checkout -B` discards anything not on the remote branch. Refuse when
+          # this submodule carries commits that are not in what we just fetched.
+          if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
+            if [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
+              echo "     ⚠  local commits will be discarded (FRAPPE_BENCH_UPDATE_FORCE=1)"
+            else
+              echo "  ⚠  $app: HEAD is not an ancestor of $remote/$branch — it has local or"
+              echo "     unpushed commits that checkout -B would discard. Skipping."
+              echo "     Push them, or re-run with FRAPPE_BENCH_UPDATE_FORCE=1 to overwrite."
+              exit 0
+            fi
+          fi
+          git checkout -B "$branch" "FETCH_HEAD"
+          find . -name "*.pyc" -delete
+        ) < /dev/null  # git must not eat the classifier's remaining lines
+      done < <(${workspaceBin} apps --apps-dir apps)
+      echo ""
+
+      # The pins just moved; sites/apps.json records them. Before the node
+      # hashes, which can be slow or fail on a network hiccup — the registry
+      # must not be left describing the old commits because of that.
+      ${syncRegistry}
+      echo "  commit sites/apps.json along with the submodule bumps"
       echo ""
 
       # Refresh node hashes for apps whose yarn.lock changed or are not yet recorded.
@@ -502,6 +578,8 @@ ${
       # build is what it would break; here it is only a warning.
       if ! $BUILD; then
         ${refreshNodeModulesSoft}
+        : # the snippet above is empty on a bench with no node apps, and bash
+          # refuses an empty then-clause
       fi
     fi
 
@@ -926,7 +1004,7 @@ ${
 
       ${registerWorkspaceMember}
 
-      ${addToAppsTxt}
+      ${syncRegistry}
 
       echo "Syncing Python dependencies..."
       uv sync
@@ -976,7 +1054,7 @@ ${
 
       ${registerWorkspaceMember}
 
-      ${addToAppsTxt}
+      ${syncRegistry}
 
       echo "Syncing Python dependencies..."
       uv sync

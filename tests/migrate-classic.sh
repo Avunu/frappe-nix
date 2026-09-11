@@ -87,10 +87,24 @@ check_eq "apps/hrms stale branch is corrected" version-15 \
   "$(git config -f .gitmodules submodule.apps/hrms.branch)"
 check "apps/hrms is a workspace member" \
   grep -q '"apps/hrms"' pyproject.toml
+check_eq "apps/hrms keeps the declared URL, not origin's fork" \
+  "file://$ROOT/fx/remotes/hrms.git" "$(git config -f .gitmodules submodule.apps/hrms.url)"
 check_eq "apps/hrms contributes only a gitlink" 1 "$(git ls-files apps/hrms | wc -l)"
 
 # Vendoring: history preserved, source tracked.
 check "localapp .git moved to the backup" test -f .frappe-nix-backup/localapp.git/HEAD
+
+# The stray gitlink: vendored too, and the gitlink itself must go — `git add`
+# never turns one into a tree, so without the explicit drop the app would
+# stay a single 160000 index entry and an empty directory in the flake source.
+check "strayapp .git moved to the backup" test -f .frappe-nix-backup/strayapp.git/HEAD
+check_eq "strayapp's gitlink is gone from the index" "" \
+  "$(git ls-files -s -- apps/strayapp | grep '^160000 ' || true)"
+check "strayapp's source is tracked as a tree" \
+  git ls-files --error-unmatch apps/strayapp/strayapp/hooks.py
+check "strayapp is a workspace member" grep -q '"apps/strayapp"' pyproject.toml
+check "a per-path submodule init works with the stray gitlink gone" \
+  git -c protocol.file.allow=always submodule update --init -- apps/hrms
 
 # A committed site_config.json holds the site's encryption key, db password and
 # object-storage credentials. The managed .gitignore block excludes the path,
@@ -220,17 +234,40 @@ check_eq "no node_modules reached the index" "" "$(git ls-files -- '*node_module
 check "env/ moved out of the bench root" test '!' -e env
 check "the classic virtualenv is recoverable" test -x .frappe-nix-backup/env/bin/python
 
-# apps.txt: union, frappe first, existing order kept, no missing trailing newline.
-check_eq "sites/apps.txt union preserves order and adds new apps" \
+# apps.txt: the workspace members, frappe first, in the order they were
+# registered — the classic bench's order for what it had, then the discovered
+# apps. Trailing newline, unlike the file frappe writes.
+check_eq "sites/apps.txt is the members, in registration order" \
   "frappe
 erpnext
 hrms
 legacyapp
-localapp" "$(cat sites/apps.txt)"
+localapp
+strayapp" "$(cat sites/apps.txt)"
+
+# apps.json: regenerated alongside, in bench's shape, from the checkouts the
+# migrator just repaired. Committed, because `nix build` cannot see a
+# submodule's commit from the flake's source tree and reads it from here.
+check "sites/apps.json is tracked" git ls-files --error-unmatch sites/apps.json
+aj() { jq -r "$@" sites/apps.json; }
+check_eq "apps.json follows apps.txt order" \
+  '["frappe","erpnext","hrms","legacyapp","localapp","strayapp"]' "$(aj -c 'keys_unsorted')"
+check_eq "apps.json idx is 1-based in that order" "[1,2,3,4,5,6]" "$(aj -c '[.[].idx]')"
+check_eq "apps.json versions come from the sources" \
+  "15.42.0 15.30.0 15.10.0 0.0.1 1.0.0 0.1.0" "$(aj -r '[.[].version] | join(" ")')"
+check_eq "apps/frappe: commit is its HEAD" "$FRAPPE_SHA" "$(aj '.frappe.resolution.commit_hash')"
+check_eq "apps/frappe: branch" version-15 "$(aj '.frappe.resolution.branch')"
+check_eq "apps/erpnext: commit despite detached HEAD" "$ERPNEXT_SHA" "$(aj '.erpnext.resolution.commit_hash')"
+check_eq "apps/erpnext: branch from the repaired .gitmodules" version-15 "$(aj '.erpnext.resolution.branch')"
+check_eq "apps/hrms: branch is the corrected one, not the stale one" version-15 "$(aj '.hrms.resolution.branch')"
+check_eq "apps/hrms: required_apps from hooks.py" '["frappe/erpnext"]' "$(aj -c '.hrms.required')"
+check_eq "a vendored app is not a repo" "false false false" \
+  "$(aj -r '[.localapp.is_repo, .legacyapp.is_repo, .strayapp.is_repo] | join(" ")')"
+check_eq "a vendored app has no resolution" '{"commit_hash":null,"branch":null}' "$(aj -c '.localapp.resolution')"
 
 echo "── idempotency ──────────────────────────────────────────────"
 git status --porcelain > "$ROOT/status.1"
-md5sum .gitignore .gitmodules pyproject.toml sites/apps.txt sites/common_site_config.json \
+md5sum .gitignore .gitmodules pyproject.toml sites/apps.txt sites/apps.json sites/common_site_config.json \
   > "$ROOT/sums.1"
 "$FRAPPE_INIT" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run2.log" 2>&1 ||
   { cat "$ROOT/run2.log"; echo "second run failed"; exit 1; }

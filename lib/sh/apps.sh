@@ -103,6 +103,16 @@ vendor_app() {
     warn "apps/$app: moved nested repo $rel aside"
   done < <(find "$path" -mindepth 2 -name .git -print0)
 
+  # A nested repo that was `git add`ed as-is sits in the index as a gitlink
+  # (mode 160000) with no .gitmodules entry — the `bench new-app` then
+  # `git add -A` bench. `git add` will not turn a gitlink into a tree even
+  # once the .git is gone, so drop the entry first or the app stays invisible.
+  # update-index, not `git rm --cached`: that one insists on a clean
+  # .gitmodules, which register_submodule has just been editing.
+  if git ls-files -s -- "$path" | grep -q '^160000 '; then
+    git update-index --force-remove -- "$path"
+    info "- apps/$app: dropped the stray gitlink (it had no .gitmodules entry)"
+  fi
   # Deliberately not `git add -f`: forcing past .gitignore would pull in
   # node_modules and public/dist. Correctness therefore rests on the ignore
   # rules, which verify_not_ignored checks.
@@ -137,7 +147,7 @@ convert_apps() {
           die "apps/$app has no usable git remote (${APP_FLAGS[$app]#,}) and --no-vendor was given. Push it to a remote and re-run, or drop --no-vendor to commit its source into the bench."
         vendor_app "$app"
         ;;
-      skip) warn "apps/$app skipped (${APP_FLAGS[$app]#,}) — it will not be part of the bench" ;;
+      skip) warn "apps/$app skipped (${APP_FLAGS[$app]#,}) — it will not be part of the bench: not a workspace member, not in sites/apps.txt" ;;
     esac
   done
 
@@ -148,18 +158,20 @@ convert_apps() {
 
 # Decided after vendoring and shimming, because a vendored setup.py-only app
 # may have just been given a pyproject.toml.
+#
+# Membership is registration: sites/apps.txt is generated from the workspace
+# members (frappe-nix-workspace sync-registry), so an app that cannot be a
+# member is not one frappe will see either.
 compute_membership() {
   local app
   MEMBER_APPS=()
-  APPS_TXT_ADD=()
   for app in "${APP_ORDER[@]}"; do
     [ "${APP_DISP[$app]}" = skip ] && continue
     app_has_flag "$app" not-a-frappe-app && continue
-    APPS_TXT_ADD+=("$app")
     if [ -f "apps/$app/pyproject.toml" ]; then
       MEMBER_APPS+=("$app")
     else
-      warn "apps/$app has no pyproject.toml — kept in apps/ and on PYTHONPATH, but not a uv workspace member (its own dependencies will not be resolved)"
+      warn "apps/$app has no pyproject.toml — kept in apps/ and on PYTHONPATH, but not a uv workspace member: its dependencies are not resolved and it is NOT in sites/apps.txt, so frappe will not see it. Vendor it (--vendor $app) to get a pyproject.toml shim, or add one upstream."
     fi
   done
 }
@@ -260,5 +272,8 @@ reconcile_workspace() {
     --preset "$frappe_version" \
     --template "$STAGING/pyproject.toml"
   frappe-nix-workspace sync-apps --pyproject pyproject.toml "${MEMBER_APPS[@]}"
-  frappe-nix-workspace apps-txt --file sites/apps.txt --add "${APPS_TXT_ADD[@]}"
+  # sites/apps.txt and sites/apps.json, from the members just registered. Git
+  # is on PATH here, so each submodule's commit is recorded; .gitmodules (which
+  # register_submodule has just corrected) supplies the branch.
+  frappe-nix-workspace sync-registry --pyproject pyproject.toml --apps-dir apps --sites-dir sites
 }

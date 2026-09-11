@@ -76,6 +76,9 @@ let
       ''
         mkdir -p $out/bench/apps $out/bench/env $out/bench/config $out/bench/sites
         echo '{}' > $out/bench/sites/common_site_config.json
+        # The registry a real package carries (lib/bench.nix).
+        printf 'frappe\n' > $out/bench/sites/apps.txt
+        printf '{"frappe": {"idx": 1}}\n' > $out/bench/sites/apps.json
         : > $out/bench/config/.keep
       '';
 in
@@ -158,5 +161,19 @@ in
     # And still nothing on TCP anywhere in the public path.
     machine.fail("ss -HltnO | grep -qE ':8000\\s'")
     machine.fail("ss -HltnO | grep -qE ':9000\\s'")
+
+    # The app registry is linked from the package, not copied; the operator's
+    # common_site_config.json is a real file.
+    sites = "/var/lib/frappe/${siteName}/sites"
+    for f in ("apps.txt", "apps.json"):
+        machine.succeed(f"readlink {sites}/{f} | grep -qx '${stubBench}/bench/sites/{f}'")
+    machine.succeed(f"test -f {sites}/common_site_config.json -a ! -L {sites}/common_site_config.json")
+
+    # A regular file left by an older frappe-nix's copy-once seed must be
+    # replaced on the next activation, not kept.
+    machine.succeed(f"rm {sites}/apps.txt && echo stale > {sites}/apps.txt")
+    machine.succeed("systemctl restart frappe-init-${siteName}.service")
+    machine.wait_for_unit("frappe-${siteName}.service")
+    machine.succeed(f"test -L {sites}/apps.txt && grep -qx frappe {sites}/apps.txt")
   '';
 }

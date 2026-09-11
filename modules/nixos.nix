@@ -198,8 +198,25 @@ let
       exec ${cmd}
     '';
 
-  # Per-site init script: assemble runtime bench tree, symlink assets,
-  # seed sites dir, and synthesize site_config.json (merging secrets).
+  # The app registry (sites/apps.txt, sites/apps.json) is the package's, never
+  # a copy of it. apps.txt is what frappe.get_all_apps() returns, and a copy
+  # that fell behind the package would silently hide an app from every
+  # process on this host. So: links into the store, like the assets below.
+  # `ln -sfn` also replaces the regular file an older frappe-nix left here
+  # with its copy-once seed. And frappe only ever reads these; anything that
+  # tries to write one (an upstream `bench get-app` run by hand) fails on the
+  # read-only store, which is the right outcome for an unmanaged mutation.
+  linkRegistry = benchDir: sitesPath: ''
+    mkdir -p ${sitesPath}
+    for f in apps.txt apps.json; do
+      if [ -e "${benchDir}/sites/$f" ]; then
+        ln -sfn "${benchDir}/sites/$f" "${sitesPath}/$f"
+      fi
+    done
+  '';
+
+  # Per-site init script: assemble runtime bench tree, link the registry and
+  # assets, seed sites dir, and synthesize site_config.json (merging secrets).
   mkSiteInit = name: siteCfg:
     let
       pkg = sitePackage siteCfg;
@@ -265,13 +282,14 @@ let
       cp -rT ${benchDir}/config ${runtimeBenchDir}/config
       chmod -R u+w ${runtimeBenchDir}/config
 
-      # Seed sites directory.
-      mkdir -p ${sitesPath}
-      for f in apps.json apps.txt common_site_config.json; do
-        if [ ! -e "${sitesPath}/$f" ] && [ -e "${benchDir}/sites/$f" ]; then
-          cp "${benchDir}/sites/$f" "${sitesPath}/$f"
-        fi
-      done
+      ${linkRegistry benchDir sitesPath}
+
+      # common_site_config.json is the operator's after the first boot: seeded
+      # once from the package if it ships one, then never touched.
+      if [ ! -e "${sitesPath}/common_site_config.json" ] \
+         && [ -e "${benchDir}/sites/common_site_config.json" ]; then
+        cp "${benchDir}/sites/common_site_config.json" "${sitesPath}/common_site_config.json"
+      fi
 
       # Symlink compiled assets from the package.
       if [ -d "${benchDir}/sites/assets" ]; then
@@ -750,6 +768,19 @@ let
       mkdir -p "$FRAPPE_BENCH_ROOT"/config
       cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
       chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
+
+      # The registry, but only where there is none yet (a `bench new-site`
+      # before the first activation). frappe-init-<site> owns these links,
+      # and this wrapper is built from the top-level package, which a site's
+      # own `package` override may differ from — so never replace them here.
+      {
+        mkdir -p "$SITES_PATH"
+        for f in apps.txt apps.json; do
+          if [ ! -e "$SITES_PATH/$f" ] && [ -e "${benchDir}/sites/$f" ]; then
+            ln -s "${benchDir}/sites/$f" "$SITES_PATH/$f"
+          fi
+        done
+      } 2>/dev/null || true
 
       SITE_FLAG=""
       if [ -n "''${FRAPPE_SITE:-}" ]; then

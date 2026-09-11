@@ -1,10 +1,12 @@
 # frappe-nix-workspace — the one implementation of the app-registration
 # contract between apps/, pyproject.toml ([tool.uv.workspace].members +
-# [tool.uv.sources]) and sites/apps.txt.
+# [tool.uv.sources]) and sites/apps.{txt,json}.
 #
-# Shared by the scaffolder/migrator (lib/init.nix) and the dev-shell scripts
-# (lib/scripts.nix), so `frappe-init`, `bench-get-app` and `bench-new-app`
-# cannot drift apart.
+# Shared by the scaffolder/migrator (lib/init.nix), the dev-shell scripts
+# (lib/scripts.nix), the dev shell itself (modules/devenv.nix) and the bench
+# package build (lib/bench.nix), so `frappe-init`, `bench-get-app`,
+# `bench-update` and `nix build` cannot drift apart on what a bench's
+# registered apps are.
 { pkgs }:
 
 let
