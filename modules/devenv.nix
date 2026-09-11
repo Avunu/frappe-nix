@@ -2189,6 +2189,18 @@ in
                     proxy_http_version 1.1;
                     proxy_set_header Upgrade $http_upgrade;
                     proxy_set_header Connection $connection_upgrade;
+                    # Repeated on purpose. nginx inherits proxy_set_header from the
+                    # enclosing level ONLY when a block defines none of its own; the
+                    # two Upgrade lines above switch inheritance off wholesale, and
+                    # Host then falls back to $proxy_host -- the upstream's *name*.
+                    # The realtime server resolves the site from Host when the
+                    # handshake carries no Origin (a same-origin GET does not), so
+                    # every connect was rejected with
+                    #   namespace '/<site>' != site 'frappe-web'
+                    # and the browser reported "Invalid namespace".
+                    proxy_set_header Host $http_host;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
                     proxy_read_timeout 3600s;
                   }
 
