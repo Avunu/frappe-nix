@@ -2,6 +2,8 @@
 
 Frappe's Python runtime, extracted from upstream as a standalone package so it can run against a released Frappe without forking the framework
 
+It lives in this repository because frappe-nix is its only consumer, but it is still a self-contained Python distribution and a flake of its own: `pip install 'git+https://github.com/Avunu/frappe-nix#subdirectory=runtime'` works, and so does `nix flake check ./runtime`. frappe-nix reaches it as a path (`frappe-nix.runtime.src`, defaulting to this directory), so there is no flake input and no consumer of frappe-nix has to fetch a Frappe tree.
+
 It replaces the Node `socket.io` server, and it can go further: one process serving the web app, realtime, the background jobs and the scheduler together.
 
 ## What this is
@@ -86,11 +88,11 @@ The WebSocket transport is uvicorn's, which is the `websockets` library Frappe a
 `src/` is committed rather than generated at build time, because `uv` builds this repo from a git source in a sandbox with no network. To move the pin:
 
 ```sh
-scripts/sync-upstream.sh /path/to/frappe <ref>   # regenerates src/ and tests/
-nix flake check                                   # drift check must pass
-scripts/run-tests.sh /path/to/bench               # the 69 unit tests
+runtime/scripts/sync-upstream.sh /path/to/frappe <ref>   # regenerates src/ and tests/
+nix flake check ./runtime                        # drift check must pass
+runtime/scripts/run-tests.sh /path/to/bench               # the 69 unit tests
 ```
 
 Then update `FRAPPE_REF` in `UPSTREAM` and `frappe-upstream` in `flake.nix`.
 
-`nix flake check` re-runs the extraction against the pinned upstream and requires byte-identical output, so a hand-edit to `src/` fails the build. Changes belong in `patches/` or `overlay/`.
+`nix flake check ./runtime` re-runs the extraction against the pinned upstream and requires byte-identical output, so a hand-edit to `src/` fails the build. Changes belong in `patches/` or `overlay/`.

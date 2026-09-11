@@ -298,15 +298,16 @@ in
 
           src = mkOption {
             type = types.nullOr types.path;
-            default = inputs.frappe-runtime;
-            defaultText = lib.literalMD "the `frappe-runtime` flake input of frappe-nix";
+            default = ../runtime;
+            defaultText = lib.literalMD "`runtime/` in this repository";
             description = ''
               Source frappe-runtime is built from, overriding whatever revision
               the bench's uv.lock resolved.
 
               This is what keeps a frappe-runtime bump from being a relock in
-              every bench: the lock entry stays put and frappe-nix's flake.lock
-              decides the code. `null` hands control back to uv.lock.
+              every bench: the lock entry stays put and the `runtime/` tree in
+              this repository decides the code. `null` hands control back to
+              uv.lock.
 
               Caveat: only the *source* is overridden. Dependency metadata still
               comes from uv.lock, so a frappe-runtime release that adds a new
@@ -2242,7 +2243,7 @@ in
                         dependencies = [ ..., "frappe-runtime" ]
 
                         [tool.uv.sources]
-                        frappe-runtime = { git = "https://github.com/Avunu/frappe-runtime" }
+                        frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
 
                         # uv builds without isolation here, so naming the backend in
                         # frappe-runtime's own build-system.requires is not enough.
@@ -2254,10 +2255,10 @@ in
                         nix run .#relock
 
                     It is a one-time declaration, not a version pin: frappe-nix
-                    carries frappe-runtime as a flake input and overrides the source
-                    uv2nix builds, so later bumps are `nix flake update frappe-nix`.
-                    The entry still has to exist because uv2nix indexes its package
-                    set by uv.lock.
+                    ships frappe-runtime in its own runtime/ directory and overrides
+                    the source uv2nix builds, so later bumps are
+                    `nix flake update frappe-nix`. The entry still has to exist
+                    because uv2nix indexes its package set by uv.lock.
 
                     Or set `frappe-nix.runtime.enable = false` to keep the split
                     processes and the Node realtime server.

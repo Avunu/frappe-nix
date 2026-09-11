@@ -276,22 +276,6 @@
         "type": "github"
       }
     },
-    "frappe-runtime": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788975832,
-        "narHash": "sha256-XFVqQsg/4Qv9bzcDBAVTa97k+s/UHv8hW5tlAKZlSdQ=",
-        "owner": "Avunu",
-        "repo": "frappe-runtime",
-        "rev": "dd6755ac9735bf9b5597f732f1a4f3b12fab48c4",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Avunu",
-        "repo": "frappe-runtime",
-        "type": "github"
-      }
-    },
     "get-flake": {
       "inputs": {
         "flake-compat": "flake-compat_3"
@@ -849,7 +833,6 @@
         "agenix-shell": "agenix-shell",
         "devenv": "devenv",
         "flake-parts": "flake-parts_2",
-        "frappe-runtime": "frappe-runtime",
         "nix-oci": "nix-oci",
         "nix2container": "nix2container_2",
         "nixpkgs": "nixpkgs_4",

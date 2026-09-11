@@ -1,0 +1,45 @@
+{
+  "nodes": {
+    "frappe-upstream": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787667372,
+        "narHash": "sha256-Eeo3h4sfOEZ80gW7tp9SxbhNG1Y+psP9nGusnsrzBhQ=",
+        "owner": "frappe",
+        "repo": "frappe",
+        "rev": "757f127a10e275d5d31fbfd4cf5ec2c590dfea53",
+        "type": "github"
+      },
+      "original": {
+        "owner": "frappe",
+        "ref": "757f127a10",
+        "repo": "frappe",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1789006805,
+        "narHash": "sha256-xB8mKMOx1IA9vTDNLmJZ6n4wCMq/cuWBBOzGCRnqxrU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "8ce4ef6cb6f871616146b9fe26d2a5ae594e94fe",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "frappe-upstream": "frappe-upstream",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

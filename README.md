@@ -285,9 +285,9 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 
 ## The unified runtime
 
-By default each bench runs a single [`frappe-runtime`](https://github.com/Avunu/frappe-runtime)
-process serving the web app, realtime, the background jobs and the scheduler
-together — in place of gunicorn (or `bench serve`), the Node `socket.io` server,
+By default each bench runs a single [`frappe-runtime`](runtime/) process — vendored
+in this repository under `runtime/` — serving the web app, realtime, the background
+jobs and the scheduler together — in place of gunicorn (or `bench serve`), the Node `socket.io` server,
 one worker per queue, and `bench schedule`. It is upstream Frappe's own
 asyncio/uvicorn port, packaged to run against a released Frappe.
 
@@ -308,7 +308,7 @@ It is a normal workspace dependency, so the bench's `pyproject.toml` declares it
 dependencies = [ ..., "frappe-runtime" ]
 
 [tool.uv.sources]
-frappe-runtime = { git = "https://github.com/Avunu/frappe-runtime" }
+frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
 
 # uv builds without isolation here, so naming the backend in frappe-runtime's own
 # build-system.requires is not enough.
@@ -319,10 +319,10 @@ frappe-runtime = [ "hatchling" ]
 then `nix run .#relock`. Leaving it out is an eval-time error naming the fix, not
 a process that dies at startup.
 
-That declaration is a one-time placeholder, not a version pin. frappe-nix carries
-`frappe-runtime` as a flake input and points uv2nix's `srcOverrides` at it, so the
-code actually built comes from frappe-nix's `flake.lock` and a bump is
-`nix flake update frappe-nix` — no relock in any bench. The declaration still has to
+That declaration is a one-time placeholder, not a version pin. frappe-nix points
+uv2nix's `srcOverrides` at its own `runtime/` directory, so the code actually built
+is whatever this repository ships and a bump is `nix flake update frappe-nix` — no
+relock in any bench. The declaration still has to
 exist because uv2nix indexes its package set by `uv.lock`, and `srcOverrides` can
 only swap the source of a package already in that set.
 

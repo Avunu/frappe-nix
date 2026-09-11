@@ -41,20 +41,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
     };
-
-    # The source frappe-runtime is built from, pinned here rather than in each
-    # bench's uv.lock. `flake = false` because only the tree is wanted — building
-    # it is uv2nix's job, using the bench's own interpreter and package set.
-    #
-    # A bench still declares frappe-runtime in its pyproject.toml: uv2nix indexes
-    # pythonSet by uv.lock, and srcOverrides can only swap the src of a package
-    # already in that set. What this input controls is which code that package is
-    # built from, so a version bump is `nix flake update frappe-nix` rather than
-    # a relock in every bench.
-    frappe-runtime = {
-      url = "github:Avunu/frappe-runtime";
-      flake = false;
-    };
   };
 
   nixConfig = {
@@ -125,6 +111,12 @@
 
       checks = forAllSystems (pkgs:
         {
+          # The vendored Python runtime builds. Only the build: its drift check
+          # pins a whole Frappe tree, so it lives in runtime/flake.nix rather than
+          # here, where every consumer of this flake would have to fetch it.
+          # Run that one with `nix flake check ./runtime`.
+          runtime = pkgs.python3Packages.callPackage ./runtime/package.nix { };
+
           # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and
           # the assertions are about which socket the connection landed on.
           devguard = pkgs.runCommand "frappe-devguard-check" { } ''
