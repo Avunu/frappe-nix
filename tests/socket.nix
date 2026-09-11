@@ -1,5 +1,11 @@
-# NixOS VM test for unix-socket mode (sites.<name>.nginx.socketPath +
-# sites.<name>.web.socketPath + sites.<name>.socketio.socketPath).
+# NixOS VM test for unix-socket mode with the SPLIT process topology
+# (runtime.enable = false): gunicorn, the node realtime server, the scheduler and
+# one unit per queue, over sites.<name>.nginx.socketPath +
+# sites.<name>.web.socketPath + sites.<name>.socketio.socketPath.
+#
+# The unified runtime is the default, so this pins runtime.enable = false and is
+# the regression test for the legacy path. tests/socket-runtime.nix covers the
+# topology that replaces it.
 #
 # Frappe itself is out of scope — like migrate-rollback.nix this stubs the bench.
 # What is under test is the request path this module generates:
@@ -138,6 +144,9 @@ in
       services.frappe = {
         enable = true;
         package = stubBench;
+        # This test is about the split topology; the unified runtime has neither a
+        # separate realtime process nor gunicorn to stub.
+        runtime.enable = false;
         sites."${siteName}" = {
           enable = true;
           database.createLocally = true;

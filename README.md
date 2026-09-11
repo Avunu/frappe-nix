@@ -4,12 +4,12 @@ Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench pro
 
 `frappe-nix` packages everything needed to develop and ship a Frappe/ERPNext bench declaratively, so a consuming project's flake stays a thin wrapper instead of a 1000-line monolith. From a single `uv` workspace + `apps/` tree it provides:
 
--   a **devenv** development shell (MariaDB, Redis, web/scheduler/worker/socketio/watch, Mailpit) with editable Python installs, live asset reloading, and a [guard rails](#development-guard-rails) so no bench can mail customers, overwrite a production bucket or upload a backup;
+-   a **devenv** development shell (MariaDB, Redis, the Frappe runtime, watch, Mailpit) with editable Python installs, live asset reloading, and a [guard rails](#development-guard-rails) so no bench can mail customers, overwrite a production bucket or upload a backup;
 -   reproducible **production Python environments** (via [uv2nix](https://github.com/pyproject-nix/uv2nix));
 -   reproducible **node\_modules** from `yarn.lock` (yarn-v1 hooks);
 -   a `benchRoot` derivation that assembles the whole `/bench` tree;
 -   a **`builtBench`** package that runs `bench build` at build time (immutable assets) — the production-ready deployable consumed by both the NixOS module and OCI containers;
--   eight **OCI container images** (web, scheduler, three workers, socketio, nginx, bench-cli);
+-   **OCI container images** — `runtime`, `nginx`, `bench-cli`, or the eight-image split set (web, scheduler, three workers, socketio, nginx, bench-cli) with `runtime.enable = false`;
 -   a multi-tenant **NixOS module** (`services.frappe`) with per-site systemd units;
 -   a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …).
 
@@ -247,7 +247,7 @@ Then:
 
 ```sh
 direnv allow            # or: nix develop --no-pure-eval
-devenv up               # start MariaDB, Redis, web, worker, scheduler, socketio, …
+devenv up               # start MariaDB, Redis, the Frappe runtime, watch, …
 provision-site          # (first run, in another shell) create the site + install apps
 # → http://localhost:8000
 ```
@@ -281,7 +281,68 @@ and one **app** (`nix run .#<name>`):
 
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}` so the NixOS module and containers can discover interpreters from the package itself — no separate `pythonEnv`/`nodejs` options needed.
 
-With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`): `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`.
+With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`.
+
+## The unified runtime
+
+By default each bench runs a single [`frappe-runtime`](runtime/) process — a hard
+fork maintained in this repository under `runtime/` — serving the web app, realtime,
+the background jobs and the scheduler together, in place of gunicorn (or
+`bench serve`), the Node `socket.io` server, one worker per queue, and
+`bench schedule`. It began as upstream Frappe's own asyncio/uvicorn port, made to
+run against a released Frappe and fixed where the upstream runner did not work
+(see [`runtime/docs/upstream-issues/`](runtime/docs/upstream-issues/)).
+
+Two things follow from it beyond the process count. Node leaves the runtime
+closure entirely — it stays a build-time dependency for `bench build`. And nginx
+loses its loopback `:80` listener along with the `networking.hosts` pin that
+resolved each site's FQDN to `127.0.0.1`: those existed only because the Node
+realtime server validated sessions by making an HTTP request back to the site's
+own name, and node's `fetch` cannot speak a unix socket. The Python runtime
+validates in-process against the WSGI app.
+
+### Adding it to a bench
+
+It is a normal workspace dependency, so the bench's `pyproject.toml` declares it:
+
+```toml
+[project]
+dependencies = [ ..., "frappe-runtime" ]
+
+[tool.uv.sources]
+frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
+
+# uv builds without isolation here, so naming the backend in frappe-runtime's own
+# build-system.requires is not enough.
+[tool.uv.extra-build-dependencies]
+frappe-runtime = [ "hatchling" ]
+```
+
+then `nix run .#relock`. Leaving it out is an eval-time error naming the fix, not
+a process that dies at startup.
+
+That declaration is a one-time placeholder, not a version pin. frappe-nix points
+uv2nix's `srcOverrides` at its own `runtime/` directory, so the code actually built
+is whatever this repository ships and a bump is `nix flake update frappe-nix` — no
+relock in any bench. The declaration still has to
+exist because uv2nix indexes its package set by `uv.lock`, and `srcOverrides` can
+only swap the source of a package already in that set.
+
+The seam: only the *source* is overridden, and dependency metadata still comes from
+`uv.lock`. A frappe-runtime release that adds a new dependency does need
+`nix run .#relock -- --upgrade-package frappe-runtime` once. Note the flag — a plain
+`uv lock` keeps an already-resolved git revision and will report success without
+changing anything.
+
+Set `runtime.src = null` to hand version control back to `uv.lock`.
+
+### Going back
+
+`runtime.enable = false` restores the split processes and the Node realtime
+server, in both the dev shell and `services.frappe`. Everything that shape needs —
+`socketio.socketPath`, `socketio.port`, `web.workers`, the loopback listener, the
+per-image container set — is still there and still tested
+(`checks.socket` covers it; `checks.socket-runtime` covers the unified one).
 
 ## Options — `perSystem.frappe-nix`
 
@@ -312,6 +373,10 @@ With `containers.enable = true` it additionally builds (named `<benchName>/<name
 | extraLibraryPaths | list of package | [] | Extra LD_LIBRARY_PATH entries (dev shell). |
 | extraScripts | attrs | {} | Extra devenv scripts, merged over the standard set. |
 | extraEnv | attrs of str | {} | Extra environment variables (dev shell). |
+| runtime.enable | bool | true | Run one `frappe-runtime` process (web + realtime + jobs + scheduler) instead of the split web/socketio/worker/scheduler processes. |
+| runtime.jobThreads | int | 2 | Concurrent background jobs inside the runtime process. |
+| runtime.dev | bool | true | Pass `--dev`: reload on a Python source change, and serve /assets and /files from the runtime. |
+| runtime.src | null or path | the `frappe-runtime` flake input | Source frappe-runtime is built from, overriding the revision uv.lock resolved. `null` defers to uv.lock. |
 | sockets.enable | bool | true | Put MariaDB, Redis, socketio and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs frappe ≥ 15.46. |
 | ports.base | port or null | null | First port this bench tries; defaults to 8000 + a hash of benchName. |
 | devguard.enable | bool | true | Master switch for all guard rails — see Development guard rails. |
@@ -367,14 +432,13 @@ These sit at the flake's top level, not under `perSystem`: recipients and `.age`
 | Service / process | Listens on |
 | --- | --- |
 | nginx | TCP 8000 + a hash of benchName — the only port a browser sees |
-| web (bench serve) | $DEVENV_RUNTIME/web.sock |
-| socketio (Node) | $DEVENV_RUNTIME/socketio.sock |
+| runtime (web + realtime + jobs + scheduler) | $DEVENV_RUNTIME/web.sock |
 | MariaDB | $DEVENV_RUNTIME/mysql.sock — and loopback TCP 3306 + the same hash |
 | Redis (cache + queue) | $DEVENV_RUNTIME/redis.sock |
 | Mailpit (SMTP / HTTP / POP3) | TCP 19000 / 20000 / 21000 + the same hash |
-| scheduler, worker, watch | — |
+| watch | — |
 
-nginx routes `/socket.io` to the realtime socket and everything else to the web socket — the same shape [`services.frappe`](#nixos-module--servicesfrappe) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which is what lets the browser reach both over one origin.
+nginx routes `/socket.io` and everything else to the same socket — one process answers both — the same shape [`services.frappe`](#nixos-module--servicesfrappe) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which is what lets the browser reach both over one origin.
 
 MariaDB is the one service that keeps a TCP listener, on loopback and on its own per-bench port, which `FRAPPE_DB_HOST`/`FRAPPE_DB_PORT` name. Frappe never uses it — `db_socket` wins over host/port in `get_connection_settings` — but an app that opens its own connection to `frappe.conf.db_host:db_port` does, and with no listener of this bench's there it silently reaches whichever _other_ bench holds 3306. Insights' "Site DB" data source is one such app (ibis rewrites host `localhost` back to `127.0.0.1`, so libmysqlclient's socket shortcut does not save it), and a `bench update` that lands in a neighbour's database fails mid-migrate with an access-denied for a user that server has never heard of.
 
@@ -690,8 +754,17 @@ The final `site_config.json` is written to the site's state directory with mode 
 | Option | Type | Default | Notes |
 | --- | --- | --- | --- |
 | package | package | (required) | Default bench package (builtBench). Sites inherit this unless overridden. |
-| web.workers | int | 4 | Gunicorn worker count (shared across sites). |
-| workers | list of str | ["default" "short" "long"] | Background worker queues per site. |
+| runtime.enable | bool | true | One `frappe-runtime` unit per site (web + realtime + jobs + scheduler) instead of separate web/socketio/worker/scheduler units. |
+| runtime.jobThreads | int | 4 | Concurrent background jobs inside the runtime process. |
+| runtime.webThreads | int | 0 | Concurrent web requests; 0 keeps `frappe_runtime.asgi`'s own default. Size the DB pool against it. |
+| runtime.restartAfterRequests | int | 5000 | Web requests before a graceful restart (0 = never). |
+| runtime.restartAfterJobs | int | 500 | Background jobs before a graceful restart (0 = never). |
+| runtime.restartIdleSeconds | int | 300 | Idle seconds before a graceful restart (0 = never). |
+| runtime.requestDrainSeconds | int | 60 | Graceful-stop wait for in-flight web requests. |
+| runtime.jobDrainSeconds | int | 600 | Graceful-stop wait for a job in progress. `TimeoutStopSec` is derived from this plus requestDrainSeconds, so systemd outlasts the drain instead of SIGKILLing partway through. |
+| runtime.extraArgs | list of str | [] | Extra arguments appended to the `frappe-runtime` command line. |
+| web.workers | int | 4 | Gunicorn worker count (shared across sites). Ignored when runtime.enable. |
+| workers | list of str | ["default" "short" "long"] | Background worker queues per site. Passed to the runtime as `--queue` when runtime.enable. |
 | database.createLocally | bool | false | Aggregate: enable MariaDB if this or any site requests it. |
 | redis.createLocally | bool | false | Enable a local Redis instance. |
 | user / group | str | "frappe" | Service user/group. |

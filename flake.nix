@@ -111,6 +111,11 @@
 
       checks = forAllSystems (pkgs:
         {
+          # The Python runtime under runtime/ builds as a distribution. Its unit
+          # suite needs a bench (it imports frappe), so that runs from
+          # runtime/scripts/run-tests.sh rather than here.
+          runtime = pkgs.python3Packages.callPackage ./runtime/package.nix { };
+
           # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and
           # the assertions are about which socket the connection landed on.
           devguard = pkgs.runCommand "frappe-devguard-check" { } ''
@@ -212,6 +217,9 @@
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (
             import ./tests/migrate-rollback.nix { inherit self pkgs; }
+          );
+          socket-runtime = pkgs.testers.runNixOSTest (
+            import ./tests/socket-runtime.nix { inherit self pkgs; }
           );
           socket = pkgs.testers.runNixOSTest (
             import ./tests/socket.nix { inherit self pkgs; }

@@ -262,6 +262,61 @@ in
           description = "Python interpreter package.";
         };
 
+        # The unified Python runtime (github:Avunu/frappe-runtime): one process
+        # serving the web app, realtime, the background jobs and the scheduler,
+        # in place of `bench serve` + node socket.io + `bench worker` +
+        # `bench schedule`.
+        runtime = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Run one frappe-runtime process instead of the separate web,
+              socketio, worker and scheduler processes.
+
+              Requires frappe-runtime in the bench's Python environment (a
+              dependency in the bench pyproject.toml plus `nix run .#relock`).
+              Set false to keep the split processes and the Node realtime server.
+            '';
+          };
+
+          jobThreads = mkOption {
+            type = types.int;
+            default = 2;
+            description = "Concurrent background jobs inside the runtime process.";
+          };
+
+          dev = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Pass --dev: reload on a change to a Python source file, and serve
+              /assets and /files from the runtime. Replaces the reloader that
+              `bench serve` provided.
+            '';
+          };
+
+          src = mkOption {
+            type = types.nullOr types.path;
+            default = ../runtime;
+            defaultText = lib.literalMD "`runtime/` in this repository";
+            description = ''
+              Source frappe-runtime is built from, overriding whatever revision
+              the bench's uv.lock resolved.
+
+              This is what keeps a frappe-runtime bump from being a relock in
+              every bench: the lock entry stays put and the `runtime/` tree in
+              this repository decides the code. `null` hands control back to
+              uv.lock.
+
+              Caveat: only the *source* is overridden. Dependency metadata still
+              comes from uv.lock, so a frappe-runtime release that adds a new
+              dependency does need `nix run .#relock -- --upgrade-package
+              frappe-runtime` in the bench.
+            '';
+          };
+        };
+
         nodejs = mkOption {
           type = types.package;
           default =
@@ -1187,16 +1242,23 @@ in
           # Keyed on the distribution name uv resolved the member to, which is
           # what the package set is indexed by — the app's own [project].name,
           # PEP 503 normalized.
-          srcOverrides = lib.optionalAttrs appMode (
-            lib.listToAttrs (
-              map (
-                a:
-                lib.nameValuePair (normalizeDist
-                  (builtins.fromTOML (builtins.readFile (a.src + "/pyproject.toml"))).project.name
-                ) a.src
-              ) (lib.filter (a: builtins.pathExists (a.src + "/pyproject.toml")) appList)
+          srcOverrides =
+            lib.optionalAttrs appMode (
+              lib.listToAttrs (
+                map (
+                  a:
+                  lib.nameValuePair (normalizeDist
+                    (builtins.fromTOML (builtins.readFile (a.src + "/pyproject.toml"))).project.name
+                  ) a.src
+                ) (lib.filter (a: builtins.pathExists (a.src + "/pyproject.toml")) appList)
+              )
             )
-          );
+            # Only applies if uv.lock already carries frappe-runtime — srcOverrides
+            # filters to names present in the set — so a bench that has not declared
+            # it is unaffected and still gets the eval-time error naming the fix.
+            // lib.optionalAttrs (cfg.runtime.enable && cfg.runtime.src != null) {
+              frappe-runtime = cfg.runtime.src;
+            };
           pyproject-nix = inputs.pyproject-nix;
           pyproject-build-systems = inputs.pyproject-build-systems;
           uv2nix = inputs.uv2nix;
@@ -1572,6 +1634,9 @@ in
             webPort =
               if sockets then
                 config.processes.nginx.ports.main.value
+              # Whichever process owns the public port: one runtime, or `bench serve`.
+              else if cfg.runtime.enable then
+                config.processes.runtime.ports.main.value
               else
                 config.processes.web.ports.main.value;
 
@@ -1825,12 +1890,19 @@ in
                     FRAPPE_REDIS_CACHE = redisUrl;
                     FRAPPE_REDIS_QUEUE = redisUrl;
 
-                    # Read by node_utils.js; realtime/index.js does
-                    # `server.listen(uds || port)`.
-                    FRAPPE_SOCKETIO_UDS = socketioSocket;
                     # Read by frappe_unixsock, which is the only way past
                     # frappe/app.py's hardcoded run_simple("0.0.0.0", int(port)).
                     FRAPPE_WEB_SOCKET = webSocket;
+                  }
+                  # optionalAttrs, not mkIf: `env` is an attrsOf, and mkIf false
+                  # leaves the *name* declared with no definition rather than
+                  # dropping it. devenv's shell derivation reads every key, so the
+                  # build dies with "option ... was accessed but has no value
+                  # defined" instead of quietly omitting the variable.
+                  // lib.optionalAttrs (!cfg.runtime.enable) {
+                    # Read by node_utils.js; realtime/index.js does
+                    # `server.listen(uds || port)`.
+                    FRAPPE_SOCKETIO_UDS = socketioSocket;
                   }
                 else
                   {
@@ -2070,7 +2142,8 @@ in
               eventsConfig = "worker_connections 1024;";
               httpConfig = ''
                 upstream frappe-web      { server unix:${webSocket}; }
-                upstream frappe-socketio { server unix:${socketioSocket}; }
+                ${lib.optionalString (!cfg.runtime.enable)
+                  "upstream frappe-socketio { server unix:${socketioSocket}; }"}
 
                 map $http_upgrade $connection_upgrade {
                   default upgrade;
@@ -2119,10 +2192,22 @@ in
                   # the browser's own Origin to rewrite.
 
                   location /socket.io {
-                    proxy_pass http://frappe-socketio;
+                    proxy_pass http://${if cfg.runtime.enable then "frappe-web" else "frappe-socketio"};
                     proxy_http_version 1.1;
                     proxy_set_header Upgrade $http_upgrade;
                     proxy_set_header Connection $connection_upgrade;
+                    # Repeated on purpose. nginx inherits proxy_set_header from the
+                    # enclosing level ONLY when a block defines none of its own; the
+                    # two Upgrade lines above switch inheritance off wholesale, and
+                    # Host then falls back to $proxy_host -- the upstream's *name*.
+                    # The realtime server resolves the site from Host when the
+                    # handshake carries no Origin (a same-origin GET does not), so
+                    # every connect was rejected with
+                    #   namespace '/<site>' != site 'frappe-web'
+                    # and the browser reported "Invalid namespace".
+                    proxy_set_header Host $http_host;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
                     proxy_read_timeout 3600s;
                   }
 
@@ -2147,6 +2232,190 @@ in
                 # send of a session doesn't hit a closed port.
                 needsMailpit = lib.optional mailEnabled "devenv:processes:mailpit";
                 needsConfig = [ "frappe:config" ];
+
+                # One process for the whole bench: the web app, realtime, the
+                # background jobs and the scheduler. `bench serve`, `bench worker`,
+                # `bench schedule` and node socket.io all collapse into this.
+                #
+                # cwd is the bench root, not sites/. The runtime chdirs into sites/
+                # itself (frappe's execute_job re-inits per job with sites_path=".",
+                # so the jobs need to be there), and bench resolves its bench by
+                # walking *up* from cwd, so starting anywhere else finds another
+                # bench or none.
+                # frappe-runtime is a normal workspace dependency, so a bench that
+                # has not added it resolves ${devPythonEnv}/bin/frappe-runtime to a
+                # path that does not exist and the process dies with ENOENT at
+                # startup. Say what to do instead, the way the uv.lock audit does.
+                runtimeProcess =
+                  let
+                    declared = map (
+                      dep: lib.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep))
+                    ) (pythonEnvs.rootPyproject.project.dependencies or [ ]);
+                  in
+                  lib.throwIf (!builtins.elem "frappe-runtime" declared) ''
+                    frappe-nix: services.frappe-nix.runtime.enable is on, but frappe-runtime
+                    is not a dependency of this bench, so there is no frappe-runtime to run.
+
+                    Add it to the bench's pyproject.toml:
+
+                        [project]
+                        dependencies = [ ..., "frappe-runtime" ]
+
+                        [tool.uv.sources]
+                        frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
+
+                        # uv builds without isolation here, so naming the backend in
+                        # frappe-runtime's own build-system.requires is not enough.
+                        [tool.uv.extra-build-dependencies]
+                        frappe-runtime = [ "hatchling" ]
+
+                    then re-lock the workspace:
+
+                        nix run .#relock
+
+                    It is a one-time declaration, not a version pin: frappe-nix
+                    ships frappe-runtime in its own runtime/ directory and overrides
+                    the source uv2nix builds, so later bumps are
+                    `nix flake update frappe-nix`. The entry still has to exist
+                    because uv2nix indexes its package set by uv.lock.
+
+                    Or set `frappe-nix.runtime.enable = false` to keep the split
+                    processes and the Node realtime server.
+                  ''
+                  {
+                  runtime = {
+                    cwd = benchPath;
+                    # uvicorn binds without unlinking first, so a crashed run would
+                    # leave EADDRINUSE behind. This belongs in exec, not a task: the
+                    # manager re-runs exec on restart, not the task graph.
+                    exec = lib.optionalString sockets ''
+                      rm -f "${webSocket}"
+                    '' + ''
+                      exec ${pythonEnvs.devPythonEnv}/bin/frappe-runtime \
+                        ${
+                          if sockets then
+                            ''--uds "${webSocket}"''
+                          else
+                            "--host 127.0.0.1 --port ${toString webPort}"
+                        } \
+                        --job-threads ${toString cfg.runtime.jobThreads}''
+                      + lib.optionalString cfg.runtime.dev " --dev";
+                    after = needsConfig ++ [
+                      "devenv:processes:mysql"
+                      "devenv:processes:redis"
+                    ] ++ needsMailpit;
+                  }
+                  # /api/method/ping, not /socket.io/: a bare GET of the engine.io
+                  # path has no EIO/transport query, so the server answers 400 and
+                  # logs "unsupported version of the Socket.IO or Engine.IO
+                  # protocols" on every probe. ping is cheap, side-effect free, and
+                  # proves the WSGI half is wired through a2wsgi; the realtime half
+                  # announces itself with the redis bridge line at startup.
+                  //
+                    lib.optionalAttrs sockets { ready = socketReady "${webSocket}" "/api/method/ping"; }
+                  //
+                    lib.optionalAttrs (!sockets) {
+                      ports.main.allocate = webBase;
+                      # A process that allocates a port and has no probe falls back
+                      # to `native` supervision, and anything declaring `after` on it
+                      # then fails to load with "no health check exists" — see the
+                      # long comment on nginx below for what that mode does. So the
+                      # TCP path needs a probe just as much as the socket one.
+                      ready = {
+                        exec = ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 http://127.0.0.1:${toString webPort}/api/method/ping'';
+                        initial_delay = 2;
+                        period = 5;
+                        probe_timeout = 5;
+                        failure_threshold = 60;
+                      };
+                    };
+                };
+
+                # The processes the runtime replaces, kept for runtime.enable = false.
+                splitProcesses = {
+                  web = {
+                    # bench resolves its bench by walking *up* from cwd
+                    # (bench/cli.py's change_working_directory → find_parent_bench),
+                    # so a process started anywhere else either finds nothing and
+                    # silently stops dispatching frappe commands, or — if this repo
+                    # happens to sit inside another bench's apps/ — finds that one
+                    # and runs against its database.
+                    cwd = benchPath;
+                    # --port is ignored when FRAPPE_WEB_SOCKET is set
+                    # (frappe_unixsock rewrites the bind address), but still passed:
+                    # it is the port the site is actually reachable on, and it is
+                    # what `bench serve` logs.
+                    exec = ''
+                      exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}
+                    '';
+                    after = needsConfig ++ [
+                      "devenv:processes:mysql"
+                      "devenv:processes:redis"
+                    ] ++ needsMailpit;
+                  }
+                  # Without nginx out front, the web server owns the public port.
+                  // lib.optionalAttrs (!sockets) { ports.main.allocate = webBase; }
+                  // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_WEB_SOCKET" "/"; };
+
+                  scheduler = {
+                    # bench resolves its bench by walking *up* from cwd
+                    # (bench/cli.py's change_working_directory → find_parent_bench),
+                    # so a process started anywhere else either finds nothing and
+                    # silently stops dispatching frappe commands, or — if this repo
+                    # happens to sit inside another bench's apps/ — finds that one
+                    # and runs against its database.
+                    cwd = benchPath;
+                    exec = ''
+                      exec ${pythonEnvs.devPythonEnv}/bin/bench schedule
+                    '';
+                    after = [
+                      "devenv:processes:mysql"
+                      # The scheduler enqueues; it has always needed redis and never
+                      # declared it.
+                      "devenv:processes:redis"
+                    ] ++ needsMailpit;
+                  };
+
+                  worker = {
+                    # bench resolves its bench by walking *up* from cwd
+                    # (bench/cli.py's change_working_directory → find_parent_bench),
+                    # so a process started anywhere else either finds nothing and
+                    # silently stops dispatching frappe commands, or — if this repo
+                    # happens to sit inside another bench's apps/ — finds that one
+                    # and runs against its database.
+                    cwd = benchPath;
+                    exec = ''
+                      exec ${pythonEnvs.devPythonEnv}/bin/bench worker
+                    '';
+                    after = [
+                      "devenv:processes:mysql"
+                      "devenv:processes:redis"
+                    ] ++ needsMailpit;
+                  };
+
+                  socketio = {
+                    cwd = benchPath;
+                    # node's server.listen() does not unlink a stale socket, so a
+                    # crashed run would otherwise leave EADDRINUSE behind forever.
+                    # This has to be in exec rather than a task: the manager re-runs
+                    # exec on restart, not the task graph. (werkzeug needs no
+                    # equivalent — it unlinks its own, and the reloader child
+                    # inherits the fd instead of rebinding.)
+                    exec = lib.optionalString sockets ''
+                      rm -f "$FRAPPE_SOCKETIO_UDS"
+                    '' + ''
+                      exec ${cfg.nodejs}/bin/node "$FRAPPE_BENCH_ROOT/apps/frappe/socketio.js"
+                    '';
+                    after = needsConfig ++ [ "devenv:processes:redis" ];
+                  }
+                  // lib.optionalAttrs (!sockets) {
+                    ports.main.allocate = 9000 + portOffset;
+                    env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
+                  }
+                  // lib.optionalAttrs sockets {
+                    ready = socketReady "$FRAPPE_SOCKETIO_UDS" "/socket.io/";
+                  };
+                };
               in
               {
                 # devenv's own probe is `mariadb-admin ping` with no timeout at
@@ -2164,89 +2433,6 @@ in
                   failure_threshold = 60;
                 };
 
-                web = {
-                  # bench resolves its bench by walking *up* from cwd
-                  # (bench/cli.py's change_working_directory → find_parent_bench),
-                  # so a process started anywhere else either finds nothing and
-                  # silently stops dispatching frappe commands, or — if this repo
-                  # happens to sit inside another bench's apps/ — finds that one
-                  # and runs against its database.
-                  cwd = benchPath;
-                  # --port is ignored when FRAPPE_WEB_SOCKET is set
-                  # (frappe_unixsock rewrites the bind address), but still passed:
-                  # it is the port the site is actually reachable on, and it is
-                  # what `bench serve` logs.
-                  exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}
-                  '';
-                  after = needsConfig ++ [
-                    "devenv:processes:mysql"
-                    "devenv:processes:redis"
-                  ] ++ needsMailpit;
-                }
-                # Without nginx out front, the web server owns the public port.
-                // lib.optionalAttrs (!sockets) { ports.main.allocate = webBase; }
-                // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_WEB_SOCKET" "/"; };
-
-                scheduler = {
-                  # bench resolves its bench by walking *up* from cwd
-                  # (bench/cli.py's change_working_directory → find_parent_bench),
-                  # so a process started anywhere else either finds nothing and
-                  # silently stops dispatching frappe commands, or — if this repo
-                  # happens to sit inside another bench's apps/ — finds that one
-                  # and runs against its database.
-                  cwd = benchPath;
-                  exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/bench schedule
-                  '';
-                  after = [
-                    "devenv:processes:mysql"
-                    # The scheduler enqueues; it has always needed redis and never
-                    # declared it.
-                    "devenv:processes:redis"
-                  ] ++ needsMailpit;
-                };
-
-                worker = {
-                  # bench resolves its bench by walking *up* from cwd
-                  # (bench/cli.py's change_working_directory → find_parent_bench),
-                  # so a process started anywhere else either finds nothing and
-                  # silently stops dispatching frappe commands, or — if this repo
-                  # happens to sit inside another bench's apps/ — finds that one
-                  # and runs against its database.
-                  cwd = benchPath;
-                  exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/bench worker
-                  '';
-                  after = [
-                    "devenv:processes:mysql"
-                    "devenv:processes:redis"
-                  ] ++ needsMailpit;
-                };
-
-                socketio = {
-                  cwd = benchPath;
-                  # node's server.listen() does not unlink a stale socket, so a
-                  # crashed run would otherwise leave EADDRINUSE behind forever.
-                  # This has to be in exec rather than a task: the manager re-runs
-                  # exec on restart, not the task graph. (werkzeug needs no
-                  # equivalent — it unlinks its own, and the reloader child
-                  # inherits the fd instead of rebinding.)
-                  exec = lib.optionalString sockets ''
-                    rm -f "$FRAPPE_SOCKETIO_UDS"
-                  '' + ''
-                    exec ${cfg.nodejs}/bin/node "$FRAPPE_BENCH_ROOT/apps/frappe/socketio.js"
-                  '';
-                  after = needsConfig ++ [ "devenv:processes:redis" ];
-                }
-                // lib.optionalAttrs (!sockets) {
-                  ports.main.allocate = 9000 + portOffset;
-                  env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
-                }
-                // lib.optionalAttrs sockets {
-                  ready = socketReady "$FRAPPE_SOCKETIO_UDS" "/socket.io/";
-                };
-
                 watch = {
                   # bench resolves its bench by walking *up* from cwd
                   # (bench/cli.py's change_working_directory → find_parent_bench),
@@ -2261,16 +2447,23 @@ in
                   # After the config task as well as web: apps/wiki's frontend
                   # imports sites/common_site_config.json, so the file is a vite
                   # input and rewriting it under a running watcher is a rebuild.
-                  after = needsConfig ++ [ "devenv:processes:web" ];
+                  after = needsConfig ++ [
+                    (if cfg.runtime.enable then "devenv:processes:runtime" else "devenv:processes:web")
+                  ];
                 };
               }
+              // (if cfg.runtime.enable then runtimeProcess else splitProcesses)
               // lib.optionalAttrs sockets {
                 nginx = {
                   ports.main.allocate = webBase;
-                  after = [
-                    "devenv:processes:web"
-                    "devenv:processes:socketio"
-                  ];
+                  after =
+                    if cfg.runtime.enable then
+                      [ "devenv:processes:runtime" ]
+                    else
+                      [
+                        "devenv:processes:web"
+                        "devenv:processes:socketio"
+                      ];
                   # Load-bearing, and not for the health reporting.
                   #
                   # devenv picks a supervisor per process

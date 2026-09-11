@@ -17,7 +17,13 @@
 {
   config = {
     perSystem =
-      { config, pkgs, lib, system, ... }:
+      {
+        config,
+        pkgs,
+        lib,
+        system,
+        ...
+      }:
       let
         cfg = config.frappe-nix;
 
@@ -26,33 +32,36 @@
         nodejs = builtBench.passthru.nodejs;
         appsPath = builtBench.passthru.appsPath "${builtBench}/bench";
 
-        containerRuntimeDeps = with pkgs; [
-          coreutils
-          bashInteractive
-          gnused
-          gnugrep
-          findutils
-          which
-          cacert
-          file
-          jq
-          wkhtmltopdf
-          chromium
-          libjpeg
-          libpng
-          zlib
-          cairo
-          pango
-          gdk-pixbuf
-          harfbuzz
-          fontconfig
-          freetype
-          openssl
-          libffi
-          (cfg.mariadb.package).client
-          liberation_ttf
-          noto-fonts
-        ] ++ cfg.extraContainerRuntimeDeps;
+        containerRuntimeDeps =
+          with pkgs;
+          [
+            coreutils
+            bashInteractive
+            gnused
+            gnugrep
+            findutils
+            which
+            cacert
+            file
+            jq
+            wkhtmltopdf
+            chromium
+            libjpeg
+            libpng
+            zlib
+            cairo
+            pango
+            gdk-pixbuf
+            harfbuzz
+            fontconfig
+            freetype
+            openssl
+            libffi
+            (cfg.mariadb.package).client
+            liberation_ttf
+            noto-fonts
+          ]
+          ++ cfg.extraContainerRuntimeDeps;
 
         libraryPath = lib.makeLibraryPath [
           pkgs.zlib
@@ -242,168 +251,209 @@
 
       in
       lib.mkIf (cfg.enable && cfg.containers.enable) {
-        packages.web = mkFrappeContainer {
-          name = "web";
-          cmd = [
-            "${pyEnv}/bin/gunicorn"
-            "--bind"
-            "0.0.0.0:8000"
-            "--workers"
-            "4"
-            "--max-requests"
-            "5000"
-            "--max-requests-jitter"
-            "500"
-            "--timeout"
-            "120"
-            "--preload"
-            "--graceful-timeout"
-            "30"
-            "--keep-alive"
-            "5"
-            "--access-logfile"
-            "-"
-            "--error-logfile"
-            "-"
-            "frappe.app:application"
-          ];
-          exposedPorts = {
-            "8000/tcp" = { };
-          };
-        };
+        # if/else over whole attrsets, not lib.mkIf per package: `packages` is an
+        # attrsOf, and mkIf false keeps the attribute *name* while removing its
+        # definition. `nix flake show` enumerates those names and dies with
+        # "option ... was accessed but has no value defined".
+        packages = {
+          # One image for the whole site: the web app, realtime, the background jobs
+          # and the scheduler. Replaces web + scheduler + worker-* + socketio, and
+          # carries no Node at all.
+          #
+          # WorkingDir is /bench, not /bench/sites: the runtime chdirs into sites/
+          # itself, and frappe's execute_job re-inits per job with sites_path=".".
+        }
+        // (
+          if cfg.runtime.enable then
+            {
+              runtime = mkFrappeContainer {
+                name = "runtime";
+                workingDir = "/bench";
+                cmd = [
+                  "${pyEnv}/bin/frappe-runtime"
+                  "--host"
+                  "0.0.0.0"
+                  "--port"
+                  "8000"
+                  "--job-threads"
+                  "4"
+                ];
+                exposedPorts = {
+                  "8000/tcp" = { };
+                };
+              };
 
-        packages.scheduler = mkFrappeContainer {
-          name = "scheduler";
-          cmd = [
-            "${pyEnv}/bin/bench"
-            "schedule"
-          ];
-        };
+            }
+          else
+            {
+              web = mkFrappeContainer {
+                name = "web";
+                cmd = [
+                  "${pyEnv}/bin/gunicorn"
+                  "--bind"
+                  "0.0.0.0:8000"
+                  "--workers"
+                  "4"
+                  "--max-requests"
+                  "5000"
+                  "--max-requests-jitter"
+                  "500"
+                  "--timeout"
+                  "120"
+                  "--preload"
+                  "--graceful-timeout"
+                  "30"
+                  "--keep-alive"
+                  "5"
+                  "--access-logfile"
+                  "-"
+                  "--error-logfile"
+                  "-"
+                  "frappe.app:application"
+                ];
+                exposedPorts = {
+                  "8000/tcp" = { };
+                };
+              };
 
-        packages.worker-default = mkFrappeContainer {
-          name = "worker-default";
-          cmd = [
-            "${pyEnv}/bin/bench"
-            "worker"
-            "--queue"
-            "default"
-          ];
-        };
+              scheduler = mkFrappeContainer {
+                name = "scheduler";
+                cmd = [
+                  "${pyEnv}/bin/bench"
+                  "schedule"
+                ];
+              };
 
-        packages.worker-short = mkFrappeContainer {
-          name = "worker-short";
-          cmd = [
-            "${pyEnv}/bin/bench"
-            "worker"
-            "--queue"
-            "short"
-          ];
-        };
+              worker-default = mkFrappeContainer {
+                name = "worker-default";
+                cmd = [
+                  "${pyEnv}/bin/bench"
+                  "worker"
+                  "--queue"
+                  "default"
+                ];
+              };
 
-        packages.worker-long = mkFrappeContainer {
-          name = "worker-long";
-          cmd = [
-            "${pyEnv}/bin/bench"
-            "worker"
-            "--queue"
-            "long"
-          ];
-        };
+              worker-short = mkFrappeContainer {
+                name = "worker-short";
+                cmd = [
+                  "${pyEnv}/bin/bench"
+                  "worker"
+                  "--queue"
+                  "short"
+                ];
+              };
 
-        packages.socketio = pkgs.dockerTools.buildLayeredImage {
-          name = "${prefix}/socketio";
-          tag = "latest";
-          maxLayers = 125;
-          contents = [
-            (pkgs.buildEnv {
-              name = "${prefix}-socketio-env";
-              paths = with pkgs; [
-                coreutils
-                bashInteractive
-                cacert
-                nodejs
-              ];
-              pathsToLink = [
-                "/bin"
-                "/lib"
-                "/share"
-                "/etc"
-              ];
-            })
-            builtBench
-          ];
-          enableFakechroot = true;
-          fakeRootCommands = ''
-            mkdir -p /bench/sites
-          '';
-          config = {
-            Entrypoint = [ "${socketioEntrypoint}" ];
-            Cmd = [
-              "${nodejs}/bin/node"
-              "/bench/apps/frappe/socketio.js"
+              worker-long = mkFrappeContainer {
+                name = "worker-long";
+                cmd = [
+                  "${pyEnv}/bin/bench"
+                  "worker"
+                  "--queue"
+                  "long"
+                ];
+              };
+
+              # Node's realtime server. Only built when the unified runtime is off — it is
+              # the last thing in the runtime closure that needs Node at all.
+              socketio = pkgs.dockerTools.buildLayeredImage {
+                name = "${prefix}/socketio";
+                tag = "latest";
+                maxLayers = 125;
+                contents = [
+                  (pkgs.buildEnv {
+                    name = "${prefix}-socketio-env";
+                    paths = with pkgs; [
+                      coreutils
+                      bashInteractive
+                      cacert
+                      nodejs
+                    ];
+                    pathsToLink = [
+                      "/bin"
+                      "/lib"
+                      "/share"
+                      "/etc"
+                    ];
+                  })
+                  builtBench
+                ];
+                enableFakechroot = true;
+                fakeRootCommands = ''
+                  mkdir -p /bench/sites
+                '';
+                config = {
+                  Entrypoint = [ "${socketioEntrypoint}" ];
+                  Cmd = [
+                    "${nodejs}/bin/node"
+                    "/bench/apps/frappe/socketio.js"
+                  ];
+                  WorkingDir = "/bench";
+                  ExposedPorts = {
+                    "9000/tcp" = { };
+                  };
+                  Env = [
+                    "NODE_ENV=production"
+                    "FRAPPE_BENCH_ROOT=/bench"
+                    "SITES_PATH=/bench/sites"
+                    "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                  ];
+                };
+              };
+
+            }
+        )
+        // {
+          nginx = pkgs.dockerTools.buildLayeredImage {
+            name = "${prefix}/nginx";
+            tag = "latest";
+            maxLayers = 125;
+            contents = [
+              (pkgs.buildEnv {
+                name = "${prefix}-nginx-env";
+                paths = with pkgs; [
+                  coreutils
+                  bashInteractive
+                  nginx
+                ];
+                pathsToLink = [
+                  "/bin"
+                  "/lib"
+                  "/share"
+                  "/etc"
+                ];
+              })
+              builtBench
             ];
-            WorkingDir = "/bench";
-            ExposedPorts = {
-              "9000/tcp" = { };
+            enableFakechroot = true;
+            fakeRootCommands = ''
+              mkdir -p /tmp/nginx /var/log/nginx /var/cache/nginx /bench/sites
+              chmod 1777 /tmp
+            '';
+            config = {
+              Entrypoint = [ "${nginxEntrypoint}" ];
+              Cmd = [
+                "${pkgs.nginx}/bin/nginx"
+                "-c"
+                "/bench/config/nginx.conf"
+                "-g"
+                "daemon off;"
+              ];
+              WorkingDir = "/bench";
+              ExposedPorts = {
+                "80/tcp" = { };
+              };
             };
-            Env = [
-              "NODE_ENV=production"
-              "FRAPPE_BENCH_ROOT=/bench"
-              "SITES_PATH=/bench/sites"
-              "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-            ];
           };
-        };
 
-        packages.nginx = pkgs.dockerTools.buildLayeredImage {
-          name = "${prefix}/nginx";
-          tag = "latest";
-          maxLayers = 125;
-          contents = [
-            (pkgs.buildEnv {
-              name = "${prefix}-nginx-env";
-              paths = with pkgs; [
-                coreutils
-                bashInteractive
-                nginx
-              ];
-              pathsToLink = [
-                "/bin"
-                "/lib"
-                "/share"
-                "/etc"
-              ];
-            })
-            builtBench
-          ];
-          enableFakechroot = true;
-          fakeRootCommands = ''
-            mkdir -p /tmp/nginx /var/log/nginx /var/cache/nginx /bench/sites
-            chmod 1777 /tmp
-          '';
-          config = {
-            Entrypoint = [ "${nginxEntrypoint}" ];
-            Cmd = [
-              "${pkgs.nginx}/bin/nginx"
-              "-c"
-              "/bench/config/nginx.conf"
-              "-g"
-              "daemon off;"
+          bench-cli = mkFrappeContainer {
+            name = "bench";
+            cmd = [
+              "${pyEnv}/bin/bench"
+              "--help"
             ];
-            WorkingDir = "/bench";
-            ExposedPorts = {
-              "80/tcp" = { };
-            };
+            extraPaths = [ nodejs ];
           };
-        };
-
-        packages.bench-cli = mkFrappeContainer {
-          name = "bench";
-          cmd = [
-            "${pyEnv}/bin/bench"
-            "--help"
-          ];
-          extraPaths = [ nodejs ];
         };
       };
   };
