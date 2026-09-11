@@ -186,8 +186,11 @@ let
 
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
   # cwd is left to systemd's WorkingDirectory= (set per-service in
-  # mkSiteServices to the site's runtime bench dir) rather than `cd`-ing here
-  # — one declarative source of truth instead of two that can drift apart.
+  # mkSiteServices) rather than `cd`-ing here — one declarative source of truth
+  # instead of two that can drift apart. It is the runtime bench dir for
+  # everything that shells out to the `bench` CLI, and the sites dir for
+  # gunicorn; both follow upstream's supervisor.conf, and the reasoning is on
+  # mkService and on frappe-web there.
   mkExec = pkg: name: cmd:
     pkgs.writeShellScript "frappe-${name}" ''
       set -euo pipefail
@@ -273,6 +276,26 @@ let
       # Symlink compiled assets from the package.
       if [ -d "${benchDir}/sites/assets" ]; then
         ln -sfn ${benchDir}/sites/assets ${sitesPath}/assets
+
+        # Frappe resolves some asset paths relative to the process cwd, not to
+        # SITES_PATH -- get_assets_json() is frappe.read_file("assets/assets.json").
+        # Upstream bench runs its processes from <bench>/sites, so that lands on
+        # sites/assets; ours run from the bench root (WorkingDirectory in
+        # mkSiteServices), where it would miss. This link makes the relative
+        # form resolve from either cwd.
+        #
+        # It fails silently and durably without this. read_file() returns None
+        # for a missing path instead of raising, get_assets_json() caches that
+        # None in a *shared* Redis key with no TTL, and every desk and website
+        # render then dies in bundled_asset() on
+        #   AttributeError: 'NoneType' object has no attribute 'get'
+        # for as long as the key survives -- which is across restarts, rebuilds
+        # and switches, since nothing evicts it. A previously-cached good value
+        # masks the bug indefinitely, so it surfaces not when the mistake is
+        # made but whenever something next clears caches. Hit in production
+        # 2026-09-09: latent for months, then `bench migrate` cleared caches
+        # during a v15 -> v16 upgrade and took the whole site to HTTP 500.
+        ln -sfn ${sitesPath}/assets ${runtimeBenchDir}/assets
       fi
 
       # Create site directory.
@@ -491,7 +514,14 @@ let
         requires = [ "${initName}.service" ];
       };
 
-      mkService = { description, execStart, extra ? {}, stopTimeout ? null }:
+      # workingDirectory defaults to the bench root because that is what the
+      # `bench` CLI needs: bench locates its bench by walking cwd
+      # (bench.utils.is_bench_directory(directory=os.path.curdir)), so
+      # `bench schedule` / `bench worker` / `bench migrate` only work from
+      # there. gunicorn is the exception -- see frappe-web in splitUnits. The
+      # unified runtime is not: it starts at the bench root and changes into
+      # sites/ itself before serving.
+      mkService = { description, execStart, extra ? {}, workingDirectory ? runtimeBenchDir, stopTimeout ? null }:
         {
           inherit description;
           after = [ "network.target" ] ++ (extra.after or []);
@@ -502,7 +532,7 @@ let
           serviceConfig = {
             User = cfg.user;
             Group = cfg.group;
-            WorkingDirectory = runtimeBenchDir;
+            WorkingDirectory = workingDirectory;
             ExecStart = execStart;
             Restart = "always";
             RestartSec = "5";
@@ -560,6 +590,22 @@ let
       splitUnits = {
         "frappe-web-${name}" = mkService {
           description = "Frappe web (gunicorn) for ${name}";
+          # The one service upstream does not run from the bench root: bench's
+          # own supervisor.conf template gives frappe-web `directory={{ sites_dir }}`
+          # and everything else `directory={{ bench_dir }}`, and bench runs frappe
+          # subprocesses with `cwd=sites_dir` (bench.utils.run_frappe_cmd).
+          #
+          # It matters because frappe resolves some paths relative to cwd rather
+          # than to SITES_PATH -- get_assets_json() is
+          # frappe.read_file("assets/assets.json"). Running gunicorn from the
+          # bench root made that miss, and since read_file() returns None for a
+          # missing path and the result is cached in a shared Redis key with no
+          # TTL, every rendered page 500d until the key was evicted (2026-09-09).
+          #
+          # This is not a substitute for the sites/assets link in mkSiteInit:
+          # that covers the same relative form for the services which correctly
+          # stay at the bench root.
+          workingDirectory = "${runtimeBenchDir}/sites";
           execStart = mkExec pkg "web-${name}" ''
             ${pyEnv}/bin/gunicorn \
               --bind ${webBind siteCfg} \

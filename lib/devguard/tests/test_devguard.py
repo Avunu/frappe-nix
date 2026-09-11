@@ -399,12 +399,16 @@ check(
 import types  # noqa: E402
 
 
-def stub_frappe():
-    """Minimal stand-in for the four registries frappe.whitelist() populates."""
+def stub_frappe(container=list):
+    """Minimal stand-in for the four registries frappe.whitelist() populates.
+
+    ``container`` is ``list`` on Frappe v15 and ``set`` from v16 on. The swap
+    has to hold for both, so every assertion below runs twice.
+    """
     stub = types.ModuleType("frappe")
-    stub.whitelisted = []
-    stub.guest_methods = []
-    stub.xss_safe_methods = []
+    stub.whitelisted = container()
+    stub.guest_methods = container()
+    stub.xss_safe_methods = container()
     stub.allowed_http_methods_for_whitelisted_func = {}
     stub.logger = lambda *_a, **_k: types.SimpleNamespace(warning=lambda *_a, **_k: None)
     sys.modules["frappe"] = stub
@@ -415,37 +419,53 @@ frappe_stub = stub_frappe()
 from frappe_devguard._patch import assert_not_overridden, rewhitelist  # noqa: E402
 
 
-def take_backup():
-    return "uploaded"
+def register(registry, fn):
+    (registry.append if isinstance(registry, list) else registry.add)(fn)
 
 
-frappe_stub.whitelisted.append(take_backup)
-frappe_stub.guest_methods.append(take_backup)
-frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
+for container in (list, set):
+    kind = container.__name__
+    frappe_stub = stub_frappe(container)
 
+    def take_backup():
+        return "uploaded"
 
-def refuse():
-    return "blocked"
+    register(frappe_stub.whitelisted, take_backup)
+    register(frappe_stub.guest_methods, take_backup)
+    frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
 
+    def refuse():
+        return "blocked"
 
-replacement = rewhitelist(take_backup, refuse)
+    replacement = rewhitelist(take_backup, refuse)
 
-check("replacement is whitelisted", replacement in frappe_stub.whitelisted)
-check("original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
-check("whitelist did not grow", len(frappe_stub.whitelisted) == 1, frappe_stub.whitelisted)
-check(
-    "http methods follow the replacement",
-    frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
-)
-check(
-    "stale http-methods key is gone",
-    take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
-)
-check("guest_methods follows too", replacement in frappe_stub.guest_methods)
-check(
-    "replacement keeps the original identity",
-    replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
-)
+    check(f"[{kind}] replacement is whitelisted", replacement in frappe_stub.whitelisted)
+    check(f"[{kind}] original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
+    check(
+        f"[{kind}] whitelist did not grow",
+        len(frappe_stub.whitelisted) == 1,
+        frappe_stub.whitelisted,
+    )
+    check(
+        f"[{kind}] http methods follow the replacement",
+        frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
+    )
+    check(
+        f"[{kind}] stale http-methods key is gone",
+        take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
+    )
+    check(f"[{kind}] guest_methods follows too", replacement in frappe_stub.guest_methods)
+    # The guest registries take no fallback registration: the original was never
+    # xss_safe, and adding the replacement there would widen access, not keep it.
+    check(
+        f"[{kind}] xss_safe_methods stays empty",
+        not frappe_stub.xss_safe_methods,
+        frappe_stub.xss_safe_methods,
+    )
+    check(
+        f"[{kind}] replacement keeps the original identity",
+        replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
+    )
 
 frappe_stub.get_hooks = lambda _name: {"some.other.cmd": ["app.override"]}
 assert_not_overridden("backups", ["protected.cmd"])  # must not raise

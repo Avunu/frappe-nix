@@ -829,8 +829,15 @@ in
                       "<range>" in our cache (possible versions are "")
 
             Refreshing the offline hash cannot fix that. Excluding the frontend
-            costs only the routes it serves, and beats forking the app when the
+            costs the routes it serves, and beats forking the app when the
             frontend is optional. Drop the entry once upstream repairs the lock.
+
+            If the parent app's `build` or `postinstall` script is what builds
+            the excluded frontend, that script is dropped from the app's
+            package.json in the bench tree as well -- it could only fail, since
+            the frontend's node_modules is never installed, and frappe's
+            esbuild runs every app's `build` script with no opt-out. Anything
+            else that script did goes with it; the build log names each one.
           '';
           example = [ "erpnext/banking" ];
         };
