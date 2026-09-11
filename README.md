@@ -303,30 +303,28 @@ validates in-process against the WSGI app.
 
 ### Adding it to a bench
 
-It is a normal workspace dependency, so the bench's `pyproject.toml` declares it:
+Nothing to do for a new bench: `frappe-init` writes the dependency into
+`pyproject.toml` from the template and locks it.
 
-```toml
-[project]
-dependencies = [ ..., "frappe-runtime" ]
+An existing bench picks it up by re-running the reconciler from the bench root —
+it adds only what is missing and re-locks:
 
-[tool.uv.sources]
-frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
-
-# uv builds without isolation here, so naming the backend in frappe-runtime's own
-# build-system.requires is not enough.
-[tool.uv.extra-build-dependencies]
-frappe-runtime = [ "hatchling" ]
+```sh
+nix run github:Avunu/frappe-nix -- -y
 ```
 
-then `nix run .#relock`. Leaving it out is an eval-time error naming the fix, not
-a process that dies at startup.
+That lands three things, the same way it lands `frappe-bench` and `setuptools`:
+`frappe-runtime` in `[project].dependencies`; a `[tool.uv.sources]` entry
+pointing at this repository's `runtime/` subdirectory; and `hatchling` in
+`[tool.uv.extra-build-dependencies]`, because uv builds without isolation here and
+the package's own `build-system.requires` is not enough.
 
-That declaration is a one-time placeholder, not a version pin. frappe-nix points
-uv2nix's `srcOverrides` at its own `runtime/` directory, so the code actually built
-is whatever this repository ships and a bump is `nix flake update frappe-nix` — no
-relock in any bench. The declaration still has to
-exist because uv2nix indexes its package set by `uv.lock`, and `srcOverrides` can
-only swap the source of a package already in that set.
+The declaration exists for uv's resolver and is a placeholder, not a version pin.
+frappe-nix points uv2nix's `srcOverrides` at its own `runtime/` directory, so the
+code actually built is whatever this repository ships and a bump is
+`nix flake update frappe-nix` — no relock in any bench. The entry has to exist
+because uv2nix indexes its package set by `uv.lock`, and `srcOverrides` can only
+swap the source of a package already in that set.
 
 The seam: only the *source* is overridden, and dependency metadata still comes from
 `uv.lock`. A frappe-runtime release that adds a new dependency does need

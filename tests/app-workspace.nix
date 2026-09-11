@@ -93,11 +93,19 @@ in
     # normalizes them itself. The print_designer fixture declares
     # "print-designer", so a directory-named key would show up here and the
     # member would silently come from PyPI instead.
+    sources = doc["tool"]["uv"]["sources"]
+    # frappe-runtime is the one non-app source the template ships; everything
+    # else in the table must be an app, keyed on its declared name.
+    app_sources = {k: v for k, v in sources.items() if k != "frappe-runtime"}
     check("[tool.uv.sources] is keyed on each app's declared [project].name",
-          sorted(doc["tool"]["uv"]["sources"]),
+          sorted(app_sources),
           ["carbon_frappe", "frappe", "print-designer"])
-    check("every source resolves to the workspace",
-          all(v == {"workspace": True} for v in doc["tool"]["uv"]["sources"].values()), True)
+    check("every app source resolves to the workspace",
+          all(v == {"workspace": True} for v in app_sources.values()), True)
+    check("frappe-runtime is a git source into this repository's runtime/",
+          sources.get("frappe-runtime", {}).get("subdirectory"), "runtime")
+    check("frappe-runtime is a root dependency",
+          any(d.split("[")[0].strip() == "frappe-runtime" for d in doc["project"]["dependencies"]), True)
 
     # The build-time deps table the template carries for apps that predate
     # PEP 517. Losing it is a build failure several layers down, so assert it

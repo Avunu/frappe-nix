@@ -2256,31 +2256,18 @@ in
                     frappe-nix: services.frappe-nix.runtime.enable is on, but frappe-runtime
                     is not a dependency of this bench, so there is no frappe-runtime to run.
 
-                    Add it to the bench's pyproject.toml:
+                    This bench predates the runtime. Re-run the reconciler from the bench
+                    root; it adds the dependency and re-locks, and changes nothing that is
+                    already correct:
 
-                        [project]
-                        dependencies = [ ..., "frappe-runtime" ]
+                        nix run github:Avunu/frappe-nix -- -y
 
-                        [tool.uv.sources]
-                        frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
+                    (Or by hand: add "frappe-runtime" to [project].dependencies plus the
+                    [tool.uv.sources] and [tool.uv.extra-build-dependencies] entries from
+                    templates/bench/pyproject.toml, then `nix run .#relock`.)
 
-                        # uv builds without isolation here, so naming the backend in
-                        # frappe-runtime's own build-system.requires is not enough.
-                        [tool.uv.extra-build-dependencies]
-                        frappe-runtime = [ "hatchling" ]
-
-                    then re-lock the workspace:
-
-                        nix run .#relock
-
-                    It is a one-time declaration, not a version pin: frappe-nix
-                    ships frappe-runtime in its own runtime/ directory and overrides
-                    the source uv2nix builds, so later bumps are
-                    `nix flake update frappe-nix`. The entry still has to exist
-                    because uv2nix indexes its package set by uv.lock.
-
-                    Or set `frappe-nix.runtime.enable = false` to keep the split
-                    processes and the Node realtime server.
+                    Or set `frappe-nix.runtime.enable = false` to keep the split processes
+                    and the Node realtime server.
                   ''
                   {
                   runtime = {

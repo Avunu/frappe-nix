@@ -258,7 +258,7 @@ reconcile_workspace() {
     --requires-python "$requires_python" \
     --overrides "$overrides" \
     --preset "$frappe_version" \
-    --extra-build-dependencies "$STAGING/pyproject.toml"
+    --template "$STAGING/pyproject.toml"
   frappe-nix-workspace sync-apps --pyproject pyproject.toml "${MEMBER_APPS[@]}"
   frappe-nix-workspace apps-txt --file sites/apps.txt --add "${APPS_TXT_ADD[@]}"
 }
