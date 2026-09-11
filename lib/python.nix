@@ -79,11 +79,24 @@ let
 
   # Last, so it wins over uv2nix's own src and over anything extraOverrides did.
   # Applied to the editable set as well, below.
+  #
+  # An override names the package root itself: app mode passes each app's
+  # checkout, the runtime option passes runtime/. The lock, though, may say the
+  # package lives in a *subdirectory* of its git source -- frappe-runtime does,
+  # under runtime/ of this repository -- and uv2nix honours that with a
+  # postUnpack that descends into it (lib/build.nix, `sourceRoot=
+  # "$sourceRoot/<subdirectory>"`). Against a src that is already the package,
+  # that descent looks for runtime/runtime and the build fails in unpackPhase.
+  # uv2nix sets postUnpack for nothing else, so clearing it is exact.
   srcOverlay =
     _final: prev:
-    lib.mapAttrs (name: src: prev.${name}.overrideAttrs (_: { inherit src; })) (
-      lib.filterAttrs (name: _: prev ? ${name}) srcOverrides
-    );
+    lib.mapAttrs (
+      name: src:
+      prev.${name}.overrideAttrs (_: {
+        inherit src;
+        postUnpack = "";
+      })
+    ) (lib.filterAttrs (name: _: prev ? ${name}) srcOverrides);
 
   pythonSet =
     (pkgs.callPackage pyproject-nix.build.packages {
