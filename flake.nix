@@ -186,6 +186,20 @@
               2>&1 | tee "$out"
           '';
 
+          # The node lock generator over the same fixture tree the Nix-side
+          # discovery is checked against, with a stub npm standing in for the
+          # resolver; the assertions are about what lands in node-locks/ and
+          # when it is regenerated.
+          node-locks = pkgs.runCommand "frappe-nix-node-locks-check" {
+            nativeBuildInputs = [ pkgs.findutils pkgs.jq ];
+          } ''
+            export HOME="$PWD"
+            bash ${./tests/node-locks.sh} \
+              ${import ./lib/node-locks.nix { inherit pkgs; }}/bin/frappe-nix-node-locks \
+              ${./tests/fixtures/node-targets/apps} \
+              2>&1 | tee "$out"
+          '';
+
           # The registry writer over a fixture bench: which apps land in
           # sites/apps.txt, and what apps.json records about each. Real git
           # repositories stand in for the checkouts, so the provenance
@@ -220,6 +234,8 @@
         // import ./tests/bench-update.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
+        # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
+        // import ./tests/node-targets.nix { inherit pkgs; }
         # The bench workspace app mode assembles around a single app.
         // import ./tests/app-workspace.nix { inherit pkgs; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it

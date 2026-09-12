@@ -138,7 +138,7 @@ Next steps:
   git diff --cached --stat     # review; nothing has been committed
   direnv allow                 # or: nix develop --no-pure-eval
   devenv up                    # MariaDB, Redis, web, scheduler, worker, …
-  bench-update --node-hashes   # generate node-offline-hashes.json before 'nix build'
+  bench-update --node-locks    # generate node-locks/ before 'nix build'
 EOF
   if [ ! -e sites/"$site" ]; then
     if grep -q 'frappe-nix\.secrets' flake.nix 2>/dev/null &&

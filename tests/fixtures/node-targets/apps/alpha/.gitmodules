@@ -1,0 +1,3 @@
+[submodule "vendored"]
+	path = vendored
+	url = https://example.com/vendored-ui.git

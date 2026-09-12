@@ -15,6 +15,27 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # Submodule operations on file:// URLs are refused by default.
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
 
+# ── a stub lock generator ─────────────────────────────────────────────────
+# NODE_LOCKS_CALLS — one line per invocation: "<cwd>\t<args>"
+# NODE_LOCKS_FAIL  — fail, as an unresolvable manifest would
+BIN="$ROOT/bin"
+mkdir -p "$BIN"
+printf '#!%s\n' "$(command -v bash)" > "$BIN/frappe-nix-node-locks"
+cat >> "$BIN/frappe-nix-node-locks" <<'STUB'
+printf '%s\t%s\n' "$PWD" "$*" >> "$NODE_LOCKS_CALLS"
+if [ "${NODE_LOCKS_FAIL:-}" = "1" ]; then
+  echo "  ✗ frappe: npm could not resolve a lock" >&2
+  exit 1
+fi
+mkdir -p node-locks/frappe
+echo '{}' > node-locks/frappe/package-lock.json
+STUB
+chmod +x "$BIN/frappe-nix-node-locks"
+export PATH="$BIN:$PATH"
+export NODE_LOCKS_CALLS="$ROOT/node-locks-calls"
+: > "$NODE_LOCKS_CALLS"
+lock_calls() { wc -l < "$NODE_LOCKS_CALLS" | tr -d ' '; }
+
 fails=0
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 no() {
@@ -111,6 +132,11 @@ check "the stray repo is reported, with the fix" \
 check "and how to vendor it" grep -q 'frappe-init --migrate' "$ROOT/pull.log"
 check_eq "the stray repo is left untouched" "$STRAY_SHA" "$(git -C apps/strayapp rev-parse HEAD)"
 
+echo "── node-locks/ follows the pull ────────────────────────────────"
+check_eq "the lock generator ran once, from the bench root, with the exclusion" \
+  "$(printf '%s\t--exclude=alpha/desk . node-locks' "$BENCH")" "$(cat "$NODE_LOCKS_CALLS")"
+check "and the user is told to commit node-locks/" grep -q 'commit node-locks/' "$ROOT/pull.log"
+
 echo "── the registry follows the pull ───────────────────────────────"
 check "sites/apps.json was written" test -f sites/apps.json
 check_eq "it records the new frappe commit" "$TIP" "$(jq -r .frappe.resolution.commit_hash sites/apps.json)"
@@ -118,6 +144,26 @@ check_eq "and the new version" "16.1.0" "$(jq -r .frappe.version sites/apps.json
 check_eq "the local app is not a repo" "false" "$(jq -r .localapp.is_repo sites/apps.json)"
 check_eq "apps.txt is the members" "frappe localapp strayapp" "$(xargs < sites/apps.txt)"
 check "the user is told to commit it" grep -q 'commit sites/apps.json' "$ROOT/pull.log"
+
+echo "── --node-locks ────────────────────────────────────────────────"
+: > "$NODE_LOCKS_CALLS"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --node-locks > "$ROOT/locks.log" 2>&1 \
+  && ok "--node-locks exits 0" || { no "--node-locks exits 0"; cat "$ROOT/locks.log"; }
+check_eq "it runs the generator over the whole bench" "1" "$(lock_calls)"
+check "and nothing else" bash -c "! grep -q 'Pulling latest' '$ROOT/locks.log'"
+if NODE_LOCKS_FAIL=1 FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --node-locks > "$ROOT/locks-fail.log" 2>&1; then
+  no "a generator failure fails --node-locks"
+else
+  ok "a generator failure fails --node-locks"
+fi
+NODE_LOCKS_FAIL=1 FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-lockfail.log" 2>&1 \
+  && ok "but only warns during --pull" || { no "but only warns during --pull"; cat "$ROOT/pull-lockfail.log"; }
+check "…and says how to retry" grep -q 'nix build keeps the previous locks' "$ROOT/pull-lockfail.log"
+: > "$NODE_LOCKS_CALLS"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --node-hashes > "$ROOT/hashes.log" 2>&1 \
+  && ok "--node-hashes still works" || { no "--node-hashes still works"; cat "$ROOT/hashes.log"; }
+check "…as an alias that says so" grep -q 'now --node-locks' "$ROOT/hashes.log"
+check_eq "…and runs the generator" "1" "$(lock_calls)"
 
 echo "── a pull with nothing to pull ─────────────────────────────────"
 FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull2.log" 2>&1 \

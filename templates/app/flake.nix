@@ -31,7 +31,7 @@
   # Outputs:
   #   devShells.<system>.default — devenv: MariaDB, Redis, web, worker, socketio…
   #   packages.<system>.default  — a built bench with this app's assets compiled in
-  #   apps.<system>.relock       — regenerate nix/uv.lock + nix/node-offline-hashes.json
+  #   apps.<system>.relock       — regenerate nix/uv.lock + nix/node-locks/
   outputs =
     { frappe-nix, ... }@inputs:
     frappe-nix.lib.mkFlake { inherit inputs; } (

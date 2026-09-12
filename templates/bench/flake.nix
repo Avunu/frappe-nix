@@ -68,7 +68,7 @@
               nodejs = pkgs.@NODEJS@;
 
               # Build production OCI images with `nix build .#web` (etc.).
-              # Generate the required yarn hashes first: `bench-update --node-hashes`.
+              # Generate node-locks/ first: `bench-update --node-locks`.
               # containers.enable = true;
             };
           };
