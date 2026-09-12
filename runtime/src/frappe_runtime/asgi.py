@@ -14,6 +14,7 @@ from frappe.app import application as wsgi_application
 from frappe.app import application_with_statics
 from frappe_runtime.config import get_config as get_socketio_config
 from frappe_runtime.server import RealtimeServer
+from frappe_runtime.util import default_site_middleware
 from frappe.utils.data import sbool
 
 DEFAULT_WEB_THREADS = 8
@@ -23,6 +24,10 @@ if sbool(os.environ.get("FRAPPE_SERVE_ASSETS", False)):
 	wsgi_application = application_with_statics()
 
 socketio_config = get_socketio_config(embedded=True)
+# `bench serve` pinned the site from FRAPPE_SITE; the direct import above does
+# not, so a Host that names no site (http://localhost:<port>) gets the default
+# site the same way the realtime half already resolves it. See util.py.
+wsgi_application = default_site_middleware(wsgi_application, socketio_config)
 application = RealtimeServer(
 	socketio_config, other_asgi_app=WSGIMiddleware(wsgi_application, workers=web_threads)
 ).app

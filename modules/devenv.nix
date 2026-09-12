@@ -2215,8 +2215,11 @@ in
                   # NB no X-Frappe-Site-Name: frappe/app.py reads it *before*
                   # get_site_name(request.host), which would pin the bench to one
                   # site and break the documented siteName = "" multi-tenancy
-                  # mode. With Host: localhost:<port>, socketio's authenticate.js
-                  # already falls through to default_site.
+                  # mode. The default site is the runtime's business instead:
+                  # a Host that names no site on the bench (localhost:<port>)
+                  # gets FRAPPE_SITE / default_site, on both the web and the
+                  # socket.io path, and a Host that does keeps its site. See
+                  # runtime/src/frappe_runtime/util.py, default_site_middleware.
                   #
                   # And no Origin override: production sets one only because a
                   # unix listener reports $scheme as http behind a TLS-terminating

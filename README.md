@@ -442,6 +442,8 @@ The ports are hashed from `benchName` rather than the project path so that every
 
 `apps/*` are installed as **editable** packages (uv2nix editable overlay), so source edits hot-reload. `uv` and `yarn` write to mutable state dirs (`$DEVENV_STATE`) so `uv add` / `yarn add` work despite the read-only Nix store; the resulting `uv.lock` / `yarn.lock` are then consumed declaratively for production builds.
 
+`http://localhost:<port>` (and `127.0.0.1`) serves the site named by `siteName`: the unified runtime sends a request whose `Host` names no site on the bench to `FRAPPE_SITE` / `default_site`, on the web and the socket.io path alike, while a `Host` that does name a site — `http://other.localhost:<port>` on a bench with several — still reaches that one. (`bench serve` used to pin every request to `FRAPPE_SITE`; the runtime, which imports the WSGI app directly, had lost that.)
+
 Each app's `node_modules` is a real `yarn install`, not the Nix-built one — nested vite frontends (`erpnext/banking`, `hrms/frontend`, `helpdesk/desk`, …) get their deps from a postinstall that needs the network. It is skipped for an app whose `package.json`/`yarn.lock` — its own and every nested one — are unchanged since the last successful install, and re-run when any of them moves. `bench build` re-runs it too, and refuses to build if it fails: pull an app that added a dependency, build without reinstalling, and what you get is a missing-package error from a vite config several apps deep, naming nothing that leads back to the install.
 
 ### Development guard rails
