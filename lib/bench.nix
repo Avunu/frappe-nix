@@ -3,7 +3,9 @@
 # benchRoot  — unbuilt /bench tree for dev shells and as a build input. Also
 #              where sites/apps.txt and sites/apps.json are generated: the
 #              registry is an output of the package, never a copy of what the
-#              bench happens to have committed.
+#              bench happens to have committed. And where each app's (and each
+#              nested frontend's) node_modules, built from the committed
+#              node-locks/, are linked in.
 # builtBench — benchRoot + compiled assets (`bench build`), the deployable
 #              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames,
 #              registeredApps} so the NixOS module can discover interpreters
@@ -15,10 +17,22 @@
   prodPythonEnv,
   workspaceRoot,
   nodejs,
+  # "app/subdir" keys of nested frontends to leave out entirely: no lock, no
+  # node_modules, and the parent app's build/postinstall scripts that drive the
+  # subdir are dropped from its package.json (see dropNestedFrontendScripts).
   nodeNestedFrontendExcludes ? [ ],
+  # Per target key (an app name, or "app/subdir"): extra `derivationArgs` for
+  # importNpmLock.buildNodeModules — npmFlags, npmRebuildFlags (`""` to run
+  # lifecycle scripts), postPatch, nativeBuildInputs, or an npmDeps of your own.
   nodeOverrides ? { },
-  nodeOfflineHashes ? { },
   extraPackages ? [ ],
+  # Where node-locks/<target>/ lives. The workspace root's in a bench; the app
+  # repository's nix/node-locks in app mode (there is no bench root to commit
+  # to there, and the assembled workspace is rebuilt on every pin bump).
+  nodeLocksDir ? workspaceRoot + "/node-locks",
+  # What to tell the user when a lock is missing or stale — the command
+  # differs between a bench and an app repository.
+  nodeLocksAdvice ? "run `bench-update --node-locks` and commit node-locks/",
   # App mode hands both of these over instead of letting them be discovered.
   #
   # Discovery is right for a bench, where apps/ is the checkout and readDir is the
@@ -115,118 +129,104 @@ let
 
   provenanceFile = pkgs.writeText "apps-provenance.json" (builtins.toJSON provenance);
 
+  # ── node_modules ────────────────────────────────────────────────────────
+  #
+  # Every node target — an app with a package.json, and each nested frontend
+  # under it (lib/node-targets.nix) — gets a node_modules built by
+  # pkgs.importNpmLock from node-locks/<target>/package-lock.json, committed
+  # to the bench and written by `frappe-nix-node-locks` (lib/node-locks.nix)
+  # with npm: pinned to the app's yarn.lock when it ships one, resolved from
+  # package.json when it does not. No hash is computed anywhere. Each package
+  # is fetched by the integrity the lock already carries, a git dependency by
+  # its commit — so an upstream yarn.lock bump costs a lock regeneration,
+  # never a hash hunt, and a nested frontend gets the same treatment as its
+  # parent rather than a hand-rolled offline install inside builtBench.
+  #
+  # The dev shell does not use these: it installs with a plain online
+  # `yarn install`, as upstream tooling expects (lib/node-modules.nix).
+
+  # Dev-shell contract only (scripts.nix, enterShell): `yarn install
+  # --frozen-lockfile` wants a yarn.lock, so this is the apps that have one.
   appsWithNode = lib.filter (
     app:
     builtins.pathExists (appSrcOf app + "/package.json")
     && builtins.pathExists (appSrcOf app + "/yarn.lock")
   ) names;
 
-  # Per-app fetchYarnDeps offline-cache hashes. The committed
-  # node-offline-hashes.json (kept current by `bench-update`) is the source of
-  # truth; entries in the nodeOfflineHashes option override it.
-  offlineHashesFile = workspaceRoot + "/node-offline-hashes.json";
-  fileOfflineHashes =
-    if builtins.pathExists offlineHashesFile then
-      builtins.fromJSON (builtins.readFile offlineHashesFile)
-    else
-      { };
-  offlineHashes = fileOfflineHashes // nodeOfflineHashes;
+  nodeTargets = (import ./node-targets.nix { inherit lib; }).discover {
+    inherit names appSrcOf;
+    excludes = nodeNestedFrontendExcludes;
+  };
+  nodeTargetKeys = map (t: t.key) nodeTargets;
 
-  # Build immutable node_modules from yarn.lock using the yarn-v1 hooks
-  # (yarn2nix / mkYarnPackage was removed from nixpkgs). fetchYarnDeps builds an
-  # offline mirror — its hash depends on the app's yarn.lock. Hashes live in
-  # node-offline-hashes.json; run `bench-update --node-hashes` to (re)generate
-  # them. A missing hash falls back to lib.fakeHash so the build fails with the
-  # `got: sha256-…` value to record.
-  #
-  # postinstall scripts are skipped (the hook passes --ignore-scripts): apps like
-  # hrms run nested `yarn install` in frontend/ subdirs needing network access
-  # not available in the sandbox.
-  nodeModulesForApp =
-    app:
-    let
-      appOverrides = nodeOverrides.${app} or { };
-      appSrc = appSrcOf app;
-      offlineCache = pkgs.fetchYarnDeps {
-        yarnLock = appSrc + "/yarn.lock";
-        hash = offlineHashes.${app} or lib.fakeHash;
-      };
-    in
-    pkgs.stdenv.mkDerivation (
-      {
-        name = "${app}-node-modules";
-        src = appSrc;
-        nativeBuildInputs = [
-          pkgs.yarnConfigHook
-          pkgs.yarn
-          nodejs
-        ];
-        yarnOfflineCache = offlineCache;
-        dontBuild = true;
-        installPhase = ''
-          runHook preInstall
-          mkdir -p $out
-          cp -R node_modules $out/node_modules
-          runHook postInstall
-        '';
-      }
-      // appOverrides
+  lockDirOf = t: nodeLocksDir + "/${t.key}";
+  hasLock =
+    t:
+    builtins.pathExists (lockDirOf t + "/package-lock.json")
+    && builtins.pathExists (lockDirOf t + "/package.json");
+
+  # The same manifests, hashed the same way, as the generator's source.json.
+  sourceStamp =
+    t:
+    lib.listToAttrs (
+      lib.concatMap (
+        f:
+        lib.optional (builtins.pathExists (t.src + "/${f}")) (
+          lib.nameValuePair f (builtins.hashFile "sha256" (t.src + "/${f}"))
+        )
+      ) [ "package.json" "yarn.lock" "package-lock.json" ]
     );
+  lockIsStale =
+    t:
+    builtins.pathExists (lockDirOf t + "/source.json")
+    && lib.importJSON (lockDirOf t + "/source.json") != sourceStamp t;
 
-  nodeModules = lib.genAttrs appsWithNode nodeModulesForApp;
-
-  # Discover nested frontends: subdirs of apps that have their own yarn.lock
-  # (e.g. commit/dashboard, commit/docs). These need separate offline caches
-  # because their postinstall-driven `yarn install` is skipped in the sandbox.
-  # Hash keys in node-offline-hashes.json use "app/subdir" format.
-  #
-  # `nodeNestedFrontendExcludes` drops a frontend from discovery entirely, by
-  # that same "app/subdir" key. It exists for the case where an upstream app
-  # ships a yarn.lock that cannot resolve offline at all -- typically a
-  # dependency bump that did not regenerate the transitive entries, leaving a
-  # range no lockfile entry satisfies. `fetchYarnDeps` still succeeds there
-  # (it mirrors exactly what the lock lists, so the hash is *correct*), and the
-  # failure lands later, in builtBench's `yarn install --offline`, as
-  #
-  #   error Couldn't find any versions for "<pkg>" that matches "<range>"
-  #         in our cache (possible versions are "")
-  #
-  # No hash refresh fixes that; the lockfile itself is wrong. Excluding the
-  # frontend skips building its assets, which costs whatever routes that
-  # frontend serves -- plus, if the parent app's own `build` script is what
-  # builds it, that script (see dropNestedFrontendScripts below, which is what
-  # keeps the rest of `bench build` working). Prefer it to forking the app when
-  # the frontend is optional, and drop the entry once upstream repairs the lock.
-  nestedFrontends = lib.concatMap (app:
+  nodeModulesFor =
+    t:
     let
-      appDir = appSrcOf app;
-      subdirs = builtins.attrNames (
-        lib.filterAttrs (_: type: type == "directory")
-          (builtins.readDir appDir)
-      );
+      dir = lockDirOf t;
     in
-    lib.concatMap (sub:
-      let subDir = appDir + "/${sub}"; in
-      if builtins.pathExists (subDir + "/yarn.lock")
-         && builtins.pathExists (subDir + "/package.json")
-         && sub != "node_modules"
-         && !(lib.elem "${app}/${sub}" nodeNestedFrontendExcludes)
-      then [{
-        app = app;
-        subdir = sub;
-        path = subDir;
-        hashKey = "${app}/${sub}";
-      }]
-      else []
-    ) subdirs
-  ) appsWithNode;
+    lib.warnIf (lockIsStale t)
+      "frappe-nix: node-locks/${t.key} is older than apps/${t.key}'s package.json/yarn.lock — ${nodeLocksAdvice}"
+      (
+        pkgs.importNpmLock.buildNodeModules {
+          # The normalized manifest npm resolved against (yarn `resolutions`
+          # turned into npm `overrides`), not the app's own: the lock only
+          # makes sense next to the manifest it was resolved from.
+          package = lib.importJSON (dir + "/package.json");
+          packageLock = lib.importJSON (dir + "/package-lock.json");
+          inherit nodejs;
+          derivationArgs = {
+            pname = "${lib.replaceStrings [ "/" ] [ "-" ] t.key}-node-modules";
+            # Strings, not lists: buildNodeModules forces structured attrs, under
+            # which the hook's `$npmInstallFlags` is a bash array's first element.
+            #
+            # --legacy-peer-deps mirrors the generator: yarn v1 never installed
+            # peers, the lock was resolved without them, and an install that
+            # disagreed would re-resolve — offline, so it would fail instead.
+            npmInstallFlags = "--legacy-peer-deps";
+            # No lifecycle scripts, as before. Every native piece a Frappe
+            # frontend needs is a platform package or a prebuilt binary; a
+            # consumer whose app is different sets npmRebuildFlags = "".
+            npmRebuildFlags = "--ignore-scripts";
+          }
+          // (nodeOverrides.${t.key} or { });
+        }
+      );
 
-  nestedOfflineCaches = lib.listToAttrs (map (nf:
-    lib.nameValuePair nf.hashKey (pkgs.fetchYarnDeps {
-      yarnLock = nf.path + "/yarn.lock";
-      hash = offlineHashes.${nf.hashKey} or lib.fakeHash;
-    })
-  ) nestedFrontends);
+  lockedTargets = lib.filter hasLock nodeTargets;
+  missingLocks = lib.filter (t: !(hasLock t)) nodeTargets;
+
+  nodeModules = lib.listToAttrs (map (t: lib.nameValuePair t.key (nodeModulesFor t)) lockedTargets);
+
+  # A missing lock is not fatal here — the dev shell never needs it — but the
+  # package it produces has no node_modules for that target, and `bench build`
+  # runs `yarn install` (online) the moment it finds an app without one.
+  warnMissingLocks = lib.warnIf (missingLocks != [ ]) (
+    "frappe-nix: no node lock for ${lib.concatMapStringsSep ", " (t: t.key) missingLocks} — "
+    + nodeLocksAdvice
+    + ". Until then the package carries no node_modules for it, and builtBench fails on any of them with a build script."
+  );
 
   # The excluded subdirs belonging to one app, from the flat "app/subdir" list.
   excludedSubdirsOf =
@@ -242,7 +242,7 @@ let
   # deployed tree walks into the same repaired package.json.
   dropNestedFrontendScripts = ./js/drop-nested-frontend-scripts.js;
 
-  benchRoot = pkgs.runCommand "bench-root" {
+  benchRoot = warnMissingLocks (pkgs.runCommand "bench-root" {
     # Not pkgs.git: sync-registry reads a checkout's .git when there is one,
     # and a store copy that happened to carry one must not change the output.
     # Without git on PATH the tool falls through to .gitmodules and the seed.
@@ -257,10 +257,6 @@ let
       map (app: ''
         cp -r ${appSrcOf app} $out/bench/apps/${app}
         chmod -R u+w $out/bench/apps/${app}
-        ${lib.optionalString (builtins.elem app appsWithNode) ''
-          rm -rf $out/bench/apps/${app}/node_modules
-          ln -s ${nodeModules.${app}}/node_modules $out/bench/apps/${app}/node_modules
-        ''}
         ${lib.optionalString (excludedSubdirsOf app != [ ]) ''
           node ${dropNestedFrontendScripts} \
             $out/bench/apps/${app}/package.json \
@@ -268,6 +264,25 @@ let
         ''}
       '') names
     )}
+
+    # node_modules, for every target with a lock: a real directory of links
+    # to the store's packages, not one link to the store's node_modules. Vite
+    # (8, via rolldown) mkdirs node_modules/.vite-temp while it bundles an ESM
+    # vite.config, and only an EACCES is tolerated — the sandbox's read-only
+    # store answers EROFS and the build dies. Node, esbuild and vite realpath
+    # through the per-entry links; the directory itself is writable wherever
+    # the tree is copied to (builtBench's $TMPDIR).
+    _link_node_modules() { # <store node_modules> <destination>
+      mkdir -p "$2"
+      for entry in "$1"/* "$1"/.[!.]*; do
+        { [ -e "$entry" ] || [ -L "$entry" ]; } || continue
+        ln -s "$entry" "$2/''${entry##*/}"
+      done
+    }
+    ${lib.concatMapStrings (t: ''
+      rm -rf $out/bench/apps/${t.key}/node_modules
+      _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
+    '') lockedTargets}
 
     # The registry. The committed apps.json, if any, is only a *seed*: the
     # lowest-ranked source, consulted for a commit hash the sandbox cannot
@@ -291,7 +306,7 @@ let
       cp -r ${workspaceRoot + "/config"}/* $out/bench/config/ 2>/dev/null || true
       chmod -R u+w $out/bench/config
     ''}
-  '';
+  '');
 
   # Production-ready bench with compiled assets. Runs `bench build` (frappe's
   # esbuild pipeline) inside the Nix sandbox, producing sites/assets/ with
@@ -302,11 +317,13 @@ let
     dontUnpack = true;
     dontConfigure = true;
 
+    # yarn stays: `bench build` is `yarn run production` in apps/frappe, and
+    # every app with a build script is built with `yarn build`. It only runs
+    # scripts against the node_modules already linked in; nothing is installed.
     nativeBuildInputs = [
       prodPythonEnv
       nodejs
       pkgs.yarn
-      pkgs.fixup-yarn-lock
       pkgs.git
     ];
 
@@ -328,32 +345,13 @@ let
       export HOME=$TMPDIR/home
       mkdir -p $HOME
 
-      # Install nested frontends (e.g. commit/dashboard, commit/docs) that have
-      # their own yarn.lock. The top-level Nix node_modules build skips postinstall,
-      # so these never get installed. Replicate yarnConfigHook's approach: set the
-      # offline mirror, fixup the lockfile, then install offline.
-      ${lib.concatStringsSep "\n" (
-        map (nf: ''
-          _subdir=$TMPDIR/bench/apps/${nf.app}/${nf.subdir}
-          echo "Installing nested frontend: ${nf.hashKey}"
-          (
-            cd "$_subdir"
-            yarn config --offline set yarn-offline-mirror ${nestedOfflineCaches.${nf.hashKey}}
-            fixup-yarn-lock yarn.lock
-            yarn install \
-              --frozen-lockfile \
-              --force \
-              --production=false \
-              --ignore-engines \
-              --ignore-platform \
-              --ignore-scripts \
-              --no-progress \
-              --non-interactive \
-              --offline
-            patchShebangs node_modules
-          )
-        '') nestedFrontends
-      )}
+      # A classic bench always has sites/common_site_config.json, and some
+      # vite configs read it unconditionally on load (erpnext/banking's
+      # proxyOptions.ts, for the dev-server proxy port) — a missing file is an
+      # ENOENT in the middle of `yarn build`. Build-time only: installPhase
+      # takes sites/ from benchRoot, and the real file is the operator's.
+      [ -f $TMPDIR/bench/sites/common_site_config.json ] \
+        || echo '{}' > $TMPDIR/bench/sites/common_site_config.json
 
       cd $TMPDIR/bench
       ${prodPythonEnv}/bin/bench build --production 2>&1
@@ -364,24 +362,35 @@ let
     installPhase = ''
       runHook preInstall
 
-      # Start from benchRoot (preserves store symlinks for env, node_modules),
-      # then layer the compiled assets on top.
-      mkdir -p $out
-      cp -a ${benchRoot}/* $out/
+      # Start from benchRoot (preserves the store symlink for env), then take
+      # apps/ as the build left it. The whole tree, not just esbuild's
+      # apps/<app>/<app>/public/dist: a nested frontend's `vite build` writes
+      # wherever its config says (erpnext/public/banking, hrms/public/frontend)
+      # and its `copy-html-entry` writes the page under <app>/www/ — cherry-
+      # picking dist/ shipped a package whose frontends had built and were
+      # missing. node_modules travel as they are: directories of links into
+      # the store (benchRoot), which cp -a preserves.
+      mkdir -p $out/bench
+      for entry in ${benchRoot}/bench/* ${benchRoot}/bench/.[!.]*; do
+        { [ -e "$entry" ] || [ -L "$entry" ]; } || continue
+        [ "''${entry##*/}" = apps ] && continue
+        cp -a "$entry" $out/bench/
+      done
+      cp -a $TMPDIR/bench/apps $out/bench/apps
       chmod -R u+w $out/bench/sites
 
-      # Copy per-app dist bundles written by esbuild. The dist files are at
-      # apps/<app>/<app>/public/dist/ (esbuild writes through the sites/assets
-      # symlinks which point to apps/<app>/<app>/public/).
-      ${lib.concatStringsSep "\n" (
-        map (app: ''
-          if [ -d "$TMPDIR/bench/apps/${app}/${app}/public/dist" ]; then
-            chmod -R u+w $out/bench/apps/${app}/${app}/public 2>/dev/null || true
-            rm -rf $out/bench/apps/${app}/${app}/public/dist
-            cp -a $TMPDIR/bench/apps/${app}/${app}/public/dist $out/bench/apps/${app}/${app}/public/dist
-          fi
-        '') names
-      )}
+      # `bench build` links each app's <app>/public/node_modules at
+      # apps/<app>/node_modules by absolute path — the build tree's. Point
+      # those at $out, as the sites/assets links are below.
+      find $out/bench/apps -type l | while IFS= read -r link; do
+        target=$(readlink "$link")
+        case "$target" in
+          "$TMPDIR/bench"/*|/build/bench/*)
+            newtarget=$(echo "$target" | sed "s|$TMPDIR/bench|$out/bench|; s|^/build/bench|$out/bench|")
+            ln -sfn "$newtarget" "$link"
+            ;;
+        esac
+      done
 
       # bench build creates sites/assets/ with symlinks to each app's public dir
       # and compiled files (locale .mo files, etc.). The symlinks point into the
@@ -413,6 +422,8 @@ let
       # The contents of sites/apps.txt, in order: the workspace members that
       # are Frappe apps. A subset of appNames, which is every apps/ directory.
       inherit registeredApps;
+      # Every app and nested frontend that has (or should have) a node lock.
+      nodeTargets = nodeTargetKeys;
       # Function: root -> colon-separated PYTHONPATH of apps under root.
       # Usage: pkg.passthru.appsPath "${pkg}/bench"
       inherit appsPath;
@@ -422,6 +433,7 @@ let
 in
 {
   appNames = names;
+  nodeTargets = nodeTargetKeys;
   inherit
     registeredApps
     appsWithNode

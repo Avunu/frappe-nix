@@ -20,7 +20,7 @@ provision-site               # (first run, another shell) create the site + inst
 
 `bench` is wrapped so the normal commands Just Work in this environment:
 
-- `bench update` — pull apps, refresh node hashes, migrate, build
+- `bench update` — pull apps, refresh node-locks/, migrate, build
 - `bench get-app <url|alias>` — add an app (git submodule + uv workspace)
 - `bench new-app <name>` — scaffold a new app
 - `bench migrate` / `bench build` / `bench console` — as usual

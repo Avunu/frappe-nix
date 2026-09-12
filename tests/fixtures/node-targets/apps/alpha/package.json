@@ -1,0 +1,14 @@
+{
+  "name": "alpha",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": { "build": "cd desk && yarn build" },
+  "dependencies": { "left-pad": "^1.3.0", "air-datepicker": "git+https://github.com/example/air-datepicker" },
+  "resolutions": {
+    "sortablejs": "^1.15.7",
+    "esbuild-plugin-vue3/esbuild": "^0.28.0",
+    "@scope/pkg/child": "2.0.0",
+    "**/deep": "3.1.0"
+  },
+  "workspaces": ["desk"]
+}

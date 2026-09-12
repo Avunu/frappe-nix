@@ -61,9 +61,6 @@
   # .#relock` has to be reachable in a repo that does not have a lock yet, and
   # it only needs the apps and the generated pyproject.toml.
   lockFile ? null,
-  # The app repo's committed node-offline-hashes.json, or null. Copied to where
-  # lib/bench.nix already looks for it, so that code path needs no app-mode case.
-  nodeHashesFile ? null,
 }:
 
 let
@@ -135,8 +132,5 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
 
     ${lib.optionalString (lockFile != null) ''
       install -m 0644 ${lockFile} "$out/uv.lock"
-    ''}
-    ${lib.optionalString (nodeHashesFile != null) ''
-      install -m 0644 ${nodeHashesFile} "$out/node-offline-hashes.json"
     ''}
   ''

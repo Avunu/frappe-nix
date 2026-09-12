@@ -16,6 +16,9 @@ let
       inherit lib pkgs;
       appsWithNode = [ ];
       benchBin = "bench";
+      # The lock generator is a stub on PATH in the test; the exclusion must
+      # reach it as a flag.
+      nodeNestedFrontendExcludes = [ "alpha/desk" ];
     }).bench-update.exec;
 in
 {
