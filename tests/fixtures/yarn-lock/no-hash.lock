@@ -1,0 +1,5 @@
+# yarn lockfile v1
+
+nohash@1.0.0:
+  version "1.0.0"
+  resolved "https://example.com/nohash-1.0.0.tgz"

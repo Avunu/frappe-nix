@@ -1,0 +1,5 @@
+# yarn lockfile v1
+
+"air-datepicker@git+https://github.com/example/air-datepicker":
+  version "3.4.0"
+  resolved "git+https://github.com/example/air-datepicker#ed37b94d95c68d8544357e330be0c89d044a3eea"

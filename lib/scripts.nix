@@ -97,11 +97,13 @@ let
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
   '';
 
-  # Shell snippet: (re)generate node-locks/ — the committed package-lock.json
-  # per app and nested frontend that `nix build` installs node_modules from.
-  # Discovers its own targets under apps/, so an app added a moment ago by
-  # bench-get-app is covered before the shell has re-evaluated; its stamp makes
-  # a target whose manifests did not move free. Expects cwd at the bench root.
+  # Shell snippet: (re)generate node-locks/ — the fallback yarn.lock per app
+  # and nested frontend that ships none of its own (and the forced ones), which
+  # `nix build` installs that target's node_modules from. Discovers its own
+  # targets under apps/, so an app added a moment ago by bench-get-app is
+  # covered before the shell has re-evaluated; its stamp makes a target whose
+  # manifests did not move free. Expects cwd at the bench root. Arguments name
+  # targets to resolve regardless — over the app's own yarn.lock, if it has one.
   regenNodeLocks = "${nodeLocksBin} ${
     lib.escapeShellArgs (map (k: "--exclude=${k}") nodeNestedFrontendExcludes)
   } . node-locks";
@@ -348,6 +350,7 @@ secretScripts
     MIGRATE=true
     BUILD=true
     NODE_LOCKS=false
+    NODE_LOCK_TARGETS=()
 
     for arg in "$@"; do
       case "$arg" in
@@ -386,16 +389,25 @@ ${
               echo "To move the pinned apps: nix flake update && nix run .#relock"''
       else
         ''
-              echo "Usage: bench-update [--pull | --migrate | --build | --node-locks]"
+              echo "Usage: bench-update [--pull | --migrate | --build | --node-locks [<app>[/<subdir>]…]]"
               echo ""
               echo "  (no flags)     Pull apps, refresh node-locks/, migrate, build"
               echo "  --pull         Pull latest commits + refresh node-locks/ for what moved"
               echo "  --migrate      Run DB migrations only"
               echo "  --build        Build JS/CSS assets only"
-              echo "  --node-locks   (Re)generate node-locks/ for every app and nested frontend (needs the network)"''
+              echo "  --node-locks   (Re)generate node-locks/: a fallback yarn.lock for every app and nested"
+              echo "                 frontend without one of its own (needs the network). Name a target to"
+              echo "                 force a lock over the yarn.lock it ships — for one that cannot resolve offline."''
     }
           exit 0 ;;
-        *) echo "Unknown flag: $arg" >&2; exit 1 ;;
+        -*) echo "Unknown flag: $arg" >&2; exit 1 ;;
+        *)
+          if $NODE_LOCKS; then
+            NODE_LOCK_TARGETS+=("$arg")
+          else
+            echo "Unexpected argument: $arg (targets only follow --node-locks)" >&2
+            exit 1
+          fi ;;
       esac
     done
 
@@ -545,13 +557,15 @@ ${
       echo "  commit sites/apps.json along with the submodule bumps"
       echo ""
 
-      # node-locks/ for whatever the pull moved. The generator's own stamp
-      # decides what that was — a lock whose manifests did not change costs
-      # nothing — and a nested frontend that arrived with the pull gets its
-      # lock in the same run.
+      # The fallback locks, for whatever the pull moved: an app without a
+      # yarn.lock of its own whose package.json changed, a forced lock whose
+      # upstream yarn.lock changed. The generator's own stamp decides what that
+      # was — anything else costs nothing — and an app that arrived with the
+      # pull lacking a lock gets its fallback in the same run. Apps that ship
+      # a yarn.lock are not its business: they build from that.
       echo "── Refreshing node-locks/ ──────────────────────────────────"
       ${regenNodeLocksSoft}
-      echo "  commit node-locks/ along with the submodule bumps"
+      echo "  commit node-locks/ along with the submodule bumps, if it changed"
       echo ""
 
       # Re-lock when an app's pyproject.toml moved. The Python half of this used
@@ -592,7 +606,7 @@ ${
 
     if $NODE_LOCKS; then
       echo "── Regenerating node-locks/ ────────────────────────────────"
-      ${regenNodeLocks}
+      ${regenNodeLocks} "''${NODE_LOCK_TARGETS[@]}"
     fi
 
     if $MIGRATE; then
@@ -915,7 +929,7 @@ ${
         ''echo "Done! Commit any changed yarn.lock, then: nix run .#relock"''
       else
         ''
-          echo "Regenerating node-locks/ from the new yarn.lock files…"
+          echo "Refreshing node-locks/ for the apps without a yarn.lock of their own…"
           ${regenNodeLocksSoft}
           echo "Done! Commit uv.lock, the yarn.lock files and node-locks/."
         ''
@@ -1058,7 +1072,7 @@ ${
       echo "Next steps:"
       echo "  1. Restart devenv: direnv reload --no-eval-cache"
       echo "  2. Install the app: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
-      echo "  3. If it ships a package.json, lock its node deps for nix build: bench-update --node-locks"
+      echo "  3. If it ships a package.json but no yarn.lock, resolve one for nix build: bench-update --node-locks"
     '';
     description = "Add a Frappe app from a git URL/alias as a submodule and register it in the uv workspace.";
   };

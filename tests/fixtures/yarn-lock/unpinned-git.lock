@@ -1,0 +1,5 @@
+# yarn lockfile v1
+
+"floating@git+https://github.com/example/floating":
+  version "1.0.0"
+  resolved "git+https://github.com/example/floating"

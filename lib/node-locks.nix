@@ -1,25 +1,30 @@
-# frappe-nix-node-locks — writes node-locks/<target>/ for every node target of a
-# bench: the package-lock.json the Nix build installs node_modules from, the
-# normalized package.json it was resolved against, and a stamp of the sources.
+# frappe-nix-node-locks — writes node-locks/<target>/yarn.lock, the fallback
+# lock for a node target that ships no yarn.lock of its own.
 #
-# The lock is what makes the build hash-free. `pkgs.importNpmLock` fetches each
-# package by the `integrity` the lock already carries, so nothing has to be
-# mined out of a failing fixed-output derivation the way fetchYarnDeps' mirror
-# hash had to be. And npm is the one resolving it: with a yarn.lock beside the
-# manifest, `npm install --package-lock-only` pins to the yarn.lock's versions
-# and integrity (it refuses a yarn.lock whose hash is wrong, so it really does
-# read it); without one, it resolves from package.json. Those are the two
-# things a Frappe app can ship, and one command covers both.
+# The rule is that an app's node_modules is built from the app's yarn.lock
+# (lib/yarn-lock.nix, lib/bench.nix), and nothing about it is committed to the
+# bench. This tool exists for the exceptions. An app whose upstream never
+# committed a lock gets one resolved here from its package.json — `yarn
+# install` in a scratch directory holding nothing but the manifests, and the
+# yarn.lock it writes is the fallback — so that the build has something to pin
+# to. An app whose upstream lock is broken (a dependency bump that never
+# regenerated the transitive entries, leaving a range no entry satisfies —
+# yarn's "Couldn't find any versions for … in our cache" offline) can be
+# *forced*: named explicitly, it gets a fallback resolved with its own
+# yarn.lock as the seed, so upstream's pins stay and only the gap is filled,
+# and the stamp records that the override was deliberate. The build then takes
+# the fallback over the upstream lock for that target, and only that one.
 #
 # Committed, because the sandbox has no network and a bench's apps are
 # submodules whose trees are pinned — the lock cannot live next to the app's
-# package.json. The stamp is what keeps regeneration cheap and honest: a target
-# whose manifests have not moved costs nothing, and a target whose manifests
-# have is regenerated whether or not a lock exists.
+# package.json. The stamp (source.json) is what keeps regeneration cheap and
+# honest: a target whose manifests have not moved costs nothing, one whose
+# manifests have is re-resolved, and the previous fallback is the seed so only
+# what has to move does.
 #
-# npm is taken from PATH on purpose: the dev shell and `relock` put
-# `frappe-nix.nodejs` there, and a lock resolved by that npm is the lock that
-# nodejs's npm installs in the sandbox.
+# yarn is taken from PATH on purpose: the dev shell pins its own nodejs/yarn
+# via `frappe-nix.nodejs`, and `relock` puts the same on PATH, so the lock is
+# resolved by the yarn that will install it.
 { pkgs }:
 
 pkgs.writeShellApplication {
@@ -27,21 +32,26 @@ pkgs.writeShellApplication {
   runtimeInputs = with pkgs; [
     coreutils
     findutils
+    gawk
     jq
   ];
   text = ''
     usage() {
-      echo "usage: frappe-nix-node-locks [--exclude=<app/subdir>]... <bench-root> <locks-dir> [<target>...]" >&2
-      echo "  no targets: discover every app and nested frontend under <bench-root>/apps," >&2
-      echo "  and prune <locks-dir> to that set; with targets: only those, no pruning" >&2
+      echo "usage: frappe-nix-node-locks [--exclude=<app/subdir>]... [--command=<how to invoke me>] <bench-root> <locks-dir> [<target>...]" >&2
+      echo "  no targets: every app and nested frontend under <bench-root>/apps without a yarn.lock" >&2
+      echo "  of its own (plus the forced locks already in <locks-dir>), and <locks-dir> is pruned" >&2
+      echo "  to the targets that exist; with targets: exactly those, and one that ships a yarn.lock" >&2
+      echo "  gets a forced lock that overrides it" >&2
       exit 2
     }
 
     excludes=()
+    command="bench-update --node-locks"
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --exclude=*) excludes+=("''${1#--exclude=}"); shift ;;
         --exclude) excludes+=("$2"); shift 2 ;;
+        --command=*) command="''${1#--command=}"; shift ;;
         -h|--help) usage ;;
         --) shift; break ;;
         -*) echo "frappe-nix-node-locks: unknown flag $1" >&2; usage ;;
@@ -56,6 +66,7 @@ pkgs.writeShellApplication {
     cd "$bench"
     # A relative locks dir is relative to the bench root, like everything else here.
     case "$locks" in /*) : ;; *) locks="$PWD/$locks" ;; esac
+    label="''${locks##*/}"
 
     _excluded() {
       local e
@@ -88,175 +99,161 @@ pkgs.writeShellApplication {
       done
     }
 
-    # The three manifests npm resolves from, hashed. Keys follow presence, so a
-    # yarn.lock appearing or disappearing is a change too.
-    _stamp() {
+    # What the fallback was resolved from, hashed, and whether it was forced
+    # over an upstream lock. lib/bench.nix reads the same keys to warn about a
+    # fallback older than its manifests.
+    _stamp() { # <app dir> <forced>
       (
         cd "$1"
         jq -n \
           --arg p "$(sha256sum package.json | cut -d' ' -f1)" \
           --arg y "$( { [ -f yarn.lock ] && sha256sum yarn.lock | cut -d' ' -f1; } || true )" \
-          --arg l "$( { [ -f package-lock.json ] && sha256sum package-lock.json | cut -d' ' -f1; } || true )" \
+          --argjson f "$2" \
           '{"package.json": $p}
            + (if $y == "" then {} else {"yarn.lock": $y} end)
-           + (if $l == "" then {} else {"package-lock.json": $l} end)'
+           + (if $f then {forced: true} else {} end)'
       )
     }
 
-    # What npm resolves from, and what the Nix build later installs from —
-    # the same file, so the two can never disagree. yarn's `resolutions`
-    # become npm's `overrides` ("a/b" nests, "@s/p/c" keeps the scope
-    # together, "**/x" is just x); an explicit `overrides` wins. `workspaces`
-    # goes: the workspace members are other targets with locks of their own.
-    # shellcheck disable=SC2016  # jq programs: the $names are jq's, not bash's
-    NORMALIZE='
-      def override_path:
-        split("/") | reduce .[] as $seg ([];
-          if $seg == "**" then .
-          elif (length > 0 and (.[-1] | startswith("@")) and ((.[-1] | contains("/")) | not))
-            then .[:-1] + [.[-1] + "/" + $seg]
-          else . + [$seg] end);
-      def set_override($path; $v):
-        if ($path | length) == 1 then
-          if (.[$path[0]] | type) == "object" then .[$path[0]]["."] = $v else .[$path[0]] = $v end
-        else
-          .[$path[0]] = (if (.[$path[0]] | type) == "string" then {".": .[$path[0]]} else (.[$path[0]] // {}) end)
-          | .[$path[0]] |= set_override($path[1:]; $v)
-        end;
-      ([ (.resolutions // {}) | to_entries[] | {path: (.key | override_path), value} | select(.path != []) ]
-         | reduce .[] as $e ({}; set_override($e.path; $e.value))) as $translated
-      | .overrides = ($translated * (.overrides // {}))
-      | (if .overrides == {} then del(.overrides) else . end)
-      | del(.resolutions) | del(.workspaces)
-    '
-
-    # Git dependencies need two repairs before fetchGit can take them. npm
-    # records a GitHub one as git+ssh://git@github.com/…, whatever the manifest
-    # said — that would need an SSH key in the sandbox, the https spelling
-    # needs nothing. And when npm imports the entry from a yarn.lock it keeps
-    # the repository but drops the commit, which fetchGit would then have to
-    # resolve impurely; the yarn.lock has the commit, so it is put back from
-    # there ($pins: repository URL, without .git → commit).
-    # shellcheck disable=SC2016
-    POSTPROCESS='
-      .packages |= with_entries(.value |=
-        (if ((.resolved // "") | startswith("git+")) then
-           (.resolved | sub("^git\\+ssh://git@github\\.com/"; "git+https://github.com/")) as $r
-           | (if ($r | contains("#")) then $r
-              else (($r | sub("\\.git$"; "")) as $u | if $pins[$u] then $r + "#" + $pins[$u] else $r end)
-              end) as $pinned
-           | .resolved = $pinned
-         else . end))
-    '
-
-    # One line per entry the build could not fetch: a link: dependency, a
-    # resolved value with no scheme (a file: path), a registry tarball with no
-    # integrity to fetch it by, or a git dependency with no commit to check
-    # out. Empty output means the lock is buildable.
-    VALIDATE='
-      .packages | to_entries[] | select(.key != "") | select((.value.inBundle // false) | not)
-      | select( (.value.link // false)
-             or (((.value.resolved // "") | test("^[a-z+]+://")) | not)
-             or (((.value.resolved // "") | test("^https?://")) and ((.value.integrity // "") == ""))
-             or (((.value.resolved // "") | startswith("git+")) and (((.value.resolved // "") | contains("#")) | not)) )
-      | "\(.key): resolved=\(.value.resolved // "-") integrity=\(.value.integrity // "-")"
-    '
-
-    # The commits a yarn.lock pins its git dependencies to, as JSON keyed by
-    # repository URL (https spelling, no .git). Empty object without a lock.
-    _git_pins() {
-      if [ -f "$1" ]; then
-        sed -nE 's/^[[:space:]]*resolved "(git\+[a-z]+:\/\/[^#"]+)#([0-9a-f]{7,40})"[[:space:]]*$/\1 \2/p' "$1" \
-          | sed -E 's#^git\+ssh://git@github\.com/#git+https://github.com/#; s/\.git ([0-9a-f]+)$/ \1/' \
-          | jq -Rn '[inputs | select(length > 0) | split(" ") | {key: .[0], value: .[1]}] | from_entries'
-      else
-        echo '{}'
-      fi
+    _is_forced() { # <target> — the committed stamp's word
+      [ -f "$locks/$1/source.json" ] && [ "$(jq -r '.forced // false' "$locks/$1/source.json")" = true ]
     }
 
-    prune=false
-    targets=()
-    if [ "$#" -gt 0 ]; then
-      targets=("$@")
-    else
-      prune=true
-      mapfile -t targets < <(_discover)
-    fi
+    # One line per entry the build could not fetch — the same rules
+    # lib/yarn-lock.nix throws on, checked here where the fix is cheap.
+    # shellcheck disable=SC2016
+    VALIDATE='
+      function flush() {
+        if (key == "") return
+        if (key ~ /@(file|link):/) print key ": a file:/link: dependency, which the Nix build cannot fetch"
+        else if (resolved == "") print key ": no resolved URL"
+        else if (resolved ~ /^(git\+|git:|ssh:)/ || resolved ~ /\.git(#.*)?$/ || resolved ~ /^https:\/\/codeload\.github\.com\//) {
+          if (resolved !~ /#[0-9a-f]+$/ && resolved !~ /codeload\.github\.com\/[^\/]+\/[^\/]+\/tar\.gz\/[0-9a-f]+$/)
+            print key ": a git dependency without a commit: " resolved
+        }
+        else if (resolved ~ /^https:\/\// && !integ && resolved !~ /#/) print key ": no integrity and no #hash on " resolved
+        key = ""
+      }
+      /^[^ \t#].*:[ \t]*$/ { flush(); key = $0; sub(/:[ \t]*$/, "", key); resolved = ""; integ = 0; next }
+      /^  resolved / { resolved = $2; gsub(/"/, "", resolved); next }
+      /^  integrity / { integ = 1; next }
+      END { flush() }
+    '
 
     failed=()
-    for key in "''${targets[@]}"; do
+
+    _generate() { # <target> <forced>
+      local key="$1" forced="$2" src dst want work bad
       src="apps/$key"
       dst="$locks/$key"
       if [ ! -f "$src/package.json" ]; then
         echo "  ✗ $key: no apps/$key/package.json" >&2
         failed+=("$key")
-        continue
+        return
       fi
 
-      want="$(_stamp "$src")"
-      if [ -f "$dst/package-lock.json" ] && [ -f "$dst/package.json" ] && [ -f "$dst/source.json" ] \
+      want="$(_stamp "$src" "$forced")"
+      if [ -f "$dst/yarn.lock" ] && [ -f "$dst/source.json" ] \
          && [ "$(jq -cS . "$dst/source.json")" = "$(printf '%s' "$want" | jq -cS .)" ]; then
-        continue
+        return
       fi
 
       work="$(mktemp -d)"
       # cp -L: in app mode the apps are symlink mirrors of their flake inputs.
-      jq "$NORMALIZE" "$src/package.json" > "$work/package.json"
-      [ -f "$src/yarn.lock" ] && cp -L "$src/yarn.lock" "$work/yarn.lock"
-      [ -f "$src/package-lock.json" ] && cp -L "$src/package-lock.json" "$work/package-lock.json"
-
-      if [ -f "$src/yarn.lock" ]; then
-        echo "  resolving $key (pinned by its yarn.lock)…"
+      cp -L "$src/package.json" "$work/package.json"
+      for f in .yarnrc .npmrc; do
+        [ -f "$src/$f" ] && cp -L "$src/$f" "$work/$f"
+      done
+      # The seed: upstream's own lock when forcing (its pins stay, the gap is
+      # what gets resolved), else the previous fallback (only what must move
+      # does). yarn keeps every entry the manifest still wants.
+      if $forced && [ -f "$src/yarn.lock" ]; then
+        cp -L "$src/yarn.lock" "$work/yarn.lock"
+        echo "  resolving $key (forced: seeded from apps/$key/yarn.lock, gaps filled from the registry)…"
+      elif [ -f "$dst/yarn.lock" ]; then
+        cp "$dst/yarn.lock" "$work/yarn.lock"
+        echo "  resolving $key (from package.json, seeded from the previous $label/$key/yarn.lock)…"
       else
-        echo "  resolving $key (from package.json — no yarn.lock)…"
+        echo "  resolving $key (from package.json — no yarn.lock upstream)…"
       fi
-      # --legacy-peer-deps: yarn v1 never auto-installed peers, and the tree
-      # upstream tested is the one without them. The build installs with the
-      # same flag; the two must agree or the offline install re-resolves.
-      # NODE_ENV=production would drop devDependencies, which is where every
-      # vite frontend keeps its build tooling.
-      if ! (cd "$work" && env -u NODE_ENV npm install --package-lock-only --ignore-scripts \
-              --legacy-peer-deps --no-audit --no-fund --no-progress --loglevel=error) \
-            > "$work/npm.log" 2>&1; then
-        echo "  ✗ $key: npm could not resolve a lock:" >&2
-        tail -n 20 "$work/npm.log" >&2
+
+      # Everything installs into the scratch directory and is thrown away;
+      # the lock is the product. NODE_ENV=production would drop
+      # devDependencies, which is where every vite frontend keeps its build
+      # tooling. The same script/engine/platform flags as the sandbox install,
+      # so what resolves here is what installs there.
+      if ! (cd "$work" && env -u NODE_ENV yarn install --ignore-scripts --ignore-engines --ignore-platform \
+              --production=false --non-interactive --no-progress) > "$work/yarn.log" 2>&1; then
+        echo "  ✗ $key: yarn could not resolve a lock:" >&2
+        grep -E '^(error|warning)' "$work/yarn.log" | tail -n 20 >&2
         failed+=("$key")
         rm -rf "$work"
-        continue
+        return
+      fi
+      if [ ! -f "$work/yarn.lock" ]; then
+        echo "  ✗ $key: yarn install wrote no yarn.lock" >&2
+        failed+=("$key")
+        rm -rf "$work"
+        return
       fi
 
-      # The app's own yarn.lock, not the copy: npm rewrites the copy in its
-      # own dialect, commit gone.
-      jq --argjson pins "$(_git_pins "$src/yarn.lock")" "$POSTPROCESS" "$work/package-lock.json" > "$work/lock.json"
-      bad="$(jq -r "$VALIDATE" "$work/lock.json")"
+      bad="$(awk "$VALIDATE" "$work/yarn.lock")"
       if [ -n "$bad" ]; then
-        echo "  ✗ $key: entries the Nix build cannot fetch (link:/file: dependencies, or no integrity):" >&2
+        echo "  ✗ $key: entries the Nix build cannot fetch:" >&2
         printf '     %s\n' "$bad" >&2
         failed+=("$key")
         rm -rf "$work"
-        continue
+        return
       fi
 
       mkdir -p "$dst"
-      install -m 0644 "$work/package.json" "$dst/package.json"
-      install -m 0644 "$work/lock.json" "$dst/package-lock.json"
+      # Leftovers of the npm-based scheme this replaced.
+      rm -f "$dst/package-lock.json" "$dst/package.json"
+      install -m 0644 "$work/yarn.lock" "$dst/yarn.lock"
       # Last: an interrupted run is retried next time, not remembered as done.
       printf '%s\n' "$want" | jq -S . > "$dst/source.json"
       rm -rf "$work"
-      echo "  + ''${locks##*/}/$key"
-    done
+      if $forced; then
+        echo "  + $label/$key (forced over apps/$key/yarn.lock)"
+      else
+        echo "  + $label/$key"
+      fi
+    }
 
-    if $prune && [ -d "$locks" ]; then
-      while IFS= read -r dir; do
-        rel="''${dir#"$locks"/}"
-        keep=false
-        for key in "''${targets[@]}"; do [ "$key" = "$rel" ] && keep=true; done
-        if ! $keep; then
-          rm -rf "$dir"
-          echo "  - ''${locks##*/}/$rel (no longer a target)"
+    if [ "$#" -gt 0 ]; then
+      # Named: resolve it, and over the app's own lock if it has one — that
+      # is the only way a forced lock comes to be.
+      for key in "$@"; do
+        if [ -f "apps/$key/yarn.lock" ]; then _generate "$key" true; else _generate "$key" false; fi
+      done
+    else
+      mapfile -t targets < <(_discover)
+      for key in "''${targets[@]}"; do
+        dst="$locks/$key"
+        if [ ! -f "apps/$key/yarn.lock" ]; then
+          _generate "$key" false
+        elif _is_forced "$key"; then
+          _generate "$key" true
+        elif [ -f "$dst/yarn.lock" ]; then
+          echo "  ~ $label/$key is unused — apps/$key ships a yarn.lock and builds from it; git rm -r $label/$key, or force it: $command $key"
+        elif [ -f "$dst/package-lock.json" ] || [ -f "$dst/package.json" ] || [ -f "$dst/source.json" ]; then
+          rm -f "$dst/package-lock.json" "$dst/package.json" "$dst/source.json"
+          echo "  - $label/$key (npm-based lock; apps/$key builds from its own yarn.lock now)"
         fi
-      done < <(find "$locks" -mindepth 1 -name package-lock.json -printf '%h\n' | sort)
-      find "$locks" -mindepth 1 -type d -empty -delete
+      done
+
+      if [ -d "$locks" ]; then
+        while IFS= read -r dir; do
+          rel="''${dir#"$locks"/}"
+          keep=false
+          for key in "''${targets[@]}"; do [ "$key" = "$rel" ] && keep=true; done
+          if ! $keep; then
+            rm -rf "$dir"
+            echo "  - $label/$rel (no longer a target)"
+          fi
+        done < <(find "$locks" -mindepth 1 \( -name yarn.lock -o -name package-lock.json \) -printf '%h\n' | sort -u)
+        find "$locks" -mindepth 1 -type d -empty -delete
+      fi
     fi
 
     if [ "''${#failed[@]}" -gt 0 ]; then

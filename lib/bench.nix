@@ -4,8 +4,8 @@
 #              where sites/apps.txt and sites/apps.json are generated: the
 #              registry is an output of the package, never a copy of what the
 #              bench happens to have committed. And where each app's (and each
-#              nested frontend's) node_modules, built from the committed
-#              node-locks/, are linked in.
+#              nested frontend's) node_modules, built from its yarn.lock, are
+#              linked in.
 # builtBench — benchRoot + compiled assets (`bench build`), the deployable
 #              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames,
 #              registeredApps} so the NixOS module can discover interpreters
@@ -21,18 +21,22 @@
   # node_modules, and the parent app's build/postinstall scripts that drive the
   # subdir are dropped from its package.json (see dropNestedFrontendScripts).
   nodeNestedFrontendExcludes ? [ ],
-  # Per target key (an app name, or "app/subdir"): extra `derivationArgs` for
-  # importNpmLock.buildNodeModules — npmFlags, npmRebuildFlags (`""` to run
-  # lifecycle scripts), postPatch, nativeBuildInputs, or an npmDeps of your own.
+  # Per target key (an app name, or "app/subdir"): extra attributes for the
+  # stdenv derivation that runs that target's `yarn install --offline` —
+  # postPatch, nativeBuildInputs, preInstall, or a yarnOfflineCache of your
+  # own. The install flags are yarnConfigHook's and not among them.
   nodeOverrides ? { },
   extraPackages ? [ ],
-  # Where node-locks/<target>/ lives. The workspace root's in a bench; the app
-  # repository's nix/node-locks in app mode (there is no bench root to commit
-  # to there, and the assembled workspace is rebuilt on every pin bump).
+  # Where the fallback locks live — node-locks/<target>/yarn.lock for a target
+  # that ships no yarn.lock of its own (or whose upstream one is forced aside).
+  # The workspace root's in a bench; the app repository's nix/node-locks in
+  # app mode (there is no bench root to commit to there, and the assembled
+  # workspace is rebuilt on every pin bump).
   nodeLocksDir ? workspaceRoot + "/node-locks",
-  # What to tell the user when a lock is missing or stale — the command
-  # differs between a bench and an app repository.
-  nodeLocksAdvice ? "run `bench-update --node-locks` and commit node-locks/",
+  # How that directory is spelled in messages, and the command that writes it
+  # — both differ between a bench and an app repository.
+  nodeLocksLabel ? "node-locks",
+  nodeLocksCommand ? "bench-update --node-locks",
   # App mode hands both of these over instead of letting them be discovered.
   #
   # Discovery is right for a bench, where apps/ is the checkout and readDir is the
@@ -132,15 +136,16 @@ let
   # ── node_modules ────────────────────────────────────────────────────────
   #
   # Every node target — an app with a package.json, and each nested frontend
-  # under it (lib/node-targets.nix) — gets a node_modules built by
-  # pkgs.importNpmLock from node-locks/<target>/package-lock.json, committed
-  # to the bench and written by `frappe-nix-node-locks` (lib/node-locks.nix)
-  # with npm: pinned to the app's yarn.lock when it ships one, resolved from
-  # package.json when it does not. No hash is computed anywhere. Each package
-  # is fetched by the integrity the lock already carries, a git dependency by
-  # its commit — so an upstream yarn.lock bump costs a lock regeneration,
-  # never a hash hunt, and a nested frontend gets the same treatment as its
-  # parent rather than a hand-rolled offline install inside builtBench.
+  # under it (lib/node-targets.nix) — gets a node_modules installed by yarn,
+  # offline, from a yarn.lock: the app's own when it ships one, which is the
+  # rule, or the bench's fallback in node-locks/<target>/yarn.lock when it
+  # does not (written by `frappe-nix-node-locks`, lib/node-locks.nix, and
+  # committed). Nothing is hashed by hand and nothing is committed for an app
+  # that carries its own lock: lib/yarn-lock.nix turns the lock into one
+  # fetchurl per tarball, by the integrity the lock states, and nixpkgs'
+  # yarnConfigHook installs from the resulting mirror exactly as it would from
+  # a fetchYarnDeps one. A git dependency is fetched by its commit at
+  # evaluation time.
   #
   # The dev shell does not use these: it installs with a plain online
   # `yarn install`, as upstream tooling expects (lib/node-modules.nix).
@@ -153,6 +158,8 @@ let
     && builtins.pathExists (appSrcOf app + "/yarn.lock")
   ) names;
 
+  yarnLock = import ./yarn-lock.nix { inherit lib; };
+
   nodeTargets = (import ./node-targets.nix { inherit lib; }).discover {
     inherit names appSrcOf;
     excludes = nodeNestedFrontendExcludes;
@@ -160,62 +167,138 @@ let
   nodeTargetKeys = map (t: t.key) nodeTargets;
 
   lockDirOf = t: nodeLocksDir + "/${t.key}";
-  hasLock =
-    t:
-    builtins.pathExists (lockDirOf t + "/package-lock.json")
-    && builtins.pathExists (lockDirOf t + "/package.json");
+  upstreamLockOf = t: t.src + "/yarn.lock";
+  fallbackLockOf = t: lockDirOf t + "/yarn.lock";
+  hasUpstreamLock = t: builtins.pathExists (upstreamLockOf t);
+  hasFallbackLock = t: builtins.pathExists (fallbackLockOf t);
 
-  # The same manifests, hashed the same way, as the generator's source.json.
-  sourceStamp =
+  # The generator's stamp: what the fallback was resolved from, and whether it
+  # was asked for over an upstream lock ("forced" — the remedy for a yarn.lock
+  # upstream never regenerated, which resolves offline to "Couldn't find any
+  # versions for …").
+  stampOf =
     t:
-    lib.listToAttrs (
-      lib.concatMap (
-        f:
-        lib.optional (builtins.pathExists (t.src + "/${f}")) (
-          lib.nameValuePair f (builtins.hashFile "sha256" (t.src + "/${f}"))
-        )
-      ) [ "package.json" "yarn.lock" "package-lock.json" ]
-    );
-  lockIsStale =
+    if builtins.pathExists (lockDirOf t + "/source.json") then
+      lib.importJSON (lockDirOf t + "/source.json")
+    else
+      { };
+  isForced = t: hasFallbackLock t && (stampOf t).forced or false;
+
+  # Which lock builds a target. By rule, not by presence: the app's own wins
+  # unless the bench deliberately forced it aside.
+  lockOf =
     t:
-    builtins.pathExists (lockDirOf t + "/source.json")
-    && lib.importJSON (lockDirOf t + "/source.json") != sourceStamp t;
+    if hasUpstreamLock t && !isForced t then
+      {
+        file = upstreamLockOf t;
+        label = "apps/${t.key}/yarn.lock";
+        fallback = false;
+      }
+    else if hasFallbackLock t then
+      {
+        file = fallbackLockOf t;
+        label = "${nodeLocksLabel}/${t.key}/yarn.lock";
+        fallback = true;
+      }
+    else
+      null;
+
+  lockedTargets = lib.filter (t: lockOf t != null) nodeTargets;
+  missingLocks = lib.filter (t: lockOf t == null) nodeTargets;
+
+  # Evaluation-time notices about the fallback directory, per target: a
+  # fallback that is stale against the manifests it was resolved from; one
+  # sitting unused beside an upstream lock (the app grew one, or the bench
+  # predates the rule); and leftovers of the npm-based scheme this replaced.
+  # None is fatal — the build proceeds from whatever lockOf chose.
+  noticesFor =
+    t:
+    let
+      s = stampOf t;
+      hashOf = f: builtins.hashFile "sha256" f;
+      manifestMoved =
+        hasFallbackLock t
+        && s ? "package.json"
+        && s."package.json" != hashOf (t.src + "/package.json");
+      upstreamMoved =
+        isForced t
+        && hasUpstreamLock t
+        && s ? "yarn.lock"
+        && s."yarn.lock" != hashOf (upstreamLockOf t);
+    in
+    lib.optional (manifestMoved || upstreamMoved)
+      "frappe-nix: ${nodeLocksLabel}/${t.key}/yarn.lock is older than apps/${t.key}'s ${
+        if upstreamMoved then "yarn.lock" else "package.json"
+      } — regenerate it: ${nodeLocksCommand} ${t.key}"
+    ++ lib.optional (hasFallbackLock t && hasUpstreamLock t && !isForced t)
+      "frappe-nix: ${nodeLocksLabel}/${t.key} is unused — apps/${t.key} ships a yarn.lock and builds from it. `git rm -r ${nodeLocksLabel}/${t.key}`, or make it a deliberate override: ${nodeLocksCommand} ${t.key}"
+    ++ lib.optional (builtins.pathExists (lockDirOf t + "/package-lock.json"))
+      "frappe-nix: ${nodeLocksLabel}/${t.key}/package-lock.json is from the npm-based scheme frappe-nix no longer uses; `${nodeLocksCommand}` removes it";
+
+  withNotices = msgs: x: builtins.foldl' (acc: m: lib.warn m acc) x msgs;
 
   nodeModulesFor =
     t:
     let
-      dir = lockDirOf t;
+      lock = lockOf t;
+      pname = lib.replaceStrings [ "/" ] [ "-" ] t.key;
+      # Only what `yarn install` reads. Not the app: a node_modules that took
+      # the whole tree as its source would be rebuilt — every tarball
+      # re-linked, every package re-extracted — for a change to any Python
+      # file in the app.
+      manifests = pkgs.runCommand "${pname}-manifests" { } ''
+        mkdir -p $out
+        cp ${t.src + "/package.json"} $out/package.json
+        cp ${lock.file} $out/yarn.lock
+        ${lib.concatMapStrings (
+          f:
+          lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
+            cp ${t.src + "/${f}"} $out/${f}
+          ''
+        ) [ ".yarnrc" ".npmrc" ]}
+      '';
+      remedy =
+        if lock.fallback then
+          "regenerate it: ${nodeLocksCommand} ${t.key}"
+        else
+          "force a repaired lock over it: ${nodeLocksCommand} ${t.key} (then commit ${nodeLocksLabel}/), or leave the target out: nodeNestedFrontendExcludes";
     in
-    lib.warnIf (lockIsStale t)
-      "frappe-nix: node-locks/${t.key} is older than apps/${t.key}'s package.json/yarn.lock — ${nodeLocksAdvice}"
-      (
-        pkgs.importNpmLock.buildNodeModules {
-          # The normalized manifest npm resolved against (yarn `resolutions`
-          # turned into npm `overrides`), not the app's own: the lock only
-          # makes sense next to the manifest it was resolved from.
-          package = lib.importJSON (dir + "/package.json");
-          packageLock = lib.importJSON (dir + "/package-lock.json");
-          inherit nodejs;
-          derivationArgs = {
-            pname = "${lib.replaceStrings [ "/" ] [ "-" ] t.key}-node-modules";
-            # Strings, not lists: buildNodeModules forces structured attrs, under
-            # which the hook's `$npmInstallFlags` is a bash array's first element.
-            #
-            # --legacy-peer-deps mirrors the generator: yarn v1 never installed
-            # peers, the lock was resolved without them, and an install that
-            # disagreed would re-resolve — offline, so it would fail instead.
-            npmInstallFlags = "--legacy-peer-deps";
-            # No lifecycle scripts, as before. Every native piece a Frappe
-            # frontend needs is a platform package or a prebuilt binary; a
-            # consumer whose app is different sets npmRebuildFlags = "".
-            npmRebuildFlags = "--ignore-scripts";
-          }
-          // (nodeOverrides.${t.key} or { });
+    withNotices (noticesFor t) (
+      pkgs.stdenv.mkDerivation (
+        {
+          name = "${pname}-node-modules";
+          src = manifests;
+          nativeBuildInputs = [
+            pkgs.yarnConfigHook
+            pkgs.yarn
+            nodejs
+          ];
+          yarnOfflineCache = yarnLock.mkOfflineMirror {
+            inherit pkgs;
+            lockFile = lock.file;
+            name = pname;
+          };
+          # The hook's own flags: --frozen-lockfile, --ignore-scripts (no
+          # lifecycle scripts in the sandbox; every native piece a Frappe
+          # frontend needs is a platform package or a prebuilt binary),
+          # --ignore-engines, --ignore-platform. The one failure that is about
+          # the lock rather than the build gets its remedy next to yarn's
+          # message, which names neither.
+          preConfigure = ''
+            echo "frappe-nix: node_modules for ${t.key} from ${lock.label}"
+            echo "  (a \"Couldn't find any versions for … in our cache\" error below means that lock does not cover package.json — ${remedy})"
+          '';
+          dontBuild = true;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            cp -R node_modules $out/node_modules
+            runHook postInstall
+          '';
         }
-      );
-
-  lockedTargets = lib.filter hasLock nodeTargets;
-  missingLocks = lib.filter (t: !(hasLock t)) nodeTargets;
+        // (nodeOverrides.${t.key} or { })
+      )
+    );
 
   nodeModules = lib.listToAttrs (map (t: lib.nameValuePair t.key (nodeModulesFor t)) lockedTargets);
 
@@ -223,9 +306,10 @@ let
   # package it produces has no node_modules for that target, and `bench build`
   # runs `yarn install` (online) the moment it finds an app without one.
   warnMissingLocks = lib.warnIf (missingLocks != [ ]) (
-    "frappe-nix: no node lock for ${lib.concatMapStringsSep ", " (t: t.key) missingLocks} — "
-    + nodeLocksAdvice
-    + ". Until then the package carries no node_modules for it, and builtBench fails on any of them with a build script."
+    "frappe-nix: no yarn.lock for ${
+      lib.concatMapStringsSep ", " (t: "apps/${t.key}") missingLocks
+    } — the app ships none and ${nodeLocksLabel}/ has no fallback. Run `${nodeLocksCommand}` (it resolves one from package.json) and commit ${nodeLocksLabel}/. "
+    + "Until then the package carries no node_modules for it, and builtBench fails on any of them with a build script."
   );
 
   # The excluded subdirs belonging to one app, from the flat "app/subdir" list.
@@ -434,6 +518,15 @@ in
 {
   appNames = names;
   nodeTargets = nodeTargetKeys;
+  # Which lock each target builds from ("apps/<key>/yarn.lock" or the
+  # fallback's label; null for none), and the notices evaluation would print
+  # — as data, for tests/node-locks-precedence.nix.
+  nodeLockSources = lib.listToAttrs (
+    map (t: lib.nameValuePair t.key (if lockOf t == null then null else (lockOf t).label)) nodeTargets
+  );
+  nodeLockNotices =
+    lib.concatMap noticesFor nodeTargets
+    ++ lib.optional (missingLocks != [ ]) "missing: ${lib.concatMapStringsSep " " (t: t.key) missingLocks}";
   inherit
     registeredApps
     appsWithNode

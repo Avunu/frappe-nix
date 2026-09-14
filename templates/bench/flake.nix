@@ -68,7 +68,6 @@
               nodejs = pkgs.@NODEJS@;
 
               # Build production OCI images with `nix build .#web` (etc.).
-              # Generate node-locks/ first: `bench-update --node-locks`.
               # containers.enable = true;
             };
           };

@@ -24,11 +24,11 @@ printf '#!%s\n' "$(command -v bash)" > "$BIN/frappe-nix-node-locks"
 cat >> "$BIN/frappe-nix-node-locks" <<'STUB'
 printf '%s\t%s\n' "$PWD" "$*" >> "$NODE_LOCKS_CALLS"
 if [ "${NODE_LOCKS_FAIL:-}" = "1" ]; then
-  echo "  ✗ frappe: npm could not resolve a lock" >&2
+  echo "  ✗ frappe: yarn could not resolve a lock" >&2
   exit 1
 fi
 mkdir -p node-locks/frappe
-echo '{}' > node-locks/frappe/package-lock.json
+printf '# yarn lockfile v1\n' > node-locks/frappe/yarn.lock
 STUB
 chmod +x "$BIN/frappe-nix-node-locks"
 export PATH="$BIN:$PATH"
@@ -46,6 +46,11 @@ check() { # <description> <command...>
   local desc=$1
   shift
   if "$@" > /dev/null 2>&1; then ok "$desc"; else no "$desc"; fi
+}
+check_not() { # <description> <command...>
+  local desc=$1
+  shift
+  if "$@" > /dev/null 2>&1; then no "$desc"; else ok "$desc"; fi
 }
 check_eq() { # <description> <expected> <actual>
   if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (expected '$2', got '$3')"; fi
@@ -179,6 +184,12 @@ FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --node-hashes > "$ROOT/hashes.log" 2>&
   && ok "--node-hashes still works" || { no "--node-hashes still works"; cat "$ROOT/hashes.log"; }
 check "…as an alias that says so" grep -q 'now --node-locks' "$ROOT/hashes.log"
 check_eq "…and runs the generator" "1" "$(lock_calls)"
+: > "$NODE_LOCKS_CALLS"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --node-locks frappe alpha/desk > "$ROOT/locks-targets.log" 2>&1 \
+  && ok "--node-locks takes targets" || { no "--node-locks takes targets"; cat "$ROOT/locks-targets.log"; }
+check_eq "…and hands them to the generator, after the exclusion" \
+  "$(printf '%s\t--exclude=alpha/desk . node-locks frappe alpha/desk' "$BENCH")" "$(cat "$NODE_LOCKS_CALLS")"
+check_not "a target without --node-locks is an error" env FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull frappe
 
 echo "── a pull with nothing to pull ─────────────────────────────────"
 FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull2.log" 2>&1 \

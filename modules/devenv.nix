@@ -108,10 +108,11 @@ in
               builtBench, the containers, the NixOS module.
 
               What the repo commits on frappe-nix's behalf lives under
-              `app.lockDir`: uv.lock, and node-locks/ (a package-lock.json per
-              app and nested frontend), both written by `nix run .#relock`. The
-              root pyproject.toml is not one of them — it is generated into the
-              store and there is nothing there to edit.
+              `app.lockDir`: uv.lock, and node-locks/ (a fallback yarn.lock for
+              each app and nested frontend that ships none of its own), both
+              written by `nix run .#relock`. The root pyproject.toml is not one
+              of them — it is generated into the store and there is nothing
+              there to edit.
             '';
           };
 
@@ -225,10 +226,10 @@ in
             default = "nix";
             description = ''
               Directory in the app repo, relative to its root, holding what is
-              generated but committed: uv.lock, and node-locks/ (a
-              package-lock.json per app and nested frontend, resolved from each
-              pin's yarn.lock or package.json). `nix run .#relock` writes and
-              stages both.
+              generated but committed: uv.lock, and node-locks/ (a fallback
+              yarn.lock for each pinned app or nested frontend that ships no
+              yarn.lock of its own; the ones that do build from it and commit
+              nothing here). `nix run .#relock` writes and stages both.
 
               The staging is not a courtesy: a flake's source tree is only its
               tracked files, so an unstaged uv.lock is invisible to evaluation and
@@ -824,14 +825,17 @@ in
           default = [ ];
           description = ''
             Nested frontends to leave out, keyed "app/subdir" (the same key
-            node-locks/ uses): no lock is generated, no node_modules is built,
-            and their assets are not built.
+            node-locks/ uses): no node_modules is built, no fallback lock is
+            generated, and their assets are not built.
 
             For a frontend the bench does not want -- one whose build is broken
-            upstream, or that serves routes the deployment never uses. (The
-            case this knob was born for, an upstream yarn.lock that could not
-            resolve offline, no longer arises: the lock generator resolves such
-            gaps from the registry when it writes node-locks/.)
+            upstream, or that serves routes the deployment never uses -- and
+            the blunt remedy for one whose upstream yarn.lock cannot resolve
+            offline (a dependency bump that never regenerated the transitive
+            entries; yarn says "Couldn't find any versions for … in our
+            cache"). The finer remedy for that one is a forced fallback lock:
+            `bench-update --node-locks app/subdir` resolves the gap from the
+            registry with upstream's pins kept, and the frontend still builds.
 
             If the parent app's `build` or `postinstall` script is what builds
             the excluded frontend, that script is dropped from the app's
@@ -848,32 +852,33 @@ in
           default = { };
           description = ''
             Per node target -- an app name, or "app/subdir" for a nested
-            frontend -- extra `derivationArgs` for the
-            `importNpmLock.buildNodeModules` that builds its node_modules from
-            node-locks/. Anything stdenv takes (postPatch, nativeBuildInputs),
-            plus the npm hook's knobs: `npmRebuildFlags = ""` runs the packages'
-            lifecycle scripts (off by default, like the lock generator), and an
-            `npmDeps` of your own (`pkgs.importNpmLock { … fetcherOpts … }`)
-            replaces how the packages are fetched.
+            frontend -- extra attributes for the stdenv derivation that runs
+            its `yarn install --offline` (nixpkgs' yarnConfigHook over a mirror
+            built from the target's yarn.lock). Anything stdenv takes:
+            postPatch, nativeBuildInputs, preInstall, or a `yarnOfflineCache`
+            of your own to change how the packages are fetched. The derivation
+            sees only the target's package.json, yarn.lock, .yarnrc and .npmrc,
+            not the app.
 
-            The flag attributes are strings: buildNodeModules forces structured
-            attrs, under which a list would reach npm as its first element only.
+            The install flags are the hook's (--frozen-lockfile,
+            --ignore-scripts, --ignore-engines, --ignore-platform) and are not
+            configurable here; a `yarnFlags` attribute is ignored with a
+            warning.
           '';
           example = literalExpression ''
             {
-              "hrms/frontend".npmRebuildFlags = "";
-              erpnext.postPatch = "rm -rf banking/node_modules";
+              "hrms/frontend".nativeBuildInputs = [ pkgs.python3 ];
             }
           '';
         };
 
-        # Replaced by node-locks/. Kept as a hidden option so a bench that still
-        # sets it gets a sentence instead of "unexpected argument".
+        # Replaced by reading the yarn.lock itself. Kept as a hidden option so a
+        # bench that still sets it gets a sentence instead of "unexpected argument".
         nodeOfflineHashes = mkOption {
           type = types.attrsOf types.str;
           default = { };
           visible = false;
-          description = "Removed. node_modules are built from node-locks/, generated by `bench-update --node-locks` (or `nix run .#relock`).";
+          description = "Removed. node_modules are built from each app's yarn.lock directly; no hash is needed.";
         };
 
         containers = {
@@ -987,7 +992,8 @@ in
               nix run .#relock
 
           That assembles the same workspace this flake does, runs `uv lock` in it,
-          writes ${lockRel} and ${locksRel}/ back here, and stages them. The
+          writes ${lockRel} (and ${locksRel}/, for pins without a yarn.lock) back
+          here, and stages them. The
           staging matters: a flake's source tree is exactly its tracked files, so
           an untracked lock is invisible to evaluation and you would see this
           message again.
@@ -1338,13 +1344,13 @@ in
           unixsock = unixsockPkg;
         };
 
-        # A bench still carrying the pre-node-locks options gets a sentence, not
-        # an "unexpected argument" from lib/bench.nix.
+        # A bench still carrying the hash-era options gets a sentence, not an
+        # "unexpected argument" from lib/bench.nix.
         benchInfraChecks =
           lib.throwIf (cfg.nodeOfflineHashes != { })
-            "frappe-nix: nodeOfflineHashes was removed — node_modules are built from node-locks/, generated by `bench-update --node-locks` (or `nix run .#relock`). Delete the option and node-offline-hashes.json."
+            "frappe-nix: nodeOfflineHashes was removed — node_modules are built from each app's yarn.lock directly, with one fetch per tarball by the integrity the lock states. Delete the option and node-offline-hashes.json."
             (lib.warnIf (lib.any (o: o ? yarnFlags) (lib.attrValues cfg.nodeOverrides))
-              "frappe-nix: nodeOverrides.<app>.yarnFlags does nothing — node_modules are installed by npm from node-locks/; see the nodeOverrides option for what it takes now."
+              "frappe-nix: nodeOverrides.<app>.yarnFlags is not read — the offline install's flags are yarnConfigHook's; see the nodeOverrides option for what it takes."
               true
             );
 
@@ -1358,15 +1364,12 @@ in
             ;
           inherit (pythonEnvs) prodPythonEnv rootPyproject;
           workspaceRoot = effectiveWorkspaceRoot;
-          # The committed locks: the app repository's in app mode (the assembled
+          # The fallback locks: the app repository's in app mode (the assembled
           # workspace is rebuilt on every pin bump, so nothing can be committed
           # to it), the bench root's otherwise.
           nodeLocksDir = if appMode then locksPath else effectiveWorkspaceRoot + "/node-locks";
-          nodeLocksAdvice =
-            if appMode then
-              "run `nix run .#relock` and commit ${locksRel}/"
-            else
-              "run `bench-update --node-locks` and commit node-locks/";
+          nodeLocksLabel = if appMode then locksRel else "node-locks";
+          nodeLocksCommand = if appMode then "nix run .#relock -- --node-locks" else "bench-update --node-locks";
           # In app mode the list is known exactly and the sources are wanted
           # unmirrored — benchRoot copies them into a tree `bench build` writes
           # into, and the workspace's own apps/ are symlinks. See lib/bench.nix.
@@ -1473,10 +1476,10 @@ in
 
         relockTool = pkgs.writeShellApplication {
           name = "frappe-nix-relock";
-          # cfg.nodejs for npm: the lock generator takes it from PATH so the
-          # lock is resolved by the npm that will install it.
+          # cfg.nodejs and yarn: the lock generator takes them from PATH so a
+          # fallback is resolved by the yarn that will install it.
           runtimeInputs =
-            [ pkgs.uv ] ++ lib.optionals appMode [ pkgs.git cfg.nodejs nodeLocksTool ];
+            [ pkgs.uv ] ++ lib.optionals appMode [ pkgs.git cfg.nodejs pkgs.yarn nodeLocksTool ];
           text =
             if !appMode then
               ''
@@ -1493,6 +1496,7 @@ in
                 DO_UV=true
                 DO_LOCKS=true
                 declare -a UV_ARGS=()
+                declare -a LOCK_TARGETS=()
                 for arg in "$@"; do
                   case "$arg" in
                     --uv-only) DO_LOCKS=false ;;
@@ -1502,23 +1506,26 @@ in
                       DO_UV=false ;;
                     -h | --help)
                       cat <<'EOF'
-                Usage: nix run .#relock [--uv-only | --node-locks] [uv lock flags…]
+                Usage: nix run .#relock [--uv-only | --node-locks [<app>[/<subdir>]…]] [uv lock flags…]
 
                 Regenerates what this app repo commits on frappe-nix's behalf:
 
                   ${lockRel}     the resolved Python workspace
-                  ${locksRel}/   a package-lock.json per app and nested frontend,
-                                 resolved by npm from each pin's yarn.lock (or its
-                                 package.json when it has none)
+                  ${locksRel}/   a fallback yarn.lock for each pinned app and nested
+                                 frontend that ships none of its own (the ones that
+                                 do build from it, and nothing is written for them).
+                                 Name a target after --node-locks to force a lock
+                                 over the yarn.lock it ships — for one that cannot
+                                 resolve offline.
 
-                Run it after `nix flake update`, after editing pyproject.toml, and
-                after any pinned app's yarn.lock moves. Both are staged for you: a
-                flake's source tree is only its tracked files, so an unstaged lock
-                is still invisible to evaluation.
+                Run it after `nix flake update` and after editing pyproject.toml.
+                Both are staged for you: a flake's source tree is only its tracked
+                files, so an unstaged lock is still invisible to evaluation.
                 EOF
                       exit 0
                       ;;
-                    *) UV_ARGS+=("$arg") ;;
+                    -*) UV_ARGS+=("$arg") ;;
+                    *) if $DO_UV; then UV_ARGS+=("$arg"); else LOCK_TARGETS+=("$arg"); fi ;;
                   esac
                 done
 
@@ -1564,8 +1571,9 @@ in
                 if $DO_LOCKS; then
                   # Over the assembled workspace: its apps/ are the pinned
                   # inputs, mirrored as symlinks the generator reads through.
-                  echo "── Regenerating ${locksRel} ──"
-                  frappe-nix-node-locks ${nodeLocksExcludeFlags} ${appWorkspaceSkeleton} "$LOCKDIR/node-locks"
+                  echo "── Refreshing ${locksRel} (fallback locks for pins without a yarn.lock) ──"
+                  frappe-nix-node-locks ${nodeLocksExcludeFlags} --command='nix run .#relock -- --node-locks' \
+                    ${appWorkspaceSkeleton} "$LOCKDIR/node-locks" "''${LOCK_TARGETS[@]}"
                 fi
 
                 if [ -f "$LOCKDIR/uv.lock" ] &&

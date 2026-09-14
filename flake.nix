@@ -199,10 +199,10 @@
               2>&1 | tee "$out"
           '';
 
-          # The node lock generator over the same fixture tree the Nix-side
-          # discovery is checked against, with a stub npm standing in for the
-          # resolver; the assertions are about what lands in node-locks/ and
-          # when it is regenerated.
+          # The fallback lock generator over the same fixture tree the Nix-side
+          # discovery is checked against, with a stub yarn standing in for the
+          # resolver; the assertions are about what lands in node-locks/, for
+          # which targets, and when it is regenerated.
           node-locks = pkgs.runCommand "frappe-nix-node-locks-check" {
             nativeBuildInputs = [ pkgs.findutils pkgs.jq ];
           } ''
@@ -251,6 +251,11 @@
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
         // import ./tests/node-targets.nix { inherit pkgs; }
+        # yarn.lock → offline mirror: the parser, the naming, what is fetched.
+        // import ./tests/yarn-lock.nix { inherit pkgs; }
+        # Which lock each target builds from — its own, a fallback, a forced
+        # fallback — and the notices that go with it.
+        // import ./tests/node-locks-precedence.nix { inherit pkgs; }
         # The bench workspace app mode assembles around a single app.
         // import ./tests/app-workspace.nix { inherit pkgs; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
