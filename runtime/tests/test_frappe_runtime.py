@@ -176,8 +176,10 @@ class TestAuthHelpers(unittest.TestCase):
 		# 1. X-Frappe-Site-Name wins
 		env = make_environ(host="localhost", origin="http://other", site_header="chosen.local")
 		self.assertEqual(auth_mod.resolve_site_name(env, cfg), "chosen.local")
-		# 2. default_site only when Host is localhost/127.0.0.1
+		# 2. a hostname that names no site falls back to default_site
 		env = make_environ(host="localhost", origin="http://other", site_header=None)
+		self.assertEqual(auth_mod.resolve_site_name(env, cfg), "default.local")
+		env = make_environ(host="myhost.lan", origin=None, site_header=None)
 		self.assertEqual(auth_mod.resolve_site_name(env, cfg), "default.local")
 		# 3. Origin hostname
 		env = make_environ(host="real.host", origin="http://origin.local", site_header=None)
@@ -185,6 +187,66 @@ class TestAuthHelpers(unittest.TestCase):
 		# 4. Host hostname
 		env = make_environ(host="host.local", origin=None, site_header=None)
 		self.assertEqual(auth_mod.resolve_site_name(env, make_config()), "host.local")
+
+	def test_site_resolution_keeps_a_real_site_over_the_default(self):
+		# A bench with a default site is not a single-site bench: a hostname
+		# that names a site on it is that site, whatever the default says.
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as sites:
+			os.makedirs(os.path.join(sites, "other.local"))
+			with open(os.path.join(sites, "other.local", "site_config.json"), "w") as f:
+				f.write("{}")
+			cfg = make_config(default_site="default.local", sites_path=sites)
+			env = make_environ(host="other.local", origin=None, site_header=None)
+			self.assertEqual(auth_mod.resolve_site_name(env, cfg), "other.local")
+			env = make_environ(host="localhost", origin="http://other.local:8000", site_header=None)
+			self.assertEqual(auth_mod.resolve_site_name(env, cfg), "other.local")
+			env = make_environ(host="localhost", origin=None, site_header=None)
+			self.assertEqual(auth_mod.resolve_site_name(env, cfg), "default.local")
+
+
+class TestDefaultSiteMiddleware(unittest.TestCase):
+	"""The web half's counterpart: a Host that names no site is sent to the
+	default site through the header frappe.app already honours."""
+
+	def _run(self, cfg, **environ):
+		from frappe_runtime.util import default_site_middleware
+
+		seen = {}
+
+		def app(env, start_response):
+			seen.update(env)
+			return [b""]
+
+		default_site_middleware(app, cfg)(dict(environ), lambda *a: None)
+		return seen.get("HTTP_X_FRAPPE_SITE_NAME")
+
+	def test_unknown_host_gets_the_default_site(self):
+		cfg = make_config(default_site="default.local", sites_path="/nonexistent")
+		self.assertEqual(self._run(cfg, HTTP_HOST="localhost:8000"), "default.local")
+		self.assertEqual(self._run(cfg, HTTP_HOST="127.0.0.1"), "default.local")
+		self.assertEqual(self._run(cfg), "default.local")
+
+	def test_a_real_site_and_a_set_header_are_left_alone(self):
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as sites:
+			os.makedirs(os.path.join(sites, "site.local"))
+			with open(os.path.join(sites, "site.local", "site_config.json"), "w") as f:
+				f.write("{}")
+			cfg = make_config(default_site="default.local", sites_path=sites)
+			self.assertIsNone(self._run(cfg, HTTP_HOST="site.local:8000"))
+			self.assertEqual(
+				self._run(cfg, HTTP_HOST="localhost", HTTP_X_FRAPPE_SITE_NAME="proxied.local"),
+				"proxied.local",
+			)
+
+	def test_no_default_site_is_a_no_op(self):
+		from frappe_runtime.util import default_site_middleware
+
+		app = object()
+		self.assertIs(default_site_middleware(app, make_config()), app)
 
 	def test_get_url_dev_mode_swaps_port(self):
 		cfg = make_config(developer_mode=True, webserver_port=8000)

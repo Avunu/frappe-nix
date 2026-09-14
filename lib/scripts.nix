@@ -18,6 +18,11 @@
   # consumer that instantiates this file on its own; the dev shell passes the
   # store path.
   nodeModulesBin ? "frappe-nix-node-modules",
+  # Absolute path to lib/node-locks.nix's tool, same convention.
+  nodeLocksBin ? "frappe-nix-node-locks",
+  # perSystem.frappe-nix.nodeNestedFrontendExcludes: the nested frontends the
+  # lock generator must leave alone (and prune).
+  nodeNestedFrontendExcludes ? [ ],
   # perSystem.frappe-nix.restore, plus `fetch` (the frappe-nix-backup-fetch
   # binary) and `devguard` (whether this bench's guard rails are on).
   # `enable = false` leaves `bench restore` with its explicit-file behaviour.
@@ -90,6 +95,21 @@ let
   # what the command is about and a yarn failure should not abort it.
   refreshNodeModulesSoft = lib.optionalString (appsWithNode != [ ]) ''
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
+  '';
+
+  # Shell snippet: (re)generate node-locks/ — the committed package-lock.json
+  # per app and nested frontend that `nix build` installs node_modules from.
+  # Discovers its own targets under apps/, so an app added a moment ago by
+  # bench-get-app is covered before the shell has re-evaluated; its stamp makes
+  # a target whose manifests did not move free. Expects cwd at the bench root.
+  regenNodeLocks = "${nodeLocksBin} ${
+    lib.escapeShellArgs (map (k: "--exclude=${k}") nodeNestedFrontendExcludes)
+  } . node-locks";
+
+  # The same, downgraded to a warning: a resolve failure must not abort a pull
+  # (the previous locks stay in place, and nix build keeps working from them).
+  regenNodeLocksSoft = ''
+    ${regenNodeLocks} || echo "  ⚠  node-locks/ not fully regenerated — nix build keeps the previous locks; re-run: bench-update --node-locks" >&2
   '';
 
   # Shell snippet: regenerate sites/apps.txt and sites/apps.json from the
@@ -322,22 +342,22 @@ secretScripts
     export _FRAPPE_BENCH_RAW=1
 
     # In app mode there is nothing here to pull and nothing here to write: the
-    # apps are pinned by flake.lock and the hashes belong to the repository, not
+    # apps are pinned by flake.lock and the locks belong to the repository, not
     # to a bench directory the next refresh replaces.
     PULL=${if appMode then "false" else "true"}
     MIGRATE=true
     BUILD=true
-    FORCE_NODE_HASHES=false
+    NODE_LOCKS=false
 
     for arg in "$@"; do
       case "$arg" in
 ${
       if appMode then
         ''
-              --pull | --node-hashes)
+              --pull | --node-locks | --node-hashes)
                 echo "bench-update: $arg has no meaning in app mode — the apps are pinned by" >&2
-                echo "flake.lock, not pulled, and ${lockDir}/node-offline-hashes.json is" >&2
-                echo "generated from those pins. Use:" >&2
+                echo "flake.lock, not pulled, and ${lockDir}/node-locks/ is generated from" >&2
+                echo "those pins. Use:" >&2
                 echo "" >&2
                 echo "    nix flake update        # move the pins" >&2
                 echo "    nix run .#relock        # re-resolve and rewrite ${lockDir}/" >&2
@@ -346,7 +366,10 @@ ${
       else
         ''
               --pull)        MIGRATE=false; BUILD=false ;;
-              --node-hashes) PULL=false;   MIGRATE=false; BUILD=false; FORCE_NODE_HASHES=true ;;''
+              --node-locks)  PULL=false;   MIGRATE=false; BUILD=false; NODE_LOCKS=true ;;
+              --node-hashes)
+                echo "bench-update: --node-hashes is now --node-locks (node-offline-hashes.json was replaced by node-locks/)" >&2
+                PULL=false; MIGRATE=false; BUILD=false; NODE_LOCKS=true ;;''
     }
         --migrate)     PULL=false;   BUILD=false  ;;
         --build)       PULL=false;   MIGRATE=false ;;
@@ -363,13 +386,13 @@ ${
               echo "To move the pinned apps: nix flake update && nix run .#relock"''
       else
         ''
-              echo "Usage: bench-update [--pull | --migrate | --build | --node-hashes]"
+              echo "Usage: bench-update [--pull | --migrate | --build | --node-locks]"
               echo ""
-              echo "  (no flags)     Pull apps, refresh node hashes, migrate, build"
-              echo "  --pull         Pull latest commits + refresh changed node hashes"
+              echo "  (no flags)     Pull apps, refresh node-locks/, migrate, build"
+              echo "  --pull         Pull latest commits + refresh node-locks/ for what moved"
               echo "  --migrate      Run DB migrations only"
               echo "  --build        Build JS/CSS assets only"
-              echo "  --node-hashes  Force-regenerate node-offline-hashes.json (all apps)"''
+              echo "  --node-locks   (Re)generate node-locks/ for every app and nested frontend (needs the network)"''
     }
           exit 0 ;;
         *) echo "Unknown flag: $arg" >&2; exit 1 ;;
@@ -377,52 +400,10 @@ ${
     done
 
     cd "$FRAPPE_BENCH_ROOT"
-    HASHES_FILE="node-offline-hashes.json"
-
-    # Compute the fetchYarnDeps offline-cache hash for one app ($1) by building
-    # the real derivation with a fake hash and reading the reported `got:` value.
-    # (prefetch-yarn-deps' standalone hash does NOT match fetchYarnDeps' FOD hash,
-    # which also embeds the yarn.lock.)
-    _offline_hash() {
-      nix build --impure --no-link --no-warn-dirty --expr "
-        let pkgs = import ${pkgs.path} { system = builtins.currentSystem; };
-        in pkgs.fetchYarnDeps { yarnLock = $FRAPPE_BENCH_ROOT/apps/$1/yarn.lock; hash = pkgs.lib.fakeHash; }
-      " 2>&1 | awk '/got:/ { print $NF; exit }' || true
-    }
-
-    _write_hash() {
-      local app="$1" h="$2" tmp
-      tmp=$(mktemp)
-      { [ -f "$HASHES_FILE" ] && cat "$HASHES_FILE" || echo '{}'; } \
-        | ${pkgs.jq}/bin/jq --sort-keys --arg a "$app" --arg h "$h" '.[$a] = $h' > "$tmp"
-      mv "$tmp" "$HASHES_FILE"
-    }
-
-    _regen_hashes() {
-      if [ "$#" -eq 0 ]; then
-        echo "  node-offline-hashes.json already up to date"
-        return 0
-      fi
-      echo "── Regenerating node-offline-hashes.json for:$(printf ' %s' "$@") ──"
-      for app in "$@"; do
-        echo "  prefetching $app (downloads yarn deps)…"
-        h=$(_offline_hash "$app")
-        if [ -z "$h" ]; then
-          echo "  ⚠  could not compute hash for $app" >&2
-          continue
-        fi
-        _write_hash "$app" "$h"
-        echo "  $app = $h"
-      done
-    }
 
     if $PULL; then
       echo "── Pulling latest commits for all app submodules ────────────"
-      declare -A _before_lock _before_py
-      for lock in apps/*/yarn.lock; do
-        [ -e "$lock" ] || continue
-        _before_lock["$lock"]=$(git hash-object "$lock" 2>/dev/null || echo none)
-      done
+      declare -A _before_py
       for pp in apps/*/pyproject.toml; do
         [ -e "$pp" ] || continue
         _before_py["$pp"]=$(git hash-object "$pp" 2>/dev/null || echo none)
@@ -533,18 +514,13 @@ ${
       echo "  commit sites/apps.json along with the submodule bumps"
       echo ""
 
-      # Refresh node hashes for apps whose yarn.lock changed or are not yet recorded.
-      changed=()
-      for lock in apps/*/yarn.lock; do
-        [ -e "$lock" ] || continue
-        app=$(basename "$(dirname "$lock")")
-        after=$(git hash-object "$lock" 2>/dev/null || echo none)
-        if [ "''${_before_lock["$lock"]:-none}" != "$after" ] \
-           || ! ${pkgs.jq}/bin/jq -e --arg a "$app" 'has($a)' "$HASHES_FILE" >/dev/null 2>&1; then
-          changed+=("$app")
-        fi
-      done
-      _regen_hashes "''${changed[@]}"
+      # node-locks/ for whatever the pull moved. The generator's own stamp
+      # decides what that was — a lock whose manifests did not change costs
+      # nothing — and a nested frontend that arrived with the pull gets its
+      # lock in the same run.
+      echo "── Refreshing node-locks/ ──────────────────────────────────"
+      ${regenNodeLocksSoft}
+      echo "  commit node-locks/ along with the submodule bumps"
       echo ""
 
       # Re-lock when an app's pyproject.toml moved. The Python half of this used
@@ -583,13 +559,9 @@ ${
       fi
     fi
 
-    if $FORCE_NODE_HASHES; then
-      all_apps=()
-      for lock in apps/*/yarn.lock; do
-        [ -e "$lock" ] || continue
-        all_apps+=("$(basename "$(dirname "$lock")")")
-      done
-      _regen_hashes "''${all_apps[@]}"
+    if $NODE_LOCKS; then
+      echo "── Regenerating node-locks/ ────────────────────────────────"
+      ${regenNodeLocks}
     fi
 
     if $MIGRATE; then
@@ -911,7 +883,11 @@ ${
       if appMode then
         ''echo "Done! Commit any changed yarn.lock, then: nix run .#relock"''
       else
-        ''echo "Done! Lock files updated. Commit uv.lock and yarn.lock files."''
+        ''
+          echo "Regenerating node-locks/ from the new yarn.lock files…"
+          ${regenNodeLocksSoft}
+          echo "Done! Commit uv.lock, the yarn.lock files and node-locks/."
+        ''
     }
   '';
 
@@ -1015,6 +991,7 @@ ${
       echo "Next steps:"
       echo "  1. Restart devenv: direnv reload --no-eval-cache"
       echo "  2. Install the app: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
+      echo "  3. If it ships a package.json, lock its node deps for nix build: bench-update --node-locks"
     '';
     description = "Add a Frappe app from a git URL/alias as a submodule and register it in the uv workspace.";
   };
