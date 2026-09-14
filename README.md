@@ -530,7 +530,7 @@ The shell ships an umbrella **`bench` wrapper** that shadows the venv's `bench` 
 | --- | --- | --- |
 | bench update … | bench-update | vanilla update pip-installs / assumes upstream remotes |
 | bench build … | bench-build | brings node_modules back in step with the apps first |
-| bench get-app <url\|alias> | bench-get-app | git submodule + uv workspace instead of pip |
+| bench get-app [--branch <b>] <url\|alias> | bench-get-app | git submodule + uv workspace instead of pip |
 | bench new-app <name> | bench-new-app | scaffold + uv workspace (skips the failing pip step) |
 | bench restore [<sql>] | bench-restore | injects the MariaDB root credentials; with no file, fetches the latest production backup |
 | bench new-site <site> | real bench + injected --db-socket/--db-root-username root | non-interactive site creation |
@@ -572,7 +572,7 @@ These back the wrapper and are also callable directly:
 | edit-secret <name> | Decrypt a secret into $EDITOR and re-encrypt it to the declared recipients. Reads stdin when it is not a terminal, so a secret can be piped in. |
 | rekey-secrets | Re-encrypt every secret after changing recipients. |
 | check-secrets [<name>] | Verify the .age files match the declared recipients; with a name, explain why you cannot decrypt one. |
-| bench-get-app <url\|alias> | Add an app as a git submodule, register it in the uv workspace and in sites/apps.{txt,json}. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. |
+| bench-get-app [--branch <b>] <url\|alias> | Add an app as a git submodule, register it in the uv workspace and in sites/apps.{txt,json}. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. The branch — --branch, else the remote's default — is recorded in .gitmodules, which is what bench-update --pull follows. |
 | bench-new-app <name> | Scaffold a new app as a local app (committed source, no nested git) and register it the same way. |
 | update-deps | Re-lock + sync Python (uv) and Node (yarn) across all apps, then regenerate node-locks/. |
 

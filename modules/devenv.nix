@@ -1956,7 +1956,11 @@ in
                 # refs that have no role in production. A local app (committed
                 # source) needs nothing here; a stray repo gets a warning, since
                 # it is the one shape `nix build` silently leaves out.
-                while IFS=$'\t' read -r _app _kind _branch; do
+                # Unit separator, not tab: tab is IFS whitespace, and `read`
+                # collapses an empty field (a submodule with no branch) out of
+                # the line. Nothing here reads past $_kind, but the loop is the
+                # same one bench-update runs, and it should parse the same way.
+                while IFS=$'\037' read -r _app _kind _branch; do
                   case "$_kind" in
                     submodule-uninitialized)
                       echo "Initializing git submodule apps/$_app..."
@@ -1968,7 +1972,7 @@ in
                       echo "  and re-add it with bench-get-app; see README, 'Local apps'." >&2
                       ;;
                   esac
-                done < <(${workspaceTool}/bin/frappe-nix-workspace apps --apps-dir "$FRAPPE_BENCH_ROOT/apps" 2>/dev/null || true)
+                done < <(${workspaceTool}/bin/frappe-nix-workspace apps --apps-dir "$FRAPPE_BENCH_ROOT/apps" 2>/dev/null | tr '\t' '\037' || true)
 
                 # sites/apps.txt and sites/apps.json are generated from the
                 # workspace members and the submodule checkouts — and committed,

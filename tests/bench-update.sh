@@ -92,6 +92,12 @@ git init -q --bare "$ROOT/remotes/fork.git"
 git -C "$ROOT/seed/frappe" push -q "$ROOT/remotes/fork.git" version-16:develop
 git -C apps/frappe remote rename origin upstream
 git -C apps/frappe remote add origin "file://$ROOT/remotes/fork.git"
+# A submodule registered with no `branch` — what bench-get-app produced before
+# it learned to record one. Named to sort before frappe: the classifier's
+# empty branch field used to shift the URL into $branch and abort the whole
+# pull on "invalid refspec", so frappe coming *after* it is what proves the
+# pull now carries on.
+git submodule add -q "file://$ROOT/remotes/frappe.git" apps/branchless
 # A local app: committed source, no .git of its own.
 seed_app apps/localapp localapp 1.0.0
 # A stray repo: its own .git, no remote, recorded as a gitlink by `git add`.
@@ -125,6 +131,11 @@ check "git submodule foreach itself dies on the stray gitlink (the bug being fix
 FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull.log" 2>&1 \
   && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull.log"; }
 check "the pull used the remote that has the .gitmodules URL, not origin" \
+  grep -q 'frappe (version-16 from upstream)' "$ROOT/pull.log"
+check "a submodule with no branch in .gitmodules is skipped, with the fix" \
+  grep -q 'branchless: no branch configured in .gitmodules' "$ROOT/pull.log"
+check "…not handed its URL as a refspec" bash -c "! grep -q 'invalid refspec' '$ROOT/pull.log'"
+check "…and the pull carried on past it (frappe sorts after it)" \
   grep -q 'frappe (version-16 from upstream)' "$ROOT/pull.log"
 check_eq "the submodule was pulled to the remote tip" "$TIP" "$(git -C apps/frappe rev-parse HEAD)"
 check_eq "and left on its branch" "version-16" "$(git -C apps/frappe symbolic-ref --short HEAD)"

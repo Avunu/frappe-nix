@@ -245,6 +245,8 @@
         // import ./tests/bench-restore.nix { inherit pkgs; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
         // import ./tests/bench-update.nix { inherit pkgs; }
+        # `bench-get-app` against file:// remotes: what it records.
+        // import ./tests/bench-get-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
