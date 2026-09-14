@@ -302,18 +302,20 @@ validates in-process against the WSGI app.
 Nothing to do for a new bench: `frappe-init` writes the dependency into
 `pyproject.toml` from the template and locks it.
 
-An existing bench picks it up by re-running the reconciler from the bench root —
-it adds only what is missing and re-locks:
+Nothing to do for an existing bench either: the dev shell adds it on entry. A
+bench from before the runtime evaluates and opens as it always did — running the
+split processes for that one session — and `enterShell` reconciles the
+workspace root and re-locks (see [Upgrading frappe-nix](#upgrading-frappe-nix)).
+Commit `pyproject.toml` and `uv.lock`, re-enter the shell, and `devenv up` runs
+the runtime.
 
-```sh
-nix run github:Avunu/frappe-nix -- -y
-```
-
-That lands three things, the same way it lands `frappe-bench` and `setuptools`:
-`frappe-runtime` in `[project].dependencies`; a `[tool.uv.sources]` entry
-pointing at this repository's `runtime/` subdirectory; and `hatchling` in
-`[tool.uv.extra-build-dependencies]`, because uv builds without isolation here and
-the package's own `build-system.requires` is not enough.
+What lands is three things, the same way `frappe-init` lands `frappe-bench` and
+`setuptools`: `frappe-runtime` in `[project].dependencies`; a
+`[tool.uv.sources]` entry pointing at this repository's `runtime/` subdirectory;
+and `hatchling` in `[tool.uv.extra-build-dependencies]`, because uv builds
+without isolation here and the package's own `build-system.requires` is not
+enough. The reconciler (`nix run github:Avunu/frappe-nix -- -y`) does the same
+and remains the way to do it from outside a shell.
 
 The declaration exists for uv's resolver and is a placeholder, not a version pin.
 frappe-nix points uv2nix's `srcOverrides` at its own `runtime/` directory, so the
@@ -445,6 +447,21 @@ The ports are hashed from `benchName` rather than the project path so that every
 `http://localhost:<port>` (and `127.0.0.1`) serves the site named by `siteName`: the unified runtime sends a request whose `Host` names no site on the bench to `FRAPPE_SITE` / `default_site`, on the web and the socket.io path alike, while a `Host` that does name a site — `http://other.localhost:<port>` on a bench with several — still reaches that one. (`bench serve` used to pin every request to `FRAPPE_SITE`; the runtime, which imports the WSGI app directly, had lost that.)
 
 Each app's `node_modules` is a real `yarn install`, not the Nix-built one — nested vite frontends (`erpnext/banking`, `hrms/frontend`, `helpdesk/desk`, …) get their deps from a postinstall that needs the network. It is skipped for an app whose `package.json`/`yarn.lock` — its own and every nested one — are unchanged since the last successful install, and re-run when any of them moves. `bench build` re-runs it too, and refuses to build if it fails: pull an app that added a dependency, build without reinstalling, and what you get is a missing-package error from a vite config several apps deep, naming nothing that leads back to the install.
+
+### Upgrading frappe-nix
+
+```sh
+nix flake update frappe-nix   # or `nix flake update` for every pin
+direnv reload                 # or: nix develop --no-pure-eval
+```
+
+That is the whole procedure. A frappe-nix bump can ask something new of a bench's **workspace root** — `frappe-runtime` becoming a required dependency is the case so far: a name in `[project].dependencies`, a `[tool.uv.sources]` entry, a build backend named in `[tool.uv.extra-build-dependencies]` — and a bench from before the bump has no way to know. So `enterShell` reconciles `pyproject.toml` on every entry with the same `ensure-root` step `frappe-init` runs: it adds what is missing, changes nothing that is already there (your name, your `requires-python`, your override list, your comments — the file is edited with tomlkit, not rewritten), and runs `uv lock` only when that changed the file. On the common path it is one TOML parse and says nothing.
+
+When it does change something it says so, lists what it added, and tells you to **commit `pyproject.toml` and `uv.lock` and re-enter the shell** — the shell you are in was built from the previous lock. Until you do, `devenv up` runs whatever shape the old lock supports: a bench whose lock predates the runtime gets the split `web`/`socketio`/`worker`/`scheduler` processes for that session, and the banner says so. Nothing about that shape is degraded — it is `runtime.enable = false`, which `checks.socket` covers.
+
+If `uv lock` fails — no network, or a genuine conflict between the new requirement and an app's pins — both files are put back exactly as they were, mtimes included, and the shell opens anyway. A `pyproject.toml` that declares what `uv.lock` does not carry would fail the *next* evaluation (see [A stale `uv.lock` is an evaluation error](#a-stale-uvlock-is-an-evaluation-error)), which is the one outcome this hook exists to avoid: you would be back to fixing the shell from outside it. The next entry retries; to resolve a conflict by hand, make the listed additions in `pyproject.toml`, add the override `uv` asks for, and run `uv lock` in the shell.
+
+What it deliberately does not do: register submodules, vendor apps, edit `.gitignore` or `common_site_config.json`, or `git add` anything — that is [the reconciler's](#migrate-an-existing-bench) job, and the reconciler still does all of it (`nix run github:Avunu/frappe-nix -- -y`) for the cases a shell hook should not decide. A change to the *options* a bench's `flake.nix` sets (`nodeOfflineHashes` was one) cannot be reconciled from inside and stays an evaluation error that names the edit.
 
 ### Development guard rails
 
@@ -899,6 +916,7 @@ frappe-nix/
 │   ├── bench.nix             # app discovery, node_modules (importNpmLock from node-locks/), benchRoot
 │   ├── app-workspace.nix     # app mode: the bench workspace, assembled in the store
 │   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
+│   ├── root-sync.nix         # shell entry: pyproject.toml up to date with frappe-nix, then uv lock
 │   ├── lock-audit.nix        # names a stale uv.lock before uv2nix trips over it
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / cairocffi
 │   ├── secrets-schema.nix    # the one derivation of a bench's secret set

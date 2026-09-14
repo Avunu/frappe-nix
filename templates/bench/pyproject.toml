@@ -39,7 +39,7 @@ package = false
 # Resolve conflicts between frappe-bench (the CLI) and frappe. Seeded from the
 # frappe-nix preset; add entries here if `uv lock` reports an unsatisfiable
 # requirement, then re-run `uv lock`.
-override-dependencies = @OVERRIDES@
+override-dependencies = "@OVERRIDES@"
 
 # Build-time deps for older Frappe/ERPNext packages that predate PEP 517/518 and
 # rely on setuptools/pkg_resources. uv2nix consumes this so the Nix build needs

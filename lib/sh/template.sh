@@ -30,17 +30,20 @@ render_template() {
       -e "s|@APP_NAME@|$app_name|g" \
       -e "s|@FRAPPE_VERSION@|$frappe_version|g" \
       -e "s|@FRAPPE_BRANCH@|$branch|g"
-    # The bench template's pyproject.toml only. @OVERRIDES@ is a bare TOML array
-    # rather than a quoted string, so it cannot go through the pass above without
-    # `|` in an override specifier splitting the sed expression; and the app
-    # template has no pyproject.toml of its own to render — an app repo's project
-    # file is its packaging metadata, not a workspace root.
+    # The bench template's pyproject.toml only. The token is quoted in the
+    # template — `"@OVERRIDES@"` — so the file is valid TOML at rest and
+    # `frappe-nix-workspace ensure-root` can read it unrendered (the dev shell
+    # does, in lib/root-sync.nix); the quotes go with it, since the value is a
+    # bare array. Kept out of the pass above because `|` in an override
+    # specifier would split the sed expression; and the app template has no
+    # pyproject.toml of its own to render — an app repo's project file is its
+    # packaging metadata, not a workspace root.
     #
     # An `if`, not `[ -f … ] &&`: this is the last command in the subshell, so
     # under `set -e` a false test would exit the whole script — which is exactly
     # what the app template, having no pyproject.toml, would do.
     if [ -f pyproject.toml ]; then
-      sed -i -e "s|@OVERRIDES@|$overrides|" pyproject.toml
+      sed -i -e "s|\"@OVERRIDES@\"|$overrides|" pyproject.toml
     fi
   )
 }

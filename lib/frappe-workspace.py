@@ -83,21 +83,40 @@ def cmd_ensure_root(args):
     [dependency-groups]; lib/bench.nix and uv2nix need [tool.uv.workspace]. A
     pyproject.toml that predates frappe-nix (a user's own project file) is
     reconciled rather than overwritten, so only absent keys are filled.
+
+    Two callers. `frappe-init` passes every value, since the file may be a
+    user's own with none of them. The dev shell's root sync (lib/root-sync.nix)
+    passes none: a frappe-nix bench already has them, and what it is after is
+    the part below that keeps up with frappe-nix itself — the required
+    dependencies and what the template ships for them. Hence --name and
+    --requires-python are only required when the key they would fill is
+    absent, and the file is written only when something changed, so a run that
+    changes nothing leaves the mtime (and git) alone.
     """
-    doc = load(args.pyproject)
+    original = Path(args.pyproject).read_text()
+    doc = tomlkit.parse(original)
     changed = []
 
     project = table_at(doc, "project")
     if "name" not in project:
+        if not args.name:
+            print(f"error: {args.pyproject} has no [project].name; pass --name", file=sys.stderr)
+            return 1
         project["name"] = args.name
         changed.append("[project].name")
     if "version" not in project:
         project["version"] = "0.1.0"
         changed.append("[project].version")
     if "requires-python" not in project:
+        if not args.requires_python:
+            print(
+                f"error: {args.pyproject} has no [project].requires-python; pass --requires-python",
+                file=sys.stderr,
+            )
+            return 1
         project["requires-python"] = args.requires_python
         changed.append("[project].requires-python")
-    elif str(project["requires-python"]) != args.requires_python:
+    elif args.requires_python and str(project["requires-python"]) != args.requires_python:
         print(
             f"  note: [project].requires-python is {project['requires-python']!s}, "
             f"the {args.preset} preset expects {args.requires_python}",
@@ -169,7 +188,9 @@ def cmd_ensure_root(args):
     table_at(doc, "tool", "uv", "workspace").setdefault("members", tomlkit.array())
     table_at(doc, "tool", "uv", "sources")
 
-    save(doc, args.pyproject)
+    rendered = tomlkit.dumps(doc)
+    if rendered != original:
+        Path(args.pyproject).write_text(rendered)
     for line in changed:
         print(f"  + {line}")
     return 0
@@ -626,8 +647,10 @@ def main():
 
     p = sub.add_parser("ensure-root")
     p.add_argument("--pyproject", required=True)
-    p.add_argument("--name", required=True)
-    p.add_argument("--requires-python", required=True)
+    # Both fill an absent key only, so a caller that knows the file already has
+    # them (the dev shell) can leave them out; see cmd_ensure_root.
+    p.add_argument("--name", default="")
+    p.add_argument("--requires-python", default="")
     p.add_argument("--overrides", default="")
     p.add_argument("--preset", default="")
     # The rendered bench template: the source of the extra-build-dependencies

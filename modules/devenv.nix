@@ -281,9 +281,11 @@ in
               Run one frappe-runtime process instead of the separate web,
               socketio, worker and scheduler processes.
 
-              Requires frappe-runtime in the bench's Python environment (a
-              dependency in the bench pyproject.toml plus `nix run .#relock`).
-              Set false to keep the split processes and the Node realtime server.
+              Requires frappe-runtime in the bench's Python environment — a
+              dependency in the bench pyproject.toml, locked. The dev shell
+              adds and locks it on entry when a bench lacks it, running the
+              split processes for that one session. Set false to keep the
+              split processes and the Node realtime server.
             '';
           };
 
@@ -1317,7 +1319,8 @@ in
             )
             # Only applies if uv.lock already carries frappe-runtime — srcOverrides
             # filters to names present in the set — so a bench that has not declared
-            # it is unaffected and still gets the eval-time error naming the fix.
+            # it is unaffected: it runs the split processes until enterShell has
+            # reconciled the dependency in (see runtimeActive).
             // lib.optionalAttrs (cfg.runtime.enable && cfg.runtime.src != null) {
               frappe-runtime = cfg.runtime.src;
             };
@@ -1439,6 +1442,27 @@ in
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
         nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
+
+        # Keeps the workspace root in step with this frappe-nix: what
+        # `frappe-init` would add to pyproject.toml on a re-run, plus the
+        # re-lock, done on shell entry instead. See lib/root-sync.nix.
+        rootSyncTool = import ../lib/root-sync.nix { inherit pkgs; };
+
+        # frappe-runtime is a normal workspace dependency, so a bench whose
+        # pyproject.toml does not declare it resolves
+        # ${devPythonEnv}/bin/frappe-runtime to a path that does not exist. A
+        # bench that predates the runtime looks exactly like that, and it is
+        # not an error here: the shell opens on the split processes for this one
+        # session, enterShell reconciles the root (rootSyncTool), and the next
+        # entry runs the runtime. Throwing instead — as this once did — blocked
+        # the very shell hook that fixes it, and sent you to run the reconciler
+        # from outside.
+        #
+        # Declared, not resolved: a name in [project].dependencies that uv.lock
+        # does not carry is the lock audit's error (lib/lock-audit.nix), and it
+        # says so before anything here is forced.
+        runtimeDeclared = builtins.elem "frappe-runtime" pythonEnvs.rootDepNames;
+        runtimeActive = cfg.runtime.enable && runtimeDeclared;
 
         nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
 
@@ -1639,7 +1663,7 @@ in
               if sockets then
                 config.processes.nginx.ports.main.value
               # Whichever process owns the public port: one runtime, or `bench serve`.
-              else if cfg.runtime.enable then
+              else if runtimeActive then
                 config.processes.runtime.ports.main.value
               else
                 config.processes.web.ports.main.value;
@@ -1903,7 +1927,7 @@ in
                   # dropping it. devenv's shell derivation reads every key, so the
                   # build dies with "option ... was accessed but has no value
                   # defined" instead of quietly omitting the variable.
-                  // lib.optionalAttrs (!cfg.runtime.enable) {
+                  // lib.optionalAttrs (!runtimeActive) {
                     # Read by node_utils.js; realtime/index.js does
                     # `server.listen(uds || port)`.
                     FRAPPE_SOCKETIO_UDS = socketioSocket;
@@ -1960,6 +1984,19 @@ in
                   --pyproject "$FRAPPE_BENCH_ROOT/pyproject.toml" \
                   --apps-dir "$FRAPPE_BENCH_ROOT/apps" \
                   --sites-dir "$FRAPPE_BENCH_ROOT/sites" || true
+
+                # The workspace root is where a frappe-nix bump can ask something
+                # new of a bench — frappe-runtime became a required dependency,
+                # with a [tool.uv.sources] entry and a build backend to name. A
+                # bench from before the bump has no way to know, so this brings
+                # pyproject.toml up to what this frappe-nix expects (the same
+                # ensure-root the reconciler runs: adds what is missing, changes
+                # nothing already correct) and re-locks only when that changed
+                # something. Quiet on the common path; when it does change the
+                # files it says so, and that this shell was built from the old
+                # lock. A failure is a warning, not a dead shell: the tool restores
+                # both files and the next entry retries.
+                ${rootSyncTool}/bin/frappe-nix-root-sync "$FRAPPE_BENCH_ROOT" || true
               ''}
 
               ${lib.optionalString appMode appBenchMaterialize}
@@ -2062,6 +2099,12 @@ in
               ''}
               ${lib.optionalString (cfg.siteName != "") ''
                 echo "  Site: ${cfg.siteName}"
+              ''}
+              ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) ''
+                echo ""
+                echo "  ⚠  frappe-runtime is not in this shell's Python environment (uv.lock predates it):"
+                echo "     'devenv up' runs the split web/socketio/worker/scheduler processes until you"
+                echo "     re-enter the shell after the reconcile above has landed."
               ''}
               echo ""
             '';
@@ -2174,7 +2217,7 @@ in
               eventsConfig = "worker_connections 1024;";
               httpConfig = ''
                 upstream frappe-web      { server unix:${webSocket}; }
-                ${lib.optionalString (!cfg.runtime.enable)
+                ${lib.optionalString (!runtimeActive)
                   "upstream frappe-socketio { server unix:${socketioSocket}; }"}
 
                 map $http_upgrade $connection_upgrade {
@@ -2227,7 +2270,7 @@ in
                   # the browser's own Origin to rewrite.
 
                   location /socket.io {
-                    proxy_pass http://${if cfg.runtime.enable then "frappe-web" else "frappe-socketio"};
+                    proxy_pass http://${if runtimeActive then "frappe-web" else "frappe-socketio"};
                     proxy_http_version 1.1;
                     proxy_set_header Upgrade $http_upgrade;
                     proxy_set_header Connection $connection_upgrade;
@@ -2277,34 +2320,10 @@ in
                 # so the jobs need to be there), and bench resolves its bench by
                 # walking *up* from cwd, so starting anywhere else finds another
                 # bench or none.
-                # frappe-runtime is a normal workspace dependency, so a bench that
-                # has not added it resolves ${devPythonEnv}/bin/frappe-runtime to a
-                # path that does not exist and the process dies with ENOENT at
-                # startup. Say what to do instead, the way the uv.lock audit does.
-                runtimeProcess =
-                  let
-                    declared = map (
-                      dep: lib.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep))
-                    ) (pythonEnvs.rootPyproject.project.dependencies or [ ]);
-                  in
-                  lib.throwIf (!builtins.elem "frappe-runtime" declared) ''
-                    frappe-nix: services.frappe-nix.runtime.enable is on, but frappe-runtime
-                    is not a dependency of this bench, so there is no frappe-runtime to run.
-
-                    This bench predates the runtime. Re-run the reconciler from the bench
-                    root; it adds the dependency and re-locks, and changes nothing that is
-                    already correct:
-
-                        nix run github:Avunu/frappe-nix -- -y
-
-                    (Or by hand: add "frappe-runtime" to [project].dependencies plus the
-                    [tool.uv.sources] and [tool.uv.extra-build-dependencies] entries from
-                    templates/bench/pyproject.toml, then `nix run .#relock`.)
-
-                    Or set `frappe-nix.runtime.enable = false` to keep the split processes
-                    and the Node realtime server.
-                  ''
-                  {
+                # Only ever selected under runtimeActive, so the binary is there:
+                # a bench that has not declared frappe-runtime runs splitProcesses
+                # instead (see runtimeActive for why that is not an error).
+                runtimeProcess = {
                   runtime = {
                     cwd = benchPath;
                     # uvicorn binds without unlinking first, so a crashed run would
@@ -2353,7 +2372,9 @@ in
                     };
                 };
 
-                # The processes the runtime replaces, kept for runtime.enable = false.
+                # The processes the runtime replaces, kept for runtime.enable = false
+                # — and run for one session by a bench whose uv.lock predates the
+                # runtime, until enterShell has reconciled it in.
                 splitProcesses = {
                   web = {
                     # bench resolves its bench by walking *up* from cwd
@@ -2470,16 +2491,16 @@ in
                   # imports sites/common_site_config.json, so the file is a vite
                   # input and rewriting it under a running watcher is a rebuild.
                   after = needsConfig ++ [
-                    (if cfg.runtime.enable then "devenv:processes:runtime" else "devenv:processes:web")
+                    (if runtimeActive then "devenv:processes:runtime" else "devenv:processes:web")
                   ];
                 };
               }
-              // (if cfg.runtime.enable then runtimeProcess else splitProcesses)
+              // (if runtimeActive then runtimeProcess else splitProcesses)
               // lib.optionalAttrs sockets {
                 nginx = {
                   ports.main.allocate = webBase;
                   after =
-                    if cfg.runtime.enable then
+                    if runtimeActive then
                       [ "devenv:processes:runtime" ]
                     else
                       [

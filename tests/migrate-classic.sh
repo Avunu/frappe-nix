@@ -150,6 +150,10 @@ for app in ("frappe", "erpnext", "localapp", "legacyapp"):
         bad.append(f"[tool.uv.sources].{app} missing")
 if d["project"]["requires-python"] != ">=3.12":
     bad.append("requires-python not from the preset")
+# A list, not a string: the template quotes its @OVERRIDES@ token so the file is
+# valid TOML unrendered, and the renderer has to replace the quotes with it.
+if uv.get("override-dependencies") != ["click>=8.2,<8.3"]:
+    bad.append(f"override-dependencies not the preset's array: {uv.get('override-dependencies')!r}")
 # frappe-runtime is reconciled in, not hand-edited: the dependency, the git
 # source frappe-nix's srcOverrides will shadow, and the build backend uv needs
 # named because it builds without isolation.

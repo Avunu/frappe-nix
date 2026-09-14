@@ -236,5 +236,8 @@ in
     workspace
     rootPyproject
     rootPkgName
+    # Normalized [project].dependencies names, for a consumer asking whether the
+    # root declares a package before it forces an env that would lack it.
+    rootDepNames
     ;
 }

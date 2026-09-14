@@ -186,6 +186,19 @@
               2>&1 | tee "$out"
           '';
 
+          # The shell-entry root sync over a bench from before frappe-runtime,
+          # with a stub uv standing in for the lock; the assertions are about
+          # what pyproject.toml gains, when the lock is regenerated, and that a
+          # failed lock leaves both files exactly as they were.
+          root-sync = pkgs.runCommand "frappe-nix-root-sync-check" {
+            nativeBuildInputs = [ pkgs.python3 ];
+          } ''
+            bash ${./tests/root-sync.sh} \
+              ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
+              ${./templates/bench/pyproject.toml} \
+              2>&1 | tee "$out"
+          '';
+
           # The node lock generator over the same fixture tree the Nix-side
           # discovery is checked against, with a stub npm standing in for the
           # resolver; the assertions are about what lands in node-locks/ and

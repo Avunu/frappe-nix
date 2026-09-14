@@ -82,9 +82,8 @@ let
   pyver = "${builtins.substring 0 1 pynum}.${builtins.substring 1 (-1) pynum}";
 
   # A TOML array of strings is a JSON array of strings, so this needs no renderer
-  # of its own. It is substituted before anything parses the file:
-  # `override-dependencies = @OVERRIDES@` is the one placeholder in the template
-  # that is not itself valid TOML.
+  # of its own. The token is quoted in the template so the file parses as-is;
+  # the quotes are replaced along with it, since the value is a bare array.
   overrides = builtins.toJSON preset.overrideDependencies;
 in
 
@@ -119,7 +118,7 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
     substitute ${../templates/bench/pyproject.toml} "$out/pyproject.toml" \
       --replace-fail '@PROJECT_NAME@'    ${lib.escapeShellArg projectName} \
       --replace-fail '@REQUIRES_PYTHON@' ${lib.escapeShellArg preset.requiresPython} \
-      --replace-fail '@OVERRIDES@'       ${lib.escapeShellArg overrides} \
+      --replace-fail '"@OVERRIDES@"'     ${lib.escapeShellArg overrides} \
       --replace-fail '@PYTAG@'           ${lib.escapeShellArg pytag} \
       --replace-fail '@PYVER@'           ${lib.escapeShellArg pyver}
 
