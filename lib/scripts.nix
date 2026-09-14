@@ -436,7 +436,12 @@ ${
         return 1
       }
 
-      while IFS=$'\t' read -r app kind branch url; do
+      # Through tr, because tab is IFS *whitespace*: `read` collapses a run of
+      # tabs into one delimiter, so a submodule with no branch — an empty third
+      # field — had the URL land in $branch and git was handed it as a refspec
+      # ("fatal: invalid refspec 'https://…'"). Unit separator is not whitespace,
+      # so an empty field stays empty and the guard below sees it.
+      while IFS=$'\037' read -r app kind branch url; do
         case "$kind" in
           local)
             echo "  · $app: local app (source committed with the bench) — nothing to pull"
@@ -530,7 +535,7 @@ ${
           git checkout -B "$branch" "FETCH_HEAD"
           find . -name "*.pyc" -delete
         ) < /dev/null  # git must not eat the classifier's remaining lines
-      done < <(${workspaceBin} apps --apps-dir apps)
+      done < <(${workspaceBin} apps --apps-dir apps | tr '\t' '\037')
       echo ""
 
       # The pins just moved; sites/apps.json records them. Before the node
@@ -963,19 +968,40 @@ ${
       set -euo pipefail
       export _FRAPPE_BENCH_RAW=1
 
-      if [ -z "''${1:-}" ]; then
-        echo "Usage: bench-get-app <url-or-alias>"
+      usage() {
+        echo "Usage: bench-get-app [--branch <name>] <url-or-alias>"
         echo ""
         echo "Adds a Frappe app as a git submodule and integrates it into the workspace."
+        echo "Without --branch the remote's default branch is used; either way the branch"
+        echo "is recorded in .gitmodules, which is what 'bench-update --pull' follows."
         echo ""
         echo "Examples:"
         echo "  bench-get-app helpdesk                              # → frappe/helpdesk"
         echo "  bench-get-app frappe/payments                      # owner/repo on GitHub"
         echo "  bench-get-app https://github.com/frappe/hrms.git   # full URL"
+        echo "  bench-get-app --branch version-16 hrms             # a release branch"
+      }
+
+      INPUT=""
+      BRANCH=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          -b | --branch)
+            [ -n "''${2:-}" ] || { usage >&2; echo "" >&2; echo "error: $1 needs a branch name" >&2; exit 1; }
+            BRANCH="$2"; shift 2 ;;
+          --branch=*) BRANCH="''${1#*=}"; shift ;;
+          -h | --help) usage; exit 0 ;;
+          -*) usage >&2; echo "" >&2; echo "error: unknown flag: $1" >&2; exit 1 ;;
+          *)
+            [ -z "$INPUT" ] || { usage >&2; echo "" >&2; echo "error: one app at a time" >&2; exit 1; }
+            INPUT="$1"; shift ;;
+        esac
+      done
+      if [ -z "$INPUT" ]; then
+        usage
         exit 1
       fi
 
-      INPUT="$1"
       cd "$FRAPPE_BENCH_ROOT"
 
       # Resolve the app source URL:
@@ -998,11 +1024,26 @@ ${
         exit 1
       fi
 
-      echo "Adding git submodule: $URL -> $APP_DIR"
-      git submodule add "$URL" "$APP_DIR"
+      echo "Adding git submodule: $URL -> $APP_DIR''${BRANCH:+ ($BRANCH)}"
+      # -b both checks the branch out and records it in .gitmodules. That record
+      # is load-bearing: `bench-update --pull` follows it, and a submodule
+      # registered without one is never pulled — this script left every app it
+      # added in that state until 2026-09-14. Without --branch git clones the
+      # remote's default branch; record whatever that turned out to be, so the
+      # checkout and .gitmodules cannot disagree.
+      add_args=()
+      if [ -n "$BRANCH" ]; then
+        add_args+=(-b "$BRANCH")
+      fi
+      git submodule add "''${add_args[@]}" "$URL" "$APP_DIR"
       # Not --recursive: Frappe apps often ship broken nested submodules that
       # have no production role and would fail init.
       git submodule update --init "$APP_DIR"
+      if [ -z "$BRANCH" ]; then
+        BRANCH="$(git -C "$APP_DIR" symbolic-ref --short HEAD)"
+        git config -f .gitmodules "submodule.$APP_DIR.branch" "$BRANCH"
+      fi
+      echo "  recorded branch '$BRANCH' in .gitmodules"
 
       ${registerWorkspaceMember}
 
