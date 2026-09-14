@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
 
       # Evaluates checks/packages/apps/devShells and the NixOS module without building
       # the VM tests. Catches the overwhelming majority of flake.lock breakage.
@@ -56,7 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/nix-installer-action@v23
 
       - name: Run the ${{ matrix.test }} NixOS test
         run: nix build .#checks.x86_64-linux.${{ matrix.test }} -L --show-trace
