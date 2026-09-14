@@ -64,7 +64,11 @@ mkdir -p "$ROOT/seed"
 seed_app "$ROOT/seed/frappe" frappe 16.0.0
 git -C "$ROOT/seed/frappe" init -q -b version-16
 git -C "$ROOT/seed/frappe" add -A
-git -C "$ROOT/seed/frappe" commit -q -m "v16.0.0"
+# Dated well in the past: the self-heal below deepens back to HEAD's own date,
+# and a root commit older than that is what leaves the clone shallow afterwards
+# — as a real bench's is — rather than fully unshallowed by a tiny fixture.
+GIT_COMMITTER_DATE="2020-01-01T00:00:00" GIT_AUTHOR_DATE="2020-01-01T00:00:00" \
+  git -C "$ROOT/seed/frappe" commit -q -m "v16.0.0"
 PINNED="$(git -C "$ROOT/seed/frappe" rev-parse HEAD)"
 git init -q --bare "$ROOT/remotes/frappe.git"
 # A bare init points HEAD at init.defaultBranch; a shallow clone needs it on
@@ -170,6 +174,38 @@ FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull2.log" 2>&1 \
   && ok "a second --pull exits 0" || { no "a second --pull exits 0"; cat "$ROOT/pull2.log"; }
 check_eq "the submodule is still at the tip" "$TIP" "$(git -C apps/frappe rev-parse HEAD)"
 
+echo "── a clone grafted by the old --depth 1 fetch heals itself ──────"
+# bench-update fetched with --depth 1 until 2026-09-11. On a shallow clone that
+# grafts the new tip with no parents: HEAD and the tip become two islands with
+# no path between them, `merge-base --is-ancestor` can never pass, and every
+# later pull skipped the app as having "local or unpushed commits" — forever,
+# since a plain fetch never asks for the gap. Reproduce the shape exactly.
+for i in 1 2 3; do
+  printf '%s\n' "$i" > "$ROOT/seed/frappe/GAP$i"
+  git -C "$ROOT/seed/frappe" add -A
+  git -C "$ROOT/seed/frappe" commit -q -m "gap $i"
+done
+git -C "$ROOT/seed/frappe" push -q origin version-16
+GRAFTED_TIP="$(git -C "$ROOT/seed/frappe" rev-parse HEAD)"
+git -C apps/frappe fetch -q --depth 1 upstream version-16
+check "fixture: HEAD and the fetched tip share no history locally" \
+  bash -c "[ -z \"\$(git -C apps/frappe merge-base HEAD FETCH_HEAD)\" ]"
+# HEAD keeps the history the earlier pull connected under it, so the phantom
+# here is "4 ahead" rather than a real bench's "1 ahead"; the heal must not
+# depend on HEAD being a graft itself.
+check "fixture: git itself reports upstream's own commits as 'ahead' (the phantom)" \
+  bash -c "[ \"\$(git -C apps/frappe rev-list --count FETCH_HEAD..HEAD)\" -gt 0 ]"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-graft.log" 2>&1 \
+  && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-graft.log"; }
+check "it noticed the shape and deepened" grep -q 'no path between HEAD' "$ROOT/pull-graft.log"
+check "and did not mistake it for local commits" \
+  bash -c "! grep -q 'HEAD is not an ancestor' '$ROOT/pull-graft.log'"
+check_eq "the submodule reached the tip" "$GRAFTED_TIP" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "and is still shallow (only the gap was fetched)" "true" \
+  "$(git -C apps/frappe rev-parse --is-shallow-repository)"
+check "and the pin is now an ancestor of the tip, so the phantom is gone" \
+  git -C apps/frappe merge-base --is-ancestor "$TIP" HEAD
+
 echo "── local commits are protected ─────────────────────────────────"
 printf 'mine\n' > apps/frappe/LOCAL
 git -C apps/frappe add LOCAL
@@ -183,9 +219,14 @@ FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull3.log" 2>&1 \
   && ok "a pull over local commits exits 0" || { no "a pull over local commits exits 0"; cat "$ROOT/pull3.log"; }
 check "the divergence is reported" grep -q 'HEAD is not an ancestor' "$ROOT/pull3.log"
 check_eq "and the local commit survives" "$MINE" "$(git -C apps/frappe rev-parse HEAD)"
+# A real local commit shares its parent with the tip, so the clone is not
+# deepened for it — that would re-graft the remote branch at the commit's date.
+check "a real divergence on a shallow clone is not deepened" \
+  bash -c "! grep -q 'deepening' '$ROOT/pull3.log'"
+check "and the shallow hint is given" grep -q 'git fetch --unshallow' "$ROOT/pull3.log"
 
 echo "── no remote carries the declared URL ──────────────────────────"
-git -C apps/frappe reset -q --hard "$TIP"
+git -C apps/frappe reset -q --hard "$GRAFTED_TIP"
 git -C apps/frappe remote set-url upstream "$ROOT/remotes/fork.git"
 printf 'z\n' > "$ROOT/seed/frappe/NEW3"
 git -C "$ROOT/seed/frappe" add -A

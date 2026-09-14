@@ -489,6 +489,28 @@ ${
             echo "     (git config -f .gitmodules submodule.apps/$app.branch <branch>) or the remote." >&2
             exit 1
           }
+          # A shallow clone can be unable to answer the ancestry question at all.
+          # Every depth-limited fetch grafts its tip with no parents — and this
+          # script fetched with --depth 1 until 2026-09-11 — so a clone that
+          # went through one has the pinned commit and the branch tip as two
+          # disconnected islands, even though upstream is linear. The plain fetch
+          # above never repairs that: negotiation starts from the tips the clone
+          # already has, so the gap between them is never asked for. Left alone,
+          # such a clone fails the check below on every pull and the app silently
+          # stops updating.
+          #
+          # "No merge-base whatsoever" is the exact signature, and it is only
+          # ever a shallow artefact: a real local commit shares its parent (the
+          # pin) with the tip. So in that case, and only that case, deepen the
+          # branch back to HEAD's own commit date — the gap and nothing older —
+          # and ask again. The margin covers a backport whose committer date
+          # runs a little behind the pin's.
+          if [ "$(git rev-parse --is-shallow-repository)" = true ] &&
+            [ -z "$(git merge-base HEAD FETCH_HEAD 2>/dev/null)" ]; then
+            echo "     shallow clone with no path between HEAD and $remote/$branch — deepening to check"
+            git fetch -q "$remote" "$branch" \
+              --shallow-since="@$(( $(git log -1 --format=%ct HEAD) - 86400 ))" || true
+          fi
           # `checkout -B` discards anything not on the remote branch. Refuse when
           # this submodule carries commits that are not in what we just fetched.
           if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
@@ -498,6 +520,10 @@ ${
               echo "  ⚠  $app: HEAD is not an ancestor of $remote/$branch — it has local or"
               echo "     unpushed commits that checkout -B would discard. Skipping."
               echo "     Push them, or re-run with FRAPPE_BENCH_UPDATE_FORCE=1 to overwrite."
+              if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+                echo "     (This clone is shallow. If you made no commits here, 'git fetch --unshallow'"
+                echo "     in apps/$app settles it.)"
+              fi
               exit 0
             fi
           fi
