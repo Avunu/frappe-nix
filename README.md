@@ -372,6 +372,9 @@ per-image container set — is still there and still tested
 | runtime.src | null or path | the `frappe-runtime` flake input | Source frappe-runtime is built from, overriding the revision uv.lock resolved. `null` defers to uv.lock. |
 | sockets.enable | bool | true | Put MariaDB, Redis, socketio and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs frappe ≥ 15.46. |
 | ports.base | port or null | null | First port this bench tries; defaults to 8000 + a hash of benchName. |
+| appsReconcile.enable | bool | siteName != "" | Install whatever sites/apps.txt names that siteName's site doesn't have installed yet, on every devenv up. See Installed-app drift. |
+| assets.reassert.hooks | list of str | [] | bench execute targets run when sites/assets/assets.json names a bundle file that doesn't exist on disk. Empty by default — names no app. See Asset-shadow staleness. |
+| assets.reassert.debounceMs | int | 750 | How long assets.json must sit unmodified before the bench-watch-driven check re-reads it. |
 | devguard.enable | bool | true | Master switch for all guard rails — see Development guard rails. |
 | devguard.mail.enable | bool | true | Route all outgoing mail to Mailpit, refuse IMAP/POP3. |
 | devguard.mail.host | str | "127.0.0.1" | Interface Mailpit binds and Frappe is redirected to. |
@@ -430,6 +433,7 @@ These sit at the flake's top level, not under `perSystem`: recipients and `.age`
 | Redis (cache + queue) | $DEVENV_RUNTIME/redis.sock |
 | Mailpit (SMTP / HTTP / POP3) | TCP 19000 / 20000 / 21000 + the same hash |
 | watch | — |
+| assetsWatch (only with `assets.reassert.hooks` set) | — |
 
 nginx routes `/socket.io` and everything else to the same socket — one process answers both — the same shape [`services.frappe`](#nixos-module--servicesfrappe) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which is what lets the browser reach both over one origin.
 
@@ -459,6 +463,18 @@ When it does change something it says so, lists what it added, and tells you to 
 If `uv lock` fails — no network, or a genuine conflict between the new requirement and an app's pins — both files are put back exactly as they were, mtimes included, and the shell opens anyway. A `pyproject.toml` that declares what `uv.lock` does not carry would fail the *next* evaluation (see [A stale `uv.lock` is an evaluation error](#a-stale-uvlock-is-an-evaluation-error)), which is the one outcome this hook exists to avoid: you would be back to fixing the shell from outside it. The next entry retries; to resolve a conflict by hand, make the listed additions in `pyproject.toml`, add the override `uv` asks for, and run `uv lock` in the shell.
 
 What it deliberately does not do: register submodules, vendor apps, edit `.gitignore` or `common_site_config.json`, or `git add` anything — that is [the reconciler's](#migrate-an-existing-bench) job, and the reconciler still does all of it (`nix run github:Avunu/frappe-nix -- -y`) for the cases a shell hook should not decide. A change to the *options* a bench's `flake.nix` sets (`nodeOfflineHashes` was one) cannot be reconciled from inside and stays an evaluation error that names the edit.
+
+### Installed-app drift
+
+`sites/apps.txt` is bench-level — frappe-nix regenerates it from the workspace members, in `app.siblings` order — but a site's installed apps are per-site, DB-backed (`frappe.get_installed_apps()`), and only ever grow through an explicit `bench install-app`. `apps.txt` is the candidate list `install_app()` validates a name against, not a queue anything drains, and `bench migrate` walks the DB list, never `apps.txt`. Pin a new sibling into an already-provisioned bench and nothing installs it: the app is importable, on `PYTHONPATH`, even visible in the desk's app switcher — and every page it owns 404s or throws, forever, with no signal pointing at "app not installed." (See [issue #32](https://github.com/Avunu/frappe-nix/issues/32) for how this actually presented — a report page that quietly ran on stock `frappe-datatable` because the app that was supposed to replace it had never been installed.)
+
+`appsReconcile.enable` closes this: a `frappe:apps-reconcile` task diffs `sites/apps.txt` against `siteName`'s installed apps on every `devenv up` and installs whatever is missing. `install-app` is idempotent (a no-op, unless `--force`, which this never passes), so on an already-reconciled bench it costs one `bench list-apps`. It defaults to `true` whenever `siteName` names one site — the common case for every app-mode bench — and `false` in multi-tenant mode (`siteName = ""`), where the task has no single site to target; run `reconcile-apps <site>` by hand there instead. `provision-site` is not a substitute for this: it installs into a site it just created, and re-running it to pick up a later-pinned sibling would drop the site's database (`bench new-site --force`).
+
+### Asset-shadow staleness
+
+Some Frappe apps ship their own JS/CSS build tooling that shadows Frappe's own bundle keys in `sites/assets/assets.json` — carbon-themed desk skins are the case this was found from, though frappe-nix has no knowledge of any specific one. Frappe's esbuild pipeline writes that file two different ways for the same logical bundle: one keyed by the *source* entry file's basename, which runs on every `bench build` **and every `bench watch` rebuild**; one keyed by the *built* file's basename with its content hash stripped, which runs only on `bench build --using-cached`. An app whose `hooks.py` names the second key can have a `bench watch` rebuild touch only the first, while esbuild's own dist cleanup deletes the file the second key still points at — and Frappe's own resolution (`bundled_asset()`) is a bare dict lookup with no existence check, so the browser 404s with no server-side signal. `bench watch` alone is enough to trigger this — no devenv restart, no second app involved.
+
+`assets.reassert.hooks` is the fix, and it ships with **zero built-in hooks and names no app**: it is a list of `bench execute`-able dotted paths that you point at your own app's asset-shadow fixup. Whenever `sites/assets/assets.json` names a bundle file that doesn't exist on disk, every configured hook runs, in order, against `siteName`. Two triggers cover the two ways this goes stale: a `frappe:assets-reassert` task runs the check once at `devenv up` (a bench that sat idle with a stale `assets.json` heals before the first page load), and an `assetsWatch` process — using [fswatch](https://github.com/emcrisostomo/fswatch) for the file-change detection, portable across Linux and Darwin — watches `assets.json` for the writes `bench watch`'s own rebuilds make, debounced by `assets.reassert.debounceMs`. esbuild's writer truncates-and-writes with no temp-file-and-rename, so a read can land mid-write; the check retries a failed JSON parse a few times before giving up, and a parse failure is never treated as a missing-file invariant failure — it would otherwise fire the hooks on every rebuild instead of only when something is actually missing. `assets-reassert` (a plain devenv script, present only when hooks are configured) runs the same check on demand.
 
 ### Development guard rails
 
@@ -562,6 +578,7 @@ These back the wrapper and are also callable directly:
 | Script | Description |
 | --- | --- |
 | provision-site [admin-pass] | Create $FRAPPE_SITE and install every app from sites/apps.txt. |
+| reconcile-apps [site] | Install whatever sites/apps.txt names that $SITE (or the given site) doesn't have installed yet. Idempotent; also runs automatically — see appsReconcile.enable. |
 | bench-update [--pull\|--migrate\|--build\|--node-locks] | Submodule-aware replacement for bench update. --pull fetches each submodule's .gitmodules branch from the remote that carries its declared URL (origin is often a developer's fork), refuses to discard local commits (a shallow clone whose pin and tip share no history at all — the shape a depth-limited fetch leaves behind, and what git shows as a phantom "1 ahead" — is deepened back to the pin's date and re-checked first, since that is never a local commit), skips local apps and reports stray repos; then regenerates sites/apps.json for the new pins, the fallback locks in node-locks/ for the apps without a yarn.lock whose package.json moved, and re-locks the workspace (uv lock) when a pyproject.toml did. --node-locks [target…] regenerates node-locks/ for every app and nested frontend without a yarn.lock of its own; a named target gets a lock forced over the yarn.lock it ships. In app mode, --migrate and --build only. |
 | bench-migrate / bench-build / bench-clear-cache / bench-console | Thin bench wrappers honoring $FRAPPE_SITE. |
 | bench-restore [<sql>\|--at <ts>\|--list] | Restore from a SQL backup, or from the latest one in the object store. See Restoring from production. |

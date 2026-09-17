@@ -49,29 +49,36 @@ let
   };
 in
 {
-  secrets-cli = pkgs.runCommand "frappe-nix-secrets-cli-check" {
-    nativeBuildInputs = with pkgs; [
-      ragenix
-      rage
-      openssh
-      git
-      jq
-      python3
-      coreutils
-    ];
-    editSecret = one.edit-secret.exec;
-    checkSecret = one.check-secrets.exec;
-    rekeySecrets = two.rekey-secrets.exec;
-    passAsFile = [ "editSecret" "checkSecret" "rekeySecrets" ];
-  } ''
-    export HOME="$PWD"
-    install -m 0600 ${./fixtures/keys/alice} alice
-    install -m 0600 ${./fixtures/keys/bob} bob
-    cp ${./fixtures/keys/alice.pub} alice.pub
-    cp ${./fixtures/keys/bob.pub} bob.pub
+  secrets-cli =
+    pkgs.runCommand "frappe-nix-secrets-cli-check"
+      {
+        nativeBuildInputs = with pkgs; [
+          ragenix
+          rage
+          openssh
+          git
+          jq
+          python3
+          coreutils
+        ];
+        editSecret = one.edit-secret.exec;
+        checkSecret = one.check-secrets.exec;
+        rekeySecrets = two.rekey-secrets.exec;
+        passAsFile = [
+          "editSecret"
+          "checkSecret"
+          "rekeySecrets"
+        ];
+      }
+      ''
+        export HOME="$PWD"
+        install -m 0600 ${./fixtures/keys/alice} alice
+        install -m 0600 ${./fixtures/keys/bob} bob
+        cp ${./fixtures/keys/alice.pub} alice.pub
+        cp ${./fixtures/keys/bob.pub} bob.pub
 
-    bash ${./secrets-cli.sh} \
-      "$editSecretPath" "$rekeySecretsPath" "$checkSecretPath" \
-      "$PWD" | tee "$out"
-  '';
+        bash ${./secrets-cli.sh} \
+          "$editSecretPath" "$rekeySecretsPath" "$checkSecretPath" \
+          "$PWD" | tee "$out"
+      '';
 }

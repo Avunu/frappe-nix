@@ -53,7 +53,12 @@
   };
 
   outputs =
-    { self, nixpkgs, flake-parts, ... }@inputs:
+    {
+      self,
+      nixpkgs,
+      flake-parts,
+      ...
+    }@inputs:
     let
       systems = [
         "x86_64-linux"
@@ -97,19 +102,24 @@
         backup-fetch = import ./lib/backup-fetch.nix { inherit pkgs; };
       });
 
-      apps = forAllSystems (pkgs: let
-        program = "${frappeInit pkgs}/bin/frappe-init";
-        app = {
-          type = "app";
-          inherit program;
-          meta.description = "Scaffold a new frappe-nix bench (bench-init style)";
-        };
-      in {
-        default = app;
-        frappe-init = app;
-      });
+      apps = forAllSystems (
+        pkgs:
+        let
+          program = "${frappeInit pkgs}/bin/frappe-init";
+          app = {
+            type = "app";
+            inherit program;
+            meta.description = "Scaffold a new frappe-nix bench (bench-init style)";
+          };
+        in
+        {
+          default = app;
+          frappe-init = app;
+        }
+      );
 
-      checks = forAllSystems (pkgs:
+      checks = forAllSystems (
+        pkgs:
         {
           # The Python runtime under runtime/ builds as a distribution. Its unit
           # suite needs a bench (it imports frappe), so that runs from
@@ -129,31 +139,44 @@
           # assertions are about the verdict. No network and no identity of the
           # builder's — an age header names its recipients in the clear, which
           # is the whole reason the check can run offline.
-          agecheck = pkgs.runCommand "frappe-nix-agecheck-check" {
-            nativeBuildInputs = [ pkgs.rage pkgs.openssh pkgs.python3 ];
-          } ''
-            cat > agecheck <<EOF
-            #!${pkgs.runtimeShell}
-            exec ${pkgs.python3}/bin/python3 ${./lib/agecheck.py} "\$@"
-            EOF
-            chmod +x agecheck
-            bash ${./tests/agecheck.sh} "$PWD/agecheck" \
-              ${pkgs.rage}/bin/rage ${pkgs.openssh}/bin/ssh-keygen | tee "$out"
-          '';
+          agecheck =
+            pkgs.runCommand "frappe-nix-agecheck-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.rage
+                  pkgs.openssh
+                  pkgs.python3
+                ];
+              }
+              ''
+                cat > agecheck <<EOF
+                #!${pkgs.runtimeShell}
+                exec ${pkgs.python3}/bin/python3 ${./lib/agecheck.py} "\$@"
+                EOF
+                chmod +x agecheck
+                bash ${./tests/agecheck.sh} "$PWD/agecheck" \
+                  ${pkgs.rage}/bin/rage ${pkgs.openssh}/bin/ssh-keygen | tee "$out"
+              '';
 
           # A directory tree stands in for a bucket: `mc ls --json` emits the
           # same shape for a local path as for S3, so folder selection, the
           # -partial and -enc cases, the public/private archive split, the
           # download cache and its retention all run with no server and no
           # network.
-          backup-fetch = pkgs.runCommand "frappe-nix-backup-fetch-check" {
-            nativeBuildInputs = [ pkgs.jq pkgs.minio-client ];
-          } ''
-            export HOME="$PWD"
-            bash ${./tests/backup-fetch.sh} \
-              ${import ./lib/backup-fetch.nix { inherit pkgs; }}/bin/frappe-nix-backup-fetch \
-              | tee "$out"
-          '';
+          backup-fetch =
+            pkgs.runCommand "frappe-nix-backup-fetch-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  pkgs.minio-client
+                ];
+              }
+              ''
+                export HOME="$PWD"
+                bash ${./tests/backup-fetch.sh} \
+                  ${import ./lib/backup-fetch.nix { inherit pkgs; }}/bin/frappe-nix-backup-fetch \
+                  | tee "$out"
+              '';
 
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
           # frappe.database and werkzeug.serving, and the assertions are about
@@ -167,82 +190,109 @@
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
-          bench-patches = pkgs.runCommand "frappe-nix-bench-patches-check" {
-            nativeBuildInputs = [ pkgs.findutils ];
-          } ''
-            bash ${./tests/bench-patches.sh} \
-              ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
-              2>&1 | tee "$out"
-          '';
+          bench-patches =
+            pkgs.runCommand "frappe-nix-bench-patches-check"
+              {
+                nativeBuildInputs = [ pkgs.findutils ];
+              }
+              ''
+                bash ${./tests/bench-patches.sh} \
+                  ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
+                  2>&1 | tee "$out"
+              '';
 
           # Node-independent in the same spirit: a stub yarn stands in for the
           # install, and the assertions are about when a pulled app is judged to
           # have outgrown its node_modules.
-          node-modules = pkgs.runCommand "frappe-nix-node-modules-check" {
-            nativeBuildInputs = [ pkgs.findutils ];
-          } ''
-            bash ${./tests/node-modules.sh} \
-              ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
-              2>&1 | tee "$out"
-          '';
+          node-modules =
+            pkgs.runCommand "frappe-nix-node-modules-check"
+              {
+                nativeBuildInputs = [ pkgs.findutils ];
+              }
+              ''
+                bash ${./tests/node-modules.sh} \
+                  ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
+                  2>&1 | tee "$out"
+              '';
 
           # The shell-entry root sync over a bench from before frappe-runtime,
           # with a stub uv standing in for the lock; the assertions are about
           # what pyproject.toml gains, when the lock is regenerated, and that a
           # failed lock leaves both files exactly as they were.
-          root-sync = pkgs.runCommand "frappe-nix-root-sync-check" {
-            nativeBuildInputs = [ pkgs.python3 ];
-          } ''
-            bash ${./tests/root-sync.sh} \
-              ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
-              ${./templates/bench/pyproject.toml} \
-              2>&1 | tee "$out"
-          '';
+          root-sync =
+            pkgs.runCommand "frappe-nix-root-sync-check"
+              {
+                nativeBuildInputs = [ pkgs.python3 ];
+              }
+              ''
+                bash ${./tests/root-sync.sh} \
+                  ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
+                  ${./templates/bench/pyproject.toml} \
+                  2>&1 | tee "$out"
+              '';
 
           # The fallback lock generator over the same fixture tree the Nix-side
           # discovery is checked against, with a stub yarn standing in for the
           # resolver; the assertions are about what lands in node-locks/, for
           # which targets, and when it is regenerated.
-          node-locks = pkgs.runCommand "frappe-nix-node-locks-check" {
-            nativeBuildInputs = [ pkgs.findutils pkgs.jq ];
-          } ''
-            export HOME="$PWD"
-            bash ${./tests/node-locks.sh} \
-              ${import ./lib/node-locks.nix { inherit pkgs; }}/bin/frappe-nix-node-locks \
-              ${./tests/fixtures/node-targets/apps} \
-              2>&1 | tee "$out"
-          '';
+          node-locks =
+            pkgs.runCommand "frappe-nix-node-locks-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.findutils
+                  pkgs.jq
+                ];
+              }
+              ''
+                export HOME="$PWD"
+                bash ${./tests/node-locks.sh} \
+                  ${import ./lib/node-locks.nix { inherit pkgs; }}/bin/frappe-nix-node-locks \
+                  ${./tests/fixtures/node-targets/apps} \
+                  2>&1 | tee "$out"
+              '';
 
           # The registry writer over a fixture bench: which apps land in
           # sites/apps.txt, and what apps.json records about each. Real git
           # repositories stand in for the checkouts, so the provenance
           # precedence is tested against git's answers rather than a stub's.
-          apps-registry = pkgs.runCommand "frappe-nix-apps-registry-check" {
-            nativeBuildInputs = [ pkgs.git pkgs.jq pkgs.python3 ];
-          } ''
-            export HOME="$PWD"
-            bash ${./tests/apps-registry.sh} \
-              ${import ./lib/workspace-tool.nix { inherit pkgs; }}/bin/frappe-nix-workspace \
-              2>&1 | tee "$out"
-          '';
+          apps-registry =
+            pkgs.runCommand "frappe-nix-apps-registry-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.jq
+                  pkgs.python3
+                ];
+              }
+              ''
+                export HOME="$PWD"
+                bash ${./tests/apps-registry.sh} \
+                  ${import ./lib/workspace-tool.nix { inherit pkgs; }}/bin/frappe-nix-workspace \
+                  2>&1 | tee "$out"
+              '';
 
           # The other half of an exclusion: a nested frontend that is not
           # installed must also not be reachable from its parent app's build
           # script, or `bench build` fails on the missing binary instead of
           # just missing the frontend's routes.
-          nested-frontend-scripts =
-            pkgs.runCommand "frappe-nix-nested-frontend-scripts-check" { } ''
-              bash ${./tests/nested-frontend-scripts.sh} \
-                ${pkgs.nodejs}/bin/node \
-                ${./lib/js/drop-nested-frontend-scripts.js} \
-                2>&1 | tee "$out"
-            '';
+          nested-frontend-scripts = pkgs.runCommand "frappe-nix-nested-frontend-scripts-check" { } ''
+            bash ${./tests/nested-frontend-scripts.sh} \
+              ${pkgs.nodejs}/bin/node \
+              ${./lib/js/drop-nested-frontend-scripts.js} \
+              2>&1 | tee "$out"
+          '';
         }
         # edit-secret / rekey-secrets against a real ragenix and real keys.
         // import ./tests/secrets-cli.nix { inherit pkgs; }
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
+        # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
+        # a site's actually-installed apps, driven against a stub bench.
+        // import ./tests/reconcile-apps.nix { inherit pkgs; }
+        # The asset-shadow reassert check (issue #32, part 2): the
+        # assets.json invariant and its reassert hooks, standalone.
+        // import ./tests/assets-reassert.nix { inherit pkgs; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
         // import ./tests/bench-update.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
@@ -272,9 +322,8 @@
           socket-runtime = pkgs.testers.runNixOSTest (
             import ./tests/socket-runtime.nix { inherit self pkgs; }
           );
-          socket = pkgs.testers.runNixOSTest (
-            import ./tests/socket.nix { inherit self pkgs; }
-          );
-        });
+          socket = pkgs.testers.runNixOSTest (import ./tests/socket.nix { inherit self pkgs; });
+        }
+      );
     };
 }

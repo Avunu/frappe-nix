@@ -80,16 +80,18 @@ in
 
     ${lib.optionalString (result.missing != [ ]) ''
       eq "the message names the app, the requirement and the fix" \
-        "yes" ${lib.escapeShellArg (
-          if
-            lib.hasInfix "apps/alpha/pyproject.toml requires json-repair>=0.30" result.message
-            && lib.hasInfix "uv lock" result.message
-            && lib.hasInfix "nix run .#relock" result.message
-          then
-            "yes"
-          else
-            result.message
-        )}
+        "yes" ${
+          lib.escapeShellArg (
+            if
+              lib.hasInfix "apps/alpha/pyproject.toml requires json-repair>=0.30" result.message
+              && lib.hasInfix "uv lock" result.message
+              && lib.hasInfix "nix run .#relock" result.message
+            then
+              "yes"
+            else
+              result.message
+          )
+        }
 
       eq "the same gaps are found however the advice is worded" \
         ${lib.escapeShellArg (lib.concatStringsSep "\n" found)} \
@@ -98,16 +100,18 @@ in
         )}
 
       eq "app mode does not send you to a bench root it does not have" \
-        "yes" ${lib.escapeShellArg (
-          if
-            lib.hasInfix "apps/alpha/pyproject.toml requires json-repair>=0.30" appMode.message
-            && lib.hasInfix "nix run .#relock" appMode.message
-            && !(lib.hasInfix "uv lock" appMode.message)
-          then
-            "yes"
-          else
-            appMode.message
-        )}
+        "yes" ${
+          lib.escapeShellArg (
+            if
+              lib.hasInfix "apps/alpha/pyproject.toml requires json-repair>=0.30" appMode.message
+              && lib.hasInfix "nix run .#relock" appMode.message
+              && !(lib.hasInfix "uv lock" appMode.message)
+            then
+              "yes"
+            else
+              appMode.message
+          )
+        }
     ''}
 
     echo ""

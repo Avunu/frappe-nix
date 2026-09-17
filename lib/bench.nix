@@ -103,7 +103,11 @@ let
       let
         parts = lib.splitString "/" (lib.removeSuffix "/" member);
       in
-      if builtins.length parts == 2 && builtins.head parts == "apps" && builtins.match ".*[*?[].*" member == null then
+      if
+        builtins.length parts == 2
+        && builtins.head parts == "apps"
+        && builtins.match ".*[*?[].*" member == null
+      then
         [ (lib.last parts) ]
       else
         [ ]
@@ -116,7 +120,8 @@ let
 
   registeredApps =
     let
-      apps = lib.optional (lib.elem "frappe" presentMembers) "frappe"
+      apps =
+        lib.optional (lib.elem "frappe" presentMembers) "frappe"
         ++ lib.filter (app: app != "frappe") presentMembers;
       unregistered = lib.filter (app: isFrappeApp app && !(lib.elem app apps)) names;
     in
@@ -217,23 +222,20 @@ let
       s = stampOf t;
       hashOf = f: builtins.hashFile "sha256" f;
       manifestMoved =
-        hasFallbackLock t
-        && s ? "package.json"
-        && s."package.json" != hashOf (t.src + "/package.json");
+        hasFallbackLock t && s ? "package.json" && s."package.json" != hashOf (t.src + "/package.json");
       upstreamMoved =
-        isForced t
-        && hasUpstreamLock t
-        && s ? "yarn.lock"
-        && s."yarn.lock" != hashOf (upstreamLockOf t);
+        isForced t && hasUpstreamLock t && s ? "yarn.lock" && s."yarn.lock" != hashOf (upstreamLockOf t);
     in
     lib.optional (manifestMoved || upstreamMoved)
       "frappe-nix: ${nodeLocksLabel}/${t.key}/yarn.lock is older than apps/${t.key}'s ${
         if upstreamMoved then "yarn.lock" else "package.json"
       } — regenerate it: ${nodeLocksCommand} ${t.key}"
-    ++ lib.optional (hasFallbackLock t && hasUpstreamLock t && !isForced t)
-      "frappe-nix: ${nodeLocksLabel}/${t.key} is unused — apps/${t.key} ships a yarn.lock and builds from it. `git rm -r ${nodeLocksLabel}/${t.key}`, or make it a deliberate override: ${nodeLocksCommand} ${t.key}"
-    ++ lib.optional (builtins.pathExists (lockDirOf t + "/package-lock.json"))
-      "frappe-nix: ${nodeLocksLabel}/${t.key}/package-lock.json is from the npm-based scheme frappe-nix no longer uses; `${nodeLocksCommand}` removes it";
+    ++
+      lib.optional (hasFallbackLock t && hasUpstreamLock t && !isForced t)
+        "frappe-nix: ${nodeLocksLabel}/${t.key} is unused — apps/${t.key} ships a yarn.lock and builds from it. `git rm -r ${nodeLocksLabel}/${t.key}`, or make it a deliberate override: ${nodeLocksCommand} ${t.key}"
+    ++
+      lib.optional (builtins.pathExists (lockDirOf t + "/package-lock.json"))
+        "frappe-nix: ${nodeLocksLabel}/${t.key}/package-lock.json is from the npm-based scheme frappe-nix no longer uses; `${nodeLocksCommand}` removes it";
 
   withNotices = msgs: x: builtins.foldl' (acc: m: lib.warn m acc) x msgs;
 
@@ -250,12 +252,18 @@ let
         mkdir -p $out
         cp ${t.src + "/package.json"} $out/package.json
         cp ${lock.file} $out/yarn.lock
-        ${lib.concatMapStrings (
-          f:
-          lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
-            cp ${t.src + "/${f}"} $out/${f}
-          ''
-        ) [ ".yarnrc" ".npmrc" ]}
+        ${lib.concatMapStrings
+          (
+            f:
+            lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
+              cp ${t.src + "/${f}"} $out/${f}
+            ''
+          )
+          [
+            ".yarnrc"
+            ".npmrc"
+          ]
+        }
       '';
       remedy =
         if lock.fallback then
@@ -315,9 +323,7 @@ let
   # The excluded subdirs belonging to one app, from the flat "app/subdir" list.
   excludedSubdirsOf =
     app:
-    map (lib.removePrefix "${app}/") (
-      lib.filter (lib.hasPrefix "${app}/") nodeNestedFrontendExcludes
-    );
+    map (lib.removePrefix "${app}/") (lib.filter (lib.hasPrefix "${app}/") nodeNestedFrontendExcludes);
 
   # Excluding a nested frontend also has to disarm whatever in the *parent* app
   # builds it -- see lib/js/drop-nested-frontend-scripts.js for why skipping the
@@ -326,71 +332,83 @@ let
   # deployed tree walks into the same repaired package.json.
   dropNestedFrontendScripts = ./js/drop-nested-frontend-scripts.js;
 
-  benchRoot = warnMissingLocks (pkgs.runCommand "bench-root" {
-    # Not pkgs.git: sync-registry reads a checkout's .git when there is one,
-    # and a store copy that happened to carry one must not change the output.
-    # Without git on PATH the tool falls through to .gitmodules and the seed.
-    nativeBuildInputs = [ workspaceTool ] ++ lib.optionals (nodeNestedFrontendExcludes != [ ]) [ nodejs ];
-  } ''
-    mkdir -p $out/bench/{sites,logs,config/pids}
+  benchRoot = warnMissingLocks (
+    pkgs.runCommand "bench-root"
+      {
+        # Not pkgs.git: sync-registry reads a checkout's .git when there is one,
+        # and a store copy that happened to carry one must not change the output.
+        # Without git on PATH the tool falls through to .gitmodules and the seed.
+        nativeBuildInputs = [
+          workspaceTool
+        ]
+        ++ lib.optionals (nodeNestedFrontendExcludes != [ ]) [ nodejs ];
+      }
+      ''
+        mkdir -p $out/bench/{sites,logs,config/pids}
 
-    ln -s ${prodPythonEnv} $out/bench/env
+        ln -s ${prodPythonEnv} $out/bench/env
 
-    mkdir -p $out/bench/apps
-    ${lib.concatStringsSep "\n" (
-      map (app: ''
-        cp -r ${appSrcOf app} $out/bench/apps/${app}
-        chmod -R u+w $out/bench/apps/${app}
-        ${lib.optionalString (excludedSubdirsOf app != [ ]) ''
-          node ${dropNestedFrontendScripts} \
-            $out/bench/apps/${app}/package.json \
-            ${lib.escapeShellArgs (excludedSubdirsOf app)}
+        mkdir -p $out/bench/apps
+        ${lib.concatStringsSep "\n" (
+          map (app: ''
+            cp -r ${appSrcOf app} $out/bench/apps/${app}
+            chmod -R u+w $out/bench/apps/${app}
+            ${lib.optionalString (excludedSubdirsOf app != [ ]) ''
+              node ${dropNestedFrontendScripts} \
+                $out/bench/apps/${app}/package.json \
+                ${lib.escapeShellArgs (excludedSubdirsOf app)}
+            ''}
+          '') names
+        )}
+
+        # node_modules, for every target with a lock: a real directory of links
+        # to the store's packages, not one link to the store's node_modules. Vite
+        # (8, via rolldown) mkdirs node_modules/.vite-temp while it bundles an ESM
+        # vite.config, and only an EACCES is tolerated — the sandbox's read-only
+        # store answers EROFS and the build dies. Node, esbuild and vite realpath
+        # through the per-entry links; the directory itself is writable wherever
+        # the tree is copied to (builtBench's $TMPDIR).
+        _link_node_modules() { # <store node_modules> <destination>
+          mkdir -p "$2"
+          for entry in "$1"/* "$1"/.[!.]*; do
+            { [ -e "$entry" ] || [ -L "$entry" ]; } || continue
+            ln -s "$entry" "$2/''${entry##*/}"
+          done
+        }
+        ${lib.concatMapStrings (t: ''
+          rm -rf $out/bench/apps/${t.key}/node_modules
+          _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
+        '') lockedTargets}
+
+        # The registry. The committed apps.json, if any, is only a *seed*: the
+        # lowest-ranked source, consulted for a commit hash the sandbox cannot
+        # read (a bench repo's apps/ are submodules, and the flake's source tree
+        # carries their files but not their .git). Versions, order and required
+        # apps are always recomputed from the sources.
+        frappe-nix-workspace sync-registry \
+          --pyproject ${workspaceRoot + "/pyproject.toml"} \
+          --apps-dir $out/bench/apps \
+          --sites-dir $out/bench/sites \
+          ${
+            lib.optionalString (builtins.pathExists (
+              workspaceRoot + "/.gitmodules"
+            )) "--gitmodules ${workspaceRoot + "/.gitmodules"}"
+          } \
+          ${
+            lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.json"))
+              "--seed ${workspaceRoot + "/sites/apps.json"}"
+          } \
+          ${lib.optionalString (provenance != { }) "--provenance ${provenanceFile}"}
+        # The Nix mirror of the membership rule (registeredApps) must agree with
+        # what the tool wrote, or passthru would describe a different bench.
+        diff ${registryExpected} $out/bench/sites/apps.txt
+
+        ${lib.optionalString (builtins.pathExists (workspaceRoot + "/config")) ''
+          cp -r ${workspaceRoot + "/config"}/* $out/bench/config/ 2>/dev/null || true
+          chmod -R u+w $out/bench/config
         ''}
-      '') names
-    )}
-
-    # node_modules, for every target with a lock: a real directory of links
-    # to the store's packages, not one link to the store's node_modules. Vite
-    # (8, via rolldown) mkdirs node_modules/.vite-temp while it bundles an ESM
-    # vite.config, and only an EACCES is tolerated — the sandbox's read-only
-    # store answers EROFS and the build dies. Node, esbuild and vite realpath
-    # through the per-entry links; the directory itself is writable wherever
-    # the tree is copied to (builtBench's $TMPDIR).
-    _link_node_modules() { # <store node_modules> <destination>
-      mkdir -p "$2"
-      for entry in "$1"/* "$1"/.[!.]*; do
-        { [ -e "$entry" ] || [ -L "$entry" ]; } || continue
-        ln -s "$entry" "$2/''${entry##*/}"
-      done
-    }
-    ${lib.concatMapStrings (t: ''
-      rm -rf $out/bench/apps/${t.key}/node_modules
-      _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
-    '') lockedTargets}
-
-    # The registry. The committed apps.json, if any, is only a *seed*: the
-    # lowest-ranked source, consulted for a commit hash the sandbox cannot
-    # read (a bench repo's apps/ are submodules, and the flake's source tree
-    # carries their files but not their .git). Versions, order and required
-    # apps are always recomputed from the sources.
-    frappe-nix-workspace sync-registry \
-      --pyproject ${workspaceRoot + "/pyproject.toml"} \
-      --apps-dir $out/bench/apps \
-      --sites-dir $out/bench/sites \
-      ${lib.optionalString (builtins.pathExists (workspaceRoot + "/.gitmodules"))
-        "--gitmodules ${workspaceRoot + "/.gitmodules"}"} \
-      ${lib.optionalString (builtins.pathExists (workspaceRoot + "/sites/apps.json"))
-        "--seed ${workspaceRoot + "/sites/apps.json"}"} \
-      ${lib.optionalString (provenance != { }) "--provenance ${provenanceFile}"}
-    # The Nix mirror of the membership rule (registeredApps) must agree with
-    # what the tool wrote, or passthru would describe a different bench.
-    diff ${registryExpected} $out/bench/sites/apps.txt
-
-    ${lib.optionalString (builtins.pathExists (workspaceRoot + "/config")) ''
-      cp -r ${workspaceRoot + "/config"}/* $out/bench/config/ 2>/dev/null || true
-      chmod -R u+w $out/bench/config
-    ''}
-  '');
+      ''
+  );
 
   # Production-ready bench with compiled assets. Runs `bench build` (frappe's
   # esbuild pipeline) inside the Nix sandbox, producing sites/assets/ with
@@ -526,7 +544,9 @@ in
   );
   nodeLockNotices =
     lib.concatMap noticesFor nodeTargets
-    ++ lib.optional (missingLocks != [ ]) "missing: ${lib.concatMapStringsSep " " (t: t.key) missingLocks}";
+    ++
+      lib.optional (missingLocks != [ ])
+        "missing: ${lib.concatMapStringsSep " " (t: t.key) missingLocks}";
   inherit
     registeredApps
     appsWithNode

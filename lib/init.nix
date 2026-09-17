@@ -9,7 +9,6 @@
 let
   inherit (pkgs) lib;
 
-
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
 
   # Concatenated rather than sourced at runtime: writeShellApplication runs
@@ -46,9 +45,13 @@ pkgs.writeShellApplication {
   ];
   # The scripts are plain .sh files (no Nix-string escaping); bake the presets
   # file and template dir store paths in via placeholders.
-  text = builtins.replaceStrings [ "@PRESETS@" "@TEMPLATE@" "@APP_TEMPLATE@" ] [
-    "${./frappe-presets.json}"
-    "${../templates/bench}"
-    "${../templates/app}"
-  ] (lib.concatMapStringsSep "\n" builtins.readFile sources);
+  text =
+    builtins.replaceStrings
+      [ "@PRESETS@" "@TEMPLATE@" "@APP_TEMPLATE@" ]
+      [
+        "${./frappe-presets.json}"
+        "${../templates/bench}"
+        "${../templates/app}"
+      ]
+      (lib.concatMapStringsSep "\n" builtins.readFile sources);
 }

@@ -33,7 +33,11 @@ in
 
     eq "an excluded frontend is left out" \
       "alpha beta" \
-      ${lib.escapeShellArg (lib.concatStringsSep " " (keysOf { excludes = [ "alpha/desk" ]; }))}
+      ${lib.escapeShellArg (
+        lib.concatStringsSep " " (keysOf {
+          excludes = [ "alpha/desk" ];
+        })
+      )}
 
     eq "a nested target knows its app and subdir" \
       "alpha desk" \
@@ -41,7 +45,19 @@ in
 
     eq "the app order is the caller's" \
       "beta alpha alpha/desk" \
-      ${lib.escapeShellArg (lib.concatStringsSep " " (map (t: t.key) (targets.discover { names = [ "beta" "alpha" ]; inherit appSrcOf; })))}
+      ${lib.escapeShellArg (
+        lib.concatStringsSep " " (
+          map (t: t.key) (
+            targets.discover {
+              names = [
+                "beta"
+                "alpha"
+              ];
+              inherit appSrcOf;
+            }
+          )
+        )
+      )}
 
     if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
     echo "all node-targets checks passed" | tee "$out"
