@@ -168,7 +168,9 @@ pkgs.writeShellApplication {
       # what gets resolved), else the previous fallback (only what must move
       # does). yarn keeps every entry the manifest still wants.
       if $forced && [ -f "$src/yarn.lock" ]; then
-        cp -L "$src/yarn.lock" "$work/yarn.lock"
+        # `--no-preserve=mode`: apps/<key> may be a store path (app mode), whose
+        # files are 0444, and yarn has to rewrite the seed it is handed
+        cp -L --no-preserve=mode "$src/yarn.lock" "$work/yarn.lock"
         echo "  resolving $key (forced: seeded from apps/$key/yarn.lock, gaps filled from the registry)…"
       elif [ -f "$dst/yarn.lock" ]; then
         cp "$dst/yarn.lock" "$work/yarn.lock"
