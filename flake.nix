@@ -243,6 +243,12 @@
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
+        # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
+        # a site's actually-installed apps, driven against a stub bench.
+        // import ./tests/reconcile-apps.nix { inherit pkgs; }
+        # The asset-shadow reassert check (issue #32, part 2): the
+        # assets.json invariant and its reassert hooks, standalone.
+        // import ./tests/assets-reassert.nix { inherit pkgs; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
         // import ./tests/bench-update.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.

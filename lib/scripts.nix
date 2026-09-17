@@ -936,6 +936,11 @@ ${
     }
   '';
 
+  # One-shot: creates $FRAPPE_SITE and installs every sites/apps.txt entry.
+  # Not safe to re-run to pick up a later-pinned sibling — `--force` below
+  # drops the site's database. That case is `reconcile-apps` instead (and,
+  # in app mode with a fixed siteName, `frappe:apps-reconcile` runs it
+  # automatically on every `devenv up` — see `appsReconcile.enable`).
   provision-site.exec = ''
     set -euo pipefail
     export _FRAPPE_BENCH_RAW=1
@@ -973,6 +978,66 @@ ${
     # port allocator for `devenv up`, so anything resolved in a plain shell is
     # the bench's base port, which may not be the one nginx actually took.
     echo "   URL: http://127.0.0.1:$(${pkgs.jq}/bin/jq -r '.webserver_port // 8000' sites/common_site_config.json)"
+  '';
+
+  # Diffs sites/apps.txt — the candidate list frappe-nix regenerates from the
+  # flake's pinned apps — against a site's actually-installed apps
+  # (frappe.get_installed_apps(), DB-backed, what `bench migrate` consults,
+  # not apps.txt) and installs whatever is missing. install-app is
+  # idempotent (a no-op, unless --force, which this never passes), so
+  # re-running this against an already-reconciled site costs one
+  # `bench list-apps` and nothing else.
+  #
+  # Uses ${benchBin} directly rather than the bare `bench` this file's other
+  # scripts call through the interactive wrapper: this also runs unattended
+  # from tasks."frappe:apps-reconcile", which has no wrapper on PATH — so the
+  # one rendering has to be correct in both contexts.
+  #
+  # This is what provision-site leaves undone afterwards: a sibling pinned
+  # into the flake *after* a site already exists never gets installed by
+  # anything else. See https://github.com/Avunu/frappe-nix/issues/32.
+  reconcile-apps.exec = ''
+    set -euo pipefail
+    export _FRAPPE_BENCH_RAW=1
+    cd "$FRAPPE_BENCH_ROOT"
+
+    SITE="''${1:-''${FRAPPE_SITE:-}}"
+    if [ -z "$SITE" ]; then
+      echo "reconcile-apps: FRAPPE_SITE is not set and no site was given." >&2
+      echo "  Usage: reconcile-apps <site>   (or set FRAPPE_SITE in .env)" >&2
+      exit 1
+    fi
+
+    if [ ! -d "sites/$SITE" ]; then
+      echo "reconcile-apps: sites/$SITE does not exist yet — run provision-site first."
+      exit 0
+    fi
+    [ -f sites/apps.txt ] || exit 0
+
+    installed="$(${benchBin} --site "$SITE" list-apps --format json 2>/dev/null \
+                 | ${pkgs.jq}/bin/jq -r --arg s "$SITE" '.[$s][]? // empty' 2>/dev/null || true)"
+
+    MISSING=""
+    while IFS= read -r app; do
+      [ -z "$app" ] && continue
+      [ "$app" = "frappe" ] && continue
+      grep -qxF "$app" <<<"$installed" || MISSING="$MISSING $app"
+    done < sites/apps.txt
+
+    [ -n "$MISSING" ] || exit 0
+
+    echo "reconcile-apps: sites/apps.txt names app(s) missing from $SITE's installed apps:$MISSING"
+    FAILED=""
+    for app in $MISSING; do
+      echo "  installing $app…"
+      ${benchBin} --site "$SITE" install-app "$app" || FAILED="$FAILED $app"
+    done
+
+    if [ -n "$FAILED" ]; then
+      echo "reconcile-apps: failed to install:$FAILED — see the error above; continuing." >&2
+      exit 0
+    fi
+    echo "reconcile-apps: $SITE now has every app in sites/apps.txt installed."
   '';
 
   # Add an existing app as a git submodule and register it in the uv workspace

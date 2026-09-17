@@ -355,6 +355,88 @@ in
           };
         };
 
+        appsReconcile = {
+          enable = mkOption {
+            type = types.bool;
+            default = config.frappe-nix.siteName != "";
+            defaultText = lib.literalMD "`true` when `siteName` names one site, `false` in multi-tenant mode";
+            description = ''
+              Reconcile `sites/apps.txt` against `siteName`'s actually-installed
+              apps on every `devenv up`, installing whatever is missing.
+
+              `sites/apps.txt` is the candidate list frappe-nix regenerates from
+              the flake's pinned apps — what `install_app()` validates a name
+              against, not a queue anything drains. A site's real
+              installed-apps state is `frappe.get_installed_apps()` (DB-backed),
+              populated only by an explicit `bench install-app`, and it is what
+              `bench migrate` walks — not `apps.txt`. Pin a new sibling into an
+              already-provisioned bench and nothing installs it, silently,
+              forever. See https://github.com/Avunu/frappe-nix/issues/32.
+
+              Needs one concrete site, because the task runs unattended at
+              `devenv up` and a multi-tenant bench (`siteName = ""`) has no
+              single answer for which site to target — off there by default;
+              run `reconcile-apps <site>` by hand instead.
+
+              `install-app` is idempotent (a no-op, unless `--force`, which
+              this never passes), so on an already-reconciled bench this costs
+              one `bench list-apps` and nothing else.
+            '';
+          };
+        };
+
+        assets = {
+          reassert = {
+            hooks = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                `bench execute` targets — dotted Python paths — run against
+                `siteName` whenever `sites/assets/assets.json` names a bundle
+                file that does not exist on disk.
+
+                Empty by default, and this option names no app: some Frappe
+                apps ship their own JS/CSS build tooling that overwrites
+                Frappe's own bundle keys in `assets.json`, and Frappe's esbuild
+                pipeline writes that file two different ways that can key the
+                same bundle differently — one that runs on every `bench build`
+                and `bench watch` rebuild, one that runs only on
+                `bench build --using-cached`. An app relying on the second can
+                go stale under `bench watch` alone, and Frappe's own
+                resolution is a bare dict lookup with no existence check, so it
+                404s with no server-side signal. See
+                https://github.com/Avunu/frappe-nix/issues/32.
+
+                Point this at whatever bench-execute-able function reruns your
+                app's own asset-shadow fixup. Every hook runs, in order, each
+                time the invariant check fails.
+
+                Needs `siteName` set — `bench execute` needs one site to run
+                in; an evaluation error if hooks are non-empty with
+                `siteName = ""`.
+              '';
+            };
+
+            debounceMs = mkOption {
+              type = types.int;
+              default = 750;
+              description = ''
+                How long `sites/assets/assets.json` must sit unmodified
+                (fswatch's `--latency`, coalescing a burst of writes from one
+                rebuild into a single check) before the long-running watcher
+                re-reads it.
+
+                Independently of this, the check itself retries a failed JSON
+                parse a few times before giving up: esbuild's `assets.json`
+                writer is a plain truncate-and-write with no
+                temp-file-and-rename, so even a debounced read can land
+                mid-write and see a torn file. A parse failure is treated as
+                "try again shortly," never as the invariant failing.
+              '';
+            };
+          };
+        };
+
         sockets = {
           enable = mkOption {
             type = types.bool;
@@ -1680,6 +1762,41 @@ in
               "${config.services.redis.package}/bin/redis-cli "
               + (if sockets then ''-s "${redisSocket}"'' else "-p ${toString config.services.redis.port}");
 
+            # Whether the assets.json invariant check + reassert hooks are
+            # wired in at all — nobody configured a hook, nothing here costs
+            # anything (Nix laziness: assetsReassertCheck below is never
+            # forced, so lib/assets-reassert.nix is never even imported).
+            assetsReassertActive = cfg.assets.reassert.hooks != [ ];
+
+            # `bench execute` needs one concrete site; a multi-tenant bench
+            # (siteName = "") has none, so a non-empty hook list there is a
+            # configuration error, not a silent no-op — the same posture
+            # appsReconcile.enable takes by defaulting off instead.
+            assetsReassertSite =
+              if !assetsReassertActive then null
+              else if cfg.siteName != "" then cfg.siteName
+              else throw "frappe-nix: assets.reassert.hooks needs `siteName` set — it targets `bench execute` at one concrete site, and a multi-tenant dev bench (siteName = \"\") has no single answer.";
+
+            # fswatch --latency wants seconds as a decimal, not milliseconds.
+            assetsReassertDebounceSeconds =
+              let
+                ms = cfg.assets.reassert.debounceMs;
+                whole = ms / 1000;
+                frac = ms - whole * 1000;
+              in
+              "${toString whole}.${lib.fixedWidthNumber 3 frac}";
+
+            # The one invariant-check-and-heal script, shared by the
+            # devenv-restart task, the fswatch-driven bench-watch process, and
+            # the manual `assets-reassert` script below — see
+            # lib/assets-reassert.nix for why it lives in its own file.
+            assetsReassertCheck = lib.optionalString assetsReassertActive (import ../lib/assets-reassert.nix {
+              inherit lib pkgs redisCli;
+              benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
+              site = assetsReassertSite;
+              hooks = cfg.assets.reassert.hooks;
+            });
+
             # A mariadbd orphaned by a previous `devenv up` — one that outlived
             # its process-compose and wedged — owns $MYSQL_UNIX_PORT and, in TCP
             # mode, the allocated port, so the next run can bind neither.
@@ -2321,7 +2438,9 @@ in
                 # Anything that can send mail waits for the catcher, so the first
                 # send of a session doesn't hit a closed port.
                 needsMailpit = lib.optional mailEnabled "devenv:processes:mailpit";
-                needsConfig = [ "frappe:config" ];
+                needsConfig = [ "frappe:config" ]
+                  ++ lib.optional cfg.appsReconcile.enable "frappe:apps-reconcile"
+                  ++ lib.optional assetsReassertActive "frappe:assets-reassert";
 
                 # One process for the whole bench: the web app, realtime, the
                 # background jobs and the scheduler. `bench serve`, `bench worker`,
@@ -2558,6 +2677,39 @@ in
                   };
                 };
               }
+              // lib.optionalAttrs assetsReassertActive {
+                # The "bench watch rebuild" trigger for the asset-shadow
+                # reassert (the devenv-restart trigger is
+                # tasks."frappe:assets-reassert" below): esbuild's own
+                # incremental rebuilds never run an app's own healing `build`
+                # script (frappe/esbuild/esbuild.js gates that off in watch
+                # mode), so nothing else re-checks sites/assets/assets.json
+                # while `bench watch` is the only thing running. fswatch is
+                # the portable choice — FSEvents on Darwin, inotify on Linux,
+                # one API — since this flake targets both.
+                assetsWatch = {
+                  cwd = benchPath;
+                  exec = ''
+                    _assets="$FRAPPE_BENCH_ROOT/sites/assets/assets.json"
+                    # `after` below only waits for `watch` to *start*, not for
+                    # its first compile, and this file may not exist yet.
+                    while [ ! -f "$_assets" ]; do
+                      ${pkgs.coreutils}/bin/sleep 1
+                    done
+                    ${pkgs.fswatch}/bin/fswatch -o --latency ${assetsReassertDebounceSeconds} "$_assets" | \
+                    while read -r _; do
+                      ( ${assetsReassertCheck} ) || true
+                    done
+                  '';
+                  # After watch, not just before it: this exists to react to
+                  # *its* rebuilds, and starting first would just mean fswatch
+                  # racing bench watch's first write of assets.json.
+                  after = [
+                    (if runtimeActive then "devenv:processes:runtime" else "devenv:processes:web")
+                    "devenv:processes:watch"
+                  ];
+                };
+              }
               // lib.optionalAttrs mailEnabled {
                 mailpit = {
                   # Everything that can send mail waits for the catcher, and
@@ -2586,87 +2738,123 @@ in
             # It runs here rather than in enterShell because devenv only enables
             # the port allocator for `devenv up`; a shell eval would write the
             # base port while the running nginx used the allocated one.
-            tasks."frappe:config" = {
-              exec = ''
-                set -euo pipefail
-                config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
-                port=${toString webPort}
+            tasks =
+              {
+                "frappe:config" = {
+                  exec = ''
+                    set -euo pipefail
+                    config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
+                    port=${toString webPort}
 
-                ${lib.optionalString mailEnabled ''
-                  # Mailpit's ports come from the allocator too, and devguard
-                  # cannot see them: it is loaded by a .pth in every interpreter,
-                  # including ones started outside this shell. Hand it the
-                  # resolved values here — it prefers them over the baked-in
-                  # base, and falls back to the base (this bench's own range,
-                  # never a shared 1025) when this file is out of reach.
-                  printf '%s\n' ${
-                    lib.escapeShellArg (
-                      builtins.toJSON {
-                        guards.mail = {
-                          port = config.processes.mailpit.ports.smtp.value;
-                          http_port = config.processes.mailpit.ports.ui.value;
-                        }
-                        // lib.optionalAttrs mc.pop3.enable {
-                          pop3_port = config.processes.mailpit.ports.pop3.value;
-                        };
-                      }
-                    )
-                  } > "$DEVENV_RUNTIME/devguard-runtime.json"
-                ''}
+                    ${lib.optionalString mailEnabled ''
+                      # Mailpit's ports come from the allocator too, and devguard
+                      # cannot see them: it is loaded by a .pth in every interpreter,
+                      # including ones started outside this shell. Hand it the
+                      # resolved values here — it prefers them over the baked-in
+                      # base, and falls back to the base (this bench's own range,
+                      # never a shared 1025) when this file is out of reach.
+                      printf '%s\n' ${
+                        lib.escapeShellArg (
+                          builtins.toJSON {
+                            guards.mail = {
+                              port = config.processes.mailpit.ports.smtp.value;
+                              http_port = config.processes.mailpit.ports.ui.value;
+                            }
+                            // lib.optionalAttrs mc.pop3.enable {
+                              pop3_port = config.processes.mailpit.ports.pop3.value;
+                            };
+                          }
+                        )
+                      } > "$DEVENV_RUNTIME/devguard-runtime.json"
+                    ''}
 
-                [ -f "$config" ] || echo '{}' > "$config"
+                    [ -f "$config" ] || echo '{}' > "$config"
 
-                tmp="$(mktemp)"
-                ${pkgs.jq}/bin/jq --argjson port "$port" '
-                  .webserver_port = $port
-                  | .socketio_port = $port
-                  # Transport keys the shell now owns through the environment.
-                  # Left in place they are a trap: a stale redis://localhost:13000
-                  # here is another project'"'"'s Redis, and it would be used by
-                  # anything that reads the config without inheriting our env.
-                  # They cannot simply be corrected in place either — the socket
-                  # paths live under $DEVENV_RUNTIME, which is a hash of the
-                  # project directory and so differs in every clone.
-                  | del(.redis_cache, .redis_queue, .redis_socketio,
-                        .db_host, .db_port,
-                        .file_watcher_port)
-                ' "$config" > "$tmp"
+                    tmp="$(mktemp)"
+                    ${pkgs.jq}/bin/jq --argjson port "$port" '
+                      .webserver_port = $port
+                      | .socketio_port = $port
+                      # Transport keys the shell now owns through the environment.
+                      # Left in place they are a trap: a stale redis://localhost:13000
+                      # here is another project'"'"'s Redis, and it would be used by
+                      # anything that reads the config without inheriting our env.
+                      # They cannot simply be corrected in place either — the socket
+                      # paths live under $DEVENV_RUNTIME, which is a hash of the
+                      # project directory and so differs in every clone.
+                      | del(.redis_cache, .redis_queue, .redis_socketio,
+                            .db_host, .db_port,
+                            .file_watcher_port)
+                    ' "$config" > "$tmp"
 
-                # Compare before writing. The port is derived from benchName, so
-                # after the first run this is a no-op and the committed file stays
-                # clean; a diff later means the allocator genuinely had to move.
-                if cmp -s "$tmp" "$config"; then
-                  rm -f "$tmp"
-                  exit 0
-                fi
+                    # Compare before writing. The port is derived from benchName, so
+                    # after the first run this is a no-op and the committed file stays
+                    # clean; a diff later means the allocator genuinely had to move.
+                    if cmp -s "$tmp" "$config"; then
+                      rm -f "$tmp"
+                      exit 0
+                    fi
 
-                echo "frappe-nix: serving on http://127.0.0.1:$port (updating sites/common_site_config.json)"
-                mv "$tmp" "$config"
+                    echo "frappe-nix: serving on http://127.0.0.1:$port (updating sites/common_site_config.json)"
+                    mv "$tmp" "$config"
 
-                # boot.py copies socketio_port into bootinfo and sessions.py
-                # caches the whole bootinfo in redis, which survives restarts in
-                # $DEVENV_STATE. Without this every already-logged-in browser
-                # keeps dialling the old port, with no symptom but a socket.io
-                # connect failure.
-                keys="$(${redisCli} --scan --pattern '*bootinfo*' 2>/dev/null || true)"
-                if [ -n "$keys" ]; then
-                  echo "$keys" | while read -r key; do
-                    [ -z "$key" ] || ${redisCli} del "$key" > /dev/null
-                  done
-                  echo "frappe-nix: cleared cached bootinfo so browsers pick up the new port"
-                fi
+                    # boot.py copies socketio_port into bootinfo and sessions.py
+                    # caches the whole bootinfo in redis, which survives restarts in
+                    # $DEVENV_STATE. Without this every already-logged-in browser
+                    # keeps dialling the old port, with no symptom but a socket.io
+                    # connect failure.
+                    keys="$(${redisCli} --scan --pattern '*bootinfo*' 2>/dev/null || true)"
+                    if [ -n "$keys" ]; then
+                      echo "$keys" | while read -r key; do
+                        [ -z "$key" ] || ${redisCli} del "$key" > /dev/null
+                      done
+                      echo "frappe-nix: cleared cached bootinfo so browsers pick up the new port"
+                    fi
 
-                # apps/wiki's frontend imports socketio_port from this file at
-                # *build* time, so its bundle still points at the old port.
-                echo "frappe-nix: if you use the wiki SPA, run 'bench build --app wiki'"
-              '';
-              # Needs redis up to clear the cache, and must land before anything
-              # reads the config — including `watch`, since the file is a vite
-              # input for wiki.
-              after = [ "devenv:processes:redis" ];
-            };
+                    # apps/wiki's frontend imports socketio_port from this file at
+                    # *build* time, so its bundle still points at the old port.
+                    echo "frappe-nix: if you use the wiki SPA, run 'bench build --app wiki'"
+                  '';
+                  # Needs redis up to clear the cache, and must land before anything
+                  # reads the config — including `watch`, since the file is a vite
+                  # input for wiki.
+                  after = [ "devenv:processes:redis" ];
+                };
+              }
+              // lib.optionalAttrs cfg.appsReconcile.enable {
+                # The devenv-startup half of Part 1 — installs whatever
+                # sites/apps.txt names that siteName's DB doesn't have yet. See
+                # appsReconcile.enable, and lib/scripts.nix's reconcile-apps
+                # (the same script, callable by hand).
+                "frappe:apps-reconcile" = {
+                  exec = ''
+                    export FRAPPE_SITE="${cfg.siteName}"
+                    ${scripts.reconcile-apps.exec}
+                  '';
+                  after = [ "devenv:processes:mysql" "devenv:processes:redis" ];
+                };
+              }
+              // lib.optionalAttrs assetsReassertActive {
+                # The "devenv restart" trigger for the asset-shadow reassert —
+                # runs once, before watch/runtime/web start serving (see
+                # needsConfig above), so a bench that sat idle with a stale
+                # assets.json heals before the first page load. The
+                # fswatch-driven `assetsWatch` process above covers the other
+                # trigger, a `bench watch` rebuild.
+                "frappe:assets-reassert" = {
+                  exec = assetsReassertCheck;
+                  after = [ "devenv:processes:mysql" "devenv:processes:redis" ];
+                };
+              };
 
-            scripts = scripts // cfg.extraScripts;
+            scripts =
+              scripts
+              // cfg.extraScripts
+              // lib.optionalAttrs assetsReassertActive {
+                # On-demand trigger for the same check the task/process run —
+                # e.g. right after hand-testing a hook, without waiting for the
+                # next `bench watch` rebuild or `devenv up`.
+                assets-reassert.exec = assetsReassertCheck;
+              };
           };
       };
   };
