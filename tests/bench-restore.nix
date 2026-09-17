@@ -46,7 +46,10 @@ let
         enable = true;
         prefix = "";
         withFiles = "none";
-        carryConfigKeys = [ "encryption_key" "backup_encryption_key" ];
+        carryConfigKeys = [
+          "encryption_key"
+          "backup_encryption_key"
+        ];
         migrate = true;
         requireDevguard = true;
         fetch = "${fetch}/bin/frappe-nix-backup-fetch";
@@ -58,31 +61,37 @@ let
     }).bench-restore.exec;
 in
 {
-  bench-restore = pkgs.runCommand "frappe-nix-bench-restore-check" {
-    nativeBuildInputs = with pkgs; [
-      jq
-      minio-client
-      coreutils
-      shellcheck
-    ];
-    guarded = render true;
-    unguarded = render false;
-    passAsFile = [ "guarded" "unguarded" ];
-  } ''
-    export HOME="$PWD"
+  bench-restore =
+    pkgs.runCommand "frappe-nix-bench-restore-check"
+      {
+        nativeBuildInputs = with pkgs; [
+          jq
+          minio-client
+          coreutils
+          shellcheck
+        ];
+        guarded = render true;
+        unguarded = render false;
+        passAsFile = [
+          "guarded"
+          "unguarded"
+        ];
+      }
+      ''
+        export HOME="$PWD"
 
-    # devenv would ship these unlinted; lint them here instead.
-    for f in "$guardedPath" "$unguardedPath"; do
-      shellcheck -s bash -S warning -e SC2317 "$f"
-    done
+        # devenv would ship these unlinted; lint them here instead.
+        for f in "$guardedPath" "$unguardedPath"; do
+          shellcheck -s bash -S warning -e SC2317 "$f"
+        done
 
-    # The devguard interlock has to be absent when the guards are on and present
-    # when they are off — it is generated, so a refactor could silently drop it.
-    grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$unguardedPath" ||
-      { echo "devguard interlock missing from the unguarded build" >&2; exit 1; }
-    ! grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$guardedPath" ||
-      { echo "devguard interlock present when guards are on" >&2; exit 1; }
+        # The devguard interlock has to be absent when the guards are on and present
+        # when they are off — it is generated, so a refactor could silently drop it.
+        grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$unguardedPath" ||
+          { echo "devguard interlock missing from the unguarded build" >&2; exit 1; }
+        ! grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$guardedPath" ||
+          { echo "devguard interlock present when guards are on" >&2; exit 1; }
 
-    bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
-  '';
+        bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
+      '';
 }

@@ -92,15 +92,18 @@ let
 
   # The root's own deps and dev tools reach the same resolver. `dependency-groups`
   # entries may be `{ include-group = …; }` attrsets rather than requirements.
-  rootDeps = map (req: {
-    where = "pyproject.toml";
-    inherit req;
-  }) (
-    (rootPyproject.project.dependencies or [ ])
-    ++ lib.filter builtins.isString (
-      lib.flatten (lib.attrValues (rootPyproject."dependency-groups" or { }))
-    )
-  );
+  rootDeps =
+    map
+      (req: {
+        where = "pyproject.toml";
+        inherit req;
+      })
+      (
+        (rootPyproject.project.dependencies or [ ])
+        ++ lib.filter builtins.isString (
+          lib.flatten (lib.attrValues (rootPyproject."dependency-groups" or { }))
+        )
+      );
 
   missing = lib.filter (d: d.name != null && !(hasPackage d.name)) (
     map (d: d // { name = reqName d.req; }) (

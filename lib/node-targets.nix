@@ -54,16 +54,18 @@
             dir = src + "/${sub}";
             key = "${app}/${sub}";
           in
-          lib.optional (
-            sub != "node_modules"
-            && builtins.pathExists (dir + "/package.json")
-            && !(lib.elem sub submodulePaths)
-            && !(lib.elem key excludes)
-          ) {
-            inherit key app;
-            subdir = sub;
-            src = dir;
-          }
+          lib.optional
+            (
+              sub != "node_modules"
+              && builtins.pathExists (dir + "/package.json")
+              && !(lib.elem sub submodulePaths)
+              && !(lib.elem key excludes)
+            )
+            {
+              inherit key app;
+              subdir = sub;
+              src = dir;
+            }
         ) subdirs;
       in
       lib.optionals (builtins.pathExists (src + "/package.json")) (

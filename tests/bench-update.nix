@@ -22,18 +22,21 @@ let
     }).bench-update.exec;
 in
 {
-  bench-update = pkgs.runCommand "frappe-nix-bench-update-check" {
-    nativeBuildInputs = with pkgs; [
-      git
-      jq
-      coreutils
-      shellcheck
-    ];
-    script = rendered;
-    passAsFile = [ "script" ];
-  } ''
-    export HOME="$PWD"
-    shellcheck -s bash -S warning -e SC2317 "$scriptPath"
-    bash ${./bench-update.sh} "$scriptPath" | tee "$out"
-  '';
+  bench-update =
+    pkgs.runCommand "frappe-nix-bench-update-check"
+      {
+        nativeBuildInputs = with pkgs; [
+          git
+          jq
+          coreutils
+          shellcheck
+        ];
+        script = rendered;
+        passAsFile = [ "script" ];
+      }
+      ''
+        export HOME="$PWD"
+        shellcheck -s bash -S warning -e SC2317 "$scriptPath"
+        bash ${./bench-update.sh} "$scriptPath" | tee "$out"
+      '';
 }

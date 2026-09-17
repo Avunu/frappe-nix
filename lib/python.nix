@@ -64,13 +64,13 @@ let
   rootDepsAttr = lib.genAttrs rootDepNames (_: [ ]);
 
   # Extract dev-group packages from [dependency-groups]
-  rootDevDepNames = map (
-    dep: lib.strings.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep))
-  ) (
-    lib.filter builtins.isString (
-      lib.flatten (lib.attrValues (rootPyproject."dependency-groups" or { }))
-    )
-  );
+  rootDevDepNames =
+    map (dep: lib.strings.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep)))
+      (
+        lib.filter builtins.isString (
+          lib.flatten (lib.attrValues (rootPyproject."dependency-groups" or { }))
+        )
+      );
   rootDevDepsAttr = lib.genAttrs rootDevDepNames (_: [ ]);
 
   overlay = workspace.mkPyprojectOverlay {
@@ -114,15 +114,13 @@ let
   # Turn a stale uv.lock into a sentence instead of an "attribute 'x' missing"
   # deep inside uv2nix's resolver. Membership is tested against `pythonSet`
   # because that is precisely the set resolvers.nix indexes.
-  lockAudit =
-    import ./lock-audit.nix { inherit lib; }
-      (
-        {
-          inherit workspaceRoot rootPyproject;
-          hasPackage = name: pythonSet ? ${name};
-        }
-        // lib.optionalAttrs (lockAuditRelock != null) { relock = lockAuditRelock; }
-      );
+  lockAudit = import ./lock-audit.nix { inherit lib; } (
+    {
+      inherit workspaceRoot rootPyproject;
+      hasPackage = name: pythonSet ? ${name};
+    }
+    // lib.optionalAttrs (lockAuditRelock != null) { relock = lockAuditRelock; }
+  );
 
   # Wraps both virtualenvs: every consumer — the dev shell, benchRoot, the
   # containers, the NixOS module — reaches uv2nix's resolver through one of them.
@@ -174,9 +172,7 @@ let
           + lib.concatMapStrings (graft: ''
             cp -r ${graft.src}/${graft.module} "$out/${python.sitePackages}/"
             printf 'import %s; %s.install()\n' ${graft.module} ${graft.module} \
-              > "$out/${python.sitePackages}/zzz-${
-                lib.replaceStrings [ "_" ] [ "-" ] graft.module
-              }.pth"
+              > "$out/${python.sitePackages}/zzz-${lib.replaceStrings [ "_" ] [ "-" ] graft.module}.pth"
           '') grafts;
       });
 
@@ -214,9 +210,7 @@ let
   );
 
   baseDevPythonEnv = editablePythonSet.mkVirtualEnv "${benchName}-bench-dev-env" (
-    lib.filterAttrs (name: _: name != rootPkgName) (
-      workspace.deps.default // workspace.deps.groups
-    )
+    lib.filterAttrs (name: _: name != rootPkgName) (workspace.deps.default // workspace.deps.groups)
     // rootDepsAttr
     // rootDevDepsAttr
   );

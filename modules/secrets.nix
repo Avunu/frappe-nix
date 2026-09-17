@@ -13,7 +13,12 @@
 }:
 
 let
-  inherit (lib) mkOption mkEnableOption types literalExpression;
+  inherit (lib)
+    mkOption
+    mkEnableOption
+    types
+    literalExpression
+    ;
 
   cfg = config.frappe-nix.secrets;
   # No `self`: flake-parts' `self` is the flake's own output set, and this
@@ -22,10 +27,12 @@ let
   # the flake root off `dir`.
   schema = import ../lib/secrets-schema.nix { inherit lib; };
 
-  sshKey = types.strMatching "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+) [A-Za-z0-9+/]+=*( .*)?$" // {
-    name = "sshPublicKey";
-    description = "SSH public key (authorized_keys format)";
-  };
+  sshKey =
+    types.strMatching "^(ssh-ed25519|ssh-rsa|ecdsa-sha2-[a-z0-9-]+) [A-Za-z0-9+/]+=*( .*)?$"
+    // {
+      name = "sshPublicKey";
+      description = "SSH public key (authorized_keys format)";
+    };
 
   # A bench-level standard secret. `file` is not configurable: agenix resolves a
   # rule by the literal path string and writes output relative to $PWD, so the
@@ -95,7 +102,11 @@ let
     {
       options = {
         format = mkOption {
-          type = types.enum [ "env" "raw" "json" ];
+          type = types.enum [
+            "env"
+            "raw"
+            "json"
+          ];
           default = "env";
           description = ''
             How the dev shell consumes the plaintext:
@@ -216,33 +227,35 @@ in
     };
 
     # ── the standard roles ──────────────────────────────────────────────────
-    backupAccess = benchRole {
-      file = "backup-access";
-      var = "frappe_backup_access";
-    } // {
-      enable = mkOption {
-        type = types.bool;
-        default = cfg.enable;
-        defaultText = literalExpression "secrets.enable";
-        description = ''
-          Declare `<dir>/backup-access.age`: object-store credentials for
-          fetching production backups, as a shell env-file.
+    backupAccess =
+      benchRole {
+        file = "backup-access";
+        var = "frappe_backup_access";
+      }
+      // {
+        enable = mkOption {
+          type = types.bool;
+          default = cfg.enable;
+          defaultText = literalExpression "secrets.enable";
+          description = ''
+            Declare `<dir>/backup-access.age`: object-store credentials for
+            fetching production backups, as a shell env-file.
 
-          Expected contents:
+            Expected contents:
 
-              BACKUPS_URL=https://s3.us-east-005.backblazeb2.com
-              BACKUPS_ACCESS_KEY=…
-              BACKUPS_SECRET_KEY=…
-              BACKUPS_BUCKET=my-backups
-              BACKUPS_PREFIX=Backups/      # optional
+                BACKUPS_URL=https://s3.us-east-005.backblazeb2.com
+                BACKUPS_ACCESS_KEY=…
+                BACKUPS_SECRET_KEY=…
+                BACKUPS_BUCKET=my-backups
+                BACKUPS_PREFIX=Backups/      # optional
 
-          Bucket and prefix live in the secret rather than in Nix on purpose:
-          they are per-deployment facts that change together with the
-          credentials, and keeping them together means `bench restore` needs no
-          Nix configuration at all.
-        '';
+            Bucket and prefix live in the secret rather than in Nix on purpose:
+            they are per-deployment facts that change together with the
+            credentials, and keeping them together means `bench restore` needs no
+            Nix configuration at all.
+          '';
+        };
       };
-    };
 
     sites = mkOption {
       type = types.attrsOf siteModule;

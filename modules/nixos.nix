@@ -88,7 +88,8 @@ let
 
   # Per-site environment. The package (and therefore interpreters) can differ
   # per site, so this is a function of (siteName, siteCfg).
-  siteEnv = name: siteCfg:
+  siteEnv =
+    name: siteCfg:
     let
       pkg = sitePackage siteCfg;
     in
@@ -168,7 +169,8 @@ let
     pkgs.gnutar
     pkgs.bash
     cfg.database.package
-  ] ++ cfg.extraPath;
+  ]
+  ++ cfg.extraPath;
 
   # Secret-bearing files for a site's init unit, keyed for both
   # systemd LoadCredential= and the jq merge expression below. Source files
@@ -176,13 +178,20 @@ let
   # has systemd (root) read them and re-expose them under $CREDENTIALS_DIRECTORY
   # owned by the unit's own User/Group, so the unit never needs direct access
   # to the original file.
-  mkSiteCredentials = siteCfg:
-    (lib.optional (siteCfg.database.passwordFile != null)
-      { file = siteCfg.database.passwordFile; key = "db_password"; })
-    ++ (lib.optional (siteCfg.encryptionKeyFile != null)
-      { file = siteCfg.encryptionKeyFile; key = "encryption_key"; })
-    ++ lib.imap1 (i: f: { file = f; key = "extra_config_${toString i}"; })
-      siteCfg.extraConfigFiles;
+  mkSiteCredentials =
+    siteCfg:
+    (lib.optional (siteCfg.database.passwordFile != null) {
+      file = siteCfg.database.passwordFile;
+      key = "db_password";
+    })
+    ++ (lib.optional (siteCfg.encryptionKeyFile != null) {
+      file = siteCfg.encryptionKeyFile;
+      key = "encryption_key";
+    })
+    ++ lib.imap1 (i: f: {
+      file = f;
+      key = "extra_config_${toString i}";
+    }) siteCfg.extraConfigFiles;
 
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
   # cwd is left to systemd's WorkingDirectory= (set per-service in
@@ -191,7 +200,8 @@ let
   # everything that shells out to the `bench` CLI, and the sites dir for
   # gunicorn; both follow upstream's supervisor.conf, and the reasoning is on
   # mkService and on frappe-web there.
-  mkExec = pkg: name: cmd:
+  mkExec =
+    pkg: name: cmd:
     pkgs.writeShellScript "frappe-${name}" ''
       set -euo pipefail
       export PYTHONPATH="${pkgAppsPath pkg}"
@@ -217,7 +227,8 @@ let
 
   # Per-site init script: assemble runtime bench tree, link the registry and
   # assets, seed sites dir, and synthesize site_config.json (merging secrets).
-  mkSiteInit = name: siteCfg:
+  mkSiteInit =
+    name: siteCfg:
     let
       pkg = sitePackage siteCfg;
       benchDir = pkgBenchDir pkg;
@@ -251,15 +262,18 @@ let
       }
       // siteCfg.extraConfig;
 
-      baseConfigFile = pkgs.writeText "site-config-${name}.json"
-        (builtins.toJSON baseConfig);
+      baseConfigFile = pkgs.writeText "site-config-${name}.json" (builtins.toJSON baseConfig);
 
       # Secrets merged via systemd LoadCredential — see mkSiteCredentials.
       secretFiles =
-        (lib.optional (siteCfg.database.passwordFile != null)
-          { file = siteCfg.database.passwordFile; key = "db_password"; })
-        ++ (lib.optional (siteCfg.encryptionKeyFile != null)
-          { file = siteCfg.encryptionKeyFile; key = "encryption_key"; });
+        (lib.optional (siteCfg.database.passwordFile != null) {
+          file = siteCfg.database.passwordFile;
+          key = "db_password";
+        })
+        ++ (lib.optional (siteCfg.encryptionKeyFile != null) {
+          file = siteCfg.encryptionKeyFile;
+          key = "encryption_key";
+        });
 
     in
     pkgs.writeShellScript "frappe-init-${name}" ''
@@ -323,46 +337,56 @@ let
       # Secret values are read from $CREDENTIALS_DIRECTORY (populated by
       # systemd's LoadCredential= on this unit) rather than the original
       # source paths, so this script never needs read access to those.
-      ${let
-        # Read secret values into env vars.
-        readSecrets = concatStringsSep "\n" (
-          map (s: ''SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}="$(cat "$CREDENTIALS_DIRECTORY/${s.key}")"'')
-            secretFiles
-        );
-        exportSecrets = concatStringsSep "\n" (
-          map (s: ''export SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}'')
-            secretFiles
-        );
-
-        # Build jq expression.
-        jqExpr = let
-          base = ".";
-          withSecrets = concatStringsSep " | " (
-            map (s: ''. + {"${s.key}": $ENV.SECRET_${lib.toUpper (builtins.replaceStrings ["-" "."] ["_" "_"] s.key)}}'')
-              secretFiles
+      ${
+        let
+          # Read secret values into env vars.
+          readSecrets = concatStringsSep "\n" (
+            map (
+              s:
+              ''SECRET_${
+                lib.toUpper (builtins.replaceStrings [ "-" "." ] [ "_" "_" ] s.key)
+              }="$(cat "$CREDENTIALS_DIRECTORY/${s.key}")"''
+            ) secretFiles
           );
-          # --slurpfile binds $extraN to an array of every JSON value in the
-          # file, even when the file holds a single object — index [0] to get
-          # the object itself before merging.
-          extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.extraConfigFiles;
+          exportSecrets = concatStringsSep "\n" (
+            map (
+              s: "export SECRET_${lib.toUpper (builtins.replaceStrings [ "-" "." ] [ "_" "_" ] s.key)}"
+            ) secretFiles
+          );
+
+          # Build jq expression.
+          jqExpr =
+            let
+              base = ".";
+              withSecrets = concatStringsSep " | " (
+                map (
+                  s:
+                  ''. + {"${s.key}": $ENV.SECRET_${
+                    lib.toUpper (builtins.replaceStrings [ "-" "." ] [ "_" "_" ] s.key)
+                  }}''
+                ) secretFiles
+              );
+              # --slurpfile binds $extraN to an array of every JSON value in the
+              # file, even when the file holds a single object — index [0] to get
+              # the object itself before merging.
+              extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.extraConfigFiles;
+            in
+            concatStringsSep " | " ([ base ] ++ lib.optional (secretFiles != [ ]) withSecrets ++ extraMerges);
+
+          extraSlurpArgs = concatStringsSep " " (
+            lib.imap1 (
+              i: _f: ''--slurpfile extra${toString i} "$CREDENTIALS_DIRECTORY/extra_config_${toString i}"''
+            ) siteCfg.extraConfigFiles
+          );
         in
-          concatStringsSep " | " (
-            [ base ]
-            ++ lib.optional (secretFiles != []) withSecrets
-            ++ extraMerges
-          );
-
-        extraSlurpArgs = concatStringsSep " " (
-          lib.imap1 (i: _f: ''--slurpfile extra${toString i} "$CREDENTIALS_DIRECTORY/extra_config_${toString i}"'')
-            siteCfg.extraConfigFiles
-        );
-      in ''
-        ${readSecrets}
-        ${exportSecrets}
-        ${pkgs.jq}/bin/jq '${jqExpr}' ${extraSlurpArgs} ${baseConfigFile} \
-          > ${sitesPath}/${name}/site_config.json
-        chmod 0600 ${sitesPath}/${name}/site_config.json
-      ''}
+        ''
+          ${readSecrets}
+          ${exportSecrets}
+          ${pkgs.jq}/bin/jq '${jqExpr}' ${extraSlurpArgs} ${baseConfigFile} \
+            > ${sitesPath}/${name}/site_config.json
+          chmod 0600 ${sitesPath}/${name}/site_config.json
+        ''
+      }
     '';
 
   # services.mysql's `ensureUsers` only ever creates passwordless accounts
@@ -372,7 +396,8 @@ let
   # set/refresh it separately here using the same secret. Safe to rerun on
   # every deploy (`ALTER USER ... IDENTIFIED BY` is idempotent and swaps the
   # account onto password auth regardless of its previous auth plugin).
-  mkSiteDbPasswordSync = name: siteCfg:
+  mkSiteDbPasswordSync =
+    name: siteCfg:
     pkgs.writeShellScript "frappe-db-password-${name}" ''
       set -euo pipefail
       PASS="$(cat "$CREDENTIALS_DIRECTORY/db_password")"
@@ -391,7 +416,8 @@ let
   # Runs entirely as cfg.user with the site's own DB credentials (read from the
   # 0600 site_config.json) — no DB-root privilege needed, so it works for both
   # locally-created and externally-managed databases.
-  mkSiteMigrate = name: siteCfg:
+  mkSiteMigrate =
+    name: siteCfg:
     let
       pkg = sitePackage siteCfg;
       pyEnv = pkgPythonEnv pkg;
@@ -423,7 +449,8 @@ let
       # re-runs (e.g. on every reboot) when the app build hasn't changed.
       marker = "${siteCfg.siteDir}/.frappe-migrate-build";
 
-      setMaintenance = state:
+      setMaintenance =
+        state:
         optionalString mg.maintenanceMode ''
           ${benchBin} --site ${name} set-maintenance-mode ${state} \
             || echo "frappe-migrate(${name}): warning: could not set maintenance mode ${state}" >&2
@@ -510,7 +537,8 @@ let
     '';
 
   # Generate all systemd services for a single site.
-  mkSiteServices = name: siteCfg:
+  mkSiteServices =
+    name: siteCfg:
     let
       pkg = sitePackage siteCfg;
       pyEnv = pkgPythonEnv pkg;
@@ -528,7 +556,10 @@ let
       migrateName = "frappe-migrate-${name}";
 
       dependsOn = {
-        after = [ "${initName}.service" "${migrateName}.service" ];
+        after = [
+          "${initName}.service"
+          "${migrateName}.service"
+        ];
         requires = [ "${initName}.service" ];
       };
 
@@ -539,11 +570,18 @@ let
       # there. gunicorn is the exception -- see frappe-web in splitUnits. The
       # unified runtime is not: it starts at the bench root and changes into
       # sites/ itself before serving.
-      mkService = { description, execStart, extra ? {}, workingDirectory ? runtimeBenchDir, stopTimeout ? null }:
+      mkService =
+        {
+          description,
+          execStart,
+          extra ? { },
+          workingDirectory ? runtimeBenchDir,
+          stopTimeout ? null,
+        }:
         {
           inherit description;
-          after = [ "network.target" ] ++ (extra.after or []);
-          requires = extra.requires or [];
+          after = [ "network.target" ] ++ (extra.after or [ ]);
+          requires = extra.requires or [ ];
           wantedBy = [ "multi-user.target" ];
           environment = env;
           path = servicePath;
@@ -554,20 +592,21 @@ let
             ExecStart = execStart;
             Restart = "always";
             RestartSec = "5";
-          } // optionalAttrs (stopTimeout != null) {
+          }
+          // optionalAttrs (stopTimeout != null) {
             TimeoutStopSec = toString stopTimeout;
           };
         };
 
       workerUnits = lib.listToAttrs (
-        map (queue: nameValuePair "frappe-worker-${queue}-${name}" (
-          mkService {
+        map (
+          queue:
+          nameValuePair "frappe-worker-${queue}-${name}" (mkService {
             description = "Frappe worker (${queue}) for ${name}";
-            execStart = mkExec pkg "worker-${queue}-${name}"
-              "${benchBin} worker --queue ${queue}";
+            execStart = mkExec pkg "worker-${queue}-${name}" "${benchBin} worker --queue ${queue}";
             extra = dependsOn;
-          }
-        )) cfg.workers
+          })
+        ) cfg.workers
       );
 
       # One process for the whole site: the web app, realtime, the jobs and the
@@ -576,25 +615,49 @@ let
       runtimeUnits = {
         "frappe-${name}" = mkService {
           description = "Frappe runtime (web, realtime, jobs, scheduler) for ${name}";
-          execStart = mkExec pkg "runtime-${name}" (concatStringsSep " " (
-            [ "${pyEnv}/bin/frappe-runtime" ]
-            ++ (if siteCfg.web.socketPath != "" then
-                  [ "--uds" siteCfg.web.socketPath ]
+          execStart = mkExec pkg "runtime-${name}" (
+            concatStringsSep " " (
+              [ "${pyEnv}/bin/frappe-runtime" ]
+              ++ (
+                if siteCfg.web.socketPath != "" then
+                  [
+                    "--uds"
+                    siteCfg.web.socketPath
+                  ]
                 else
-                  [ "--host" "0.0.0.0" "--port" (toString siteCfg.web.port) ])
-            ++ [
-              "--job-threads" (toString cfg.runtime.jobThreads)
-              "--restart-after-requests" (toString cfg.runtime.restartAfterRequests)
-              "--restart-after-jobs" (toString cfg.runtime.restartAfterJobs)
-              "--restart-idle-seconds" (toString cfg.runtime.restartIdleSeconds)
-              "--request-drain-seconds" (toString cfg.runtime.requestDrainSeconds)
-              "--job-drain-seconds" (toString cfg.runtime.jobDrainSeconds)
-            ]
-            # Same queues the split workers took, as one comma-separated list.
-            ++ lib.optionals (cfg.workers != [ ]) [ "--queue" (concatStringsSep "," cfg.workers) ]
-            ++ lib.optionals (cfg.runtime.webThreads != 0) [ "--web-threads" (toString cfg.runtime.webThreads) ]
-            ++ cfg.runtime.extraArgs
-          ));
+                  [
+                    "--host"
+                    "0.0.0.0"
+                    "--port"
+                    (toString siteCfg.web.port)
+                  ]
+              )
+              ++ [
+                "--job-threads"
+                (toString cfg.runtime.jobThreads)
+                "--restart-after-requests"
+                (toString cfg.runtime.restartAfterRequests)
+                "--restart-after-jobs"
+                (toString cfg.runtime.restartAfterJobs)
+                "--restart-idle-seconds"
+                (toString cfg.runtime.restartIdleSeconds)
+                "--request-drain-seconds"
+                (toString cfg.runtime.requestDrainSeconds)
+                "--job-drain-seconds"
+                (toString cfg.runtime.jobDrainSeconds)
+              ]
+              # Same queues the split workers took, as one comma-separated list.
+              ++ lib.optionals (cfg.workers != [ ]) [
+                "--queue"
+                (concatStringsSep "," cfg.workers)
+              ]
+              ++ lib.optionals (cfg.runtime.webThreads != 0) [
+                "--web-threads"
+                (toString cfg.runtime.webThreads)
+              ]
+              ++ cfg.runtime.extraArgs
+            )
+          );
           extra = dependsOn;
           # The runner drains web requests and then background jobs on SIGTERM.
           # systemd's 90s default would SIGKILL it partway through, so give it the
@@ -648,11 +711,11 @@ let
 
         "frappe-socketio-${name}" = mkService {
           description = "Frappe SocketIO for ${name}";
-          execStart = mkExec pkg "socketio-${name}"
-            "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
+          execStart = mkExec pkg "socketio-${name}" "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
           extra = dependsOn;
         };
-      } // workerUnits;
+      }
+      // workerUnits;
     in
     {
       "${initName}" = {
@@ -682,10 +745,13 @@ let
         # Order after the data stores — migrate is a Restart-less oneshot and would
         # race MariaDB/Redis on a cold boot otherwise. Gate each on its createLocally
         # flag so this stays correct for externally-managed DB/Redis too.
-        after = [ "${initName}.service" "network.target" ]
-          ++ lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service"
-          ++ lib.optional cfg.database.createLocally "mysql.service"
-          ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
+        after = [
+          "${initName}.service"
+          "network.target"
+        ]
+        ++ lib.optional needsDbPasswordSync "${dbPasswordSyncName}.service"
+        ++ lib.optional cfg.database.createLocally "mysql.service"
+        ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
         requires = [ "${initName}.service" ];
         environment = env;
         # coreutils for date/ls/tail/rm/cat used by the snapshot/rollback script;
@@ -748,12 +814,14 @@ let
 
       # Resolve SITES_PATH and runtime bench dir from the site's siteDir.
       FRAPPE_BENCH_ROOT=""
-      ${concatStringsSep "\n" (mapAttrsToList (name: siteCfg: ''
-        if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
-          export SITES_PATH="${siteCfg.siteDir}/sites"
-          FRAPPE_BENCH_ROOT="${siteCfg.siteDir}/bench"
-        fi
-      '') enabledSites)}
+      ${concatStringsSep "\n" (
+        mapAttrsToList (name: siteCfg: ''
+          if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
+            export SITES_PATH="${siteCfg.siteDir}/sites"
+            FRAPPE_BENCH_ROOT="${siteCfg.siteDir}/bench"
+          fi
+        '') enabledSites
+      )}
       export SITES_PATH=''${SITES_PATH:-/var/lib/frappe/sites}
       export FRAPPE_BENCH_ROOT=''${FRAPPE_BENCH_ROOT:-/var/lib/frappe/bench}
 
@@ -823,7 +891,8 @@ let
   socketioUpstreamName = name: "frappe-socketio-${lib.replaceStrings [ "." ] [ "_" ] name}";
 
   # Per-site nginx virtualHost config.
-  mkSiteNginxVhost = name: siteCfg:
+  mkSiteNginxVhost =
+    name: siteCfg:
     let
       pkg = sitePackage siteCfg;
       benchDir = pkgBenchDir pkg;
@@ -917,164 +986,166 @@ let
     };
 
   # Site submodule option definition.
-  siteModule = types.submodule ({ name, ... }: {
-    options = {
-      enable = mkEnableOption "this Frappe site";
+  siteModule = types.submodule (
+    { name, ... }: {
+      options = {
+        enable = mkEnableOption "this Frappe site";
 
-      package = mkOption {
-        type = types.nullOr types.package;
-        default = null;
-        description = "Per-site bench package override. Defaults to services.frappe.package.";
-      };
-
-      siteDir = mkOption {
-        type = types.str;
-        default = "/var/lib/frappe/${name}";
-        description = "State directory for this site.";
-      };
-
-      web.port = mkOption {
-        type = types.port;
-        default = 8000;
-        description = "Gunicorn listen port for this site (ignored when web.socketPath is set).";
-      };
-
-      web.socketPath = mkOption {
-        type = types.str;
-        default = "";
-        example = "/run/frappe-erp/web.sock";
-        description = ''
-          Bind gunicorn to this unix socket instead of a TCP port, removing the
-          nginx->gunicorn hop from the network stack. nginx reaches it through a
-          generated upstream block.
-
-          Access is governed by the socket's *directory*, which this module
-          creates 0750 owned by the service user — nginx is already a member of
-          that group. Put the socket in its own directory, not directly in /run.
-        '';
-      };
-
-      socketio.port = mkOption {
-        type = types.port;
-        default = 9000;
-        description = "SocketIO listen port for this site (ignored when socketio.socketPath is set).";
-      };
-
-      socketio.socketPath = mkOption {
-        type = types.str;
-        default = "";
-        example = "/run/frappe-mysite/socketio.sock";
-        description = ''
-          Unix socket for the realtime server, the counterpart of web.socketPath.
-          When set, socketio.port is unused and the site has no TCP listener on
-          9000 at all — nginx reaches it through a generated upstream block.
-
-          Frappe reads this as `socketio_uds`; support landed in v15.46 and every
-          v16, so an older bench must leave this empty.
-
-          The same directory rules as web.socketPath apply: access is governed by
-          the socket's directory, so give it its own.
-
-          Only used when services.frappe.runtime.enable is false. The unified
-          runtime serves /socket.io from the same process — and the same socket —
-          as the web app, so it has no separate realtime listener.
-
-          In that legacy mode this does not remove nginx's loopback :80 listener.
-          That is there because the node realtime server validates sessions by
-          making an HTTP request back to the site's own FQDN, and node's fetch
-          cannot speak unix — so the callback still needs a TCP way in.
-        '';
-      };
-
-      database = {
-        createLocally = mkEnableOption "a local MariaDB database for this site";
-        host = mkOption {
-          type = types.str;
-          default = "127.0.0.1";
-        };
-        port = mkOption {
-          type = types.port;
-          default = 3306;
-        };
-        socket = mkOption {
-          type = types.str;
-          default = "/run/mysqld/mysqld.sock";
-          description = "Database unix socket (empty to disable socket auth).";
-        };
-        name = mkOption {
-          type = types.str;
-          default = builtins.replaceStrings ["." "-"] ["_" "_"] name;
-          description = "Database name. Defaults to site name with dots/hyphens replaced by underscores.";
-        };
-        user = mkOption {
-          type = types.str;
-          default = builtins.replaceStrings ["." "-"] ["_" "_"] name;
-          description = "Database user. Defaults to site name with dots/hyphens replaced by underscores.";
-        };
-        passwordFile = mkOption {
-          type = types.nullOr types.path;
+        package = mkOption {
+          type = types.nullOr types.package;
           default = null;
-          description = "File containing the database password. Merged into site_config.json at activation.";
+          description = "Per-site bench package override. Defaults to services.frappe.package.";
         };
-      };
 
-      redis = {
-        cacheUrl = mkOption {
+        siteDir = mkOption {
           type = types.str;
-          default = "redis://127.0.0.1:13000";
+          default = "/var/lib/frappe/${name}";
+          description = "State directory for this site.";
         };
-        queueUrl = mkOption {
-          type = types.str;
-          default = "redis://127.0.0.1:13000";
+
+        web.port = mkOption {
+          type = types.port;
+          default = 8000;
+          description = "Gunicorn listen port for this site (ignored when web.socketPath is set).";
         };
-        socketioUrl = mkOption {
-          type = types.str;
-          default = "redis://127.0.0.1:13000";
-        };
-      };
 
-      encryptionKeyFile = mkOption {
-        type = types.nullOr types.path;
-        default = null;
-        description = "File containing the Frappe encryption key. Merged into site_config.json at activation.";
-      };
-
-      extraConfig = mkOption {
-        type = types.attrsOf types.anything;
-        default = {};
-        description = "Extra keys merged into the base site_config.json (Nix values, no secrets).";
-      };
-
-      extraConfigFiles = mkOption {
-        type = types.listOf types.path;
-        default = [];
-        description = "JSON files deep-merged into site_config.json at activation (for secrets).";
-      };
-
-      nginx = {
-        enable = mkEnableOption "an nginx virtualHost for this site";
-
-        socketPath = mkOption {
+        web.socketPath = mkOption {
           type = types.str;
           default = "";
-          example = "/run/frappe-erp/nginx.sock";
+          example = "/run/frappe-erp/web.sock";
           description = ''
-            Additionally serve this vhost over a unix socket, for a co-located
-            reverse proxy or tunnel connector that terminates TLS elsewhere.
+            Bind gunicorn to this unix socket instead of a TCP port, removing the
+            nginx->gunicorn hop from the network stack. nginx reaches it through a
+            generated upstream block.
 
-            The loopback :80 listener is kept alongside it — the socketio
-            session-validation callback resolves the site FQDN to 127.0.0.1 and
-            needs it. In this mode the client IP comes from `CF-Connecting-IP`,
-            since a unix socket has no peer address.
-
-            nginx chmods its unix listen sockets to 0666, so the socket file does
-            not restrict access. Give it its own directory; this module creates
-            that 0750 and owned by the service user, which is the real gate.
+            Access is governed by the socket's *directory*, which this module
+            creates 0750 owned by the service user — nginx is already a member of
+            that group. Put the socket in its own directory, not directly in /run.
           '';
         };
+
+        socketio.port = mkOption {
+          type = types.port;
+          default = 9000;
+          description = "SocketIO listen port for this site (ignored when socketio.socketPath is set).";
+        };
+
+        socketio.socketPath = mkOption {
+          type = types.str;
+          default = "";
+          example = "/run/frappe-mysite/socketio.sock";
+          description = ''
+            Unix socket for the realtime server, the counterpart of web.socketPath.
+            When set, socketio.port is unused and the site has no TCP listener on
+            9000 at all — nginx reaches it through a generated upstream block.
+
+            Frappe reads this as `socketio_uds`; support landed in v15.46 and every
+            v16, so an older bench must leave this empty.
+
+            The same directory rules as web.socketPath apply: access is governed by
+            the socket's directory, so give it its own.
+
+            Only used when services.frappe.runtime.enable is false. The unified
+            runtime serves /socket.io from the same process — and the same socket —
+            as the web app, so it has no separate realtime listener.
+
+            In that legacy mode this does not remove nginx's loopback :80 listener.
+            That is there because the node realtime server validates sessions by
+            making an HTTP request back to the site's own FQDN, and node's fetch
+            cannot speak unix — so the callback still needs a TCP way in.
+          '';
+        };
+
+        database = {
+          createLocally = mkEnableOption "a local MariaDB database for this site";
+          host = mkOption {
+            type = types.str;
+            default = "127.0.0.1";
+          };
+          port = mkOption {
+            type = types.port;
+            default = 3306;
+          };
+          socket = mkOption {
+            type = types.str;
+            default = "/run/mysqld/mysqld.sock";
+            description = "Database unix socket (empty to disable socket auth).";
+          };
+          name = mkOption {
+            type = types.str;
+            default = builtins.replaceStrings [ "." "-" ] [ "_" "_" ] name;
+            description = "Database name. Defaults to site name with dots/hyphens replaced by underscores.";
+          };
+          user = mkOption {
+            type = types.str;
+            default = builtins.replaceStrings [ "." "-" ] [ "_" "_" ] name;
+            description = "Database user. Defaults to site name with dots/hyphens replaced by underscores.";
+          };
+          passwordFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = "File containing the database password. Merged into site_config.json at activation.";
+          };
+        };
+
+        redis = {
+          cacheUrl = mkOption {
+            type = types.str;
+            default = "redis://127.0.0.1:13000";
+          };
+          queueUrl = mkOption {
+            type = types.str;
+            default = "redis://127.0.0.1:13000";
+          };
+          socketioUrl = mkOption {
+            type = types.str;
+            default = "redis://127.0.0.1:13000";
+          };
+        };
+
+        encryptionKeyFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "File containing the Frappe encryption key. Merged into site_config.json at activation.";
+        };
+
+        extraConfig = mkOption {
+          type = types.attrsOf types.anything;
+          default = { };
+          description = "Extra keys merged into the base site_config.json (Nix values, no secrets).";
+        };
+
+        extraConfigFiles = mkOption {
+          type = types.listOf types.path;
+          default = [ ];
+          description = "JSON files deep-merged into site_config.json at activation (for secrets).";
+        };
+
+        nginx = {
+          enable = mkEnableOption "an nginx virtualHost for this site";
+
+          socketPath = mkOption {
+            type = types.str;
+            default = "";
+            example = "/run/frappe-erp/nginx.sock";
+            description = ''
+              Additionally serve this vhost over a unix socket, for a co-located
+              reverse proxy or tunnel connector that terminates TLS elsewhere.
+
+              The loopback :80 listener is kept alongside it — the socketio
+              session-validation callback resolves the site FQDN to 127.0.0.1 and
+              needs it. In this mode the client IP comes from `CF-Connecting-IP`,
+              since a unix socket has no peer address.
+
+              nginx chmods its unix listen sockets to 0666, so the socket file does
+              not restrict access. Give it its own directory; this module creates
+              that 0750 and owned by the service user, which is the real gate.
+            '';
+          };
+        };
       };
-    };
-  });
+    }
+  );
 
 in
 {
@@ -1104,7 +1175,11 @@ in
 
     workers = mkOption {
       type = types.listOf types.str;
-      default = [ "default" "short" "long" ];
+      default = [
+        "default"
+        "short"
+        "long"
+      ];
       description = ''
         Background worker queues to run per site. Under the unified runtime these
         are passed to the runner as --queue instead of becoming one unit each.
@@ -1191,7 +1266,10 @@ in
       extraArgs = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        example = [ "--request-drain-seconds" "120" ];
+        example = [
+          "--request-drain-seconds"
+          "120"
+        ];
         description = "Extra arguments appended to the frappe-runtime command line.";
       };
     };
@@ -1260,13 +1338,13 @@ in
 
     extraEnv = mkOption {
       type = types.attrsOf types.str;
-      default = {};
+      default = { };
       description = "Additional environment variables for all Frappe services.";
     };
 
     extraPath = mkOption {
       type = types.listOf types.package;
-      default = [];
+      default = [ ];
       description = ''
         Additional packages on PATH for all Frappe services (web, workers,
         migrate). Needed because systemd's `path` sets PATH to exactly the
@@ -1285,7 +1363,7 @@ in
 
     sites = mkOption {
       type = types.attrsOf siteModule;
-      default = {};
+      default = { };
       description = "Per-site configuration. Each key is the site name (FQDN).";
     };
   };
@@ -1295,44 +1373,56 @@ in
       # Socket paths must sit in their own directory: nginx chmods its unix listen
       # sockets to 0666 and gunicorn's mode follows its umask, so neither socket
       # file gates access. The 0750 directory this module creates around it does.
-      assertions = lib.concatLists (mapAttrsToList (name: siteCfg:
-        let
-          paths = filterAttrs (_: p: p != "") {
-            "web.socketPath" = siteCfg.web.socketPath;
-            "socketio.socketPath" = siteCfg.socketio.socketPath;
-            "nginx.socketPath" = siteCfg.nginx.socketPath;
-          };
-        in
-        mapAttrsToList (opt: p: {
-          assertion = lib.hasPrefix "/" p && builtins.dirOf p != "/run" && builtins.dirOf p != "/";
-          message =
-            "services.frappe.sites.\"${name}\".${opt} must be an absolute path inside its own"
-            + " directory (e.g. /run/frappe-${name}/web.sock), not directly in /run —"
-            + " the directory's 0750 mode is what keeps the socket private.";
-        }) paths
-        ++ lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
-          assertion = false;
-          message = "services.frappe.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
-        }
-      ) enabledSites);
+      assertions = lib.concatLists (
+        mapAttrsToList (
+          name: siteCfg:
+          let
+            paths = filterAttrs (_: p: p != "") {
+              "web.socketPath" = siteCfg.web.socketPath;
+              "socketio.socketPath" = siteCfg.socketio.socketPath;
+              "nginx.socketPath" = siteCfg.nginx.socketPath;
+            };
+          in
+          mapAttrsToList (opt: p: {
+            assertion = lib.hasPrefix "/" p && builtins.dirOf p != "/run" && builtins.dirOf p != "/";
+            message =
+              "services.frappe.sites.\"${name}\".${opt} must be an absolute path inside its own"
+              + " directory (e.g. /run/frappe-${name}/web.sock), not directly in /run —"
+              + " the directory's 0750 mode is what keeps the socket private.";
+          }) paths
+          ++ lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
+            assertion = false;
+            message = "services.frappe.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
+          }
+        ) enabledSites
+      );
 
       # The unified runtime has no separate realtime process and no gunicorn, so
       # these configure nothing. Say so rather than letting a set value quietly
       # do nothing.
       warnings = lib.optionals cfg.runtime.enable (
-        lib.concatLists (mapAttrsToList (name: siteCfg:
-          lib.optional (siteCfg.socketio.socketPath != "")
-            ("services.frappe.sites.\"${name}\".socketio.socketPath is ignored when"
-             + " services.frappe.runtime.enable is true: the runtime serves /socket.io"
-             + " on web.socketPath. Remove it, or set runtime.enable = false.")
-        ) enabledSites)
-        ++ lib.optional (cfg.web.workers != 4)
-          ("services.frappe.web.workers is ignored when services.frappe.runtime.enable"
-           + " is true: the runtime sizes web concurrency with"
-           + " services.frappe.runtime.webThreads instead.")
+        lib.concatLists (
+          mapAttrsToList (
+            name: siteCfg:
+            lib.optional (siteCfg.socketio.socketPath != "") (
+              "services.frappe.sites.\"${name}\".socketio.socketPath is ignored when"
+              + " services.frappe.runtime.enable is true: the runtime serves /socket.io"
+              + " on web.socketPath. Remove it, or set runtime.enable = false."
+            )
+          ) enabledSites
+        )
+        ++ lib.optional (cfg.web.workers != 4) (
+          "services.frappe.web.workers is ignored when services.frappe.runtime.enable"
+          + " is true: the runtime sizes web concurrency with"
+          + " services.frappe.runtime.webThreads instead."
+        )
       );
 
-      environment.systemPackages = [ benchCli pkgs.git ] ++ (cfg.package.passthru.extraPackages or [ ]);
+      environment.systemPackages = [
+        benchCli
+        pkgs.git
+      ]
+      ++ (cfg.package.passthru.extraPackages or [ ]);
 
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
@@ -1343,7 +1433,7 @@ in
         };
       };
       users.groups = mkIf (cfg.group == "frappe") {
-        frappe = {};
+        frappe = { };
       };
 
       # Generate per-site systemd services.
@@ -1352,47 +1442,61 @@ in
       );
 
       # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
-      systemd.tmpfiles.rules = mapAttrsToList
-        (name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -")
-        enabledSites
+      systemd.tmpfiles.rules =
+        mapAttrsToList (name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -") enabledSites
         # Socket directories gate access to the sockets inside them, since nginx
         # chmods its listen socket to 0666 and gunicorn's follows its umask.
         # 0770, not 0750: nginx *creates* its socket in here and is only a member
         # of cfg.group, so it needs group write, not just traversal.
         # Deduplicated — both sockets of a site normally share one directory.
-        ++ lib.unique (lib.concatMap (siteCfg:
-          map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -")
-            (lib.filter (p: p != "") ([
-              siteCfg.web.socketPath
-              siteCfg.nginx.socketPath
-            ] ++ lib.optional (!cfg.runtime.enable) siteCfg.socketio.socketPath)))
-          (builtins.attrValues enabledSites));
+        ++ lib.unique (
+          lib.concatMap (
+            siteCfg:
+            map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -") (
+              lib.filter (p: p != "") (
+                [
+                  siteCfg.web.socketPath
+                  siteCfg.nginx.socketPath
+                ]
+                ++ lib.optional (!cfg.runtime.enable) siteCfg.socketio.socketPath
+              )
+            )
+          ) (builtins.attrValues enabledSites)
+        );
     }
 
     # Aggregate database.createLocally: enable MariaDB if any site requests it
     # or if the top-level toggle is on.
-    (mkIf (cfg.database.createLocally ||
-           lib.any (s: s.database.createLocally) (builtins.attrValues enabledSites)) {
-      services.mysql = {
-        enable = true;
-        package = cfg.database.package;
-        # `ensureUsers` only creates passwordless unix_socket accounts —
-        # the actual password is set separately by mkSiteDbPasswordSync,
-        # since NixOS deliberately doesn't manage passwords declaratively.
-        ensureDatabases = mapAttrsToList (_: s: s.database.name)
-          (filterAttrs (_: s: s.database.createLocally) enabledSites);
-        ensureUsers = mapAttrsToList (_: s: {
-          name = s.database.user;
-          ensurePermissions = { "${s.database.name}.*" = "ALL PRIVILEGES"; };
-        }) (filterAttrs (_: s: s.database.createLocally) enabledSites);
-        settings.mysqld = {
-          character-set-server = "utf8mb4";
-          collation-server = "utf8mb4_unicode_ci";
-          skip-character-set-client-handshake = true;
-          innodb-read-only-compressed = "OFF";
+    (mkIf
+      (
+        cfg.database.createLocally
+        || lib.any (s: s.database.createLocally) (builtins.attrValues enabledSites)
+      )
+      {
+        services.mysql = {
+          enable = true;
+          package = cfg.database.package;
+          # `ensureUsers` only creates passwordless unix_socket accounts —
+          # the actual password is set separately by mkSiteDbPasswordSync,
+          # since NixOS deliberately doesn't manage passwords declaratively.
+          ensureDatabases = mapAttrsToList (_: s: s.database.name) (
+            filterAttrs (_: s: s.database.createLocally) enabledSites
+          );
+          ensureUsers = mapAttrsToList (_: s: {
+            name = s.database.user;
+            ensurePermissions = {
+              "${s.database.name}.*" = "ALL PRIVILEGES";
+            };
+          }) (filterAttrs (_: s: s.database.createLocally) enabledSites);
+          settings.mysqld = {
+            character-set-server = "utf8mb4";
+            collation-server = "utf8mb4_unicode_ci";
+            skip-character-set-client-handshake = true;
+            innodb-read-only-compressed = "OFF";
+          };
         };
-      };
-    })
+      }
+    )
 
     (mkIf cfg.redis.createLocally {
       services.redis.servers.frappe = {
@@ -1416,9 +1520,7 @@ in
       # NixOS itself always defines that key. Selecting the whole attrset does not
       # depend on that.
       networking.hosts = lib.optionalAttrs (!cfg.runtime.enable) {
-        "127.0.0.1" = mapAttrsToList (name: _: name) (
-          filterAttrs (_: s: s.nginx.enable) enabledSites
-        );
+        "127.0.0.1" = mapAttrsToList (name: _: name) (filterAttrs (_: s: s.nginx.enable) enabledSites);
       };
 
       services.nginx = {
@@ -1428,19 +1530,24 @@ in
 
         # One upstream per site process that listens on a unix socket.
         upstreams =
-          lib.mapAttrs' (name: siteCfg:
+          lib.mapAttrs' (
+            name: siteCfg:
             nameValuePair (upstreamName name) {
               servers."unix:${siteCfg.web.socketPath}" = { };
-            })
-            (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites)
-          // lib.optionalAttrs (!cfg.runtime.enable) (lib.mapAttrs' (name: siteCfg:
-            nameValuePair (socketioUpstreamName name) {
-              servers."unix:${siteCfg.socketio.socketPath}" = { };
-            })
-            (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites));
+            }
+          ) (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites)
+          // lib.optionalAttrs (!cfg.runtime.enable) (
+            lib.mapAttrs' (
+              name: siteCfg:
+              nameValuePair (socketioUpstreamName name) {
+                servers."unix:${siteCfg.socketio.socketPath}" = { };
+              }
+            ) (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites)
+          );
 
-        virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg)
-          (filterAttrs (_: s: s.nginx.enable) enabledSites);
+        virtualHosts = mapAttrs (name: siteCfg: mkSiteNginxVhost name siteCfg) (
+          filterAttrs (_: s: s.nginx.enable) enabledSites
+        );
       };
     })
   ]);

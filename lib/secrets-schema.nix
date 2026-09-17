@@ -118,23 +118,21 @@ rec {
         let
           site = cfg.sites.${siteName};
         in
-        map
-          (
-            r:
-            mk {
-              subpath = "${siteName}/${r.file}.age";
-              var = "${r.var}_${slug siteName}";
-              inherit (r) format;
-              role = r.attr;
-              site = siteName;
-              inherit (site) developers;
-              # Per-site secrets are what the deployment host consumes
-              # (database.passwordFile / encryptionKeyFile / extraConfigFiles),
-              # so host keys always apply; `developers` gates the humans.
-              hosts = true;
-            }
-          )
-          (filter (r: site.${r.attr}) siteRoles)
+        map (
+          r:
+          mk {
+            subpath = "${siteName}/${r.file}.age";
+            var = "${r.var}_${slug siteName}";
+            inherit (r) format;
+            role = r.attr;
+            site = siteName;
+            inherit (site) developers;
+            # Per-site secrets are what the deployment host consumes
+            # (database.passwordFile / encryptionKeyFile / extraConfigFiles),
+            # so host keys always apply; `developers` gates the humans.
+            hosts = true;
+          }
+        ) (filter (r: site.${r.attr}) siteRoles)
       ) (lib.attrNames cfg.sites);
 
       extra = lib.mapAttrsToList (

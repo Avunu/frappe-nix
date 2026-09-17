@@ -90,22 +90,21 @@ let
         # --edit/--rekey/--schema, so there is no `agenix -d`.
         rage
       ];
-      text =
-        ''
-          AGENIX=${lib.getExe' cli "agenix"}
-          AGECHECK=${lib.getExe' agecheck "frappe-nix-agecheck"}
-          RULES_JSON=${rulesJSON}
-          SECRET_REL="${cfg.relDir}/backup-access.age"
-          FETCH=${fetch}
-          # Assigned rather than interpolated into the loop: these are shell
-          # strings holding $HOME, so they expand here and nowhere else.
-          IDENTITY_PATHS="${toString cfg.identityPaths}"
+      text = ''
+        AGENIX=${lib.getExe' cli "agenix"}
+        AGECHECK=${lib.getExe' agecheck "frappe-nix-agecheck"}
+        RULES_JSON=${rulesJSON}
+        SECRET_REL="${cfg.relDir}/backup-access.age"
+        FETCH=${fetch}
+        # Assigned rather than interpolated into the loop: these are shell
+        # strings holding $HOME, so they expand here and nowhere else.
+        IDENTITY_PATHS="${toString cfg.identityPaths}"
 
-          write_rules() {
-            ${writeRules}
-          }
-        ''
-        + builtins.readFile ./sh/backup-access.sh;
+        write_rules() {
+          ${writeRules}
+        }
+      ''
+      + builtins.readFile ./sh/backup-access.sh;
     };
 
   # Shell fragment: decrypt every declared secret and make it usable.

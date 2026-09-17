@@ -17,18 +17,21 @@ let
     }).bench-get-app.exec;
 in
 {
-  bench-get-app = pkgs.runCommand "frappe-nix-bench-get-app-check" {
-    nativeBuildInputs = with pkgs; [
-      git
-      coreutils
-      python3
-      shellcheck
-    ];
-    script = rendered;
-    passAsFile = [ "script" ];
-  } ''
-    export HOME="$PWD"
-    shellcheck -s bash -S warning -e SC2317 "$scriptPath"
-    bash ${./bench-get-app.sh} "$scriptPath" | tee "$out"
-  '';
+  bench-get-app =
+    pkgs.runCommand "frappe-nix-bench-get-app-check"
+      {
+        nativeBuildInputs = with pkgs; [
+          git
+          coreutils
+          python3
+          shellcheck
+        ];
+        script = rendered;
+        passAsFile = [ "script" ];
+      }
+      ''
+        export HOME="$PWD"
+        shellcheck -s bash -S warning -e SC2317 "$scriptPath"
+        bash ${./bench-get-app.sh} "$scriptPath" | tee "$out"
+      '';
 }

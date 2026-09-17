@@ -69,28 +69,34 @@ let
   fakeGunicorn = pkgs.writeShellScriptBin "gunicorn" "exec sleep infinity";
   stubPyEnv = pkgs.buildEnv {
     name = "stub-frappe-pyenv";
-    paths = [ fakeBench fakeGunicorn ];
+    paths = [
+      fakeBench
+      fakeGunicorn
+    ];
   };
   stubNode = pkgs.writeShellScriptBin "node" "exec sleep infinity";
 
   # Minimal stand-in for `builtBench`: just the on-disk layout frappe-init
   # expects plus the passthru the NixOS module reads.
-  stubBench = pkgs.runCommand "stub-bench" {
-    passthru = {
-      pythonEnv = stubPyEnv;
-      nodejs = stubNode;
-      appsPath = benchDir: "${benchDir}/apps";
-      appNames = [ "frappe" ];
-      extraPackages = [ ];
-    };
-  } ''
-    mkdir -p $out/bench/apps $out/bench/env $out/bench/config $out/bench/sites
-    echo '{}' > $out/bench/sites/common_site_config.json
-    # The registry a real package carries (lib/bench.nix).
-    printf 'frappe\n' > $out/bench/sites/apps.txt
-    printf '{"frappe": {"idx": 1}}\n' > $out/bench/sites/apps.json
-    : > $out/bench/config/.keep
-  '';
+  stubBench =
+    pkgs.runCommand "stub-bench"
+      {
+        passthru = {
+          pythonEnv = stubPyEnv;
+          nodejs = stubNode;
+          appsPath = benchDir: "${benchDir}/apps";
+          appNames = [ "frappe" ];
+          extraPackages = [ ];
+        };
+      }
+      ''
+        mkdir -p $out/bench/apps $out/bench/env $out/bench/config $out/bench/sites
+        echo '{}' > $out/bench/sites/common_site_config.json
+        # The registry a real package carries (lib/bench.nix).
+        printf 'frappe\n' > $out/bench/sites/apps.txt
+        printf '{"frappe": {"idx": 1}}\n' > $out/bench/sites/apps.json
+        : > $out/bench/config/.keep
+      '';
 
   cfgPath = "/var/lib/frappe/${siteName}/sites/${siteName}/site_config.json";
   markerPath = "/var/lib/frappe/${siteName}/.frappe-migrate-build";
@@ -102,7 +108,10 @@ in
   nodes.machine = { ... }: {
     imports = [ self.nixosModules.default ];
     virtualisation.memorySize = 2048;
-    environment.systemPackages = [ pkgs.jq pkgs.mariadb ];
+    environment.systemPackages = [
+      pkgs.jq
+      pkgs.mariadb
+    ];
 
     services.frappe = {
       enable = true;
