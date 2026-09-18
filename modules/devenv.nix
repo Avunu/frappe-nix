@@ -1572,6 +1572,17 @@ in
         runtimeDeclared = builtins.elem "frappe-runtime" pythonEnvs.rootDepNames;
         runtimeActive = cfg.runtime.enable && runtimeDeclared;
 
+        # The dev-shell welcome banner (rich-rendered, lib/banner.py) -- shares
+        # lib/rich-python.nix with nothing else yet, but kept separate from
+        # cfg.python's own withPackages call rather than hand-drawn
+        # box-drawing-character `echo` lines, which are fragile to keep
+        # column-aligned by hand and degrade ungracefully (no width awareness)
+        # compared to a real renderer.
+        richPython = import ../lib/rich-python.nix {
+          inherit pkgs;
+          inherit (cfg) python;
+        };
+
         nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
 
         # The nested frontends the lock generator must leave alone, as flags.
@@ -2220,65 +2231,28 @@ in
                 ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
               ''}
 
-              echo ""
-              echo "╔════════════════════════════════════════════════════════════╗"
-              echo "║  ${cfg.benchName} Frappe Bench Development Environment"
-              echo "╠════════════════════════════════════════════════════════════╣"
-              echo "║  Start all services:  devenv up                           ║"
-              ${lib.optionalString (cfg.siteName != "") ''
-                echo "║  Default site: ${cfg.siteName}"
-              ''}
-              echo "║                                                            ║"
-              echo "║  Common commands:                                          ║"
-              ${
-                if appMode then
-                  ''
-                    echo "║    bench-update         # migrate + build                  ║"
-                    echo "║    nix flake update     # move the pinned apps             ║"
-                    echo "║    nix run .#relock     # after any pin or manifest change ║"
-                  ''
-                else
-                  ''
-                    echo "║    bench-update         # pull + migrate + build           ║"
-                    echo "║    bench-update --pull  # pull app submodules only         ║"
-                  ''
-              }
-              echo "║    bench-migrate        # run DB migrations                ║"
-              echo "║    bench-build          # build JS/CSS assets              ║"
-              echo "║    bench-clear-cache    # clear Frappe cache               ║"
-              echo "║    bench-console        # open Frappe Python REPL          ║"
-              echo "╚════════════════════════════════════════════════════════════╝"
-              echo ""
-              echo "  Python: ${pythonEnvs.devPythonEnv}/bin/python"
-              echo "  Bench root: $FRAPPE_BENCH_ROOT"
-              ${lib.optionalString appMode ''
-                echo "  App: apps/${cfg.app.name} → this repository (edits are live)"
-                echo "        the bench is generated; deleting it costs a re-copy, not the database"
-              ''}
               # Read back rather than interpolate: the port allocator only runs
               # for `devenv up`, so a value baked in here would be the base while
               # the running nginx might have moved on.
               _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
-              echo "  URL: http://127.0.0.1:''${_port:-${toString webBase}}"
-              ${lib.optionalString sockets ''
-                echo "  Sockets: $DEVENV_RUNTIME/{mysql,redis,socketio,web}.sock"
-              ''}
-              ${lib.optionalString mailEnabled ''
-                echo "  Mail: ALL outgoing email → Mailpit (http://${mc.host}:${toString mailpitHttpBase})"
-                echo "        incoming (IMAP/POP3) is ${
-                  if mc.pop3.enable then "served from Mailpit POP3" else "blocked"
-                }"
-              ''}
-              ${lib.optionalString (cfg.siteName != "") ''
-                echo "  Site: ${cfg.siteName}"
-              ''}
-              ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) ''
-                echo ""
-                echo "  ⚠  frappe-runtime is not in this shell's Python environment (uv.lock predates it):"
-                echo "     'devenv up' runs the split web/socketio/worker/scheduler processes until you"
-                echo "     re-enter the shell after the reconcile above has landed."
-              ''}
-              echo ""
+
+              ${richPython}/bin/python ${../lib/banner.py} \
+                --bench-name ${lib.escapeShellArg cfg.benchName} \
+                --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
+                --bench-root "$FRAPPE_BENCH_ROOT" \
+                --port "''${_port:-${toString webBase}}" \
+                ${lib.optionalString appMode
+                  "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"
+                } \
+                ${lib.optionalString (cfg.siteName != "")
+                  "--site-name ${lib.escapeShellArg cfg.siteName}"
+                } \
+                ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
+                ${lib.optionalString mailEnabled (
+                  "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
+                  + lib.optionalString mc.pop3.enable " --mail-pop3"
+                )} \
+                ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
             '';
 
             services.mysql = {
