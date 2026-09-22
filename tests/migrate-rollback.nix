@@ -2,8 +2,9 @@
 #
 # It deliberately STUBS `bench migrate` — Frappe's own migration correctness is
 # out of scope. What is under test is the module's safety machinery in
-# mkSiteMigrate: pre-migrate snapshot, rollback-on-failure, maintenance-mode
-# handling, and the build-guard marker — exercised against a real MariaDB.
+# mkSiteMigrate: the uninstalled-site guard, pre-migrate snapshot,
+# rollback-on-failure, maintenance-mode handling, and the build-guard marker —
+# exercised against a real MariaDB.
 #
 # Run: nix build .#checks.x86_64-linux.migrate-rollback -L
 { self, pkgs }:
@@ -128,14 +129,21 @@ in
     start_all()
     machine.wait_for_unit("multi-user.target")
 
-    # First deploy: the migration succeeds and the build marker is recorded.
+    # First deploy against an EMPTY database: the site has never been installed,
+    # so the migration is skipped rather than failing activation, and no build
+    # marker is recorded (the deploy after the restore must still migrate).
     machine.wait_for_unit("${migrateUnit}")
-    machine.succeed("test -e ${markerPath}")
+    machine.succeed("journalctl -u ${migrateUnit} | grep -q 'the site is not installed'")
+    machine.fail("test -e ${markerPath}")
 
-    # Establish a known pre-migrate state S0: canary holds a single row v=1.
+    # Install the site -- canary stands in for the Frappe schema -- and
+    # establish a known pre-migrate state S0: a single row v=1. With a schema
+    # present the same build now migrates for real and records the marker.
     machine.succeed(
         "${mysql} ${dbName} -e 'CREATE TABLE canary (v INT); INSERT INTO canary VALUES (1);'"
     )
+    machine.succeed("systemctl restart ${migrateUnit}")
+    machine.succeed("test -e ${markerPath}")
 
     # Force the next migration to fail (and mutate the DB); drop the marker so
     # the build guard does not short-circuit the re-run.

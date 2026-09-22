@@ -756,7 +756,7 @@ For each enabled site, the module generates:
 | Unit | Role |
 | --- | --- |
 | frappe-init-<site> | Oneshot: assembles runtime bench tree, links the app registry (sites/apps.txt, sites/apps.json) and assets from the package, synthesizes site_config.json via jq (merging base config + secrets). |
-| frappe-migrate-<site> | Oneshot: runs bench migrate when the build changes. Snapshots the DB first and rolls back on failure (see Safe migrations). |
+| frappe-migrate-<site> | Oneshot: runs bench migrate when the build changes. Snapshots the DB first and rolls back on failure; skips an uninstalled site (see Safe migrations). |
 | frappe-web-<site> | Gunicorn bound to sites.<name>.web.port. |
 | frappe-scheduler-<site> | Background scheduler. |
 | frappe-socketio-<site> | SocketIO (Node). |
@@ -825,6 +825,8 @@ Site creation remains an operational step (run `bench new-site` against the depl
 ### Safe migrations on deploy
 
 Whenever a new build is deployed (`nixos-rebuild switch`), the `frappe-migrate-<site>` oneshot runs `bench migrate` for the site. It re-runs only when the build actually changes — the last migrated build's store path is recorded in `<siteDir>/.frappe-migrate-build` and re-migration is skipped when it is unchanged.
+
+A site whose database holds **no tables** has never been installed — a fresh deploy waiting on `bench new-site`, or a host that lost its local database state while the site directory (on shared storage) survived. `bench migrate` cannot run there: it dies on its first query, `Table '<db>.tabDefaultValue' doesn't exist`. Installing or restoring a site is an operational step, so the unit says what is missing and exits 0 rather than failing activation — one uninstalled site must not block every other site's deploy, on every deploy. No build marker is recorded, so the first deploy after the restore migrates even if the build has not changed.
 
 Because Frappe migrations perform DDL (`CREATE`/`ALTER TABLE`), which auto-commits in MariaDB and cannot be rolled back in a transaction, the unit wraps the migration in a physical snapshot instead:
 

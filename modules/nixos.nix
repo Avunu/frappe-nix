@@ -472,6 +472,23 @@ let
       # Site DB credentials for snapshot/rollback (frappe user owns this file).
       export MYSQL_PWD="$(${jq} -r '.db_password // empty' "${siteConfig}")"
 
+      # A database with no tables belongs to a site that has never been
+      # installed — a fresh deploy awaiting `bench new-site`, or a host whose
+      # local database state was lost while the site directory (on shared
+      # storage) survived. `bench migrate` dies there on its very first query,
+      #   Table '<db>.tabDefaultValue' doesn't exist
+      # and takes activation down with it, every single deploy. Installing or
+      # restoring a site is an operator action that activation cannot perform,
+      # so this is not an activation failure: say what is missing and stop.
+      # The marker stays unwritten, so the deploy after the restore migrates
+      # even if the build has not changed.
+      TABLES="$(${mysql} ${connArgs} -N -B -e \
+        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';" 2>/dev/null)"
+      if [ "$TABLES" = "0" ]; then
+        echo "frappe-migrate(${name}): database ${dbName} has no tables — the site is not installed; skipping migrate. Install (bench new-site) or restore it, then redeploy." >&2
+        exit 0
+      fi
+
       SNAP=""
       ${optionalString mg.snapshot ''
         mkdir -p "${snapDir}"
