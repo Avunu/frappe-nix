@@ -130,10 +130,6 @@ done
 # in the dev shell it is just `mc`.
 MC="${FRAPPE_BACKUP_MC:-mc}"
 
-# Percent-encode, because an S3 secret routinely contains '/' and '+' and both
-# would terminate the userinfo field of the URL below.
-urlenc() { jq -rn --arg s "$1" '$s|@uri'; }
-
 if [ -n "${FRAPPE_BACKUP_SOURCE:-}" ]; then
   BASE="${FRAPPE_BACKUP_SOURCE%/}/"
 else
@@ -152,18 +148,19 @@ else
     fi
   done
 
-  # MC_HOST_<alias> rather than `mc alias set`: the latter writes the
-  # credentials into the user's global ~/.mc/config.json, where they outlive the
-  # process and are shared with every other tool the user runs. It also needs a
-  # unique alias name and a cleanup trap to match. This needs neither.
-  scheme="${BACKUPS_URL%%://*}"
-  hostpart="${BACKUPS_URL#*://}"
-  # Assigned before export so a failing urlenc is an error rather than an
-  # empty credential silently baked into the URL (shellcheck SC2155).
-  enc_key="$(urlenc "$BACKUPS_ACCESS_KEY")"
-  enc_secret="$(urlenc "$BACKUPS_SECRET_KEY")"
-  MC_HOST_frappenix="$scheme://$enc_key:$enc_secret@$hostpart"
-  export MC_HOST_frappenix
+  # `mc alias set` into a throwaway MC_CONFIG_DIR rather than MC_HOST_<alias>:
+  # the alias takes the key and secret as plain argv, so neither has to survive
+  # a round trip through URL syntax. MC_HOST_ does not survive it -- mc splits
+  # the userinfo itself and does NOT percent-decode it, so a secret containing
+  # '/' or '+' (routine for S3, universal on Backblaze) signs with the literal
+  # "%2F"/"%2B" and every request returns "Signature validation failed".
+  # The private config dir is what keeps the credentials out of the user's
+  # global ~/.mc/config.json, which is the reason MC_HOST_ was used here.
+  MC_CONFIG_DIR="$(mktemp -d)"
+  export MC_CONFIG_DIR
+  trap 'rm -rf -- "$MC_CONFIG_DIR"' EXIT
+  "$MC" alias set frappenix "$BACKUPS_URL" \
+    "$BACKUPS_ACCESS_KEY" "$BACKUPS_SECRET_KEY" >/dev/null
 
   prefix="${BACKUPS_PREFIX:-}"
   prefix="${prefix#/}"
