@@ -7,12 +7,11 @@
 let
   inherit (pkgs) lib;
 
-  rendered =
-    (import ../lib/scripts.nix {
-      inherit lib pkgs;
-      appsWithNode = [ ];
-      benchBin = "bench";
-    }).bench-uninstall-app.exec;
+  scripts = import ../lib/scripts.nix {
+    inherit lib pkgs;
+    appsWithNode = [ ];
+    benchBin = "bench";
+  };
 in
 {
   bench-uninstall-app =
@@ -25,12 +24,21 @@ in
           python3
           shellcheck
         ];
-        script = rendered;
-        passAsFile = [ "script" ];
+        script = scripts.bench-uninstall-app.exec;
+        # The umbrella dispatcher: bench-uninstall-app.sh also checks that
+        # `bench --site <name> uninstall-app <app>` — the idiomatic form
+        # Frappe's own docs show — reaches bench-uninstall-app rather than
+        # silently falling through to the raw, teardown-free command, since
+        # the dispatch only matches $1 against a bare subcommand name.
+        dispatch = scripts.bench.exec;
+        passAsFile = [
+          "script"
+          "dispatch"
+        ];
       }
       ''
         export HOME="$PWD"
         shellcheck -s bash -S warning -e SC2317 "$scriptPath"
-        bash ${./bench-uninstall-app.sh} "$scriptPath" | tee "$out"
+        bash ${./bench-uninstall-app.sh} "$scriptPath" "$dispatchPath" | tee "$out"
       '';
 }

@@ -310,6 +310,27 @@ secretScripts
       get-app)       shift; exec bench-get-app "$@" ;;
       new-app)       shift; exec bench-new-app "$@" ;;
       uninstall-app) shift; exec bench-uninstall-app "$@" ;;
+      --site | --site=*)
+        # bench's own idiomatic `--site <name> <command>` (both forms — the
+        # one Frappe's own docs show) puts a flag in $1, which the dispatch
+        # above never matches — recognised here for uninstall-app
+        # specifically, so `bench --site foo uninstall-app bar` cannot
+        # silently fall through to the raw, teardown-free command this whole
+        # wrapper exists to replace. Every other `--site ... <command>` falls
+        # through unchanged, exactly as before this case existed.
+        if [ "$1" = "--site" ]; then
+          site="''${2:-}"
+          cmd="''${3:-}"
+        else
+          site="''${1#--site=}"
+          cmd="''${2:-}"
+        fi
+        if [ "$cmd" = "uninstall-app" ]; then
+          if [ "$1" = "--site" ]; then shift 3; else shift 2; fi
+          FRAPPE_SITE="$site" exec bench-uninstall-app "$@"
+        fi
+        exec ${benchBin} "$@"
+        ;;
       restore)       shift; exec bench-restore "$@" ;;
       migrate)       shift; exec bench-migrate "$@" ;;
       console)       shift; exec bench-console "$@" ;;

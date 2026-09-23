@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks for `bench-uninstall-app` — the inverse of bench-get-app.
 #
-# Usage: bench-uninstall-app.sh <path-to-rendered-bench-uninstall-app-script>
+# Usage: bench-uninstall-app.sh <rendered-bench-uninstall-app> <rendered-bench-dispatch>
 #
 # Network-free: submodule apps come from bare repositories on disk (same
 # technique as bench-get-app.sh); a stub `bench` answers `list-apps` from an
@@ -10,6 +10,7 @@
 set -euo pipefail
 
 SCRIPT="$1"
+DISPATCH="$2"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -231,6 +232,44 @@ echo "── usage ────────────────────�
 check "no app given prints usage and exits 0" bash "$SCRIPT"
 check "--help exits 0" bash "$SCRIPT" --help
 check "…and mentions .frappe-nix-backup" bash -c "bash '$SCRIPT' --help | grep -q -- '.frappe-nix-backup'"
+
+echo "── dispatch: does \`bench --site <name> uninstall-app <app>\` reach it? ──"
+# The umbrella wrapper's own case statement (not bench-uninstall-app's own
+# logic, already covered above) only matches $1 against a bare subcommand
+# name — `--site` as $1, the form Frappe's own docs show, used to fall
+# straight through to the raw, teardown-free command.
+DISPATCH_LOG="$ROOT/dispatch-calls"
+cat > "$BIN/bench-uninstall-app" <<STUB
+#!$(command -v bash)
+STUB
+cat >> "$BIN/bench-uninstall-app" <<'STUB'
+printf 'FRAPPE_SITE=%s %s\n' "${FRAPPE_SITE:-}" "$*" >> "$DISPATCH_LOG"
+exit 0
+STUB
+chmod +x "$BIN/bench-uninstall-app"
+export DISPATCH_LOG
+
+mkdir -p "$ROOT/dispatchbench"
+export FRAPPE_BENCH_ROOT="$ROOT/dispatchbench"
+
+: > "$DISPATCH_LOG"
+bash "$DISPATCH" --site mysite.local uninstall-app crm --yes > /dev/null 2>&1
+check "the \`--site <name> uninstall-app <app>\` form reaches it" \
+  grep -qx "FRAPPE_SITE=mysite.local crm --yes" "$DISPATCH_LOG"
+
+: > "$DISPATCH_LOG"
+bash "$DISPATCH" --site=mysite.local uninstall-app crm > /dev/null 2>&1
+check "the \`--site=<name> uninstall-app <app>\` form also reaches it" \
+  grep -qx "FRAPPE_SITE=mysite.local crm" "$DISPATCH_LOG"
+
+: > "$DISPATCH_LOG"
+bash "$DISPATCH" uninstall-app crm > /dev/null 2>&1
+check "the bare \`uninstall-app <app>\` form still reaches it" \
+  grep -qx "FRAPPE_SITE= crm" "$DISPATCH_LOG"
+
+: > "$DISPATCH_LOG"
+bash "$DISPATCH" --site mysite.local migrate > /dev/null 2>&1 || true
+check_eq "a non-uninstall-app --site command is left alone" "" "$(cat "$DISPATCH_LOG")"
 
 echo
 if [ "$fails" -gt 0 ]; then
