@@ -3,9 +3,9 @@ contract between `apps/`, `pyproject.toml` and `sites/apps.{txt,json}`.
 
 Every subcommand is idempotent and format-preserving (tomlkit), so it is safe
 to run against a bench that is already correct: `frappe-init` uses it for both
-scaffolding and migration, `bench-get-app` / `bench-new-app` / `bench-update`
-use it at runtime, and lib/bench.nix runs `sync-registry` when it assembles
-the bench package.
+scaffolding and migration, `bench-get-app` / `bench-new-app` / `bench-update` /
+`bench-uninstall-app` use it at runtime, and lib/bench.nix runs `sync-registry`
+when it assembles the bench package.
 """
 
 import argparse
@@ -216,6 +216,28 @@ def cmd_add_app(args):
         sources[dist] = source
     else:
         sources[dist].setdefault("workspace", True)
+
+    save(doc, args.pyproject)
+    return 0
+
+
+def cmd_remove_app(args):
+    """Unregister one app from the uv workspace. Mirror of cmd_add_app; idempotent
+    — a no-op if the app is not currently a member."""
+    doc = load(args.pyproject)
+    members = table_at(doc, "tool", "uv", "workspace").setdefault("members", tomlkit.array())
+    sources = table_at(doc, "tool", "uv", "sources")
+
+    entry = f"apps/{args.app}"
+    if entry in members:
+        del members[members.index(entry)]
+
+    # Same key cmd_add_app would have written: the app's own distribution name
+    # when known, else --source-name (captured by the caller before the app's
+    # pyproject.toml became unreadable), else the directory name.
+    dist = args.source_name or app_dist_name(Path(args.pyproject).parent / entry)
+    if dist in sources:
+        del sources[dist]
 
     save(doc, args.pyproject)
     return 0
@@ -663,6 +685,12 @@ def main():
     p.add_argument("--app", required=True)
     p.add_argument("--source-name", default="")
     p.set_defaults(func=cmd_add_app)
+
+    p = sub.add_parser("remove-app")
+    p.add_argument("--pyproject", required=True)
+    p.add_argument("--app", required=True)
+    p.add_argument("--source-name", default="")
+    p.set_defaults(func=cmd_remove_app)
 
     p = sub.add_parser("sync-apps")
     p.add_argument("--pyproject", required=True)

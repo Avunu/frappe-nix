@@ -297,6 +297,9 @@
         // import ./tests/bench-update.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix { inherit pkgs; }
+        # `bench-uninstall-app`, its inverse: what it tears out, and what it
+        # correctly leaves alone when another site still needs the app.
+        // import ./tests/bench-uninstall-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.

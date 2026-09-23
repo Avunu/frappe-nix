@@ -236,9 +236,9 @@ let
     };
   # App mode replaces the two scripts whose whole job is to edit the bench as if
   # it were a checkout. Replaced rather than dropped: the `bench` umbrella
-  # wrapper dispatches `get-app`/`new-app` to them, and a missing script would
-  # surface as `command not found` instead of the one sentence that says what to
-  # do instead.
+  # wrapper dispatches `get-app`/`new-app`/`uninstall-app` to them, and a
+  # missing script would surface as `command not found` instead of the one
+  # sentence that says what to do instead.
   appModeOverrides = {
     bench-get-app = {
       exec = ''
@@ -273,6 +273,19 @@ let
       '';
       description = "Not available in app mode — new apps get their own repository.";
     };
+
+    bench-uninstall-app = {
+      exec = ''
+        cat >&2 <<'EOF'
+        bench-uninstall-app: this is an app repository, not a bench — there is no
+        apps/ submodule or uv workspace membership of yours to tear down here.
+
+        Drop the sibling from frappe-nix.app.siblings instead, then: nix run .#relock
+        EOF
+        exit 1
+      '';
+      description = "Not available in app mode — remove the sibling declaration instead.";
+    };
   };
 in
 secretScripts
@@ -292,20 +305,21 @@ secretScripts
     # get it — and after the raw guard, which has already run it.
     ${atBench}
     case "''${1:-}" in
-      update)      shift; exec bench-update "$@" ;;
-      build)       shift; exec bench-build "$@" ;;
-      get-app)     shift; exec bench-get-app "$@" ;;
-      new-app)     shift; exec bench-new-app "$@" ;;
-      restore)     shift; exec bench-restore "$@" ;;
-      migrate)     shift; exec bench-migrate "$@" ;;
-      console)     shift; exec bench-console "$@" ;;
-      clear-cache) shift; exec bench-clear-cache "$@" ;;
+      update)        shift; exec bench-update "$@" ;;
+      build)         shift; exec bench-build "$@" ;;
+      get-app)       shift; exec bench-get-app "$@" ;;
+      new-app)       shift; exec bench-new-app "$@" ;;
+      uninstall-app) shift; exec bench-uninstall-app "$@" ;;
+      restore)       shift; exec bench-restore "$@" ;;
+      migrate)       shift; exec bench-migrate "$@" ;;
+      console)       shift; exec bench-console "$@" ;;
+      clear-cache)   shift; exec bench-clear-cache "$@" ;;
       new-site)
         # Inject env-specific DB connection flags so site creation isn't
         # interactive; provision-site stays the create-and-install-all flow.
         shift
         exec ${benchBin} new-site --db-socket "$FRAPPE_DB_SOCKET" --db-root-username root "$@" ;;
-      *)           exec ${benchBin} "$@" ;;
+      *)             exec ${benchBin} "$@" ;;
     esac
   '';
 
@@ -1156,6 +1170,156 @@ secretScripts
       echo "  3. If it ships a package.json but no yarn.lock, resolve one for nix build: bench-update --node-locks"
     '';
     description = "Add a Frappe app from a git URL/alias as a submodule and register it in the uv workspace.";
+  };
+
+  # The inverse of bench-get-app. Reached both directly and as `bench
+  # uninstall-app`, via the umbrella wrapper above — it replaces the real
+  # subcommand entirely rather than passing through to it, the same way
+  # bench-get-app does for `get-app`.
+  #
+  # Uninstalls the app from a site's database (the real bench, which is the
+  # only thing that can do that), then — only if the app ends up installed on
+  # no site in this bench — deinits its submodule, strips its .gitmodules
+  # entry, drops it from the uv workspace, resyncs sites/apps.{txt,json}, and
+  # relocks. Left alone otherwise: another site in this bench may still need
+  # the code, and ripping out its submodule from under it would break that
+  # site's next `bench migrate` (the same hazard bench-restore's "missing
+  # apps" check already guards against, from the other direction).
+  bench-uninstall-app = {
+    exec = ''
+      set -euo pipefail
+      export _FRAPPE_BENCH_RAW=1
+
+      if [ -z "''${1:-}" ] || [ "''${1:-}" = "--help" ] || [ "''${1:-}" = "-h" ]; then
+        cat <<'EOF'
+      Usage: bench-uninstall-app <app> [uninstall-app flags...]
+
+      Uninstalls <app> from the current site's database (trailing flags, e.g.
+      --yes/--no-backup/--force, pass straight through to the real `bench
+      uninstall-app`), then, only if <app> ends up installed on no site in this
+      bench, fully removes it: deinits its git submodule, strips its
+      .gitmodules entry, drops it from the uv workspace (pyproject.toml),
+      regenerates sites/apps.txt and sites/apps.json, and relocks (uv lock).
+
+      A vendored (non-submodule) app is backed up to .frappe-nix-backup/ first,
+      the same way `frappe-init --migrate` backs one up when vendoring it. A
+      submodule is not backed up — it is just a pinned commit of a public repo,
+      trivially re-added with: bench get-app <url-or-alias>
+
+      If <app> is still installed on another site in this bench, only the
+      database uninstall happens — the codebase and its registration are left
+      in place, since that other site still needs them.
+      EOF
+        exit 0
+      fi
+
+      APP="$1"
+      shift
+
+      cd "$FRAPPE_BENCH_ROOT"
+      APP_DIR="apps/$APP"
+
+      # ── identity, before anything moves ─────────────────────────────────
+      # KIND is empty when frappe-nix-workspace doesn't know the name at all —
+      # not on disk and no .gitmodules entry, i.e. already fully removed (safe
+      # to re-run this command any number of times). DIST_NAME is the
+      # [tool.uv.sources] key, which can differ from the directory name
+      # (print_designer -> print-designer); once the directory is gone it is no
+      # longer readable, so it has to be captured now, before the database
+      # uninstall below gets any chance to delete it.
+      KIND="$(${workspaceBin} apps --apps-dir apps | awk -F'\t' -v a="$APP" '$1==a{print $2; exit}')"
+      DIST_NAME=""
+      if [ -d "$APP_DIR" ]; then
+        DIST_NAME="$(${workspaceBin} dist-name --app-dir "$APP_DIR")"
+      fi
+
+      ${siteFlag}
+
+      echo "Uninstalling $APP from ''${FRAPPE_SITE:-the current site}…"
+      ${benchBin} $SITE_FLAG uninstall-app "$APP" "$@" || true
+
+      # ── is $APP still installed anywhere in this bench? ─────────────────
+      # Checked fresh against every site's actual installed-apps list, not
+      # trusted from the uninstall's exit code above: a site this bench does
+      # not currently point $FRAPPE_SITE at may still have it installed, and a
+      # real failure above (a data constraint, a hook, anything) leaves $APP
+      # installed on $FRAPPE_SITE too — both read the same way here, and both
+      # mean stop rather than remove code a site still runs.
+      STILL_INSTALLED=""
+      for cfg in sites/*/site_config.json; do
+        [ -e "$cfg" ] || continue
+        s="$(basename "$(dirname "$cfg")")"
+        if ${benchBin} --site "$s" list-apps --format json 2>/dev/null \
+          | ${pkgs.jq}/bin/jq -e --arg s "$s" --arg a "$APP" \
+            '(.[$s] // []) | index($a) != null' > /dev/null 2>&1
+        then
+          STILL_INSTALLED="$STILL_INSTALLED $s"
+        fi
+      done
+
+      if [ -n "$STILL_INSTALLED" ]; then
+        echo "  $APP is still installed on:$STILL_INSTALLED — leaving the codebase,"
+        echo "  submodule, and workspace registration in place."
+        exit 0
+      fi
+
+      if [ -z "$KIND" ]; then
+        echo "  $APP is not on disk and not in .gitmodules — nothing to remove there."
+      fi
+
+      case "$KIND" in
+        submodule | submodule-uninitialized)
+          echo "Removing the $APP_DIR submodule…"
+          git submodule deinit -f -- "$APP_DIR" || true
+          git rm -f -- "$APP_DIR"
+          git config -f .gitmodules --remove-section "submodule.$APP_DIR" || true
+          git add .gitmodules
+          rm -rf ".git/modules/$APP_DIR"
+          ;;
+        local)
+          # A "local" app (frappe-nix-workspace's classify_apps) never has its
+          # own .git — that is exactly what distinguishes it from nested-repo
+          # below — so unlike a submodule its content exists nowhere outside
+          # this bench's own git history and this working tree. `git rm -r`
+          # alone leaves it recoverable from a commit, but only a committed
+          # one; a plain filesystem copy is cheaper to restore from and also
+          # covers anything not yet committed.
+          echo "Backing up vendored $APP_DIR before removing it…"
+          mkdir -p .frappe-nix-backup
+          rm -rf ".frappe-nix-backup/$APP"
+          cp -r "$APP_DIR" ".frappe-nix-backup/$APP"
+          git rm -r -f -- "$APP_DIR"
+          echo "  backed up to .frappe-nix-backup/$APP — restore with:"
+          echo "    mv .frappe-nix-backup/$APP $APP_DIR"
+          ;;
+        nested-repo)
+          echo "$APP_DIR is a git repository that is not a registered submodule —" >&2
+          echo "not removing it automatically. Remove it by hand:" >&2
+          echo "    git rm -r --cached $APP_DIR && rm -rf $APP_DIR" >&2
+          exit 1
+          ;;
+      esac
+
+      echo "Removing $APP from the uv workspace…"
+      ${workspaceBin} remove-app --pyproject pyproject.toml --app "$APP" --source-name "$DIST_NAME"
+
+      ${syncRegistry}
+
+      if [ -d "node-locks/$APP" ]; then
+        rm -rf "node-locks/$APP"
+        echo "  - node-locks/$APP"
+      fi
+
+      echo "Re-locking the Python workspace…"
+      if ! uv lock; then
+        echo "  ⚠  uv lock failed — resolve it, then re-run: uv lock" >&2
+      fi
+
+      echo ""
+      echo "✅ $APP fully removed."
+      echo "   Restart devenv: direnv reload --no-eval-cache"
+    '';
+    description = "Uninstall a Frappe app from its site and, if nothing else in this bench needs it, remove its submodule and uv workspace registration.";
   };
 
   # Scaffold a brand-new app and register it in the uv workspace. Wraps
