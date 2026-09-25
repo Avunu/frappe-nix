@@ -668,18 +668,52 @@ in
               type = types.bool;
               default = true;
               description = ''
-                Keep File writes and deletes on local disk instead of the
-                configured S3-protocol object store.
+                Hold the configured S3-protocol object store to additive-only
+                access: nothing is ever deleted from it or overwritten in it.
 
-                Forces the `cloud_storage` app's own `use_local` mode rather
-                than blocking, so nothing breaks. Without it, a bench restored
-                from production deletes real objects out of the production
-                bucket — Frappe's own hourly `delete_old_exported_report_files`
-                is enough to start that within an hour of `devenv up` — and
-                overwrites others, since the keys carry no site prefix.
+                Without it, a bench restored from production deletes real
+                objects out of the production bucket — Frappe's own hourly
+                `delete_old_exported_report_files` is enough to start that
+                within an hour of `devenv up` — and overwrites others, since
+                the keys carry no site prefix.
 
+                Enforced on botocore's single API-call funnel, so it covers
+                every S3 client in the bench, not only `cloud_storage`'s:
+                deletes are dropped without reaching the network, bucket
+                configuration (policy, lifecycle, ACLs, tagging) is refused,
+                and presigned URLs are issued for reads only. Loopback
+                endpoints, such as a local MinIO, are left alone.
+              '';
+            };
+
+            mode = mkOption {
+              type = types.enum [
+                "local"
+                "push"
+              ];
+              default = "local";
+              description = ''
+                Where `cloud_storage` puts new files.
+
+                `local` forces the app's own `use_local` mode, so File writes
+                and deletes go to local disk and the bucket is never written.
                 Files inherited from the dump will 404 in dev, because their
                 objects are not on local disk.
+
+                `push` leaves `cloud_storage` on the configured bucket, so new
+                attachments are uploaded to it — the usual way of moving
+                attachments to production alongside documents sent as
+                fixtures — and inherited files resolve. A write is refused if
+                its key already exists (checked with `HeadObject`, and sent
+                with `If-None-Match: *` so the store refuses a racing one
+                too), and deletes are still dropped: removing a File in dev
+                removes its row, never production's object. An upload whose
+                key production already holds — the same file name on the same
+                document — is refused rather than versioned, and a file pushed
+                by mistake has to be removed from production.
+
+                `FRAPPE_DEVGUARD_OBJECTSTORE_MODE=push` switches a single
+                command without a rebuild.
               '';
             };
           };
@@ -1349,7 +1383,10 @@ in
               pop3_password = mc.pop3.password;
             };
             backups.enable = dg.backups.enable;
-            objectstore.enable = dg.objectstore.enable;
+            objectstore = {
+              enable = dg.objectstore.enable;
+              mode = dg.objectstore.mode;
+            };
             integrations = {
               enable = dg.integrations.enable;
               allow_hosts = dg.integrations.allowHosts;

@@ -386,7 +386,8 @@ per-image container set — is still there and still tested
 | devguard.mail.pop3.port | port | 21000 + hash | Mailpit POP3 port (per-bench). |
 | devguard.mail.pop3.user / .password | str | "dev" | Mailpit POP3 credentials (local development only). |
 | devguard.backups.enable | bool | true | Block Dropbox / S3 / Google Drive / Frappe Cloud backup upload. |
-| devguard.objectstore.enable | bool | true | Force cloud_storage to local disk instead of the configured bucket. |
+| devguard.objectstore.enable | bool | true | Never delete from, or overwrite in, the configured S3 bucket. |
+| devguard.objectstore.mode | local/push | "local" | `local`: cloud_storage writes to local disk. `push`: new files are uploaded to the bucket (additive only). |
 | devguard.integrations.enable | bool | true | Block outbound HTTP via frappe.integrations.utils.make_request. |
 | devguard.integrations.allowHosts | list of str | [] | Hosts to permit anyway. Loopback is always allowed. |
 | devguard.google.enable | bool | true | Block Google Calendar / Contacts / Drive access. |
@@ -486,7 +487,7 @@ A bench restored from a production backup carries working production credentials
 | --- | --- | --- |
 | mail | Any mail leaving the machine | Redirects SMTP to Mailpit (http://127.0.0.1:8025); refuses IMAP/POP3 |
 | backups | Dropbox / S3 / Google Drive / Frappe Cloud backup upload | No-ops the scheduler entries, blocks the upload funnels, throws on the desk buttons |
-| objectstore | cloud_storage writing to and deleting from the production bucket | Forces the app's own use_local mode, so files go to local disk |
+| objectstore | Deleting from, or overwriting in, the production bucket | Drops S3 deletes and refuses overwrites at botocore; `local` mode (default) also forces cloud_storage's use_local, `push` mode lets new attachments upload |
 | integrations | Outbound HTTP via frappe.integrations.utils.make_request | Refuses non-loopback hosts unless listed in allowHosts |
 | google | Calendar / Contacts / Drive access — sync writes back and can delete real events | Blocks GoogleOAuth's service-object and token-refresh calls |
 | webhooks | Webhook rows firing at production endpoints | No-ops enqueue_webhook |
@@ -494,6 +495,14 @@ A bench restored from a production backup carries working production credentials
 | scheduler | Third-party backup jobs and Server Script scheduler events | Skips them in ScheduledJobType.execute |
 
 Local backups are untouched by all of this: `bench backup`, `bench restore`, `trim-database`, `drop-site` and the desk Backups page keep working. Only egress is blocked.
+
+#### Pushing attachments to production
+
+Documents usually reach production as fixtures, and their attachments through the object store. `devguard.objectstore.mode = "push"` supports that: `cloud_storage` stays on the bucket named in the dev site's `cloud_storage_settings` (which `bench restore` never carries over — you add it), so new attachments upload there and files inherited from the dump resolve instead of 404ing.
+
+The bucket is still additive-only. Every S3 call in the bench passes through botocore's `BaseClient._make_api_call`, and there the guard lets reads through, lets a new object be written only if its key is free (checked with `HeadObject`, and sent with `If-None-Match: *` so the store refuses a racing write too), drops `DeleteObject`/`DeleteObjects` without touching the network, and refuses everything else — bucket policy, lifecycle rules, ACLs, tagging. Presigned URLs are issued for reads only. So deleting a File in dev removes its row, never production's object; an attachment whose key production already holds (the same file name on the same document) is refused rather than versioned; and a file pushed by mistake has to be removed from production.
+
+`FRAPPE_DEVGUARD_OBJECTSTORE_MODE=push` does the same for a single command without a rebuild.
 
 #### How it works
 
