@@ -201,6 +201,24 @@
                   2>&1 | tee "$out"
               '';
 
+          # What shell entry says about apps/ — and, mostly, that it touches
+          # nothing: entry once checked out any submodule it found without a
+          # checkout, re-cloning apps that had been removed.
+          apps-report =
+            pkgs.runCommand "frappe-nix-apps-report-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.findutils
+                ];
+              }
+              ''
+                export HOME="$PWD"
+                bash ${./tests/apps-report.sh} \
+                  ${import ./lib/apps-report.nix { inherit pkgs; }}/bin/frappe-nix-apps-report \
+                  2>&1 | tee "$out"
+              '';
+
           # Node-independent in the same spirit: a stub yarn stands in for the
           # install, and the assertions are about when a pulled app is judged to
           # have outgrown its node_modules.

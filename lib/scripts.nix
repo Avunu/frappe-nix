@@ -488,8 +488,27 @@ secretScripts
                 continue
                 ;;
               submodule-uninitialized)
-                echo "  ⚠  $app: registered submodule with no checkout — skipping (re-enter the shell to initialise it)"
-                continue
+                # Shell entry never checks a submodule out (lib/apps-report.nix);
+                # a pull is where one gets its checkout — a fresh clone's, or a
+                # deinitialized one's — and then moves with the rest. Not
+                # --recursive, as ever: Frappe apps ship nested submodules with
+                # broken refs. Without a gitlink there is no commit to check out:
+                # .gitmodules outlived a removal, which remove-app finishes.
+                if ! git ls-files -s -- "apps/$app" \
+                  | awk -v p="apps/$app" '$1 == "160000" && $4 == p { f = 1 } END { exit !f }'; then
+                  echo "  ⚠  $app: .gitmodules registers it, but the bench records no commit for it — skipping."
+                  echo "     A removal that stopped halfway; finish it with: bench remove-app $app"
+                  continue
+                fi
+                echo "  → $app: registered but not checked out — checking out its pinned commit"
+                git submodule update --init -- "apps/$app" < /dev/null || {
+                  echo "  ✗ $app: could not check it out — skipping" >&2
+                  continue
+                }
+                # The pinned commit is what uv.lock was resolved against, so it —
+                # not the empty directory before it — is what the re-lock below
+                # compares the pulled pyproject.toml with.
+                _before_py["apps/$app/pyproject.toml"]=$(git hash-object "apps/$app/pyproject.toml" 2>/dev/null || echo none)
                 ;;
             esac
             [ -n "$branch" ] || {

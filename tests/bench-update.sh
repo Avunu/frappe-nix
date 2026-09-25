@@ -260,6 +260,30 @@ FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull4.log" 2>&1 \
 check "the URL is fetched directly, and says so" grep -q 'fetching it directly' "$ROOT/pull4.log"
 check_eq "and the submodule reaches the tip" "$TIP3" "$(git -C apps/frappe rev-parse HEAD)"
 
+echo "── a registered submodule with no checkout is checked out, then pulled ──"
+# Shell entry no longer checks anything out, so this is where a fresh clone's
+# submodules — or a deinitialized one — get a checkout.
+git submodule deinit -q -f -- apps/frappe
+check "fixture: apps/frappe has no checkout" test ! -e apps/frappe/.git
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-init.log" 2>&1 \
+  && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-init.log"; }
+check "it says so" grep -q 'frappe: registered but not checked out' "$ROOT/pull-init.log"
+check "the submodule is checked out again" test -e apps/frappe/.git
+check_eq "and pulled with the rest, to the tip" "$TIP3" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "on its branch" "version-16" "$(git -C apps/frappe symbolic-ref --short HEAD)"
+
+echo "── .gitmodules outliving a removal is left alone ────────────────"
+# What the upstream `bench remove-app` leaves: no gitlink, no directory, the
+# .gitmodules entry still there. There is no commit to check out.
+git config -f .gitmodules submodule.apps/ghost.path apps/ghost
+git config -f .gitmodules submodule.apps/ghost.url "file://$ROOT/remotes/frappe.git"
+git config -f .gitmodules submodule.apps/ghost.branch version-16
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-ghost.log" 2>&1 \
+  && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-ghost.log"; }
+check "it is skipped, pointing at remove-app" grep -q 'bench remove-app ghost' "$ROOT/pull-ghost.log"
+check "and not resurrected" test ! -e apps/ghost
+git config -f .gitmodules --remove-section submodule.apps/ghost
+
 echo "── a branch the declared URL does not have ─────────────────────"
 git config -f .gitmodules submodule.apps/frappe.branch nope
 if FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull5.log" 2>&1; then

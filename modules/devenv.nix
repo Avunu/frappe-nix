@@ -1546,6 +1546,7 @@ in
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.
         benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
+        appsReportTool = import ../lib/apps-report.nix { inherit pkgs; };
 
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
@@ -2127,33 +2128,12 @@ in
 
             enterShell = ''
               ${lib.optionalString (!appMode) ''
-                # Initialize the bench's direct app submodules (apps/*) if needed.
-                #
-                # One path at a time, from what .gitmodules registers, and NOT
-                # --recursive. A bare `git submodule update --init` dies on the
-                # first gitlink with no .gitmodules entry — a nested repo that
-                # was `git add`ed as-is — and would take shell startup with it;
-                # and Frappe apps frequently ship nested submodules with broken
-                # refs that have no role in production. A local app (committed
-                # source) needs nothing here; a stray repo gets a warning, since
-                # it is the one shape `nix build` silently leaves out.
-                # Unit separator, not tab: tab is IFS whitespace, and `read`
-                # collapses an empty field (a submodule with no branch) out of
-                # the line. Nothing here reads past $_kind, but the loop is the
-                # same one bench-update runs, and it should parse the same way.
-                while IFS=$'\037' read -r _app _kind _branch; do
-                  case "$_kind" in
-                    submodule-uninitialized)
-                      echo "Initializing git submodule apps/$_app..."
-                      git submodule update --init -- "apps/$_app"
-                      ;;
-                    nested-repo)
-                      echo "frappe-nix: apps/$_app is a git repository but not a registered submodule —" >&2
-                      echo "  'nix build' will not see it. Vendor it (frappe-init --migrate) or push it" >&2
-                      echo "  and re-add it with bench-get-app; see README, 'Local apps'." >&2
-                      ;;
-                  esac
-                done < <(${workspaceTool}/bin/frappe-nix-workspace apps --apps-dir "$FRAPPE_BENCH_ROOT/apps" 2>/dev/null | tr '\t' '\037' || true)
+                # Say which apps/* need a hand — a registered submodule with no
+                # checkout, a half-finished removal, a stray nested repo — and
+                # touch none of them. Shell entry runs on every `nix develop`
+                # and direnv reload; only you, or `bench update --pull`, move a
+                # submodule. See lib/apps-report.nix.
+                ${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true
 
                 # sites/apps.txt and sites/apps.json are generated from the
                 # workspace members and the submodule checkouts — and committed,
