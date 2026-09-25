@@ -4,7 +4,7 @@ contract between `apps/`, `pyproject.toml` and `sites/apps.{txt,json}`.
 Every subcommand is idempotent and format-preserving (tomlkit), so it is safe
 to run against a bench that is already correct: `frappe-init` uses it for both
 scaffolding and migration, `bench-get-app` / `bench-new-app` / `bench-update` /
-`bench-uninstall-app` use it at runtime, and lib/bench.nix runs `sync-registry`
+`bench-remove-app` use it at runtime, and lib/bench.nix runs `sync-registry`
 when it assembles the bench package.
 """
 
@@ -222,24 +222,36 @@ def cmd_add_app(args):
 
 
 def cmd_remove_app(args):
-    """Unregister one app from the uv workspace. Mirror of cmd_add_app; idempotent
-    — a no-op if the app is not currently a member."""
-    doc = load(args.pyproject)
-    members = table_at(doc, "tool", "uv", "workspace").setdefault("members", tomlkit.array())
-    sources = table_at(doc, "tool", "uv", "sources")
+    """Unregister one app from the uv workspace — cmd_add_app's inverse.
+
+    Idempotent: nothing is written when the app is not registered.
+    """
+    original = Path(args.pyproject).read_text()
+    doc = tomlkit.parse(original)
+    uv = doc.get("tool", {}).get("uv", {})
+    members = uv.get("workspace", {}).get("members", [])
+    sources = uv.get("sources", {})
 
     entry = f"apps/{args.app}"
     if entry in members:
         del members[members.index(entry)]
+        print(f"  - workspace member {entry}")
 
-    # Same key cmd_add_app would have written: the app's own distribution name
-    # when known, else --source-name (captured by the caller before the app's
-    # pyproject.toml became unreadable), else the directory name.
-    dist = args.source_name or app_dist_name(Path(args.pyproject).parent / entry)
-    if dist in sources:
-        del sources[dist]
+    # The key cmd_add_app wrote: the app's own distribution name — which the
+    # caller captures while the app's pyproject.toml is still readable — else
+    # the directory name. Compared normalized, so the directory-name fallback
+    # still finds print-designer for print_designer; and only workspace
+    # sources, which are the ones add-app writes.
+    dist = normalize(args.source_name or app_dist_name(Path(args.pyproject).parent / entry))
+    for key in [k for k in sources if normalize(k) == dist]:
+        value = sources[key]
+        if hasattr(value, "get") and value.get("workspace"):
+            del sources[key]
+            print(f"  - [tool.uv.sources].{key}")
 
-    save(doc, args.pyproject)
+    rendered = tomlkit.dumps(doc)
+    if rendered != original:
+        Path(args.pyproject).write_text(rendered)
     return 0
 
 

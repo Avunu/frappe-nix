@@ -545,10 +545,11 @@ The shell ships an umbrella **`bench` wrapper** that shadows the venv's `bench` 
 | bench build … | bench-build | brings node_modules back in step with the apps first |
 | bench get-app [--branch <b>] <url\|alias> | bench-get-app | git submodule + uv workspace instead of pip |
 | bench new-app <name> | bench-new-app | scaffold + uv workspace (skips the failing pip step) |
+| bench remove-app [--force] [--no-backup] <app> | bench-remove-app | submodule + .gitmodules + uv workspace instead of apps.txt + pip |
 | bench restore [<sql>] | bench-restore | injects the MariaDB root credentials; with no file, fetches the latest production backup |
 | bench new-site <site> | real bench + injected --db-socket/--db-root-username root | non-interactive site creation |
 | bench migrate / console / clear-cache | bench-* | inject --site $FRAPPE_SITE |
-| everything else (serve, install-app, --help, …) | the real bench | unchanged |
+| everything else (serve, install-app, uninstall-app, --help, …) | the real bench | unchanged |
 
 Recursion is avoided with a `_FRAPPE_BENCH_RAW` env guard the specialized scripts export and the wrapper checks, so a script's own nested `bench …` calls reach the real CLI — whether you invoke `bench update` or the underlying `bench-update` directly. Two caveats: redirected commands follow the frappe-nix scripts' flags, not vanilla bench's (e.g. `bench update` takes `--pull|--migrate|--build|--node-locks`, not `--reset`); and interception is subcommand-first, so `bench --site X migrate` (global option before the subcommand) passes straight through.
 
@@ -588,11 +589,12 @@ These back the wrapper and are also callable directly:
 | check-secrets [<name>] | Verify the .age files match the declared recipients; with a name, explain why you cannot decrypt one. |
 | bench-get-app [--branch <b>] <url\|alias> | Add an app as a git submodule, register it in the uv workspace and in sites/apps.{txt,json}. helpdesk → frappe/helpdesk; owner/repo and full URLs also work. The branch — --branch, else the remote's default — is recorded in .gitmodules, which is what bench-update --pull follows. |
 | bench-new-app <name> | Scaffold a new app as a local app (committed source, no nested git) and register it the same way. |
+| bench-remove-app [--force] [--no-backup] <app> | The inverse of bench-get-app, for the bench as a whole: deinit the submodule and drop it from .gitmodules (staging only that removal, so other uncommitted .gitmodules edits stay as they were), unregister it from the uv workspace and sites/apps.{txt,json}, drop node-locks/<app> and sites/assets/<app>, and uv lock. A local app is moved to .frappe-nix-backup/<app>-<timestamp> unless --no-backup; a submodule is not backed up, since bench-get-app re-adds it. Refuses while any site still has the app installed (or cannot say whether it does), and while the submodule has uncommitted changes; --force skips both checks. Taking an app out of one site is still the real `bench --site <site> uninstall-app <app>` — but with appsReconcile.enable on, the next `devenv up` reinstalls anything sites/apps.txt still lists. |
 | update-deps | Re-lock + sync Python (uv) and Node (yarn) across all apps, then refresh the fallback locks in node-locks/. |
 
-In [app mode](#develop-a-single-app) the three that edit the bench as if it were a checkout have no checkout to edit — there are no submodules, and anything written into the generated bench is discarded on the next pin bump. They refuse with the flake-input equivalent instead: `bench-update --pull` and `--node-locks` point at `nix flake update`
+In [app mode](#develop-a-single-app) the four that edit the bench as if it were a checkout have no checkout to edit — there are no submodules, and anything written into the generated bench is discarded on the next pin bump. They refuse with the flake-input equivalent instead: `bench-update --pull` and `--node-locks` point at `nix flake update`
 
--   `nix run .#relock`, and `bench-get-app` / `bench-new-app` at declaring the app as an input. `--migrate` and `--build` are unaffected, and everything else in the table works exactly as it does in a bench.
+-   `nix run .#relock`, `bench-get-app` / `bench-new-app` at declaring the app as an input, and `bench-remove-app` at dropping it from `frappe-nix.app.siblings`. `--migrate` and `--build` are unaffected, and everything else in the table works exactly as it does in a bench.
 
 ## Secrets
 
@@ -868,7 +870,7 @@ Pure-Python build deps (setuptools, etc.) belong in `pyproject.toml` `[tool.uv.e
 | yarn add / yarn install | the app's yarn.lock → one fetchurl per tarball → yarn install --offline (node-locks/<app>/yarn.lock, from bench-update --node-locks, for an app that ships none) |
 | bench build | builtBench runs bench build in the sandbox |
 | edits apps/* source | benchRoot / builtBench copies the source tree |
-| bench-get-app / bench-update --pull | benchRoot regenerates sites/apps.{txt,json} from the members |
+| bench-get-app / bench-remove-app / bench-update --pull | benchRoot regenerates sites/apps.{txt,json} from the members |
 
 Commit `uv.lock`, each app's `yarn.lock` (in the app), `sites/apps.json`, and `node-locks/` for the apps that have no `yarn.lock` to commit; the production env, node\_modules, compiled assets, app registry, containers, and NixOS deployment are all rebuilt from them.
 
@@ -878,7 +880,7 @@ In [app mode](#develop-a-single-app) the left column is the same but the right o
 
 `sites/apps.txt` is what `frappe.get_all_apps()` returns — the list every process consults, and the one `install-app` checks a name against. `sites/apps.json` is bench's record of each app's version and pin (`is_repo`, `resolution.{commit_hash,branch}`, `required`, `idx`, `version`), in bench's own shape. frappe-nix generates both, from one rule: **the registered apps are the `[tool.uv.workspace].members`**, in declared order, `frappe` first. Members, because that is what the virtualenv actually installs. A directory under `apps/` that is not a member is on PYTHONPATH and nothing more, and evaluation warns about it.
 
-One tool writes them — `frappe-nix-workspace sync-registry` — and it runs wherever the members or the pins change: `frappe-init`, `bench-get-app`, `bench-new-app`, `bench-update --pull`, on every dev-shell entry (the one hook that also sees a pin moved by hand inside `apps/<x>`), and in `benchRoot` when the package is built. The dev shell's regeneration and the build's are byte-identical when the committed record is current, so a dirty `sites/apps.json` after a pin moves means exactly one thing: commit it with the bump. The build reads the committed file for the one fact the flake's source tree cannot carry — a submodule's commit — and recomputes everything else from the sources; a stale record costs a stale `commit_hash`, nothing more. `version` comes from `[project].version` or the app's `__version__`, `required` from `hooks.py`'s `required_apps`, the branch from `.gitmodules` (or the flake input's ref, in app mode).
+One tool writes them — `frappe-nix-workspace sync-registry` — and it runs wherever the members or the pins change: `frappe-init`, `bench-get-app`, `bench-new-app`, `bench-remove-app`, `bench-update --pull`, on every dev-shell entry (the one hook that also sees a pin moved by hand inside `apps/<x>`), and in `benchRoot` when the package is built. The dev shell's regeneration and the build's are byte-identical when the committed record is current, so a dirty `sites/apps.json` after a pin moves means exactly one thing: commit it with the bump. The build reads the committed file for the one fact the flake's source tree cannot carry — a submodule's commit — and recomputes everything else from the sources; a stale record costs a stale `commit_hash`, nothing more. `version` comes from `[project].version` or the app's `__version__`, `required` from `hooks.py`'s `required_apps`, the branch from `.gitmodules` (or the flake input's ref, in app mode).
 
 At runtime the two files are symlinks into the package, like `sites/assets`: `frappe-init-<site>` and the container entrypoint relink them on every start, so a deploy that adds an app registers it, and nothing on the host can drift them (an upstream `bench get-app` run by hand fails on the read-only store, as it should). Only `common_site_config.json` is the operator's — seeded once, never touched again.
 
