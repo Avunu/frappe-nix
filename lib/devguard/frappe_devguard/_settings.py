@@ -53,7 +53,7 @@ DEFAULTS = {
             "pop3_password": "dev",
         },
         "backups": {"enable": True},
-        "objectstore": {"enable": True},
+        "objectstore": {"enable": True, "mode": "local"},
         "integrations": {"enable": True, "allow_hosts": []},
         "google": {"enable": True},
         "webhooks": {"enable": True},

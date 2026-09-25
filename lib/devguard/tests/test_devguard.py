@@ -622,6 +622,216 @@ expect_raises(
 )
 
 
+# --------------------------------------------------------------------------
+# the object store: additive-only S3
+#
+# Stand-ins for botocore.client.BaseClient and botocore.signers, which are all
+# the guard touches. `calls` records what would have reached the network.
+# --------------------------------------------------------------------------
+
+from frappe_devguard.guards import objectstore  # noqa: E402
+
+
+class FakeClientError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.response = {"Error": {"Code": code}}
+
+
+def fake_botocore():
+    client_mod = types.ModuleType("botocore.client")
+    signers_mod = types.ModuleType("botocore.signers")
+
+    class BaseClient:
+        def __init__(self, endpoint="https://s3.example.com", service="s3", existing=(), head_error=None):
+            self.meta = types.SimpleNamespace(
+                endpoint_url=endpoint,
+                service_model=types.SimpleNamespace(service_name=service),
+            )
+            self.existing = set(existing)
+            self.head_error = head_error
+            self.calls = []
+
+        def _make_api_call(self, operation_name, api_params):
+            self.calls.append((operation_name, dict(api_params)))
+            if operation_name == "HeadObject":
+                if self.head_error:
+                    raise FakeClientError(self.head_error)
+                if api_params["Key"] not in self.existing:
+                    raise FakeClientError("404")
+                return {"ContentLength": 1}
+            return {"ok": operation_name}
+
+    def generate_presigned_url(self, ClientMethod, Params=None, **_kwargs):  # noqa: N803
+        return f"https://signed/{ClientMethod}"
+
+    def generate_presigned_post(self, Bucket, Key, **_kwargs):  # noqa: N803
+        return {"url": "https://signed/post"}
+
+    client_mod.BaseClient = BaseClient
+    signers_mod.generate_presigned_url = generate_presigned_url
+    signers_mod.generate_presigned_post = generate_presigned_post
+    objectstore._patch_client(client_mod)
+    objectstore._patch_signers(signers_mod)
+    return BaseClient, signers_mod
+
+
+S3, _signers = fake_botocore()
+
+
+def ops(client):
+    return [name for name, _params in client.calls]
+
+
+def put(client, key="new.pdf"):
+    return client._make_api_call("PutObject", {"Bucket": "prod", "Key": key, "Body": b"x"})
+
+
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE", None)
+check("objectstore defaults to local mode", objectstore.mode() == "local")
+
+# -- local mode (the default) --
+
+_c = S3()
+_c._make_api_call("GetObject", {"Bucket": "prod", "Key": "a"})
+check("reads reach the store", ops(_c) == ["GetObject"], ops(_c))
+
+_c = S3()
+_resp = _c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
+check("DeleteObject never reaches the store", ops(_c) == [], ops(_c))
+check("and reports success, as S3 does", _resp["ResponseMetadata"]["HTTPStatusCode"] == 204)
+
+_c = S3()
+_resp = _c._make_api_call(
+    "DeleteObjects", {"Bucket": "prod", "Delete": {"Objects": [{"Key": "a"}, {"Key": "b"}]}}
+)
+check("DeleteObjects never reaches the store", ops(_c) == [], ops(_c))
+check(
+    "and reports every key as not deleted",
+    [e["Key"] for e in _resp["Errors"]] == ["a", "b"] and not _resp.get("Deleted"),
+    _resp,
+)
+
+_c = S3()
+expect_raises("local mode refuses writes", DevGuardBlocked, lambda: put(_c))
+check("before anything is sent", ops(_c) == [], ops(_c))
+
+expect_raises(
+    "bucket configuration is refused",
+    DevGuardBlocked,
+    lambda: S3()._make_api_call(
+        "PutBucketLifecycleConfiguration", {"Bucket": "prod", "LifecycleConfiguration": {}}
+    ),
+)
+
+# -- push mode --
+
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "push"
+check("push mode is read from settings", objectstore.mode() == "push")
+
+_c = S3()
+put(_c)
+check("push mode writes a new key", ops(_c) == ["HeadObject", "PutObject"], ops(_c))
+check(
+    "with If-None-Match so the store refuses a racing overwrite",
+    _c.calls[-1][1].get("IfNoneMatch") == "*",
+    _c.calls[-1][1],
+)
+
+_c = S3(existing={"taken.pdf"})
+expect_raises("push mode refuses to overwrite a key", DevGuardBlocked, lambda: put(_c, "taken.pdf"))
+check("the overwrite is never sent", ops(_c) == ["HeadObject"], ops(_c))
+
+_c = S3(head_error="403")
+put(_c)
+check(
+    "a write-only credential still writes, guarded by If-None-Match",
+    ops(_c) == ["HeadObject", "PutObject"] and _c.calls[-1][1].get("IfNoneMatch") == "*",
+    _c.calls,
+)
+
+_c = S3()
+expect_raises(
+    "an explicit If-Match overwrite is refused",
+    DevGuardBlocked,
+    lambda: _c._make_api_call("PutObject", {"Bucket": "prod", "Key": "k", "IfMatch": '"etag"'}),
+)
+
+_c = S3(existing={"big.bin"})
+expect_raises(
+    "a multipart upload onto an existing key fails before any part is sent",
+    DevGuardBlocked,
+    lambda: _c._make_api_call("CreateMultipartUpload", {"Bucket": "prod", "Key": "big.bin"}),
+)
+
+_c = S3()
+_c._make_api_call("CompleteMultipartUpload", {"Bucket": "prod", "Key": "big.bin", "UploadId": "u"})
+check("completing a multipart upload is conditional", _c.calls[-1][1].get("IfNoneMatch") == "*")
+
+_c = S3()
+_c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
+check("push mode still drops deletes", ops(_c) == [], ops(_c))
+
+expect_raises(
+    "push mode still refuses tagging",
+    DevGuardBlocked,
+    lambda: S3()._make_api_call("PutObjectTagging", {"Bucket": "prod", "Key": "a", "Tagging": {}}),
+)
+
+# -- presigning --
+
+check(
+    "presigned reads are issued",
+    _signers.generate_presigned_url(S3(), "get_object") == "https://signed/get_object",
+)
+expect_raises(
+    "presigned writes are refused",
+    DevGuardBlocked,
+    lambda: _signers.generate_presigned_url(S3(), "put_object"),
+)
+expect_raises(
+    "presigned POST is refused",
+    DevGuardBlocked,
+    lambda: _signers.generate_presigned_post(S3(), "prod", "k"),
+)
+
+# -- scope --
+
+_c = S3(endpoint="http://127.0.0.1:9000")
+_c._make_api_call("DeleteObject", {"Bucket": "local", "Key": "a"})
+check("a loopback endpoint (local MinIO) is left alone", ops(_c) == ["DeleteObject"], ops(_c))
+
+_c = S3(service="sqs")
+_c._make_api_call("DeleteQueue", {"QueueUrl": "q"})
+check("non-S3 clients are left alone", ops(_c) == ["DeleteQueue"], ops(_c))
+
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "objectstore"
+_c = S3()
+_c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
+check("FRAPPE_DEVGUARD_DISABLE=objectstore restores stock behaviour", ops(_c) == ["DeleteObject"])
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "yolo"
+check("an unknown mode falls back to local", objectstore.mode() == "local")
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
+
+# -- cloud_storage's use_local, which only local mode forces --
+
+_frappe_stub = types.ModuleType("frappe")
+_frappe_stub.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
+objectstore._patch_get_site_config(_frappe_stub)
+check(
+    "local mode forces cloud_storage to local disk",
+    _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+)
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "push"
+check(
+    "push mode leaves cloud_storage on the bucket",
+    not _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local"),
+)
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
+
+
 del sys.modules["frappe"]
 
 smtp_server.shutdown()
