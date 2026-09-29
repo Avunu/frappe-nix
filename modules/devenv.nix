@@ -664,6 +664,28 @@ in
           };
 
           objectstore = {
+            conditionalWrites = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Whether the object store honours `If-None-Match` on writes.
+
+                In `push` mode every write carries `If-None-Match: *`, so the
+                store itself refuses a key that appeared after the guard's
+                `HeadObject` check. Backblaze B2 does not implement it and
+                answers such a write with 501 Not Implemented (which botocore
+                reports as "Connection was closed before we received a valid
+                response", and `cloud_storage` only logs), so no push reaches
+                a B2 bucket. Set this to `false` for B2: the header is left
+                out, `HeadObject` is the only check, and a write whose key it
+                cannot check (a write-only credential's 403) is refused rather
+                than sent unguarded.
+
+                `FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES=false` switches
+                a single command without a rebuild.
+              '';
+            };
+
             enable = mkOption {
               type = types.bool;
               default = true;
@@ -1384,6 +1406,7 @@ in
             };
             backups.enable = dg.backups.enable;
             objectstore = {
+              conditional_writes = dg.objectstore.conditionalWrites;
               enable = dg.objectstore.enable;
               mode = dg.objectstore.mode;
             };

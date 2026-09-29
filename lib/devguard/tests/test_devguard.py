@@ -778,6 +778,48 @@ expect_raises(
     lambda: S3()._make_api_call("PutObjectTagging", {"Bucket": "prod", "Key": "a", "Tagging": {}}),
 )
 
+# -- push mode against a store without conditional writes (Backblaze B2) --
+#
+# B2 answers any write carrying If-None-Match with 501 Not Implemented, so
+# every push fails there. With conditional writes off, HeadObject is the only
+# check left, and a write it cannot vouch for is refused rather than sent bare.
+
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES"] = "false"
+
+_c = S3()
+put(_c)
+check(
+    "without conditional writes, a new key is written without If-None-Match",
+    ops(_c) == ["HeadObject", "PutObject"] and "IfNoneMatch" not in _c.calls[-1][1],
+    _c.calls,
+)
+
+_c = S3()
+_c._make_api_call("CompleteMultipartUpload", {"Bucket": "prod", "Key": "big.bin", "UploadId": "u"})
+check(
+    "without conditional writes, completing a multipart upload is unconditional",
+    "IfNoneMatch" not in _c.calls[-1][1],
+    _c.calls,
+)
+
+_c = S3(existing={"taken.pdf"})
+expect_raises(
+    "without conditional writes, an existing key is still refused",
+    DevGuardBlocked,
+    lambda: put(_c, "taken.pdf"),
+)
+check("and the overwrite is never sent", ops(_c) == ["HeadObject"], ops(_c))
+
+_c = S3(head_error="403")
+expect_raises(
+    "without conditional writes, a key HeadObject cannot check is refused",
+    DevGuardBlocked,
+    lambda: put(_c),
+)
+check("and the write is never sent", ops(_c) == ["HeadObject"], ops(_c))
+
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES")
+
 # -- presigning --
 
 check(

@@ -386,6 +386,7 @@ per-image container set — is still there and still tested
 | devguard.mail.pop3.port | port | 21000 + hash | Mailpit POP3 port (per-bench). |
 | devguard.mail.pop3.user / .password | str | "dev" | Mailpit POP3 credentials (local development only). |
 | devguard.backups.enable | bool | true | Block Dropbox / S3 / Google Drive / Frappe Cloud backup upload. |
+| devguard.objectstore.conditionalWrites | bool | true | Send `If-None-Match: *` on push-mode writes. Set `false` for Backblaze B2, which answers it with 501. |
 | devguard.objectstore.enable | bool | true | Never delete from, or overwrite in, the configured S3 bucket. |
 | devguard.objectstore.mode | local/push | "local" | `local`: cloud_storage writes to local disk. `push`: new files are uploaded to the bucket (additive only). |
 | devguard.integrations.enable | bool | true | Block outbound HTTP via frappe.integrations.utils.make_request. |
@@ -503,6 +504,8 @@ Documents usually reach production as fixtures, and their attachments through th
 The bucket is still additive-only. Every S3 call in the bench passes through botocore's `BaseClient._make_api_call`, and there the guard lets reads through, lets a new object be written only if its key is free (checked with `HeadObject`, and sent with `If-None-Match: *` so the store refuses a racing write too), drops `DeleteObject`/`DeleteObjects` without touching the network, and refuses everything else — bucket policy, lifecycle rules, ACLs, tagging. Presigned URLs are issued for reads only. So deleting a File in dev removes its row, never production's object; an attachment whose key production already holds (the same file name on the same document) is refused rather than versioned; and a file pushed by mistake has to be removed from production.
 
 `FRAPPE_DEVGUARD_OBJECTSTORE_MODE=push` does the same for a single command without a rebuild.
+
+**Backblaze B2** does not implement `If-None-Match`, and answers any write carrying it with `501 Not Implemented`. botocore misreads that reply (its status line has no reason phrase) as "Connection was closed before we received a valid response", and `cloud_storage` only logs the failure and keeps the File row, so every upload looks like it worked while nothing reaches the bucket. Set `devguard.objectstore.conditionalWrites = false` for a B2 bucket: the header is left out, `HeadObject` is the only check, and a write whose key it cannot check is refused rather than sent unguarded. `FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES=false` does the same for a single command.
 
 #### How it works
 
