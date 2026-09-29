@@ -1445,6 +1445,19 @@ in
           }/frappe_unixsock "$out/"
         '';
 
+        # Nothing to bake either: frappe_journald keys off JOURNAL_STREAM, which
+        # systemd sets, and FRAPPE_LOG_LEVEL, which services.frappe sets.
+        journaldPkg = pkgs.runCommand "frappe-journald" { } ''
+          mkdir -p "$out"
+          cp -r ${
+            builtins.path {
+              path = ../lib/journald;
+              name = "frappe-journald-src";
+              filter = path: _type: baseNameOf path != "__pycache__";
+            }
+          }/frappe_journald "$out/"
+        '';
+
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python benchName;
@@ -1483,6 +1496,9 @@ in
           # module. Independent of devguard.enable: turning the guards off must
           # not silently put the web server back on TCP.
           unixsock = unixsockPkg;
+          # Both envs too; it only acts under a systemd unit, so the dev shell,
+          # the OCI images and a terminal on the host keep stock output.
+          journald = journaldPkg;
         };
 
         # A bench still carrying the hash-era options gets a sentence, not an

@@ -32,6 +32,9 @@
   # Derivation containing a `frappe_unixsock/` package to graft into *both*
   # virtualenvs, or null. See lib/unixsock.
   unixsock ? null,
+  # Derivation containing a `frappe_journald/` package to graft into *both*
+  # virtualenvs, or null. See lib/journald.
+  journald ? null,
   # Overrides the "how to re-lock" half of the stale-lock message. See
   # lib/lock-audit.nix; null keeps its bench-mode default.
   lockAuditRelock ? null,
@@ -154,6 +157,15 @@ let
     ++ lib.optional (unixsock != null) {
       src = unixsock;
       module = "frappe_unixsock";
+    }
+    # frappe_journald ships to BOTH as well, and is inert in development by
+    # construction: it does nothing unless stderr is the journal, which only a
+    # systemd unit arranges. Production is where it matters — services.frappe's
+    # units log to the journal, and without it every Frappe line lands there at
+    # the unit's default priority and bench keeps appending to logs/bench.log.
+    ++ lib.optional (journald != null) {
+      src = journald;
+      module = "frappe_journald";
     };
 
   withGrafts =
@@ -216,8 +228,8 @@ let
   );
 
   # Development: the guards (frappe_devguard) plus the socket corrections
-  # (frappe_unixsock). See graftFor above for why only one of those two is also
-  # in prodPythonEnv.
+  # (frappe_unixsock) and the journald formatting (frappe_journald). See
+  # graftFor above for why devguard alone is kept out of prodPythonEnv.
   devPythonEnv = assertLockCurrent (withGrafts "dev" baseDevPythonEnv);
 
 in
