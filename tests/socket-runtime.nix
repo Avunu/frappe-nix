@@ -22,6 +22,11 @@ let
 
   # Stands in for the real frappe-runtime. Answers both / and /socket.io/ off the
   # same listener, which is the whole point of the topology under test.
+  #
+  # Also under test: the journald contract (tests/logging-fields.nix checks it
+  # at evaluation; this is the same thing on a running system) — the unit's
+  # entries carry APP_SERVICE/APP_SITE and a stable identifier, and nginx's
+  # access log reaches the journal as JSON through its sandbox, not a file.
   fakeRuntime = pkgs.writeScriptBin "frappe-runtime" ''
     #!${pkgs.python3}/bin/python3
     import json, os, socket, sys
@@ -54,6 +59,8 @@ let
     if os.path.exists(uds):
         os.unlink(uds)
     srv = S(uds, H)
+    # One line with a priority prefix, for the journald assertions.
+    print("<4>stub runtime listening", file=sys.stderr, flush=True)
     # Real uvicorn leaves the socket at the process umask; the directory is the
     # access gate. Reproduce that so a regression relying on socket permissions
     # would be caught here.
@@ -161,6 +168,46 @@ in
     # And still nothing on TCP anywhere in the public path.
     machine.fail("ss -HltnO | grep -qE ':8000\\s'")
     machine.fail("ss -HltnO | grep -qE ':9000\\s'")
+
+    # The journald contract. The unit's own output: identified, labelled, and
+    # at the priority its prefix names.
+    machine.wait_until_succeeds(
+        "journalctl _SYSTEMD_UNIT=frappe-${siteName}.service SYSLOG_IDENTIFIER=frappe-runtime"
+        " -o cat | grep -q 'stub runtime listening'"
+    )
+    runtime_entries = [
+        json.loads(line)
+        for line in machine.succeed(
+            "journalctl _SYSTEMD_UNIT=frappe-${siteName}.service SYSLOG_IDENTIFIER=frappe-runtime -o json"
+        ).splitlines()
+    ]
+    assert runtime_entries, "no journal entries from the runtime unit"
+    for entry in runtime_entries:
+        assert entry.get("APP_SERVICE") == "runtime", entry
+        assert entry.get("APP_SITE") == "${siteName}", entry
+    listening = [e for e in runtime_entries if e["MESSAGE"] == "stub runtime listening"]
+    assert listening and listening[0]["PRIORITY"] == "4", runtime_entries
+
+    # nginx's access log: over /dev/log from inside the unit's sandbox, one JSON
+    # object per request, labelled as nginx (shared, so no APP_SITE); the site
+    # is in the JSON. The requests above are what it logged.
+    machine.wait_until_succeeds("journalctl SYSLOG_IDENTIFIER=nginx_access -o cat | grep -q request_time")
+    access_entries = [
+        json.loads(line)
+        for line in machine.succeed("journalctl SYSLOG_IDENTIFIER=nginx_access -o json").splitlines()
+    ]
+    for entry in access_entries:
+        assert entry.get("APP_SERVICE") == "nginx", entry
+        assert "APP_SITE" not in entry, entry
+    requests = [json.loads(e["MESSAGE"]) for e in access_entries]
+    root_req = next(r for r in requests if r["uri"] == "/")
+    assert root_req["site"] == "${siteName}", root_req
+    assert root_req["method"] == "GET", root_req
+    assert root_req["status"] == 200, root_req
+    assert isinstance(root_req["request_time"], (int, float)), root_req
+    assert isinstance(root_req["upstream_time"], str), root_req
+    assert any(r["uri"].startswith("/socket.io/") for r in requests), requests
+    machine.fail("test -e /var/log/nginx/access.log")
 
     # The app registry is linked from the package, not copied; the operator's
     # common_site_config.json is a real file.

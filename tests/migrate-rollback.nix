@@ -134,6 +134,8 @@ in
     # marker is recorded (the deploy after the restore must still migrate).
     machine.wait_for_unit("${migrateUnit}")
     machine.succeed("journalctl -u ${migrateUnit} | grep -q 'the site is not installed'")
+    # ...at warning priority, with the <4> prefix consumed rather than printed.
+    machine.succeed("journalctl -u ${migrateUnit} -p warning | grep -q '^.*: frappe-migrate(.*the site is not installed'")
     machine.fail("test -e ${markerPath}")
 
     # Install the site -- canary stands in for the Frappe schema -- and
@@ -167,6 +169,10 @@ in
     assert machine.succeed("jq -r .maintenance_mode ${cfgPath}").strip() == "1"
     machine.fail("test -e ${markerPath}")
     machine.succeed("journalctl -u ${migrateUnit} | grep -q 'MIGRATION FAILED'")
+    # Findable by priority, not only by wording: `journalctl -p err` is what a
+    # log store's alert filters on.
+    machine.succeed("journalctl -u ${migrateUnit} -p err | grep -q 'MIGRATION FAILED'")
+    machine.succeed("journalctl -u ${migrateUnit} -p err | grep -q 'site left in maintenance mode'")
 
     # A clean redeploy path recovers: allow migrate to succeed again.
     machine.succeed("rm -f /run/fail-migrate")

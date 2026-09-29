@@ -347,6 +347,12 @@
           inherit pkgs;
           frappe-init = frappeInit pkgs;
         }
+        # The journald fields and services.frappe.logging, at evaluation. Linux
+        # only because it evaluates a NixOS system, but no VM: cheap enough for
+        # every PR.
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          import ./tests/logging-fields.nix { inherit self pkgs; }
+        )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (

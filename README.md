@@ -807,6 +807,8 @@ The final `site_config.json` is written to the site's state directory with mode 
 | redis.createLocally | bool | false | Enable a local Redis instance. |
 | user / group | str | "frappe" | Service user/group. |
 | extraEnv | attrs of str | {} | Extra env vars for all Frappe services. |
+| logging.level | "debug" / "info" / "warning" / "error" | "warning" | Threshold for Frappe's application loggers and bench's own log (FRAPPE_LOG_LEVEL). See Logging. |
+| logging.accessLog | bool | true | nginx access log to the journal as JSON; false turns it off. See Logging. |
 | migrate.enable | bool | true | Run bench migrate automatically per site when the build changes. |
 | migrate.snapshot | bool | true | Take a mysqldump snapshot before migrating (safety net). |
 | migrate.rollbackOnFailure | bool | true | Restore the snapshot if the migration fails. |
@@ -847,6 +849,40 @@ Because Frappe migrations perform DDL (`CREATE`/`ALTER TABLE`), which auto-commi
 4.  **On failure** — restore the snapshot (drop all current tables, re-import the dump), **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero (the unit shows `failed`). The database is returned to its pre-migrate state; recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
 
 It runs as the `frappe` user with the site's own DB credentials (no DB-root needed), so it works for both locally-created and externally-managed databases. Tune or disable it via the `services.frappe.migrate.*` options above (e.g. `migrate.snapshot = false` for very large databases where a snapshot per deploy is too costly).
+
+### Logging
+
+Everything goes to the journal and nothing writes a log file: not Frappe (`FRAPPE_STREAM_LOGGING=1`, and a caller asking for a file is overridden), not bench (`bench/logs/bench.log` is no longer written), not nginx (no `/var/log/nginx/access.log`). The exceptions are Frappe features that write a file as their product rather than as logging, and only when used: the request monitor (`monitor` in site_config, `logs/monitor.json.log`) and the setup wizard's `logs/setup-wizard.log`. A host that ships the journal to a log store filters by the fields below and by PRIORITY, so both are part of the module's contract — the same one odoo-nix and wordpress-nix follow.
+
+**Fields.** Every unit the module defines carries `LogExtraFields`, which journald attaches to everything the unit's processes log (stdout/stderr and syslog alike):
+
+| Unit | APP_SERVICE | APP_SITE | SYSLOG_IDENTIFIER |
+| --- | --- | --- | --- |
+| frappe-<site> (unified runtime) | runtime | <site> | frappe-runtime |
+| frappe-web-<site> | web | <site> | frappe-web |
+| frappe-worker-<queue>-<site> | worker | <site> | frappe-worker-<queue> |
+| frappe-scheduler-<site> | scheduler | <site> | frappe-scheduler |
+| frappe-socketio-<site> | socketio | <site> | frappe-socketio |
+| frappe-migrate-<site> | migrate | <site> | frappe-migrate |
+| frappe-init-<site> | init | <site> | frappe-init |
+| frappe-db-password-<site> | init | <site> | frappe-db-password |
+| mysql | db | — | (MariaDB's own) |
+| redis-frappe | redis | — | (Redis's own) |
+| nginx | nginx | — | nginx; nginx_access for the access log |
+
+The shared units serve every site on the host, so they carry no APP_SITE; each access-log entry names its site in its JSON instead.
+
+**Priority.** The bench's virtualenv carries `frappe_journald` (`lib/journald`, grafted like `frappe_unixsock` into both virtualenvs). When stderr is the journal — it checks `JOURNAL_STREAM` against stderr's device and inode, so a terminal, the dev shell, the OCI images and a captured subprocess keep stock output — it reformats Frappe's loggers and bench's own as `<N>{module} [{site}] {message}`. journald reads the `<N>` as the line's syslog priority (debug 7, info 6, warning 4, error 3, critical 2) and stamps the time itself, so the timestamp and level name are gone; the site is added because Frappe's own format has none. Every line of a multi-line record carries the prefix, so a traceback stays at error from its first line to its last instead of dropping to info after the first. `frappe-runtime` formats its root logger the same way, and the migrate unit's failure lines are at error — `journalctl -u frappe-migrate-<site> -p err` finds a failed migration.
+
+**`logging.level`** (default `warning`) is the threshold for `frappe.logger()` and for bench's log, passed as `FRAPPE_LOG_LEVEL`. Frappe's own production default is error, which silently drops every `frappe.logger().warning()`. An explicit `set_log_level()` still wins; the runtime's lifecycle lines stay at info, and gunicorn, Node, MariaDB and Redis keep their own levels. The units also set `PYTHONUNBUFFERED=1`, so `print()` output is neither held back nor lost in a crash.
+
+**`logging.accessLog`** (default `true`) sends nginx's access log to the journal over `/dev/log`, one JSON object per request under `SYSLOG_IDENTIFIER=nginx_access`:
+
+```json
+{"time":"2026-09-29T12:00:00+00:00","site":"erp.example.com","method":"GET","uri":"/app","status":200,"bytes":5120,"request_time":0.042,"upstream_time":"0.041","remote_addr":"203.0.113.7","user_agent":"…","referer":"…"}
+```
+
+`upstream_time` is a string: it is `-` for a request with no upstream (`/assets/`) and a comma-separated list when nginx retried one. `false` turns access logging off. Both are set at the http level, so they apply to every virtualHost on the host. nginx's error log goes to syslog too (`services.nginx.logError`, overridable), so its `[error]`/`[crit]` lines keep their severity.
 
 ## Library
 
@@ -945,6 +981,7 @@ frappe-nix/
 │   ├── backup-fetch.nix      # → sh/backup-fetch.sh, shellchecked
 │   ├── devguard/             # frappe_devguard — guards against reaching production
 │   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)
+│   ├── journald/             # frappe_journald — journald priorities, no log files (dev + prod, acts only under systemd)
 │   ├── init.nix              # `nix run` entry point: builds frappe-init from sh/*
 │   ├── sh/                   # the scaffolder/migrator, concatenated into one script
 │   │   ├── common.sh         #   presets, naming, output helpers
