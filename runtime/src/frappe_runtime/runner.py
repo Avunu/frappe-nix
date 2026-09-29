@@ -24,6 +24,8 @@ import frappe
 from frappe.utils.background_jobs import FrappeWorkerNoFork, get_queue_list, get_redis_conn
 from frappe.utils.scheduler import start_scheduler
 
+from frappe_runtime.journald import setup_logging
+
 logger = logging.getLogger("frappe.runner")
 
 # The time that the job worker stays in one blocking dequeue. After this time the
@@ -588,7 +590,11 @@ def main() -> None:
 	# directory, so a re-exec (which keeps the cwd) does not descend twice.
 	if os.path.isdir("sites"):
 		os.chdir("sites")
-	logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+	# INFO, not the level services.frappe.logging.level sets: what reaches the root
+	# logger here is mostly the runner's own lifecycle (restarts, drains), which is
+	# what an operator reads the unit's journal for. Frappe's application loggers
+	# do not propagate to it; FRAPPE_LOG_LEVEL governs those.
+	setup_logging(logging.INFO)
 	if config.verbose:
 		logging.getLogger("frappe.realtime.packets").setLevel(logging.INFO)
 	Runner(config).run()

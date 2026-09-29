@@ -34,6 +34,7 @@ from frappe_runtime.auth import close_clients
 from frappe_runtime.bridge import RedisBridge
 from frappe_runtime.config import RealtimeConfig, get_config
 from frappe_runtime.dispatch import wire
+from frappe_runtime.journald import setup_logging
 
 logger = logging.getLogger("frappe.realtime")
 
@@ -183,7 +184,7 @@ def serve(config: RealtimeConfig | None = None) -> None:
 
 
 def main() -> None:
-	logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+	setup_logging(logging.WARNING)
 	serve()
 
 

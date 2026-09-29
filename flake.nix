@@ -187,6 +187,18 @@
             ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
           '';
 
+          # Frappe- and systemd-independent: stub frappe.utils.logger and
+          # bench.utils modules stand in, JOURNAL_STREAM is pointed at the test's
+          # own stderr, and the assertions are about the <N> prefix on every line
+          # and the bench.log that is never created. The runtime's copy of the
+          # formatter is rendered against the graft's, so the two cannot drift.
+          journald = pkgs.runCommand "frappe-journald-check" { } ''
+            cp -r ${./lib/journald} ./journald
+            chmod -R u+w ./journald
+            ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
+              ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
+          '';
+
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
@@ -335,6 +347,12 @@
           inherit pkgs;
           frappe-init = frappeInit pkgs;
         }
+        # The journald fields and services.frappe.logging, at evaluation. Linux
+        # only because it evaluates a NixOS system, but no VM: cheap enough for
+        # every PR.
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          import ./tests/logging-fields.nix { inherit self pkgs; }
+        )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (

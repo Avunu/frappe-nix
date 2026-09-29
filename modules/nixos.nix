@@ -101,7 +101,18 @@ let
       FRAPPE_BENCH_ROOT = "${siteCfg.siteDir}/bench";
       SITES_PATH = "${siteCfg.siteDir}/sites";
       FRAPPE_SITE = name;
+      # Frappe's loggers to stderr, never to logs/*.log: stderr is the journal.
+      # frappe_journald (grafted into the bench's virtualenv) forces the same for
+      # a caller that asks for a file explicitly, and gives each line its <N>
+      # priority prefix; see services.frappe.logging.
       FRAPPE_STREAM_LOGGING = "1";
+      # Read by frappe_journald as Frappe's default logger level. Frappe's own
+      # production default is ERROR, which drops every frappe.logger().warning().
+      FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
+      # A block-buffered stdout holds print() output back until the buffer fills
+      # or the process exits, so a crash loses exactly the lines that explain it,
+      # and what does arrive is out of order with stderr.
+      PYTHONUNBUFFERED = "1";
       FRAPPE_TUNE_GC = "1";
 
       FRAPPE_DB_HOST = siteCfg.database.host;
@@ -130,6 +141,28 @@ let
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
     }
     // cfg.extraEnv;
+
+  # The journald fields every unit this module defines carries, shared with
+  # odoo-nix and wordpress-nix: a host shipping the journal to a log store labels
+  # by these, so they are a contract, not decoration. APP_SERVICE is the unit's
+  # role; APP_SITE the site FQDN, only for a unit tied to exactly one site.
+  #
+  # LogExtraFields applies to everything journald receives from the unit's
+  # processes — stdout/stderr, syslog(3) and sd_journal — so nginx's access log
+  # over /dev/log is labelled as well as its stderr.
+  logFields =
+    {
+      role,
+      site ? null,
+      # A stable identifier rather than the process name, which for these units
+      # is `python3`, `bench` or a store script named after the site. Only on
+      # per-site units: the shared ones (mysql, redis, nginx) keep their own.
+      identifier ? "frappe-${role}",
+    }:
+    {
+      LogExtraFields = [ "APP_SERVICE=${role}" ] ++ lib.optional (site != null) "APP_SITE=${site}";
+    }
+    // optionalAttrs (site != null) { SyslogIdentifier = identifier; };
 
   # Packages on PATH for every Frappe service (git needed by GitPython).
   # systemd's `path` option sets PATH to exactly these packages' bin/sbin —
@@ -453,9 +486,13 @@ let
         state:
         optionalString mg.maintenanceMode ''
           ${benchBin} --site ${name} set-maintenance-mode ${state} \
-            || echo "frappe-migrate(${name}): warning: could not set maintenance mode ${state}" >&2
+            || echo "<4>frappe-migrate(${name}): warning: could not set maintenance mode ${state}" >&2
         '';
     in
+    # Its stderr is the journal, which reads a leading <N> as the line's syslog
+    # priority (sd-daemon(3)); the stdout lines are progress and take the default
+    # of info. So a failed migrate is findable at `journalctl -p err`, not only by
+    # grepping for its wording.
     pkgs.writeShellScript "frappe-migrate-${name}" ''
       set -uo pipefail
       # Snapshots are full DB dumps — keep everything this script writes
@@ -485,7 +522,7 @@ let
       TABLES="$(${mysql} ${connArgs} -N -B -e \
         "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';" 2>/dev/null)"
       if [ "$TABLES" = "0" ]; then
-        echo "frappe-migrate(${name}): database ${dbName} has no tables — the site is not installed; skipping migrate. Install (bench new-site) or restore it, then redeploy." >&2
+        echo "<4>frappe-migrate(${name}): database ${dbName} has no tables — the site is not installed; skipping migrate. Install (bench new-site) or restore it, then redeploy." >&2
         exit 0
       fi
 
@@ -496,7 +533,7 @@ let
         echo "frappe-migrate(${name}): taking pre-migrate snapshot -> $SNAP"
         if ! ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
              --routines --triggers ${dbName} | ${gzip} > "$SNAP"; then
-          echo "frappe-migrate(${name}): ERROR pre-migrate snapshot failed; aborting before migrate (no safety net)." >&2
+          echo "<3>frappe-migrate(${name}): ERROR pre-migrate snapshot failed; aborting before migrate (no safety net)." >&2
           rm -f "$SNAP"
           exit 1
         fi
@@ -521,11 +558,11 @@ let
         exit 0
       fi
 
-      echo ">>> frappe-migrate(${name}): MIGRATION FAILED (bench migrate exit $RC) <<<" >&2
+      echo "<3>>>> frappe-migrate(${name}): MIGRATION FAILED (bench migrate exit $RC) <<<" >&2
 
       ${optionalString (mg.snapshot && mg.rollbackOnFailure) ''
         if [ -n "$SNAP" ] && [ -f "$SNAP" ]; then
-          echo "frappe-migrate(${name}): rolling back database from $SNAP" >&2
+          echo "<4>frappe-migrate(${name}): rolling back database from $SNAP" >&2
           rollback_ok=1
           # Drop every current table/view — including any a partial migration
           # created — then re-import the snapshot (whose own DROP/CREATE/INSERT
@@ -537,19 +574,19 @@ let
           } | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
           ${gunzip} -c "$SNAP" | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
           if [ "$rollback_ok" -eq 1 ]; then
-            echo "frappe-migrate(${name}): rollback complete — restored pre-migrate snapshot." >&2
+            echo "<4>frappe-migrate(${name}): rollback complete — restored pre-migrate snapshot." >&2
           else
-            echo "frappe-migrate(${name}): ERROR rollback FAILED; database may be inconsistent. Snapshot preserved at $SNAP." >&2
+            echo "<3>frappe-migrate(${name}): ERROR rollback FAILED; database may be inconsistent. Snapshot preserved at $SNAP." >&2
           fi
         else
-          echo "frappe-migrate(${name}): no snapshot available to roll back to." >&2
+          echo "<3>frappe-migrate(${name}): no snapshot available to roll back to." >&2
         fi
       ''}
 
       # Failure posture: leave maintenance mode ON so the site serves the
       # maintenance page instead of new code on the rolled-back (older) schema.
       # Recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
-      echo "frappe-migrate(${name}): site left in maintenance mode; investigate and redeploy." >&2
+      echo "<3>frappe-migrate(${name}): site left in maintenance mode; investigate and redeploy." >&2
       exit "$RC"
     '';
 
@@ -591,6 +628,9 @@ let
         {
           description,
           execStart,
+          # APP_SERVICE, and with it the SyslogIdentifier; see logFields.
+          role,
+          identifier ? "frappe-${role}",
           extra ? { },
           workingDirectory ? runtimeBenchDir,
           stopTimeout ? null,
@@ -610,6 +650,10 @@ let
             Restart = "always";
             RestartSec = "5";
           }
+          // logFields {
+            inherit role identifier;
+            site = name;
+          }
           // optionalAttrs (stopTimeout != null) {
             TimeoutStopSec = toString stopTimeout;
           };
@@ -620,6 +664,10 @@ let
           queue:
           nameValuePair "frappe-worker-${queue}-${name}" (mkService {
             description = "Frappe worker (${queue}) for ${name}";
+            role = "worker";
+            # One identifier per queue: which queue a failing job ran on is the
+            # first thing to know about it.
+            identifier = "frappe-worker-${queue}";
             execStart = mkExec pkg "worker-${queue}-${name}" "${benchBin} worker --queue ${queue}";
             extra = dependsOn;
           })
@@ -632,6 +680,7 @@ let
       runtimeUnits = {
         "frappe-${name}" = mkService {
           description = "Frappe runtime (web, realtime, jobs, scheduler) for ${name}";
+          role = "runtime";
           execStart = mkExec pkg "runtime-${name}" (
             concatStringsSep " " (
               [ "${pyEnv}/bin/frappe-runtime" ]
@@ -688,6 +737,7 @@ let
       splitUnits = {
         "frappe-web-${name}" = mkService {
           description = "Frappe web (gunicorn) for ${name}";
+          role = "web";
           # The one service upstream does not run from the bench root: bench's
           # own supervisor.conf template gives frappe-web `directory={{ sites_dir }}`
           # and everything else `directory={{ bench_dir }}`, and bench runs frappe
@@ -722,12 +772,14 @@ let
 
         "frappe-scheduler-${name}" = mkService {
           description = "Frappe scheduler for ${name}";
+          role = "scheduler";
           execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
           extra = dependsOn;
         };
 
         "frappe-socketio-${name}" = mkService {
           description = "Frappe SocketIO for ${name}";
+          role = "socketio";
           execStart = mkExec pkg "socketio-${name}" "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
           extra = dependsOn;
         };
@@ -750,6 +802,10 @@ let
           # by cfg.user — the unit never needs direct read access to them.
           LoadCredential = map (s: "${s.key}:${s.file}") (mkSiteCredentials siteCfg);
           ExecStart = mkSiteInit name siteCfg;
+        }
+        // logFields {
+          role = "init";
+          site = name;
         };
       };
 
@@ -783,6 +839,10 @@ let
           Group = cfg.group;
           WorkingDirectory = runtimeBenchDir;
           ExecStart = mkSiteMigrate name siteCfg;
+        }
+        // logFields {
+          role = "migrate";
+          site = name;
         };
       };
     }
@@ -800,6 +860,12 @@ let
           User = config.services.mysql.user;
           LoadCredential = [ "db_password:${siteCfg.database.passwordFile}" ];
           ExecStart = mkSiteDbPasswordSync name siteCfg;
+        }
+        # Site setup like frappe-init, so the same role; its own identifier.
+        // logFields {
+          role = "init";
+          site = name;
+          identifier = "frappe-db-password";
         };
       };
     };
@@ -1353,6 +1419,48 @@ in
       };
     };
 
+    # Everything goes to the journal; nothing here writes a log file. Every unit
+    # is labelled with APP_SERVICE (and APP_SITE where it serves one site) — see
+    # logFields — and the bench's virtualenv carries frappe_journald, which gives
+    # each Python log line its syslog priority. These two options are the knobs.
+    logging = {
+      level = mkOption {
+        type = types.enum [
+          "debug"
+          "info"
+          "warning"
+          "error"
+        ];
+        default = "warning";
+        description = ''
+          Threshold for Frappe's application loggers (`frappe.logger()`) and for
+          bench's own log, passed as FRAPPE_LOG_LEVEL.
+
+          Frappe's own production default is error, which silently drops every
+          `frappe.logger().warning()`; warning keeps those at no real cost in
+          volume. An explicit `frappe.utils.logger.set_log_level()` still wins.
+
+          The runtime's lifecycle lines (restarts, drains) are logged at info
+          regardless, and gunicorn, Node, MariaDB and Redis keep their own levels.
+        '';
+      };
+
+      accessLog = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Send nginx's HTTP access log to the journal as one JSON object per
+          request (SYSLOG_IDENTIFIER=nginx_access, fields time, site, method, uri,
+          status, bytes, request_time, upstream_time, remote_addr, user_agent,
+          referer). false turns access logging off altogether.
+
+          Either way nginx no longer writes /var/log/nginx/access.log. Set at the
+          http level, so it applies to every virtualHost on the host, not only
+          the Frappe sites.
+        '';
+      };
+    };
+
     extraEnv = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -1512,6 +1620,9 @@ in
             innodb-read-only-compressed = "OFF";
           };
         };
+
+        # Shared by every site, so no APP_SITE.
+        systemd.services.mysql.serviceConfig = logFields { role = "db"; };
       }
     )
 
@@ -1521,6 +1632,7 @@ in
         port = cfg.redis.port;
         bind = "127.0.0.1";
       };
+      systemd.services.redis-frappe.serviceConfig = logFields { role = "redis"; };
     })
 
     # Per-site nginx virtualHosts.
@@ -1540,10 +1652,42 @@ in
         "127.0.0.1" = mapAttrsToList (name: _: name) (filterAttrs (_: s: s.nginx.enable) enabledSites);
       };
 
+      # One nginx serves every site, so no APP_SITE on the unit; each access-log
+      # entry carries the site in its JSON instead.
+      systemd.services.nginx.serviceConfig = logFields { role = "nginx"; };
+
       services.nginx = {
         enable = true;
         recommendedProxySettings = true;
         recommendedGzipSettings = true;
+
+        # nginx's stderr carries no severity, so its error log would reach the
+        # journal as info, [emerg] and all. Over syslog, nginx maps its own levels
+        # onto syslog's. mkDefault: the operator may want it elsewhere.
+        logError = lib.mkDefault "syslog:server=unix:/dev/log,tag=nginx,nohostname error";
+
+        # Before the vhosts, so the format exists by the time anything uses it;
+        # at the http level, so every server{} inherits it. Without an access_log
+        # here nginx falls back to its compiled-in /var/log/nginx/access.log.
+        #
+        # escape=json makes the variables safe inside the string literals. The
+        # numeric ones are left bare; $upstream_response_time is quoted because
+        # it can be "-" (no upstream: /assets/) or a list ("0.012, 0.004") when a
+        # request was retried. /dev/log is journald's syslog socket, which the
+        # nginx unit's sandbox allows (AF_UNIX is in RestrictAddressFamilies,
+        # and PrivateDevices keeps a /dev/log link). A syslog datagram is capped
+        # near 2 KiB by nginx, so an entry with an enormous URI arrives truncated
+        # and will not parse — acceptable for an access log.
+        commonHttpConfig =
+          if cfg.logging.accessLog then
+            ''
+              log_format journal_json escape=json '{"time":"$time_iso8601","site":"$host","method":"$request_method","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_time":"$upstream_response_time","remote_addr":"$remote_addr","user_agent":"$http_user_agent","referer":"$http_referer"}';
+              access_log syslog:server=unix:/dev/log,tag=nginx_access,nohostname journal_json;
+            ''
+          else
+            ''
+              access_log off;
+            '';
 
         # One upstream per site process that listens on a unix socket.
         upstreams =
