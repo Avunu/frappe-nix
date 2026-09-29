@@ -348,6 +348,21 @@ in
           description = "Node.js package for frontend builds and socketio.";
         };
 
+        esbuildTarget = mkOption {
+          type = types.str;
+          default = "es2022";
+          example = "es2017";
+          description = ''
+            The target frappe's esbuild pipeline compiles bundles for, exported as
+            `ESBUILD_TARGET` to both `bench build` in the dev shell and builtBench.
+            Frappe's own default is es2017, which cannot lower async generators or
+            BigInt literals — both common in current npm packages (frappe-react-sdk,
+            temporal-polyfill) — so the build fails outright on them. Frappe reads
+            `esbuild_target` in common_site_config.json ahead of this, but that file
+            is the operator's and never reaches the Nix build.
+          '';
+        };
+
         mariadb = {
           package = mkOption {
             type = types.package;
@@ -1521,6 +1536,7 @@ in
               nodeNestedFrontendExcludes
               nodeOverrides
               extraPackages
+              esbuildTarget
               ;
             inherit (pythonEnvs) prodPythonEnv rootPyproject;
             workspaceRoot = effectiveWorkspaceRoot;
@@ -2095,6 +2111,10 @@ in
               # of this — `bench new-site --db-socket` already wrote db_socket
               # into every site_config.json — so it needs no `sockets` guard.
               FRAPPE_DB_SOCKET = mysqlSocket;
+
+              # Same target builtBench compiles for, so a bundle that builds
+              # here builds in the package too. See the esbuildTarget option.
+              ESBUILD_TARGET = cfg.esbuildTarget;
 
               FRAPPE_BENCH_ROOT = benchPath;
               SITES_PATH = benchPath + "/sites";

@@ -27,6 +27,11 @@
   # own. The install flags are yarnConfigHook's and not among them.
   nodeOverrides ? { },
   extraPackages ? [ ],
+  # Exported as ESBUILD_TARGET to builtBench's `bench build`. frappe's es2017
+  # default cannot lower async generators or BigInt literals, and the sandbox's
+  # common_site_config.json is an empty stub, so its esbuild_target never
+  # applies here.
+  esbuildTarget ? "es2022",
   # Where the fallback locks live — node-locks/<target>/yarn.lock for a target
   # that ships no yarn.lock of its own (or whose upstream one is forced aside).
   # The workspace root's in a bench; the app repository's nix/node-locks in
@@ -440,6 +445,7 @@ let
       mkdir -p $TMPDIR/bench/sites/assets
       mkdir -p $TMPDIR/bench/config/pids
 
+      export ESBUILD_TARGET=${lib.escapeShellArg esbuildTarget}
       export FRAPPE_BENCH_ROOT=$TMPDIR/bench
       export SITES_PATH=$TMPDIR/bench/sites
       export PYTHONPATH=${appsPath "$TMPDIR/bench"}
