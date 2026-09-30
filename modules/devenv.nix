@@ -2012,7 +2012,9 @@ in
                   # path, and this directory is per-project.
                   if [ -n "''${DEVENV_STATE:-}" ]; then
                     mkdir -p "$DEVENV_STATE/mysql-tmp"
-                    set -- "--tmpdir=$DEVENV_STATE/mysql-tmp" "$@"
+                    # Last, not first: --defaults-file is only honoured as the
+                    # very first argument, and devenv passes it.
+                    set -- "$@" "--tmpdir=$DEVENV_STATE/mysql-tmp"
                   fi
                   exec ${cfg.mariadb.package}/bin/mariadbd "$@"
                 ''}/bin/mariadbd "$out/bin/mariadbd"
