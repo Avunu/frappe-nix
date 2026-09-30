@@ -354,7 +354,9 @@ in
           example = "es2017";
           description = ''
             The target frappe's esbuild pipeline compiles bundles for, exported as
-            `ESBUILD_TARGET` to both `bench build` in the dev shell and builtBench.
+            `ESBUILD_TARGET` to `bench build` in the dev shell, the `watch`
+            process (which, unlike stock `bench watch`, passes it on) and
+            builtBench.
             Frappe's own default is es2017, which cannot lower async generators or
             BigInt literals — both common in current npm packages (frappe-react-sdk,
             temporal-polyfill) — so the build fails outright on them. Frappe reads
@@ -1471,6 +1473,41 @@ in
               filter = path: _type: baseNameOf path != "__pycache__";
             }
           }/frappe_journald "$out/"
+        '';
+
+        # `bench watch`, compiling for the same esbuild target `bench build`
+        # does. Frappe's frappe.build.watch() never passes one, so its
+        # esbuild.js falls back to es2017 whatever esbuild_target or
+        # ESBUILD_TARGET say, and es2017 can't lower async generators or
+        # BigInt literals (see the esbuildTarget option). The watcher's first
+        # compile then fails outright on bundles `bench build` handles fine,
+        # leaving sites/assets/assets.json naming files that no longer exist.
+        #
+        # This is frappe.build.watch() line for line (v15 and v16) plus the
+        # target, resolved the way `bench build` resolves it
+        # (frappe/commands/utils.py): common_site_config.json's esbuild_target
+        # first, then ESBUILD_TARGET. Run it from sites/, as bench runs every
+        # frappe command, for frappe.init("") to find the sites.
+        benchWatch = pkgs.writeText "frappe-nix-bench-watch.py" ''
+          import os
+
+          import frappe
+          import frappe.build
+          from frappe.commands import popen
+          from frappe.utils import cint
+
+          frappe.init("")
+          frappe.build.setup()
+
+          command = "yarn run watch"
+          if cint(os.environ.get("LIVE_RELOAD", frappe.conf.live_reload)):
+              command += " --live-reload"
+          target = frappe.conf.get("esbuild_target") or os.environ.get("ESBUILD_TARGET")
+          if target:
+              command += f" --esbuild-target {target}"
+
+          frappe.build.check_node_executable()
+          popen(command, cwd=frappe.get_app_path("frappe", ".."), env=frappe.build.get_node_env())
         '';
 
         pythonEnvs = import ../lib/python.nix {
@@ -2614,15 +2651,14 @@ in
                 };
 
                 watch = {
-                  # bench resolves its bench by walking *up* from cwd
-                  # (bench/cli.py's change_working_directory → find_parent_bench),
-                  # so a process started anywhere else either finds nothing and
-                  # silently stops dispatching frappe commands, or — if this repo
-                  # happens to sit inside another bench's apps/ — finds that one
-                  # and runs against its database.
-                  cwd = benchPath;
+                  # sites/ of *this* bench, where bench itself would run
+                  # `frappe watch` from: frappe.init("") resolves the sites from
+                  # the working directory. Anywhere else it either finds nothing
+                  # or - if this repo sits inside another bench's apps/ - that
+                  # bench's sites. Not `bench watch` itself: see benchWatch.
+                  cwd = "${benchPath}/sites";
                   exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/bench watch
+                    exec ${pythonEnvs.devPythonEnv}/bin/python ${benchWatch}
                   '';
                   # After the config task as well as web: apps/wiki's frontend
                   # imports sites/common_site_config.json, so the file is a vite
