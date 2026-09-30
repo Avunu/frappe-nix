@@ -315,6 +315,9 @@
         }
         # edit-secret / rekey-secrets against a real ragenix and real keys.
         // import ./tests/secrets-cli.nix { inherit pkgs; }
+        # The real mariadbd, started through the dev shell's wrapper the way
+        # devenv starts it: argument order, and where its temp files go.
+        // import ./tests/mariadbd-wrapper.nix { inherit pkgs; }
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
