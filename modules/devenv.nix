@@ -1999,6 +1999,21 @@ in
                 rm -f "$out/bin/mariadbd"
                 ln -s ${pkgs.writeShellScriptBin "mariadbd" ''
                   ${mariadbdReaper}
+
+                  # Its temp files on disk, beside the datadir, and not in /tmp —
+                  # a tmpfs on most desktops, a few GB of RAM. A table rebuild
+                  # sorts into files there as large as the table: `ALTER TABLE
+                  # tabVersion` on a restored production copy (2+ GB) filled a
+                  # 3.9 GB /tmp and died with InnoDB error 168 ("no space left
+                  # on device") midway through `bench migrate`. `innodb_tmpdir`
+                  # does not cover those files; `tmpdir` does, and it cannot be
+                  # set on a running server, so it goes on the command line.
+                  # Set here and not in `settings`: the config file is a store
+                  # path, and this directory is per-project.
+                  if [ -n "''${DEVENV_STATE:-}" ]; then
+                    mkdir -p "$DEVENV_STATE/mysql-tmp"
+                    set -- "--tmpdir=$DEVENV_STATE/mysql-tmp" "$@"
+                  fi
                   exec ${cfg.mariadb.package}/bin/mariadbd "$@"
                 ''}/bin/mariadbd "$out/bin/mariadbd"
               '';
