@@ -1601,6 +1601,8 @@ in
             devguard = dg.enable;
           };
           nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
+          nodeVerifyBin = "${nodeVerifyTool}/bin/frappe-nix-node-verify";
+          pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
           nodeLocksBin = "${nodeLocksTool}/bin/frappe-nix-node-locks";
           inherit (cfg) nodeNestedFrontendExcludes;
           inherit appMode;
@@ -1620,6 +1622,10 @@ in
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
         nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
+
+        # Finds and repairs what yarn cannot see is broken in the cache and in
+        # node_modules, ahead of that install. See lib/node-verify.py.
+        nodeVerifyTool = import ../lib/node-verify.nix { inherit pkgs; };
 
         # Keeps the workspace root in step with this frappe-nix: what
         # `frappe-init` would add to pyproject.toml on a re-run, plus the
@@ -2202,7 +2208,14 @@ in
               # interesting churn is. A failure here is a warning, not a dead
               # shell: it is `bench build` that needs node_modules, and it
               # re-runs this and refuses to build against a stale one.
+              #
+              # Verified first: yarn calls a cache or node_modules that an install
+              # cut short up-to-date, for as long as the lockfile stands, so the
+              # install would skip right over it. What this finds damaged it
+              # deletes, and the install puts back. Skipped, in well under a
+              # second, while nothing has been installed since the last clean scan.
               ${lib.optionalString (benchInfra.appsWithNode != [ ]) ''
+                ${nodeVerifyTool}/bin/frappe-nix-node-verify "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
                 ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
               ''}
 

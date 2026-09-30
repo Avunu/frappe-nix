@@ -315,6 +315,10 @@
         }
         # edit-secret / rekey-secrets against a real ragenix and real keys.
         // import ./tests/secrets-cli.nix { inherit pkgs; }
+        # Finding and repairing what yarn cannot see is broken, and the Python
+        # half of `bench setup requirements`.
+        // import ./tests/node-verify.nix { inherit pkgs; }
+        // import ./tests/setup-requirements.nix { inherit pkgs; }
         # The real mariadbd, started through the dev shell's wrapper the way
         # devenv starts it: argument order, and where its temp files go.
         // import ./tests/mariadbd-wrapper.nix { inherit pkgs; }
