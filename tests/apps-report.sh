@@ -41,6 +41,22 @@ says() { grep -qF -- "$1" <<< "$OUT"; }
 silent_on() { ! grep -qF -- "$1" <<< "$OUT"; }
 run() { OUT="$("$TOOL" "$PWD" 2>&1)" && RC=0 || RC=$?; }
 
+# Whether an object is on disk, without the lazy fetch a partial clone would
+# otherwise make to answer the question.
+has_obj() { # <repo> <object>
+  GIT_NO_LAZY_FETCH=1 git -C "$1" cat-file -e "$2" 2> /dev/null
+}
+
+# The shape the first entry gives a clone: partial, not shallow, every branch
+# of origin fetched, and commits only from here on.
+partial_all_branches() { # <path>
+  [ "$(git -C "$1" config remote.origin.promisor)" = true ] \
+    && [ "$(git -C "$1" rev-parse --is-shallow-repository)" = false ] \
+    && [ "$(git -C "$1" config --get-all remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ] \
+    && [ "$(git -C "$1" config remote.origin.partialclonefilter)" = tree:0 ] \
+    && git -C "$1" rev-parse -q --verify refs/remotes/origin/version-x > /dev/null
+}
+
 # Everything git knows about the bench and its submodules, and the file tree.
 snapshot() {
   git status --porcelain --ignore-submodules=none
@@ -59,6 +75,18 @@ empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
 APPS=(present fresh gone taken inplace)
 
+commit_to() { # <name> <branch> <message> — a commit on the seed, pushed
+  local seed="$ROOT/seed/$1"
+  git -C "$seed" checkout -q "$2"
+  mkdir -p "$seed/$1/$2"
+  printf '%s\n' "$3" > "$seed/$1/$2/log.txt"
+  git -C "$seed" add -A
+  git -C "$seed" commit -q -m "$3"
+  git -C "$seed" push -q "$ROOT/remotes/$1.git" "$2"
+}
+# develop, which the bench pins, and version-x, which it never checks out.
+# Filters allowed, as GitHub does: without them a partial clone quietly falls
+# back to a full one and nothing below would be tested.
 seed_remote() { # <name>
   local seed="$ROOT/seed/$1"
   mkdir -p "$seed/$1"
@@ -67,7 +95,13 @@ seed_remote() { # <name>
   git -C "$seed" add -A
   git -C "$seed" commit -q -m init
   git init -q --bare "$ROOT/remotes/$1.git"
+  git -C "$ROOT/remotes/$1.git" symbolic-ref HEAD refs/heads/develop
+  git -C "$ROOT/remotes/$1.git" config uploadpack.allowFilter true
+  git -C "$ROOT/remotes/$1.git" config uploadpack.allowAnySHA1InWant true
   git -C "$seed" push -q "$ROOT/remotes/$1.git" develop
+  git -C "$seed" branch -q version-x
+  commit_to "$1" develop "develop 1"
+  commit_to "$1" version-x "version-x 1"
 }
 for a in "${APPS[@]}"; do seed_remote "$a"; done
 
@@ -89,10 +123,14 @@ mkdir -p apps/strayapp && git -C apps/strayapp init -q -b main
 printf 'x\n' > apps/strayapp/f && git -C apps/strayapp add -A && git -C apps/strayapp commit -q -m i
 git -c advice.addEmbeddedRepo=false add -A 2>/dev/null
 git commit -q -m bench
+# Upstream moves on past what the bench pins, so a checkout at the branch tip
+# is not a checkout at the pin.
+for a in "${APPS[@]}"; do commit_to "$a" develop "develop 2"; done
 
 # Fresh clones of the bench as committed, for the sections further down.
 git clone -q "$BENCH" "$ROOT/clone"
 git clone -q "$BENCH" "$ROOT/clone2"
+git clone -q "$BENCH" "$ROOT/clone3"
 
 # fresh: what `git submodule deinit` leaves — its clone kept in the git dir.
 git submodule deinit -q -f -- apps/fresh
@@ -139,12 +177,26 @@ cd "$ROOT/clone"
 # node_modules from a `yarn install` in the empty directory.
 mkdir -p apps/gone/node_modules
 touch apps/gone/node_modules/.yarn-integrity
+# inplace: .gitmodules names a branch its remote no longer has.
+git config -f .gitmodules submodule.apps/inplace.branch retired
 run
 check_eq "exits 0" 0 "$RC"
 for a in present fresh taken inplace; do
   check "checks out apps/$a at its pinned commit" at_pin "$a"
+  check "…as a partial clone of every branch" partial_all_branches "apps/$a"
 done
 check "says so" says "checking out apps/present (first shell entry in this clone)"
+check "the git dir is under .git/modules, as git's own submodule clone puts it" \
+  test "$(cat apps/present/.git)" = "gitdir: ../../.git/modules/apps/present"
+# origin/develop is a commit past the pin, so nothing of it was checked out.
+check "the paired branch has its folders past the checkout…" has_obj apps/present 'origin/develop^{tree}'
+check_not "…but not their file contents" has_obj apps/present 'origin/develop:present/develop/log.txt'
+check_not "another branch has its commits but not its folders" has_obj apps/present 'origin/version-x^{tree}'
+check "and switching to it downloads what it needs" git -C apps/present switch -q version-x
+check "…files and all" test -f apps/present/present/version-x/log.txt
+git -C apps/present switch -q --detach "$(git ls-files -s -- apps/present | awk '{ print $2 }')"
+check "a branch the remote no longer has falls back to its default" says "could not clone apps/inplace at 'retired'"
+git checkout -q -- .gitmodules
 check "names an app whose directory is in the way" says "apps/gone is not checked out, but its directory is not empty"
 check "…and what is in it" says "node_modules"
 check "…leaves that directory as it was" test -f apps/gone/node_modules/.yarn-integrity -a ! -e apps/gone/.git
@@ -167,6 +219,32 @@ check "…and both are reported" says "registered but not checked out: apps/fres
 rm -rf apps/gone/node_modules
 run
 check "once its directory is cleared, the app in the way is checked out" at_pin gone
+
+echo "── shallow clones from before ───────────────────────────────────"
+cd "$ROOT/clone3"
+# What `shallow = true` made of every app: the remote's default branch at depth
+# 1, and only that branch followed.
+git submodule update -q --init --depth 1 -- apps/present apps/fresh apps/taken apps/inplace
+printf 'mine\n' > apps/present/local.txt
+git -C apps/present add local.txt
+git -C apps/present commit -q -m "a local commit"
+declare -A head_before
+for a in present fresh taken inplace; do head_before[$a]="$(git -C "apps/$a" rev-parse HEAD)"; done
+check "(they start out shallow)" test "$(git -C apps/fresh rev-parse --is-shallow-repository)" = true
+run
+check_eq "exits 0" 0 "$RC"
+for a in present fresh taken inplace; do
+  check "apps/$a becomes a partial clone of every branch" partial_all_branches "apps/$a"
+  check_eq "…its checkout where it was" "${head_before[$a]}" "$(git -C "apps/$a" rev-parse HEAD)"
+done
+check_eq "a local commit is kept, and the worktree left clean" "" "$(git -C apps/present status --porcelain)"
+check "the paired branch gains its folders" has_obj apps/fresh 'origin/develop~2^{tree}'
+check "says what it is fetching" says "apps/fresh is a shallow or single-branch clone"
+before="$(snapshot)"
+run
+after="$(snapshot)"
+check_eq "the next entry changes nothing" "$before" "$after"
+check_eq "…and says nothing" "" "$OUT"
 
 echo "── a first checkout that fails ──────────────────────────────────"
 cd "$ROOT/clone2"

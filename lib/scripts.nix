@@ -541,7 +541,16 @@ secretScripts
               # a full clone it cut the history down to that tip as a side effect.
               # A plain fetch on a shallow clone stops at what the clone already
               # has, so it costs only the new commits and stays shallow.
-              git fetch "$remote" "$branch" || {
+              #
+              # A partial clone (lib/apps-report.nix makes them) keeps its
+              # paired branch with the folders of every commit, and fetches
+              # anything else as commits only — its configured filter. The
+              # branch this pulls is the paired one, so ask for its folders.
+              _filter=()
+              if [ "$(git config --get "remote.$remote.promisor" 2>/dev/null)" = true ]; then
+                _filter=(--filter=blob:none)
+              fi
+              git fetch "''${_filter[@]}" "$remote" "$branch" || {
                 echo "  ✗ $app: could not fetch '$branch' from $remote" >&2
                 echo "     .gitmodules says apps/$app is $url @ $branch; fix either the entry" >&2
                 echo "     (git config -f .gitmodules submodule.apps/$app.branch <branch>) or the remote." >&2
