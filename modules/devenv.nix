@@ -2201,11 +2201,13 @@ in
 
             enterShell = ''
               ${lib.optionalString (!appMode) ''
-                # Say which apps/* need a hand — a registered submodule with no
-                # checkout, a half-finished removal, a stray nested repo — and
-                # touch none of them. Shell entry runs on every `nix develop`
-                # and direnv reload; only you, or `bench update --pull`, move a
-                # submodule. See lib/apps-report.nix.
+                # First, before anything below works in apps/<x>: check out the
+                # app submodules a fresh clone has never had, then say which
+                # apps/* need a hand — one taken out since, a half-finished
+                # removal, a stray nested repo — and touch none of those. Shell
+                # entry runs on every `nix develop` and direnv reload; past a
+                # clone's first entry, only you, or `bench update --pull`, move
+                # a submodule. See lib/apps-report.nix.
                 ${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true
 
                 # sites/apps.txt and sites/apps.json are generated from the

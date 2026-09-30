@@ -488,12 +488,14 @@ secretScripts
                 continue
                 ;;
               submodule-uninitialized)
-                # Shell entry never checks a submodule out (lib/apps-report.nix);
-                # a pull is where one gets its checkout — a fresh clone's, or a
-                # deinitialized one's — and then moves with the rest. Not
-                # --recursive, as ever: Frappe apps ship nested submodules with
-                # broken refs. Without a gitlink there is no commit to check out:
-                # .gitmodules outlived a removal, which remove-app finishes.
+                # Shell entry checks out only what a fresh clone has never had
+                # (lib/apps-report.nix); a pull is where any other gets its
+                # checkout — a deinitialized one's, say, or a fresh clone's
+                # pulled before the shell was ever entered — and then moves with
+                # the rest. Not --recursive, as ever: Frappe apps ship nested
+                # submodules with broken refs. Without a gitlink there is no
+                # commit to check out: .gitmodules outlived a removal, which
+                # remove-app finishes.
                 if ! git ls-files -s -- "apps/$app" \
                   | awk -v p="apps/$app" '$1 == "160000" && $4 == p { f = 1 } END { exit !f }'; then
                   echo "  ⚠  $app: .gitmodules registers it, but the bench records no commit for it — skipping."

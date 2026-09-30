@@ -192,6 +192,27 @@ before=$(calls)
 "$TOOL" "$BENCH" gamma > /dev/null 2>&1
 check_eq "the generated bench under the app is not part of its fingerprint" "$before" "$(calls)"
 
+echo "── the app is not checked out ───────────────────────────────────"
+# The app list comes from what Nix saw, and `self.submodules = true` has Nix
+# fetch every submodule itself — so a fresh clone's still-empty apps/<x> is on
+# it. yarn in an empty directory succeeds having done nothing, and the
+# node_modules/ it leaves is what `git submodule update --init` then refuses
+# to clone into.
+mkdir -p "$BENCH/apps/delta"
+before=$(calls)
+check_not "the tool reports it" "$TOOL" "$BENCH" delta
+"$TOOL" "$BENCH" delta > "$ROOT/absent.log" 2>&1 || true
+check_eq "yarn is not run" "$before" "$(calls)"
+check_eq "and the directory is left empty" "0" "$(find "$BENCH/apps/delta" -mindepth 1 | wc -l | tr -d ' ')"
+check "the app is named" grep -qF 'apps/delta' "$ROOT/absent.log"
+check_not "a directory that is not there at all is reported too" "$TOOL" "$BENCH" epsilon
+check_not "…and not created" test -e "$BENCH/apps/epsilon"
+echo '# yarn lockfile v1 (bumped next to an absent app)' > "$BENCH/apps/alpha/yarn.lock"
+before=$(calls)
+"$TOOL" "$BENCH" alpha delta > /dev/null 2>&1 || true
+check_eq "an app that is checked out is still installed alongside" "$((before + 1))" "$(calls)"
+check_eq "…and the absent one still left empty" "0" "$(find "$BENCH/apps/delta" -mindepth 1 | wc -l | tr -d ' ')"
+
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
 check_not "a bench root with no apps is an error" "$TOOL" "$BENCH"

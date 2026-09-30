@@ -213,9 +213,10 @@
                   2>&1 | tee "$out"
               '';
 
-          # What shell entry says about apps/ — and, mostly, that it touches
-          # nothing: entry once checked out any submodule it found without a
-          # checkout, re-cloning apps that had been removed.
+          # What shell entry does about apps/: checks out a fresh clone's apps
+          # once, and past that touches nothing — entry once checked out any
+          # submodule it found without a checkout, re-cloning apps that had
+          # been removed.
           apps-report =
             pkgs.runCommand "frappe-nix-apps-report-check"
               {
