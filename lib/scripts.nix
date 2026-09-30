@@ -1074,6 +1074,18 @@ secretScripts
     fi
     [ -f sites/apps.txt ] || exit 0
 
+    # One at a time. On `devenv up` every process that waits on this task —
+    # runtime, watch, … — runs it from its own `devenv-tasks` wrapper, so
+    # several copies start in the same second, each sees the same missing apps
+    # and each installs them: concurrent `install-app`s fighting over the
+    # site's install_app lock, and their failures land in the Error Log. Held
+    # from before the installed-apps query, so a copy that waited finds the
+    # first one's work done and has nothing left to install. The lock is the
+    # kernel's, not the file's: it goes when the holder does, however it dies.
+    mkdir -p "sites/$SITE/locks"
+    exec 9>"sites/$SITE/locks/reconcile-apps.lock"
+    ${pkgs.util-linux}/bin/flock 9
+
     installed="$(${benchBin} --site "$SITE" list-apps --format json 2>/dev/null \
                  | ${pkgs.jq}/bin/jq -r --arg s "$SITE" '.[$s][]? // empty' 2>/dev/null || true)"
 
