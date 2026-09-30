@@ -1252,6 +1252,31 @@ in
             ln -s "$DEVENV_ROOT" "$_bench/apps/${cfg.app.name}"
           fi
 
+          # The materialized apps' nested public link: apps/<app>/<app>/public/
+          # node_modules -> ../../node_modules. `bench build` is what writes it
+          # in a vanilla bench — the package build counts on the same link
+          # (lib/bench.nix) — because build-time CSS imports resolve through it:
+          # @frappe/esbuild-plugin-postcss2 reads a path like
+          # frappe/public/node_modules/highlight.js/styles/tomorrow.css
+          # cwd-relative to apps/frappe, and only this link makes that path
+          # reach the installed packages. A dev loop of `bench watch` never
+          # builds, so the link never comes to exist on its own; and a pin bump
+          # rebuilds apps/ from the sources while carrying only the top-level
+          # apps/*/node_modules across, destroying a link a build did leave
+          # behind. So, like the dev-app heal above, on every entry rather than
+          # only on pin change. The link may dangle on a first entry until
+          # frappe-nix-node-modules runs later in enterShell; harmless. A real
+          # directory at the destination is left alone — `ln -sfn` does not
+          # replace one, it nests inside it — and the app under development is
+          # absent from this list by construction: its apps/<app> is a symlink
+          # into the developer's own tree.
+          for _app in ${lib.escapeShellArgs (map (a: a.name) (lib.filter (a: a.name != cfg.app.name) appList))}; do
+            _public="$_bench/apps/$_app/$_app/public"
+            if [ -d "$_public" ] && { [ ! -d "$_public/node_modules" ] || [ -L "$_public/node_modules" ]; }; then
+              ln -sfn ../../node_modules "$_public/node_modules"
+            fi
+          done
+
           # sites/apps.txt and sites/apps.json, from the workspace's members —
           # the same call, on the same pyproject.toml, as the package build.
           # The provenance file carries what the flake knows (each pin's
