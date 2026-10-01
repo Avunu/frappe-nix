@@ -1429,29 +1429,48 @@ in
             ln -s "$DEVENV_ROOT" "$_bench/apps/${cfg.app.name}"
           fi
 
-          # The materialized apps' nested public link: apps/<app>/<app>/public/
-          # node_modules -> ../../node_modules. `bench build` is what writes it
-          # in a vanilla bench — the package build counts on the same link
-          # (lib/bench.nix) — because build-time CSS imports resolve through it:
-          # @frappe/esbuild-plugin-postcss2 reads a path like
-          # frappe/public/node_modules/highlight.js/styles/tomorrow.css
-          # cwd-relative to apps/frappe, and only this link makes that path
-          # reach the installed packages. A dev loop of `bench watch` never
-          # builds, so the link never comes to exist on its own; and a pin bump
-          # rebuilds apps/ from the sources while carrying only the top-level
-          # apps/*/node_modules across, destroying a link a build did leave
-          # behind. So, like the dev-app heal above, on every entry rather than
-          # only on pin change. The link may dangle on a first entry until
-          # frappe-nix-node-modules runs later in enterShell; harmless. A real
-          # directory at the destination is left alone — `ln -sfn` does not
-          # replace one, it nests inside it — and the app under development is
-          # absent from this list by construction: its apps/<app> is a symlink
-          # into the developer's own tree.
-          for _app in ${lib.escapeShellArgs (map (a: a.name) (lib.filter (a: a.name != cfg.app.name) appList))}; do
+          # Each app's nested public link: apps/<app>/<app>/public/node_modules
+          # -> ../../node_modules. `bench build` is what writes it in a vanilla
+          # bench — the package build counts on the same link (lib/bench.nix) —
+          # and two things reach the installed packages only through it:
+          #
+          # - Build-time CSS imports. @frappe/esbuild-plugin-postcss2 reads a
+          #   path like frappe/public/node_modules/highlight.js/styles/
+          #   tomorrow.css cwd-relative to apps/frappe — and not only for frappe's
+          #   own bundles: another app's stylesheet can import that same path
+          #   (carbon_frappe's desk.bundle.scss does), so the watcher needs
+          #   frappe's link even while watch.excludePublishers leaves frappe
+          #   itself unwatched.
+          # - Served files. sites/assets/<app> is <app>/public, so
+          #   /assets/<app>/node_modules/... is this link: frappe's code editor
+          #   loads ace-builds from it, and an app's hooks may include CSS or JS
+          #   from it.
+          #
+          # A dev loop of `watch` never builds, so the link never comes to exist
+          # on its own; and a pin bump rebuilds apps/ from the sources while
+          # carrying only the top-level apps/*/node_modules across, destroying a
+          # link a build did leave behind. So, like the dev-app heal above, on
+          # every entry rather than only on pin change — at the cost of a stat
+          # and a readlink per app while the link is in place. The app under
+          # development included: its link lands in the developer's own tree,
+          # where `bench build` puts it too, under the `node_modules` every
+          # `bench new-app` .gitignore lists.
+          #
+          # The apps with a yarn.lock, which are the apps frappe-nix-node-modules
+          # installs; the link may dangle on a first entry until it runs later in
+          # enterShell. A link that already reaches apps/<app>/node_modules is
+          # left as it is, so `bench build`'s absolute one is not rewritten to
+          # this relative one and back on every build. A real directory at the
+          # destination is left alone — `ln -sfn` does not replace one, it
+          # nests inside it.
+          for _app in ${lib.escapeShellArgs benchInfra.appsWithNode}; do
             _public="$_bench/apps/$_app/$_app/public"
-            if [ -d "$_public" ] && { [ ! -d "$_public/node_modules" ] || [ -L "$_public/node_modules" ]; }; then
-              ln -sfn ../../node_modules "$_public/node_modules"
-            fi
+            _link="$_public/node_modules"
+            [ -d "$_public" ] || continue
+            [ -L "$_link" ] || [ ! -e "$_link" ] || continue
+            [ "$(readlink "$_link" 2>/dev/null)" = ../../node_modules ] && continue
+            [ "$_link" -ef "$_bench/apps/$_app/node_modules" ] && continue
+            ln -sfn ../../node_modules "$_link"
           done
 
           # sites/apps.txt and sites/apps.json, from the workspace's members —
