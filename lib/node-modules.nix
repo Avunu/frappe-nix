@@ -71,9 +71,20 @@ pkgs.writeShellApplication {
     }
 
     _failed=()
+    _absent=()
 
     for app in "$@"; do
       nm="apps/$app/node_modules"
+
+      # The app list is what Nix saw, and with `self.submodules = true` Nix
+      # fetches every submodule itself, checked out or not. In an app that is
+      # not checked out, `yarn install` finds no package.json, succeeds having
+      # done nothing, and leaves node_modules/ behind: a directory git will then
+      # not clone the app into, and a sentinel that fingerprints nothing.
+      if [ ! -f "apps/$app/package.json" ]; then
+        _absent+=("$app")
+        continue
+      fi
 
       # An earlier frappe-nix symlinked the Nix-built node_modules here. Those
       # are built with --ignore-scripts and are read-only, so nested frontends
@@ -112,6 +123,11 @@ pkgs.writeShellApplication {
       rm -f "$log"
     done
 
+    if [ ''${#_absent[@]} -gt 0 ]; then
+      echo "node_modules not installed for apps with no package.json on disk (not checked out?):" >&2
+      printf '  apps/%s\n' "''${_absent[@]}" >&2
+    fi
+
     if [ ''${#_failed[@]} -gt 0 ]; then
       echo "" >&2
       echo "node_modules is out of date for:" >&2
@@ -120,5 +136,9 @@ pkgs.writeShellApplication {
       echo "the previous install." >&2
       exit 1
     fi
+
+    # Not an install failure, but not an install either: `bench build` must not
+    # go on as if these apps had their node_modules.
+    [ ''${#_absent[@]} -eq 0 ] || exit 1
   '';
 }

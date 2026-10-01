@@ -354,13 +354,96 @@ in
           example = "es2017";
           description = ''
             The target frappe's esbuild pipeline compiles bundles for, exported as
-            `ESBUILD_TARGET` to both `bench build` in the dev shell and builtBench.
+            `ESBUILD_TARGET` to `bench build` in the dev shell, the `watch`
+            process (which, unlike stock `bench watch`, passes it on) and
+            builtBench.
             Frappe's own default is es2017, which cannot lower async generators or
             BigInt literals — both common in current npm packages (frappe-react-sdk,
             temporal-polyfill) — so the build fails outright on them. Frappe reads
             `esbuild_target` in common_site_config.json ahead of this, but that file
             is the operator's and never reaches the Nix build.
           '';
+        };
+
+        watch = {
+          apps = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            example = [
+              "myapp"
+              "my_theme"
+            ];
+            description = ''
+              The apps whose bundles the `watch` process rebuilds as you edit
+              them, or null to choose by publisher (`watch.excludePublishers`).
+
+              The watcher keeps every watched app's whole dependency graph in
+              memory for as long as it runs, so what it watches is most of what
+              it costs: on one bench, frappe's own bundles were 1.4 GB of a
+              2.5 GB watcher. An app left out is not unbuilt — it keeps the
+              assets of the last `bench build`, and `bench update` builds after
+              every pull — it just stops rebuilding on save. After editing one,
+              run `bench build --app <name>`.
+            '';
+          };
+
+          excludePublishers = mkOption {
+            type = types.listOf types.str;
+            default = [ "Frappe Technologies" ];
+            example = [
+              "Frappe Technologies"
+              "AgriTheory"
+            ];
+            description = ''
+              With `watch.apps` null, the watcher leaves out every app whose
+              hooks.py `app_publisher` contains one of these, ignoring case.
+
+              The default covers Frappe's own apps — frappe, erpnext, hrms,
+              payments and the rest, which sign themselves "Frappe Technologies"
+              or "Frappe Technologies Pvt. Ltd." — because a bench builds on
+              them rather than editing them: their JS and CSS change when a pin
+              moves, and `bench update` rebuilds then. Add the publishers of any
+              other apps you vendor and never touch; set `[ ]` to watch
+              everything, as `bench watch` does.
+            '';
+          };
+
+          rtl = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Rebuild right-to-left stylesheets on save as well.
+
+              Frappe's esbuild compiles every stylesheet a second time, through
+              rtlcss, which doubles the Sass work — the slowest part of a build.
+              On one bench, skipping it halved the watcher's startup (50 s to
+              23 s). Off, the RTL files keep the last `bench build`'s content;
+              turn it on if you develop in an RTL language. `bench build` always
+              builds both.
+            '';
+          };
+
+          nativeSass = mkOption {
+            type = types.bool;
+            default = lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.dart-sass;
+            defaultText = lib.literalMD "`true` where nixpkgs builds `dart-sass`";
+            description = ''
+              Compile stylesheets in the watcher with native Dart Sass
+              (lib/sass-embedded.nix) instead of the JavaScript build of it
+              frappe requires.
+
+              Same API, same importers, 3–6x faster: on Carbon-based
+              stylesheets, 9–10 s became 1.6 s. The compiler is newer than the
+              one frappe pins (nixpkgs' against 1.69), so the CSS is not
+              byte-identical to `bench build`'s: properties written after a
+              nested rule are grouped in source order, as native CSS nesting
+              does, and computed colors print as precise `rgb(%)` rather than
+              rounded hex — identical renderings, to within 1/255 per channel,
+              on the stylesheets compared. Newer deprecation notices (`@import`
+              chiefly) may print in the watch log. `bench build` keeps
+              frappe's compiler.
+            '';
+          };
         };
 
         mariadb = {
@@ -377,6 +460,100 @@ in
             example = [
               { name = "mysite_db"; }
             ];
+          };
+
+          durable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Flush InnoDB to disk at every commit, as production does.
+
+              Off by default, because the dev database pays for it constantly
+              and gets nothing back. Frappe commits often — every request, every
+              background job, every document `bench migrate` touches — and with
+              full durability each commit is an fsync of the redo log, on top of
+              every page being written twice through the doublewrite buffer. Off,
+              the log is flushed once a second (`innodb_flush_log_at_trx_commit
+              = 2`) and the doublewrite buffer is skipped. What that risks is
+              the last second of commits if the *machine* crashes — a crashed
+              mariadbd alone loses nothing at setting 2 — and, without
+              doublewrite, a torn page from a power cut mid-write. Both are
+              repaired by `bench restore`, which a dev database can always fall
+              back on.
+
+              Each setting is a default, so either can still be changed on its
+              own through `services.mysql.settings.mysqld`.
+            '';
+          };
+
+          noCow = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              On btrfs, keep the datadir off copy-on-write (`chattr +C`).
+
+              InnoDB rewrites pages in place; copy-on-write turns every such
+              write into a new extent — compressed first, on the compressed
+              mounts btrfs desktops usually have — and every fsync into a
+              filesystem transaction that other programs' saves wait behind.
+              See lib/db-nocow.nix.
+
+              The attribute only reaches files created after it is set, so
+              shell entry sets it on a datadir that is missing or still empty.
+              One that already holds a database is reported, not touched:
+              stop `devenv up` and run `frappe-nix-db-nocow migrate
+              "$MYSQL_HOME"` to copy it across once. A no-op on any other
+              filesystem.
+            '';
+          };
+        };
+
+        processScope = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Run `devenv up` in a systemd scope of its own, with a memory
+              ceiling.
+
+              Started from an editor's terminal, every process `devenv up`
+              starts — MariaDB, the runtime, the asset watchers — is otherwise
+              accounted to the editor. When that one cgroup runs short, the
+              kernel reclaims from the editor and the dev stack alike, and
+              systemd-oomd, which kills whole cgroups, takes the editor down
+              with every window it has open. In a scope of its own the dev stack
+              is reclaimed from, throttled and, if it comes to that, killed on
+              its own, and the editor is left alone.
+
+              Linux with a running systemd user manager only; anywhere else
+              `devenv up` runs exactly as before. Needs the process-compose
+              process manager — devenv's native manager has no hook to start
+              under.
+            '';
+          };
+
+          memoryHigh = mkOption {
+            type = types.str;
+            default = "40%";
+            example = "4G";
+            description = ''
+              The scope's `MemoryHigh=`: past this, the dev stack is slowed and
+              made to give memory back before anything else is asked to. A
+              percentage is of physical RAM. Not a kill threshold — see
+              `memoryMax` for that.
+            '';
+          };
+
+          memoryMax = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            example = "60%";
+            description = ''
+              The scope's `MemoryMax=`, or null for none. Past it the kernel's
+              OOM killer acts inside the scope, picking off one process (often
+              mariadbd, the largest) rather than the whole stack, so most
+              machines are better served by `memoryHigh` alone.
+            '';
           };
         };
 
@@ -1498,6 +1675,25 @@ in
           }/frappe_journald "$out/"
         '';
 
+        # `bench watch`, with the esbuild target `bench build` uses, only the
+        # apps someone edits, no right-to-left rebuilds and native Sass. See
+        # lib/bench-watch.py and the watch.* options.
+        benchWatch = ../lib/bench-watch.py;
+        benchWatchArgs = lib.escapeShellArgs (
+          (
+            if cfg.watch.apps != null then
+              [ "--apps=${lib.concatStringsSep "," cfg.watch.apps}" ]
+            else
+              map (p: "--exclude-publisher=${p}") cfg.watch.excludePublishers
+          )
+          ++ lib.optional (!cfg.watch.rtl) "--skip-rtl"
+          ++ lib.optional cfg.watch.nativeSass "--sass=${sassEmbedded}/${sassEmbedded.module}"
+          ++ lib.optional (
+            !cfg.watch.rtl || cfg.watch.nativeSass
+          ) "--preload=${../lib/js/esbuild-preload.js}"
+        );
+        sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
+
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python benchName;
@@ -1626,6 +1822,8 @@ in
             devguard = dg.enable;
           };
           nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
+          nodeVerifyBin = "${nodeVerifyTool}/bin/frappe-nix-node-verify";
+          pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
           nodeLocksBin = "${nodeLocksTool}/bin/frappe-nix-node-locks";
           inherit (cfg) nodeNestedFrontendExcludes;
           inherit appMode;
@@ -1645,6 +1843,14 @@ in
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
         nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
+
+        # Finds and repairs what yarn cannot see is broken in the cache and in
+        # node_modules, ahead of that install. See lib/node-verify.py.
+        nodeVerifyTool = import ../lib/node-verify.nix { inherit pkgs; };
+
+        # Keeps the MariaDB datadir off btrfs copy-on-write — see
+        # lib/db-nocow.nix and the mariadb.noCow option.
+        dbNocowTool = import ../lib/db-nocow.nix { inherit pkgs; };
 
         # Keeps the workspace root in step with this frappe-nix: what
         # `frappe-init` would add to pyproject.toml on a re-run, plus the
@@ -1943,90 +2149,10 @@ in
               }
             );
 
-            # A mariadbd orphaned by a previous `devenv up` — one that outlived
-            # its process-compose and wedged — owns $MYSQL_UNIX_PORT and, in TCP
-            # mode, the allocated port, so the next run can bind neither.
-            # devenv's allocator does not rescue this: on an eval-cache replay it
-            # hands the cached port straight back without probing it
-            # (PortAllocator::allocate_exact under allow_in_use, which
-            # reserve_running_ports sets whenever processes look live). So reap
-            # the corpse rather than hope to be allocated around it.
-            mariadbdReaper = pkgs.writeShellScript "mariadbd-reap" ''
-              set -uo pipefail
-              PATH=${
-                lib.makeBinPath [
-                  pkgs.procps
-                  pkgs.coreutils
-                ]
-              }:$PATH
-
-              datadir="''${MYSQL_HOME:-}"
-              sock="''${MYSQL_UNIX_PORT:-}"
-
-              if [ -n "$datadir" ]; then
-                # Selected by --datadir, never by process name alone: a
-                # system MariaDB and a neighbouring bench's server are both
-                # mariadbd, and neither is ours to kill. Same for the uid.
-                # $$ matches too — devenv invokes this wrapper *with* --datadir.
-                for pid in $(pgrep -u "$(id -u)" -f -- "--datadir=$datadir" 2>/dev/null || true); do
-                  [ "$pid" = "$$" ] && continue
-                  [ "$pid" = "$PPID" ] && continue
-                  # pgrep -f matches a command line, so on its own it would also
-                  # match anything that merely mentions the datadir. Require the
-                  # process to actually be a server before signalling it.
-                  comm="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
-                  case "''${comm##*/}" in
-                    mariadbd | mysqld) ;;
-                    *) continue ;;
-                  esac
-                  echo "frappe-nix: reaping orphaned mariadbd (pid $pid) on $datadir" >&2
-                  # SIGTERM is mariadbd's clean-shutdown signal and needs no
-                  # credentials, which `mariadb-admin shutdown` would — and that
-                  # would hang anyway against the wedged server this exists for.
-                  kill -TERM "$pid" 2>/dev/null || true
-                  for _ in $(seq 1 30); do
-                    kill -0 "$pid" 2>/dev/null || break
-                    sleep 1
-                  done
-                  if kill -0 "$pid" 2>/dev/null; then
-                    echo "frappe-nix: pid $pid ignored SIGTERM, sending SIGKILL" >&2
-                    kill -KILL "$pid" 2>/dev/null || true
-                  fi
-                done
-              fi
-
-              # Only after the reap: any live owner is now gone, and
-              # $DEVENV_RUNTIME is per-project so nothing else can hold this
-              # socket. mariadbd refuses to start while the file is still there.
-              if [ -n "$sock" ] && [ -S "$sock" ]; then
-                rm -f "$sock"
-              fi
-            '';
-
-            # devenv builds processes.mysql.exec around ${cfg.package}/bin/mariadbd
-            # and gives us a store path we cannot append to without
-            # re-implementing its first-run logic (mariadb-install-db, the
-            # timezone import), so the hook goes on the binary itself. That also
-            # puts it on the one path process-compose re-runs on *restart* — the
-            # same reason socketio's `rm -f` lives in `exec` and not in a task.
-            #
-            # symlinkJoin rather than an override because devenv passes
-            # --basedir=${cfg.package} to mariadbd: share/ (charsets, errmsg.sys,
-            # the plugin dir) has to travel with bin/.
-            mariadbWrapped = pkgs.symlinkJoin {
-              # Keep the upstream name stem. devenv chooses the mariadb-* over
-              # the mysql-* client spellings with
-              # `getName cfg.package == getName pkgs.mariadb`, and a renamed join
-              # flips it to the Oracle names, none of which exist here.
-              name = "${lib.getName cfg.mariadb.package}-${lib.getVersion cfg.mariadb.package}";
-              paths = [ cfg.mariadb.package ];
-              postBuild = ''
-                rm -f "$out/bin/mariadbd"
-                ln -s ${pkgs.writeShellScriptBin "mariadbd" ''
-                  ${mariadbdReaper}
-                  exec ${cfg.mariadb.package}/bin/mariadbd "$@"
-                ''}/bin/mariadbd "$out/bin/mariadbd"
-              '';
+            # mariadbd behind the reaping wrapper — see lib/mariadbd-wrapper.nix.
+            mariadbWrapped = import ../lib/mariadbd-wrapper.nix {
+              inherit lib pkgs;
+              mariadb = cfg.mariadb.package;
             };
 
             # Keeps a client out of ~/.my.cnf and /etc/my.cnf, the way devenv's
@@ -2106,6 +2232,8 @@ in
                 backupFetch
                 pkgs.gnupg
               ]
+              # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
+              ++ lib.optional cfg.mariadb.noCow dbNocowTool
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -2226,11 +2354,13 @@ in
 
             enterShell = ''
               ${lib.optionalString (!appMode) ''
-                # Say which apps/* need a hand — a registered submodule with no
-                # checkout, a half-finished removal, a stray nested repo — and
-                # touch none of them. Shell entry runs on every `nix develop`
-                # and direnv reload; only you, or `bench update --pull`, move a
-                # submodule. See lib/apps-report.nix.
+                # First, before anything below works in apps/<x>: check out the
+                # app submodules a fresh clone has never had, then say which
+                # apps/* need a hand — one taken out since, a half-finished
+                # removal, a stray nested repo — and touch none of those. Shell
+                # entry runs on every `nix develop` and direnv reload; past a
+                # clone's first entry, only you, or `bench update --pull`, move
+                # a submodule. See lib/apps-report.nix.
                 ${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true
 
                 # sites/apps.txt and sites/apps.json are generated from the
@@ -2271,6 +2401,15 @@ in
               # devenv's mysql module uses $DEVENV_STATE/mysql.)
               mkdir -p "$FRAPPE_BENCH_ROOT/logs" "$FRAPPE_BENCH_ROOT/config/pids"
 
+              ${lib.optionalString cfg.mariadb.noCow ''
+                # Before anything writes to the datadir: the btrfs NOCOW
+                # attribute only reaches files created after it is set. The
+                # mariadbd wrapper writes its temp files to mysql-tmp. See
+                # lib/db-nocow.nix.
+                ${dbNocowTool}/bin/frappe-nix-db-nocow prepare \
+                  "''${MYSQL_HOME:-$DEVENV_STATE/mysql}" "$DEVENV_STATE/mysql-tmp" || true
+              ''}
+
               # Symlink the Nix-built Python env to ./env where bench expects it.
               #
               # A classic `bench init` bench has a real env/ directory (its own
@@ -2305,7 +2444,14 @@ in
               # interesting churn is. A failure here is a warning, not a dead
               # shell: it is `bench build` that needs node_modules, and it
               # re-runs this and refuses to build against a stale one.
+              #
+              # Verified first: yarn calls a cache or node_modules that an install
+              # cut short up-to-date, for as long as the lockfile stands, so the
+              # install would skip right over it. What this finds damaged it
+              # deletes, and the install puts back. Skipped, in well under a
+              # second, while nothing has been installed since the last clean scan.
               ${lib.optionalString (benchInfra.appsWithNode != [ ]) ''
+                ${nodeVerifyTool}/bin/frappe-nix-node-verify "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
                 ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
               ''}
 
@@ -2348,6 +2494,12 @@ in
                   innodb-log-file-size = "64M";
                   max-connections = 200;
                   innodb-read-only-compressed = "OFF";
+                }
+                # Defaults, so a bench can still set either one on its own. See
+                # the mariadb.durable option for what this trades.
+                // lib.optionalAttrs (!cfg.mariadb.durable) {
+                  innodb-flush-log-at-trx-commit = lib.mkDefault 2;
+                  innodb-doublewrite = lib.mkDefault 0;
                 }
                 // (
                   # Frappe reaches the database over $DEVENV_RUNTIME/mysql.sock
@@ -2516,6 +2668,37 @@ in
                 }
               '';
             };
+
+            # The top of the `devenv up` script: re-run it inside a systemd scope
+            # of its own. See the processScope option for why.
+            #
+            # systemd-run from PATH, not pkgs.systemd: it has to talk to the user
+            # manager that is actually running. --scope keeps the terminal, the
+            # environment and the foreground process group, and execs the command
+            # itself, so Ctrl-C reaches process-compose exactly as before.
+            # FRAPPE_NIX_SCOPED stops the re-run from scoping itself again. The
+            # show-environment probe makes a machine with no user manager (a bare
+            # SSH login, a container) run unscoped instead of failing to start.
+            process.manager.before =
+              let
+                ps = cfg.processScope;
+                unitName = lib.concatMapStrings (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "-") (
+                  lib.stringToCharacters cfg.benchName
+                );
+              in
+              lib.mkIf (ps.enable && config.process.manager.implementation != "native") ''
+                if [ -z "''${FRAPPE_NIX_SCOPED:-}" ] \
+                  && command -v systemd-run >/dev/null 2>&1 \
+                  && systemctl --user show-environment >/dev/null 2>&1; then
+                  export FRAPPE_NIX_SCOPED=1
+                  exec systemd-run --user --scope --quiet --collect \
+                    --unit="frappe-nix-${unitName}-$$" \
+                    --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.benchName})"} \
+                    -p MemoryHigh=${lib.escapeShellArg ps.memoryHigh} \
+                    ${lib.optionalString (ps.memoryMax != null) "-p MemoryMax=${lib.escapeShellArg ps.memoryMax}"} \
+                    -- "$0" "$@"
+                fi
+              '';
 
             # Ordering uses devenv's own `after`, not the raw process-compose
             # `depends_on` this replaces: `after` is honoured by whichever manager
@@ -2704,15 +2887,14 @@ in
                 };
 
                 watch = {
-                  # bench resolves its bench by walking *up* from cwd
-                  # (bench/cli.py's change_working_directory → find_parent_bench),
-                  # so a process started anywhere else either finds nothing and
-                  # silently stops dispatching frappe commands, or — if this repo
-                  # happens to sit inside another bench's apps/ — finds that one
-                  # and runs against its database.
-                  cwd = benchPath;
+                  # sites/ of *this* bench, where bench itself would run
+                  # `frappe watch` from: frappe.init("") resolves the sites from
+                  # the working directory. Anywhere else it either finds nothing
+                  # or - if this repo sits inside another bench's apps/ - that
+                  # bench's sites. Not `bench watch` itself: see benchWatch.
+                  cwd = "${benchPath}/sites";
                   exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/bench watch
+                    exec ${pythonEnvs.devPythonEnv}/bin/python ${benchWatch} ${benchWatchArgs}
                   '';
                   # After the config task as well as web: apps/wiki's frontend
                   # imports sites/common_site_config.json, so the file is a vite

@@ -20,6 +20,10 @@
   # consumer that instantiates this file on its own; the dev shell passes the
   # store path.
   nodeModulesBin ? "frappe-nix-node-modules",
+  # Absolute path to lib/node-verify.nix's tool, same convention.
+  nodeVerifyBin ? "frappe-nix-node-verify",
+  # The interpreter of the environment the apps are installed in.
+  pythonBin ? "python3",
   # Absolute path to lib/node-locks.nix's tool, same convention.
   nodeLocksBin ? "frappe-nix-node-locks",
   # perSystem.frappe-nix.nodeNestedFrontendExcludes: the nested frontends the
@@ -91,13 +95,18 @@ let
   # of every build — which is the point: `bench update` pulls the app commit that
   # adds a dependency and then builds in the same breath, and only this stands
   # between those two steps. Expects cwd at the bench root.
+  #
+  # Repairing first: a damaged cache or node_modules passes for installed (see
+  # lib/node-verify.py), so the install below would skip right over it.
   refreshNodeModules = lib.optionalString (appsWithNode != [ ]) ''
+    ${nodeVerifyBin} . ${lib.escapeShellArgs appsWithNode} || true
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode}
   '';
 
   # The same, downgraded to a warning — for the paths where node_modules is not
   # what the command is about and a yarn failure should not abort it.
   refreshNodeModulesSoft = lib.optionalString (appsWithNode != [ ]) ''
+    ${nodeVerifyBin} . ${lib.escapeShellArgs appsWithNode} || true
     ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || true
   '';
 
@@ -311,6 +320,12 @@ secretScripts
       new-app)     shift; exec bench-new-app "$@" ;;
       remove-app)  shift; exec bench-remove-app "$@" ;;
       restore)     shift; exec bench-restore "$@" ;;
+      setup)
+        # Only `setup requirements` is ours; the rest of `bench setup` (nginx,
+        # supervisor, production, …) configures a conventional bench and is left
+        # to upstream.
+        if [ "''${2:-}" = requirements ]; then shift 2; exec bench-setup-requirements "$@"; fi
+        exec ${benchBin} "$@" ;;
       migrate)     shift; exec bench-migrate "$@" ;;
       console)     shift; exec bench-console "$@" ;;
       clear-cache) shift; exec bench-clear-cache "$@" ;;
@@ -321,6 +336,72 @@ secretScripts
         exec ${benchBin} new-site --db-socket "$FRAPPE_DB_SOCKET" --db-root-username root "$@" ;;
       *)           exec ${benchBin} "$@" ;;
     esac
+  '';
+
+  # `bench setup requirements`, for a bench whose Python comes from uv.lock by
+  # way of Nix and whose node_modules are installed by frappe-nix — not the
+  # conventional bench's `pip install -e` and `yarn install` of every app, which
+  # here would either fight the read-only environment or skip the checks that
+  # matter. See lib/node-verify.py and lib/requirements-check.py.
+  bench-setup-requirements.exec = ''
+    set -uo pipefail
+    export _FRAPPE_BENCH_RAW=1
+    cd "$FRAPPE_BENCH_ROOT" || exit 1
+
+    DO_NODE=true
+    DO_PYTHON=true
+    CHECK=false
+    for arg in "$@"; do
+      case "$arg" in
+        --node)   DO_PYTHON=false ;;
+        --python) DO_NODE=false ;;
+        --check)  CHECK=true ;;
+        # Upstream's flag for the dev-only requirements; the workspace's are
+        # already part of the environment.
+        --dev)    ;;
+        -h | --help)
+          cat <<'HELP'
+Usage: bench setup requirements [--node | --python] [--check]
+
+Verifies and repairs what the apps need installed, for a frappe-nix bench:
+
+  node     the yarn cache and every app's node_modules (nested frontends
+           included) for truncated native binaries, empty or partial packages
+           and cache records that contradict their package; deletes what is
+           damaged, then installs what is missing or out of date. Also lists
+           lockfiles that differ from their commit.
+  python   every requirement the apps declare is in uv.lock, and every app in
+           sites/apps.txt imports. The environment is built by Nix from
+           uv.lock, so this reports — `uv lock`, then re-enter the shell.
+
+  --check  report only: change nothing, exit 1 if anything is wrong.
+HELP
+          exit 0
+          ;;
+        *) echo "bench setup requirements: unknown option '$arg' (see --help)" >&2; exit 2 ;;
+      esac
+    done
+
+    RC=0
+    ${lib.optionalString (appsWithNode != [ ]) ''
+      if $DO_NODE; then
+        echo "── node ──"
+        VERIFY=(--full --lockfiles)
+        $CHECK && VERIFY+=(--check)
+        ${nodeVerifyBin} "''${VERIFY[@]}" . ${lib.escapeShellArgs appsWithNode} || RC=1
+        if ! $CHECK; then
+          ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || RC=1
+        fi
+        [ "$RC" -eq 0 ] && echo "  ✓ node: ${toString (builtins.length appsWithNode)} app(s) verified"
+      fi
+    ''}
+    ${lib.optionalString (!appMode) ''
+      if $DO_PYTHON; then
+        echo "── python ──"
+        ${pythonBin} ${./requirements-check.py} . || RC=1
+      fi
+    ''}
+    exit "$RC"
   '';
 
   bench-console.exec = ''
@@ -488,12 +569,14 @@ secretScripts
                 continue
                 ;;
               submodule-uninitialized)
-                # Shell entry never checks a submodule out (lib/apps-report.nix);
-                # a pull is where one gets its checkout — a fresh clone's, or a
-                # deinitialized one's — and then moves with the rest. Not
-                # --recursive, as ever: Frappe apps ship nested submodules with
-                # broken refs. Without a gitlink there is no commit to check out:
-                # .gitmodules outlived a removal, which remove-app finishes.
+                # Shell entry checks out only what a fresh clone has never had
+                # (lib/apps-report.nix); a pull is where any other gets its
+                # checkout — a deinitialized one's, say, or a fresh clone's
+                # pulled before the shell was ever entered — and then moves with
+                # the rest. Not --recursive, as ever: Frappe apps ship nested
+                # submodules with broken refs. Without a gitlink there is no
+                # commit to check out: .gitmodules outlived a removal, which
+                # remove-app finishes.
                 if ! git ls-files -s -- "apps/$app" \
                   | awk -v p="apps/$app" '$1 == "160000" && $4 == p { f = 1 } END { exit !f }'; then
                   echo "  ⚠  $app: .gitmodules registers it, but the bench records no commit for it — skipping."
@@ -539,7 +622,16 @@ secretScripts
               # a full clone it cut the history down to that tip as a side effect.
               # A plain fetch on a shallow clone stops at what the clone already
               # has, so it costs only the new commits and stays shallow.
-              git fetch "$remote" "$branch" || {
+              #
+              # A partial clone (lib/apps-report.nix makes them) keeps its
+              # paired branch with the folders of every commit, and fetches
+              # anything else as commits only — its configured filter. The
+              # branch this pulls is the paired one, so ask for its folders.
+              _filter=()
+              if [ "$(git config --get "remote.$remote.promisor" 2>/dev/null)" = true ]; then
+                _filter=(--filter=blob:none)
+              fi
+              git fetch "''${_filter[@]}" "$remote" "$branch" || {
                 echo "  ✗ $app: could not fetch '$branch' from $remote" >&2
                 echo "     .gitmodules says apps/$app is $url @ $branch; fix either the entry" >&2
                 echo "     (git config -f .gitmodules submodule.apps/$app.branch <branch>) or the remote." >&2
@@ -1062,6 +1154,18 @@ secretScripts
       exit 0
     fi
     [ -f sites/apps.txt ] || exit 0
+
+    # One at a time. On `devenv up` every process that waits on this task —
+    # runtime, watch, … — runs it from its own `devenv-tasks` wrapper, so
+    # several copies start in the same second, each sees the same missing apps
+    # and each installs them: concurrent `install-app`s fighting over the
+    # site's install_app lock, and their failures land in the Error Log. Held
+    # from before the installed-apps query, so a copy that waited finds the
+    # first one's work done and has nothing left to install. The lock is the
+    # kernel's, not the file's: it goes when the holder does, however it dies.
+    mkdir -p "sites/$SITE/locks"
+    exec 9>"sites/$SITE/locks/reconcile-apps.lock"
+    ${pkgs.util-linux}/bin/flock 9
 
     installed="$(${benchBin} --site "$SITE" list-apps --format json 2>/dev/null \
                  | ${pkgs.jq}/bin/jq -r --arg s "$SITE" '.[$s][]? // empty' 2>/dev/null || true)"

@@ -40,13 +40,21 @@ if [ "$1" = "--site" ]; then
   site="$2"
   case "$3" in
     list-apps)
-      cat "${INSTALLED_APPS_JSON:-/dev/null}"
+      if [ -n "${STATEFUL_APPS:-}" ]; then
+        # What a real site does: what was installed stays installed.
+        printf '{"%s":[%s]}' "$site" \
+          "$(printf '"frappe"'; while read -r a; do printf ',"%s"' "$a"; done <"$STATEFUL_APPS")"
+      else
+        cat "${INSTALLED_APPS_JSON:-/dev/null}"
+      fi
       exit 0
       ;;
     install-app)
       app="$4"
       printf '%s\n' "$app" >>"$INSTALL_LOG"
       [ "$app" = "${FAIL_APP:-}" ] && exit 1
+      # A real install takes seconds; this is what lets a second copy get in.
+      if [ -n "${STATEFUL_APPS:-}" ]; then sleep 0.3; printf '%s\n' "$app" >>"$STATEFUL_APPS"; fi
       exit 0
       ;;
   esac
@@ -133,6 +141,22 @@ if [ "$RC" -eq 0 ] && installed erpnext && installed hrms && installed mynewapp;
   ok "a positional site argument is honoured over \$FRAPPE_SITE"
 else
   no "a positional site argument works" "rc=$RC out=$OUT installs=$(cat "$INSTALL_LOG" 2>/dev/null)"
+fi
+
+# ── 7. several copies at once (every devenv process that waits on the task
+#      runs its own): each app installed once, not once per copy ─────────
+: >"$INSTALL_LOG"
+export STATEFUL_APPS="$WORK/site-apps"
+: >"$STATEFUL_APPS"
+for i in 1 2 3 4; do
+  FRAPPE_SITE=mysite.local bash "$SCRIPT" >"$WORK/copy$i.out" 2>&1 &
+done
+wait
+unset STATEFUL_APPS
+if [ "$(install_count)" -eq 3 ] && [ "$(sort -u "$INSTALL_LOG" | wc -l)" -eq 3 ]; then
+  ok "four copies at once install each missing app once"
+else
+  no "concurrent copies install each app once" "installs=$(tr '\n' ' ' <"$INSTALL_LOG")"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

@@ -296,6 +296,36 @@ check "and names the app, branch and remote" \
 check "and points at the .gitmodules entry" grep -q 'submodule.apps/frappe.branch' "$ROOT/pull5.log"
 git config -f .gitmodules submodule.apps/frappe.branch version-16
 
+echo "── a partial clone keeps its branch's folders ───────────────────"
+# The clone shell entry makes (lib/apps-report.nix): version-16 with every
+# commit's folders, anything else commits only (tree:0, its configured filter).
+# A pull fetches version-16, and must ask for the folders, or the new commits
+# arrive as commits alone.
+git -C "$ROOT/remotes/frappe.git" config uploadpack.allowFilter true
+git -C "$ROOT/remotes/frappe.git" config uploadpack.allowAnySHA1InWant true
+git submodule deinit -q -f -- apps/frappe
+rm -rf "$(git rev-parse --git-path modules/apps/frappe)"
+git clone -q --no-checkout --filter=blob:none --single-branch --branch version-16 \
+  "file://$ROOT/remotes/frappe.git" apps/frappe
+git submodule absorbgitdirs -- apps/frappe > /dev/null
+git submodule update -q --init --force -- apps/frappe
+git -C apps/frappe config remote.origin.partialclonefilter tree:0
+for m in "partial 1" "partial 2"; do
+  git -C "$ROOT/seed/frappe" commit -q --allow-empty -m "$m"
+  printf '%s\n' "$m" > "$ROOT/seed/frappe/PARTIAL"
+  git -C "$ROOT/seed/frappe" add -A
+  git -C "$ROOT/seed/frappe" commit -q -m "$m (file)"
+done
+git -C "$ROOT/seed/frappe" push -q origin version-16
+TIP4="$(git -C "$ROOT/seed/frappe" rev-parse HEAD)"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-partial.log" 2>&1 \
+  && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-partial.log"; }
+check_eq "the submodule reaches the tip" "$TIP4" "$(git -C apps/frappe rev-parse HEAD)"
+check "the commits before it came with their folders" \
+  env GIT_NO_LAZY_FETCH=1 git -C apps/frappe cat-file -e "$TIP4~2^{tree}"
+check_eq "and it is still a partial clone, not a shallow one" "true false" \
+  "$(git -C apps/frappe config remote.origin.promisor) $(git -C apps/frappe rev-parse --is-shallow-repository)"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails check(s) failed"

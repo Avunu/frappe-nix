@@ -1,0 +1,8 @@
+{
+  "name": "frappe-nix-sass-embedded",
+  "private": true,
+  "description": "The JavaScript half of native Sass for the dev shell's watch process. See lib/sass-embedded.nix.",
+  "dependencies": {
+    "sass-embedded": "1.104.0"
+  }
+}

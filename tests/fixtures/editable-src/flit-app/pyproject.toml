@@ -1,0 +1,10 @@
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "flit-app"
+description = "A Frappe-shaped app"
+readme = "README.md"
+license = { file = "license.txt" }
+dynamic = ["version"]
