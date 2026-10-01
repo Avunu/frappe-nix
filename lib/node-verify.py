@@ -189,12 +189,18 @@ def scan_cache(cache):
 
 def node_modules_roots(app_dir):
     """Every top-level node_modules under an app: its own and each nested
-    frontend's, found without looking inside one."""
+    frontend's, found without looking inside one.
+
+    Not a linked one: `bench build`, and shell entry, link <app>/public/
+    node_modules at the app's own, which os.walk lists among the directories
+    and would have scanned — and reported — twice."""
     roots = []
     for d, dirs, _ in os.walk(app_dir):
         dirs[:] = [x for x in dirs if x not in PRUNE]
         if "node_modules" in dirs:
-            roots.append(os.path.join(d, "node_modules"))
+            nm = os.path.join(d, "node_modules")
+            if not os.path.islink(nm):
+                roots.append(nm)
             dirs.remove("node_modules")
     return roots
 

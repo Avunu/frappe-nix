@@ -1429,6 +1429,50 @@ in
             ln -s "$DEVENV_ROOT" "$_bench/apps/${cfg.app.name}"
           fi
 
+          # Each app's nested public link: apps/<app>/<app>/public/node_modules
+          # -> ../../node_modules. `bench build` is what writes it in a vanilla
+          # bench — the package build counts on the same link (lib/bench.nix) —
+          # and two things reach the installed packages only through it:
+          #
+          # - Build-time CSS imports. @frappe/esbuild-plugin-postcss2 reads a
+          #   path like frappe/public/node_modules/highlight.js/styles/
+          #   tomorrow.css cwd-relative to apps/frappe — and not only for frappe's
+          #   own bundles: another app's stylesheet can import that same path
+          #   (carbon_frappe's desk.bundle.scss does), so the watcher needs
+          #   frappe's link even while watch.excludePublishers leaves frappe
+          #   itself unwatched.
+          # - Served files. sites/assets/<app> is <app>/public, so
+          #   /assets/<app>/node_modules/... is this link: frappe's code editor
+          #   loads ace-builds from it, and an app's hooks may include CSS or JS
+          #   from it.
+          #
+          # A dev loop of `watch` never builds, so the link never comes to exist
+          # on its own; and a pin bump rebuilds apps/ from the sources while
+          # carrying only the top-level apps/*/node_modules across, destroying a
+          # link a build did leave behind. So, like the dev-app heal above, on
+          # every entry rather than only on pin change — at the cost of a stat
+          # and a readlink per app while the link is in place. The app under
+          # development included: its link lands in the developer's own tree,
+          # where `bench build` puts it too, under the `node_modules` every
+          # `bench new-app` .gitignore lists.
+          #
+          # The apps with a yarn.lock, which are the apps frappe-nix-node-modules
+          # installs; the link may dangle on a first entry until it runs later in
+          # enterShell. A link that already reaches apps/<app>/node_modules is
+          # left as it is, so `bench build`'s absolute one is not rewritten to
+          # this relative one and back on every build. A real directory at the
+          # destination is left alone — `ln -sfn` does not replace one, it
+          # nests inside it.
+          for _app in ${lib.escapeShellArgs benchInfra.appsWithNode}; do
+            _public="$_bench/apps/$_app/$_app/public"
+            _link="$_public/node_modules"
+            [ -d "$_public" ] || continue
+            [ -L "$_link" ] || [ ! -e "$_link" ] || continue
+            [ "$(readlink "$_link" 2>/dev/null)" = ../../node_modules ] && continue
+            [ "$_link" -ef "$_bench/apps/$_app/node_modules" ] && continue
+            ln -sfn ../../node_modules "$_link"
+          done
+
           # sites/apps.txt and sites/apps.json, from the workspace's members —
           # the same call, on the same pyproject.toml, as the package build.
           # The provenance file carries what the flake knows (each pin's
