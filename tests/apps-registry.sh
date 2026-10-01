@@ -75,6 +75,10 @@ seed_app unregistered dynamic
 # A member that is not a Frappe app (no hooks.py) and one that is not on disk.
 mkdir -p "$BENCH/apps/notanapp"
 printf '[project]\nname = "notanapp"\n' > "$BENCH/apps/notanapp/pyproject.toml"
+# A directory named for the repository, not the app (frappe/flow_client ships `flow`).
+mkdir -p "$BENCH/apps/flow_client/flow"
+printf 'app_name = "flow"\n' > "$BENCH/apps/flow_client/flow/hooks.py"
+printf '[project]\nname = "flow"\n' > "$BENCH/apps/flow_client/pyproject.toml"
 # No version anywhere.
 seed_app noversion none
 # hooks.py that does not parse.
@@ -92,6 +96,7 @@ members = [
     "apps/print_designer",
     "apps/legacy",
     "apps/notanapp",
+    "apps/flow_client",
     "apps/missing",
     "apps/noversion",
     "apps/brokenhooks",
@@ -145,6 +150,9 @@ check_eq "apps.txt is the members, frappe first, declared order, trailing newlin
 check_not "a non-member app directory is not registered" grep -qx unregistered "$BENCH/sites/apps.txt"
 check_not "a stale apps.txt entry is dropped" grep -qx stale "$BENCH/sites/apps.txt"
 check "a member without hooks.py is skipped with a warning" grep -q 'apps/notanapp.*skipped' "$ROOT/run1.err"
+check "a directory not named for its app is skipped, naming the app" \
+  grep -q 'apps/flow_client holds flow/hooks.py: the Frappe app is called flow' "$ROOT/run1.err"
+check_not "…and is not registered under the repo's name" grep -qx flow_client "$BENCH/sites/apps.txt"
 check "a member missing on disk is skipped with a warning" grep -q 'apps/missing.*skipped' "$ROOT/run1.err"
 check "both writes are reported" grep -q 'sites/apps.json' "$ROOT/run1.log"
 

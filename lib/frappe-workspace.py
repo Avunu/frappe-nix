@@ -385,7 +385,20 @@ def registered_apps(members, apps_dir):
         if not app_dir.is_dir():
             warn(f"workspace member apps/{app} is not on disk — skipped")
         elif not (app_dir / app / "hooks.py").is_file():
-            warn(f"workspace member apps/{app} has no {app}/hooks.py — not a Frappe app, skipped")
+            # A directory named for the repository rather than the app
+            # (frappe/flow_client ships the app `flow`) holds a hooks.py, just
+            # not under its own name. Frappe would import `<dir>.hooks`, so the
+            # directory has to be renamed — say so, rather than "not a Frappe app".
+            packages = sorted(p.parent.name for p in app_dir.glob("*/hooks.py"))
+            if packages:
+                warn(
+                    f"workspace member apps/{app} holds {packages[0]}/hooks.py: the Frappe app is "
+                    f"called {packages[0]}, and its directory has to be too — skipped. "
+                    f"A submodule: bench-remove-app {app}, then bench-get-app <url> "
+                    f"(it names the directory after the app)"
+                )
+            else:
+                warn(f"workspace member apps/{app} has no {app}/hooks.py — not a Frappe app, skipped")
         else:
             apps.append(app)
     if "frappe" in apps:

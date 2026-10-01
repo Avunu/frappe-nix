@@ -13,6 +13,9 @@ SCRIPT="$1"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
+# Where the script's own mktemp lands, so a leftover is visible.
+mkdir "$ROOT/tmp"
+export TMPDIR="$ROOT/tmp"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
@@ -83,6 +86,31 @@ seed_remote telephony develop
 seed_remote hrms develop version-16
 HRMS_V16="$(git -C "$ROOT/seed/hrms" rev-parse version-16)"
 
+# Repositories whose packages are not named for them: frappe/flow_client ships
+# the app `flow`. Each package is `<name>/hooks.py`; none (a repo that is not a
+# Frappe app) is a bare `lib/` directory.
+seed_packages() { # <repo> <package…>
+  local repo=$1 seed="$ROOT/seed/$1" pkg
+  shift
+  mkdir -p "$seed"
+  for pkg in "$@"; do
+    mkdir -p "$seed/$pkg"
+    printf '__version__ = "1.0.0"\n' > "$seed/$pkg/__init__.py"
+    [ "$pkg" = lib ] || printf 'app_name = "%s"\n' "$pkg" > "$seed/$pkg/hooks.py"
+  done
+  printf '[project]\nname = "%s"\ndynamic = ["version"]\n' "$1" > "$seed/pyproject.toml"
+  git -C "$seed" init -q -b develop
+  git -C "$seed" add -A
+  git -C "$seed" commit -q -m "init"
+  git init -q --bare "$ROOT/remotes/$repo.git"
+  git -C "$ROOT/remotes/$repo.git" symbolic-ref HEAD refs/heads/develop
+  git -C "$seed" push -q "$ROOT/remotes/$repo.git" develop
+}
+seed_packages widgets_client widgets
+seed_packages plainlib lib
+seed_packages multi multi multi_extra
+seed_packages twin_client alpha beta
+
 BENCH="$ROOT/bench"
 mkdir -p "$BENCH/apps" "$BENCH/sites"
 cd "$BENCH"
@@ -133,6 +161,44 @@ check_eq "hrms likewise" \
   "$(printf 'hrms\tsubmodule\tversion-16\tfile://%s/remotes/hrms.git' "$ROOT")" \
   "$("$WORKSPACE_TOOL" apps --apps-dir apps | grep '^hrms')"
 
+echo "── a repository named differently from its app ────────────────"
+# The directory is the app's name — the package holding hooks.py — not the
+# repo's, because frappe imports `<app>.hooks`. Worktree dirty as a real bench's
+# is: an unrelated uncommitted edit to .gitmodules.
+printf '# a note of mine\n' >> .gitmodules
+bash "$SCRIPT" "file://$ROOT/remotes/widgets_client.git" > "$ROOT/widgets.log" 2>&1 \
+  && ok "exits 0" || { no "exits 0"; cat "$ROOT/widgets.log"; }
+check "it lands in apps/widgets" test -f apps/widgets/widgets/hooks.py
+check_not "not in apps/widgets_client" test -e apps/widgets_client
+check "and says why" grep -q "widgets_client is the Frappe app 'widgets'" "$ROOT/widgets.log"
+check_eq "the submodule is named for its path" apps/widgets \
+  "$(git config -f .gitmodules --get 'submodule.apps/widgets.path')"
+check_eq "its URL is the repo's" "file://$ROOT/remotes/widgets_client.git" "$(gm widgets url)"
+check_eq "its branch is recorded" develop "$(gm widgets branch)"
+check_eq "it is a uv workspace member" True \
+  "$(toml_get pyproject.toml "'apps/widgets' in d['tool']['uv']['workspace']['members']")"
+check_eq "sites/apps.txt lists the app, not the repo" "telephony hrms widgets" "$(xargs < sites/apps.txt)"
+check "the next step names the app" grep -q 'install-app widgets$' "$ROOT/widgets.log"
+check "the unrelated .gitmodules edit survived" grep -q 'a note of mine' .gitmodules
+check_not "the same repo again" bash "$SCRIPT" "file://$ROOT/remotes/widgets_client.git"
+check "…is refused for the app's directory" \
+  bash -c "bash '$SCRIPT' 'file://$ROOT/remotes/widgets_client.git' 2>&1 | grep -q \"App 'widgets' already exists in apps/widgets\""
+
+echo "── when there is no app name to find ───────────────────────────"
+bash "$SCRIPT" "file://$ROOT/remotes/plainlib.git" > "$ROOT/plain.log" 2>&1 \
+  && ok "no hooks.py anywhere: exits 0" || { no "no hooks.py anywhere: exits 0"; cat "$ROOT/plain.log"; }
+check "…keeps the repo's name, with a warning" grep -q "does not look like a Frappe app; keeping the name 'plainlib'" "$ROOT/plain.log"
+check "…as apps/plainlib" test -d apps/plainlib
+bash "$SCRIPT" "file://$ROOT/remotes/multi.git" > "$ROOT/multi.log" 2>&1 \
+  && ok "two packages, one named for the repo: exits 0" || { no "two packages, one named for the repo: exits 0"; cat "$ROOT/multi.log"; }
+check "…takes the one that is" test -f apps/multi/multi/hooks.py
+check_not "…without a warning about its name" grep -qE 'several packages|has no <package>' "$ROOT/multi.log"
+bash "$SCRIPT" "file://$ROOT/remotes/twin_client.git" > "$ROOT/twin.log" 2>&1 \
+  && ok "two packages, neither named for it: exits 0" || { no "two packages, neither named for it: exits 0"; cat "$ROOT/twin.log"; }
+check "…keeps the repo's name, with a warning" grep -q "none is named for it; keeping the name 'twin_client'" "$ROOT/twin.log"
+check "…as apps/twin_client" test -d apps/twin_client
+check_eq "no throwaway clone is left behind" "" "$(ls -A "$ROOT/tmp")"
+
 echo "── refusals ────────────────────────────────────────────────────"
 check_not "an app that is already there" bash "$SCRIPT" "file://$ROOT/remotes/hrms.git"
 check_eq "…left as it was" version-16 "$(gm hrms branch)"
@@ -143,7 +209,7 @@ check_not "two apps at once" bash "$SCRIPT" a b
 check "--help exits 0" bash "$SCRIPT" --help
 check "…and shows --branch" bash -c "bash '$SCRIPT' --help | grep -q -- '--branch version-16'"
 check "nothing was added by any of those" \
-  bash -c "[ \"\$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | wc -l)\" = 2 ]"
+  bash -c "[ \"\$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | wc -l)\" = 6 ]"
 
 echo
 if [ "$fails" -gt 0 ]; then
