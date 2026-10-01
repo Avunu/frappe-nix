@@ -383,6 +383,9 @@
         // import ./tests/assets-reassert.nix { inherit pkgs; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
         // import ./tests/bench-update.nix { inherit pkgs; }
+        # `update-deps`: how it calls yarn in a bench (never writing a lock the
+        # app's repository owns) and in app mode.
+        // import ./tests/update-deps.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix { inherit pkgs; }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty

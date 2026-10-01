@@ -39,6 +39,10 @@ check_eq() { # <description> <expected> <actual>
 # YARN_CALLS  — one line per invocation, so "did it reinstall?" is a line count
 # YARN_FAIL   — make the install fail, as a broken lockfile would
 # YARN_REWRITE — a manifest path a postinstall rewrites during the install
+# YARN_REWRITE_LOCK / YARN_CREATE_LOCK / YARN_DELETE_LOCK — a lockfile path that
+#              a postinstall's non-frozen nested `yarn install` rewrites, writes
+#              where upstream ships none, or removes. Ahead of YARN_FAIL: a
+#              failed install can have touched a lock first.
 BIN="$ROOT/bin"
 mkdir -p "$BIN"
 # Not `#!/usr/bin/env bash`: this also runs as a Nix check, where the sandbox
@@ -46,6 +50,15 @@ mkdir -p "$BIN"
 printf '#!%s\n' "$(command -v bash)" > "$BIN/yarn"
 cat >> "$BIN/yarn" <<'STUB'
 echo "$PWD" >> "$YARN_CALLS"
+if [ -n "${YARN_REWRITE_LOCK:-}" ]; then
+  printf '# yarn lockfile v1 (rewritten by yarn %s)\n' "$RANDOM" > "$YARN_REWRITE_LOCK"
+fi
+if [ -n "${YARN_CREATE_LOCK:-}" ]; then
+  printf '# yarn lockfile v1 (written by yarn)\n' > "$YARN_CREATE_LOCK"
+fi
+if [ -n "${YARN_DELETE_LOCK:-}" ]; then
+  rm -f "$YARN_DELETE_LOCK"
+fi
 if [ "${YARN_FAIL:-}" = "1" ]; then
   echo "error Your lockfile needs to be updated" >&2
   exit 1
@@ -212,6 +225,91 @@ before=$(calls)
 "$TOOL" "$BENCH" alpha delta > /dev/null 2>&1 || true
 check_eq "an app that is checked out is still installed alongside" "$((before + 1))" "$(calls)"
 check_eq "…and the absent one still left empty" "0" "$(find "$BENCH/apps/delta" -mindepth 1 | wc -l | tr -d ' ')"
+
+echo "── an install leaves the lockfiles as it found them ─────────────"
+# The postinstall of most apps runs a non-frozen `yarn install` in each nested
+# frontend: it rewrites a tracked lock, or writes one where upstream ships none.
+# Those are the app's repository's files, and the app's next `git checkout`
+# refuses over a modified one — which is what stopped `bench update`.
+# Fresh apps, so the call counts above are not disturbed.
+ZETA="$BENCH/apps/zeta"
+mkdir -p "$ZETA/desk" "$ZETA/banking" "$ZETA/roster"
+echo '{"name":"zeta"}' > "$ZETA/package.json"
+echo '# root lock' > "$ZETA/yarn.lock"
+echo '{"name":"zeta-desk"}' > "$ZETA/desk/package.json"
+echo '# desk lock' > "$ZETA/desk/yarn.lock"
+echo '{"name":"zeta-banking"}' > "$ZETA/banking/package.json" # upstream ships no lock
+echo '{"name":"zeta-roster"}' > "$ZETA/roster/package.json"
+echo '# roster lock' > "$ZETA/roster/yarn.lock"
+# What a real app's checkout carries besides: an edited tracked file, an untracked
+# one. They are not the install's to touch.
+echo 'edited by hand' > "$ZETA/NOTES"
+echo 'scratch' > "$ZETA/scratch.txt"
+reinstall() { # <log> — as if package.json had moved
+  rm -f "$ZETA/node_modules/.frappe-nix-installed"
+  "$TOOL" "$BENCH" zeta > "$ROOT/$1.log" 2>&1
+}
+
+export YARN_REWRITE_LOCK="$ZETA/desk/yarn.lock"
+export YARN_CREATE_LOCK="$ZETA/banking/yarn.lock"
+export YARN_DELETE_LOCK="$ZETA/roster/yarn.lock"
+before=$(calls)
+reinstall lock1 && ok "the install succeeds" || { no "the install succeeds"; cat "$ROOT/lock1.log"; }
+check_eq "and yarn ran" "$((before + 1))" "$(calls)"
+check_eq "a lock it rewrote is put back" "# desk lock" "$(cat "$ZETA/desk/yarn.lock")"
+check_not "a lock it wrote where upstream ships none is removed" test -e "$ZETA/banking/yarn.lock"
+check_eq "a lock it deleted is restored" "# roster lock" "$(cat "$ZETA/roster/yarn.lock")"
+check_eq "the app's own lock, which it left alone, is untouched" "# root lock" "$(cat "$ZETA/yarn.lock")"
+check "each is reported" bash -c "grep -q 'desk/yarn.lock: rewritten' '$ROOT/lock1.log' \
+  && grep -q 'banking/yarn.lock: created' '$ROOT/lock1.log' \
+  && grep -q 'roster/yarn.lock: deleted' '$ROOT/lock1.log'"
+check_eq "an edited tracked file is left alone" "edited by hand" "$(cat "$ZETA/NOTES")"
+check_eq "and an untracked one" "scratch" "$(cat "$ZETA/scratch.txt")"
+check "node_modules was installed all the same" test -s "$ZETA/node_modules/.frappe-nix-installed"
+before=$(calls)
+"$TOOL" "$BENCH" zeta > /dev/null 2>&1
+check_eq "the sentinel records the restored locks, so the next run is a no-op" "$before" "$(calls)"
+
+echo "  · a lock that was already edited comes back edited"
+echo '# desk lock (edited by hand)' > "$ZETA/desk/yarn.lock"
+reinstall lock2 || { no "the install succeeds"; cat "$ROOT/lock2.log"; }
+check_eq "the edit survives an install that rewrote it" "# desk lock (edited by hand)" "$(cat "$ZETA/desk/yarn.lock")"
+echo '# desk lock' > "$ZETA/desk/yarn.lock"
+
+echo "  · an install that fails"
+export YARN_FAIL=1
+before=$(calls)
+check_not "the tool still reports failure" reinstall lock3
+check_eq "yarn was attempted" "$((before + 1))" "$(calls)"
+check_eq "a lock it rewrote before failing is put back" "# desk lock" "$(cat "$ZETA/desk/yarn.lock")"
+check_not "and one it wrote" test -e "$ZETA/banking/yarn.lock"
+check_eq "and one it deleted" "# roster lock" "$(cat "$ZETA/roster/yarn.lock")"
+unset YARN_FAIL
+
+echo "  · an install that changes no lock says nothing about locks"
+unset YARN_REWRITE_LOCK YARN_CREATE_LOCK YARN_DELETE_LOCK
+reinstall lock4 || { no "the install succeeds"; cat "$ROOT/lock4.log"; }
+check_not "no lock is reported" grep -qE 'put back|removed' "$ROOT/lock4.log"
+
+echo "  · the app is a symlink to its own repository (app mode)"
+THETA="$ROOT/theta-repo"
+mkdir -p "$THETA/desk" "$THETA/.frappe-nix/bench/apps/frappe"
+echo '{"name":"theta"}' > "$THETA/package.json"
+echo '# yarn lockfile v1' > "$THETA/yarn.lock"
+echo '{"name":"theta-ui"}' > "$THETA/desk/package.json"
+echo '# theta desk lock' > "$THETA/desk/yarn.lock"
+echo '# generated copy of frappe' > "$THETA/.frappe-nix/bench/apps/frappe/yarn.lock"
+ln -s "$THETA" "$BENCH/apps/theta"
+export YARN_REWRITE_LOCK="$THETA/desk/yarn.lock"
+"$TOOL" "$BENCH" theta > "$ROOT/lock5.log" 2>&1 || { no "the install succeeds"; cat "$ROOT/lock5.log"; }
+check_eq "the lock is put back through the symlink" "# theta desk lock" "$(cat "$THETA/desk/yarn.lock")"
+# The generated bench inside the repository is not the app's, and is not walked.
+rm -f "$THETA/node_modules/.frappe-nix-installed"
+export YARN_REWRITE_LOCK="$THETA/.frappe-nix/bench/apps/frappe/yarn.lock"
+"$TOOL" "$BENCH" theta > "$ROOT/lock6.log" 2>&1 || { no "the install succeeds"; cat "$ROOT/lock6.log"; }
+check "a lock inside the generated bench is not touched" \
+  grep -q 'rewritten by yarn' "$THETA/.frappe-nix/bench/apps/frappe/yarn.lock"
+unset YARN_REWRITE_LOCK
 
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
