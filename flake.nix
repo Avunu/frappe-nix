@@ -250,6 +250,19 @@
                 } 2>&1 | tee "$out"
               '';
 
+          # Native Sass for the watcher: the packaged sass-embedded finds
+          # nixpkgs' compiler and serves the legacy render() frappe's postcss
+          # plugin calls — JS importer and includedFiles included. Linux and
+          # Darwin alike, wherever nixpkgs builds dart-sass.
+          sass-embedded =
+            let
+              sassEmbedded = import ./lib/sass-embedded.nix { inherit pkgs; };
+            in
+            pkgs.runCommand "frappe-nix-sass-embedded-check" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+              export HOME="$PWD"
+              node ${./tests/sass-embedded.js} ${sassEmbedded}/${sassEmbedded.module} 2>&1 | tee "$out"
+            '';
+
           # What shell entry does about apps/: checks out a fresh clone's apps
           # once, and past that touches nothing — entry once checked out any
           # submodule it found without a checkout, re-cloning apps that had

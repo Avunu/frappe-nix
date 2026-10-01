@@ -26,6 +26,11 @@ for line (v15 and v16):
   loads. The --preload module turns that second build into a no-op; `bench
   build` still produces it.
 
+- Native Sass, with --sass. frappe compiles stylesheets with Dart Sass compiled
+  to JavaScript; --sass names a sass-embedded module (lib/sass-embedded.nix)
+  that the --preload module hands to frappe's require("sass") instead — the
+  same API on the native compiler, 3–6x faster on the stylesheets measured.
+
 Run from sites/, as bench runs every frappe command, for frappe.init("") to find
 the sites.
 """
@@ -82,6 +87,7 @@ def main(argv=None):
     parser.add_argument("--apps", help="comma-separated apps to watch, overriding --exclude-publisher")
     parser.add_argument("--exclude-publisher", action="append", default=[])
     parser.add_argument("--skip-rtl", action="store_true")
+    parser.add_argument("--sass", help="sass-embedded module directory to compile stylesheets with")
     parser.add_argument("--preload", help="module the build's node loads with --require")
     args = parser.parse_args(argv)
 
@@ -126,6 +132,8 @@ def main(argv=None):
         env["NODE_OPTIONS"] = f"{env.get('NODE_OPTIONS', '')} --require={args.preload}".strip()
     if args.skip_rtl:
         env["FRAPPE_NIX_SKIP_RTL"] = "1"
+    if args.sass:
+        env["FRAPPE_NIX_SASS"] = args.sass
 
     frappe.build.check_node_executable()
     popen(command, cwd=frappe.get_app_path("frappe", ".."), env=env)

@@ -80,6 +80,49 @@ check("without FRAPPE_NIX_SKIP_RTL nothing is skipped", [1, 3], [notAsked.rtlOut
 const elsewhere = run("scripts/other.js", true);
 check("another caller of esbuild is left alone", [1, 3], [elsewhere.rtlOutputs, elsewhere.reachedEsbuild]);
 
+// require("sass"): frappe's JS build of Sass, or the native one named by
+// FRAPPE_NIX_SASS. Both stand-ins echo which one ran and the options it got.
+const sassStub = (name) => `exports.info = ${JSON.stringify(name)};
+exports.render = (options, done) => done(null, { impl: ${JSON.stringify(name)}, options });
+exports.renderSync = (options) => ({ impl: ${JSON.stringify(name)}, options });
+`;
+write("node_modules/sass/index.js", sassStub("js"));
+write("native/sass-embedded/index.js", sassStub("native"));
+write(
+  "node_modules/@frappe/esbuild-plugin-postcss2/dist/index.js",
+  `const sass = require("sass");
+sass.render({ file: "x.scss", silenceDeprecations: ["import"] }, (err, res) => {
+  const sync = sass.renderSync({ file: "x.scss" });
+  console.log(JSON.stringify({
+    info: sass.info,
+    impl: res.impl,
+    silenced: res.options.silenceDeprecations,
+    syncImpl: sync.impl,
+    syncSilenced: sync.options.silenceDeprecations,
+  }));
+});
+`
+);
+
+const plugin = (sass) =>
+  JSON.parse(
+    execFileSync(process.execPath, ["--require", preload, "node_modules/@frappe/esbuild-plugin-postcss2/dist/index.js"], {
+      cwd: root,
+      env: { ...process.env, FRAPPE_NIX_SASS: sass },
+      encoding: "utf8",
+    })
+  );
+
+const native = plugin(path.join(root, "native/sass-embedded"));
+check("with FRAPPE_NIX_SASS, require(\"sass\") gets the native module", ["native", "native", "native"], [native.info, native.impl, native.syncImpl]);
+check(
+  "render() and renderSync() have the legacy-API notice silenced, keeping the caller's own",
+  [["import", "legacy-js-api"], ["legacy-js-api"]],
+  [native.silenced, native.syncSilenced]
+);
+const js = plugin("");
+check("without it, frappe's own sass is untouched", ["js", "js", ["import"]], [js.info, js.impl, js.silenced]);
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log("");
 if (fails) {

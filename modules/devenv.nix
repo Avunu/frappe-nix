@@ -422,6 +422,28 @@ in
               builds both.
             '';
           };
+
+          nativeSass = mkOption {
+            type = types.bool;
+            default = lib.meta.availableOn pkgs.stdenv.hostPlatform pkgs.dart-sass;
+            defaultText = lib.literalMD "`true` where nixpkgs builds `dart-sass`";
+            description = ''
+              Compile stylesheets in the watcher with native Dart Sass
+              (lib/sass-embedded.nix) instead of the JavaScript build of it
+              frappe requires.
+
+              Same API, same importers, 3–6x faster: on Carbon-based
+              stylesheets, 9–10 s became 1.6 s. The compiler is newer than the
+              one frappe pins (nixpkgs' against 1.69), so the CSS is not
+              byte-identical to `bench build`'s: properties written after a
+              nested rule are grouped in source order, as native CSS nesting
+              does, and computed colors print as precise `rgb(%)` rather than
+              rounded hex — identical renderings, to within 1/255 per channel,
+              on the stylesheets compared. Newer deprecation notices (`@import`
+              chiefly) may print in the watch log. `bench build` keeps
+              frappe's compiler.
+            '';
+          };
         };
 
         mariadb = {
@@ -1629,7 +1651,7 @@ in
         '';
 
         # `bench watch`, with the esbuild target `bench build` uses, only the
-        # apps someone edits, and no right-to-left rebuilds. See
+        # apps someone edits, no right-to-left rebuilds and native Sass. See
         # lib/bench-watch.py and the watch.* options.
         benchWatch = ../lib/bench-watch.py;
         benchWatchArgs = lib.escapeShellArgs (
@@ -1639,11 +1661,13 @@ in
             else
               map (p: "--exclude-publisher=${p}") cfg.watch.excludePublishers
           )
-          ++ lib.optionals (!cfg.watch.rtl) [
-            "--skip-rtl"
-            "--preload=${../lib/js/esbuild-preload.js}"
-          ]
+          ++ lib.optional (!cfg.watch.rtl) "--skip-rtl"
+          ++ lib.optional cfg.watch.nativeSass "--sass=${sassEmbedded}/${sassEmbedded.module}"
+          ++ lib.optional (
+            !cfg.watch.rtl || cfg.watch.nativeSass
+          ) "--preload=${../lib/js/esbuild-preload.js}"
         );
+        sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
 
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
