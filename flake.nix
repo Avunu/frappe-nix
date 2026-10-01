@@ -231,6 +231,25 @@
                   2>&1 | tee "$out"
               '';
 
+          # The dev shell's watch process: which apps the publisher rule
+          # leaves out (fixture hooks.py files, no frappe), and that its
+          # esbuild preload skips the right-to-left build only where asked
+          # (a stand-in esbuild with getter exports, like the real one).
+          bench-watch =
+            pkgs.runCommand "frappe-nix-bench-watch-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.python3
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                {
+                  python3 ${./tests/bench-watch.py} ${./lib/bench-watch.py}
+                  node ${./tests/esbuild-preload.js} ${./lib/js/esbuild-preload.js}
+                } 2>&1 | tee "$out"
+              '';
+
           # What shell entry does about apps/: checks out a fresh clone's apps
           # once, and past that touches nothing — entry once checked out any
           # submodule it found without a checkout, re-cloning apps that had

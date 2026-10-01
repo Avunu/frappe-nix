@@ -365,6 +365,65 @@ in
           '';
         };
 
+        watch = {
+          apps = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            example = [
+              "myapp"
+              "my_theme"
+            ];
+            description = ''
+              The apps whose bundles the `watch` process rebuilds as you edit
+              them, or null to choose by publisher (`watch.excludePublishers`).
+
+              The watcher keeps every watched app's whole dependency graph in
+              memory for as long as it runs, so what it watches is most of what
+              it costs: on one bench, frappe's own bundles were 1.4 GB of a
+              2.5 GB watcher. An app left out is not unbuilt — it keeps the
+              assets of the last `bench build`, and `bench update` builds after
+              every pull — it just stops rebuilding on save. After editing one,
+              run `bench build --app <name>`.
+            '';
+          };
+
+          excludePublishers = mkOption {
+            type = types.listOf types.str;
+            default = [ "Frappe Technologies" ];
+            example = [
+              "Frappe Technologies"
+              "AgriTheory"
+            ];
+            description = ''
+              With `watch.apps` null, the watcher leaves out every app whose
+              hooks.py `app_publisher` contains one of these, ignoring case.
+
+              The default covers Frappe's own apps — frappe, erpnext, hrms,
+              payments and the rest, which sign themselves "Frappe Technologies"
+              or "Frappe Technologies Pvt. Ltd." — because a bench builds on
+              them rather than editing them: their JS and CSS change when a pin
+              moves, and `bench update` rebuilds then. Add the publishers of any
+              other apps you vendor and never touch; set `[ ]` to watch
+              everything, as `bench watch` does.
+            '';
+          };
+
+          rtl = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Rebuild right-to-left stylesheets on save as well.
+
+              Frappe's esbuild compiles every stylesheet a second time, through
+              rtlcss, which doubles the Sass work — the slowest part of a build.
+              On one bench, skipping it halved the watcher's startup (50 s to
+              23 s). Off, the RTL files keep the last `bench build`'s content;
+              turn it on if you develop in an RTL language. `bench build` always
+              builds both.
+            '';
+          };
+        };
+
         mariadb = {
           package = mkOption {
             type = types.package;
@@ -1569,40 +1628,22 @@ in
           }/frappe_journald "$out/"
         '';
 
-        # `bench watch`, compiling for the same esbuild target `bench build`
-        # does. Frappe's frappe.build.watch() never passes one, so its
-        # esbuild.js falls back to es2017 whatever esbuild_target or
-        # ESBUILD_TARGET say, and es2017 can't lower async generators or
-        # BigInt literals (see the esbuildTarget option). The watcher's first
-        # compile then fails outright on bundles `bench build` handles fine,
-        # leaving sites/assets/assets.json naming files that no longer exist.
-        #
-        # This is frappe.build.watch() line for line (v15 and v16) plus the
-        # target, resolved the way `bench build` resolves it
-        # (frappe/commands/utils.py): common_site_config.json's esbuild_target
-        # first, then ESBUILD_TARGET. Run it from sites/, as bench runs every
-        # frappe command, for frappe.init("") to find the sites.
-        benchWatch = pkgs.writeText "frappe-nix-bench-watch.py" ''
-          import os
-
-          import frappe
-          import frappe.build
-          from frappe.commands import popen
-          from frappe.utils import cint
-
-          frappe.init("")
-          frappe.build.setup()
-
-          command = "yarn run watch"
-          if cint(os.environ.get("LIVE_RELOAD", frappe.conf.live_reload)):
-              command += " --live-reload"
-          target = frappe.conf.get("esbuild_target") or os.environ.get("ESBUILD_TARGET")
-          if target:
-              command += f" --esbuild-target {target}"
-
-          frappe.build.check_node_executable()
-          popen(command, cwd=frappe.get_app_path("frappe", ".."), env=frappe.build.get_node_env())
-        '';
+        # `bench watch`, with the esbuild target `bench build` uses, only the
+        # apps someone edits, and no right-to-left rebuilds. See
+        # lib/bench-watch.py and the watch.* options.
+        benchWatch = ../lib/bench-watch.py;
+        benchWatchArgs = lib.escapeShellArgs (
+          (
+            if cfg.watch.apps != null then
+              [ "--apps=${lib.concatStringsSep "," cfg.watch.apps}" ]
+            else
+              map (p: "--exclude-publisher=${p}") cfg.watch.excludePublishers
+          )
+          ++ lib.optionals (!cfg.watch.rtl) [
+            "--skip-rtl"
+            "--preload=${../lib/js/esbuild-preload.js}"
+          ]
+        );
 
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
@@ -2804,7 +2845,7 @@ in
                   # bench's sites. Not `bench watch` itself: see benchWatch.
                   cwd = "${benchPath}/sites";
                   exec = ''
-                    exec ${pythonEnvs.devPythonEnv}/bin/python ${benchWatch}
+                    exec ${pythonEnvs.devPythonEnv}/bin/python ${benchWatch} ${benchWatchArgs}
                   '';
                   # After the config task as well as web: apps/wiki's frontend
                   # imports sites/common_site_config.json, so the file is a vite
