@@ -213,6 +213,24 @@
                   2>&1 | tee "$out"
               '';
 
+          # The datadir's btrfs NOCOW attribute: set on a fresh one, reported on
+          # one already holding data, and the one-off copy that fixes that.
+          # Branches on the sandbox's own filesystem, so it checks the real
+          # attribute on a btrfs builder and the no-op path everywhere else.
+          db-nocow =
+            pkgs.runCommand "frappe-nix-db-nocow-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.e2fsprogs
+                  pkgs.procps
+                ];
+              }
+              ''
+                bash ${./tests/db-nocow.sh} \
+                  ${import ./lib/db-nocow.nix { inherit pkgs; }}/bin/frappe-nix-db-nocow \
+                  2>&1 | tee "$out"
+              '';
+
           # What shell entry does about apps/: checks out a fresh clone's apps
           # once, and past that touches nothing — entry once checked out any
           # submodule it found without a checkout, re-cloning apps that had
@@ -340,6 +358,8 @@
         // import ./tests/bench-remove-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
+        # What an editable workspace member is built from in the dev shell.
+        // import ./tests/editable-src.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
         // import ./tests/node-targets.nix { inherit pkgs; }
         # yarn.lock → offline mirror: the parser, the naming, what is fetched.

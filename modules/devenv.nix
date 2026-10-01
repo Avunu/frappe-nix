@@ -380,6 +380,100 @@ in
               { name = "mysite_db"; }
             ];
           };
+
+          durable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Flush InnoDB to disk at every commit, as production does.
+
+              Off by default, because the dev database pays for it constantly
+              and gets nothing back. Frappe commits often — every request, every
+              background job, every document `bench migrate` touches — and with
+              full durability each commit is an fsync of the redo log, on top of
+              every page being written twice through the doublewrite buffer. Off,
+              the log is flushed once a second (`innodb_flush_log_at_trx_commit
+              = 2`) and the doublewrite buffer is skipped. What that risks is
+              the last second of commits if the *machine* crashes — a crashed
+              mariadbd alone loses nothing at setting 2 — and, without
+              doublewrite, a torn page from a power cut mid-write. Both are
+              repaired by `bench restore`, which a dev database can always fall
+              back on.
+
+              Each setting is a default, so either can still be changed on its
+              own through `services.mysql.settings.mysqld`.
+            '';
+          };
+
+          noCow = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              On btrfs, keep the datadir off copy-on-write (`chattr +C`).
+
+              InnoDB rewrites pages in place; copy-on-write turns every such
+              write into a new extent — compressed first, on the compressed
+              mounts btrfs desktops usually have — and every fsync into a
+              filesystem transaction that other programs' saves wait behind.
+              See lib/db-nocow.nix.
+
+              The attribute only reaches files created after it is set, so
+              shell entry sets it on a datadir that is missing or still empty.
+              One that already holds a database is reported, not touched:
+              stop `devenv up` and run `frappe-nix-db-nocow migrate
+              "$MYSQL_HOME"` to copy it across once. A no-op on any other
+              filesystem.
+            '';
+          };
+        };
+
+        processScope = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Run `devenv up` in a systemd scope of its own, with a memory
+              ceiling.
+
+              Started from an editor's terminal, every process `devenv up`
+              starts — MariaDB, the runtime, the asset watchers — is otherwise
+              accounted to the editor. When that one cgroup runs short, the
+              kernel reclaims from the editor and the dev stack alike, and
+              systemd-oomd, which kills whole cgroups, takes the editor down
+              with every window it has open. In a scope of its own the dev stack
+              is reclaimed from, throttled and, if it comes to that, killed on
+              its own, and the editor is left alone.
+
+              Linux with a running systemd user manager only; anywhere else
+              `devenv up` runs exactly as before. Needs the process-compose
+              process manager — devenv's native manager has no hook to start
+              under.
+            '';
+          };
+
+          memoryHigh = mkOption {
+            type = types.str;
+            default = "40%";
+            example = "4G";
+            description = ''
+              The scope's `MemoryHigh=`: past this, the dev stack is slowed and
+              made to give memory back before anything else is asked to. A
+              percentage is of physical RAM. Not a kill threshold — see
+              `memoryMax` for that.
+            '';
+          };
+
+          memoryMax = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            example = "60%";
+            description = ''
+              The scope's `MemoryMax=`, or null for none. Past it the kernel's
+              OOM killer acts inside the scope, picking off one process (often
+              mariadbd, the largest) rather than the whole stack, so most
+              machines are better served by `memoryHigh` alone.
+            '';
+          };
         };
 
         appsReconcile = {
@@ -1664,6 +1758,10 @@ in
         # node_modules, ahead of that install. See lib/node-verify.py.
         nodeVerifyTool = import ../lib/node-verify.nix { inherit pkgs; };
 
+        # Keeps the MariaDB datadir off btrfs copy-on-write — see
+        # lib/db-nocow.nix and the mariadb.noCow option.
+        dbNocowTool = import ../lib/db-nocow.nix { inherit pkgs; };
+
         # Keeps the workspace root in step with this frappe-nix: what
         # `frappe-init` would add to pyproject.toml on a re-run, plus the
         # re-lock, done on shell entry instead. See lib/root-sync.nix.
@@ -2044,6 +2142,8 @@ in
                 backupFetch
                 pkgs.gnupg
               ]
+              # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
+              ++ lib.optional cfg.mariadb.noCow dbNocowTool
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -2211,6 +2311,15 @@ in
               # devenv's mysql module uses $DEVENV_STATE/mysql.)
               mkdir -p "$FRAPPE_BENCH_ROOT/logs" "$FRAPPE_BENCH_ROOT/config/pids"
 
+              ${lib.optionalString cfg.mariadb.noCow ''
+                # Before anything writes to the datadir: the btrfs NOCOW
+                # attribute only reaches files created after it is set. The
+                # mariadbd wrapper writes its temp files to mysql-tmp. See
+                # lib/db-nocow.nix.
+                ${dbNocowTool}/bin/frappe-nix-db-nocow prepare \
+                  "''${MYSQL_HOME:-$DEVENV_STATE/mysql}" "$DEVENV_STATE/mysql-tmp" || true
+              ''}
+
               # Symlink the Nix-built Python env to ./env where bench expects it.
               #
               # A classic `bench init` bench has a real env/ directory (its own
@@ -2295,6 +2404,12 @@ in
                   innodb-log-file-size = "64M";
                   max-connections = 200;
                   innodb-read-only-compressed = "OFF";
+                }
+                # Defaults, so a bench can still set either one on its own. See
+                # the mariadb.durable option for what this trades.
+                // lib.optionalAttrs (!cfg.mariadb.durable) {
+                  innodb-flush-log-at-trx-commit = lib.mkDefault 2;
+                  innodb-doublewrite = lib.mkDefault 0;
                 }
                 // (
                   # Frappe reaches the database over $DEVENV_RUNTIME/mysql.sock
@@ -2463,6 +2578,37 @@ in
                 }
               '';
             };
+
+            # The top of the `devenv up` script: re-run it inside a systemd scope
+            # of its own. See the processScope option for why.
+            #
+            # systemd-run from PATH, not pkgs.systemd: it has to talk to the user
+            # manager that is actually running. --scope keeps the terminal, the
+            # environment and the foreground process group, and execs the command
+            # itself, so Ctrl-C reaches process-compose exactly as before.
+            # FRAPPE_NIX_SCOPED stops the re-run from scoping itself again. The
+            # show-environment probe makes a machine with no user manager (a bare
+            # SSH login, a container) run unscoped instead of failing to start.
+            process.manager.before =
+              let
+                ps = cfg.processScope;
+                unitName = lib.concatMapStrings (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "-") (
+                  lib.stringToCharacters cfg.benchName
+                );
+              in
+              lib.mkIf (ps.enable && config.process.manager.implementation != "native") ''
+                if [ -z "''${FRAPPE_NIX_SCOPED:-}" ] \
+                  && command -v systemd-run >/dev/null 2>&1 \
+                  && systemctl --user show-environment >/dev/null 2>&1; then
+                  export FRAPPE_NIX_SCOPED=1
+                  exec systemd-run --user --scope --quiet --collect \
+                    --unit="frappe-nix-${unitName}-$$" \
+                    --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.benchName})"} \
+                    -p MemoryHigh=${lib.escapeShellArg ps.memoryHigh} \
+                    ${lib.optionalString (ps.memoryMax != null) "-p MemoryMax=${lib.escapeShellArg ps.memoryMax}"} \
+                    -- "$0" "$@"
+                fi
+              '';
 
             # Ordering uses devenv's own `after`, not the raw process-compose
             # `depends_on` this replaces: `after` is honoured by whichever manager

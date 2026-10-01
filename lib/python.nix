@@ -197,6 +197,27 @@ let
     )
   );
 
+  # The workspace members uv.lock installs editable, by distribution name.
+  editableMembers = map (p: p.name) (
+    lib.filter (p: p ? source && p.source ? editable) (
+      (builtins.fromTOML (builtins.readFile (workspaceRoot + "/uv.lock"))).package or [ ]
+    )
+  );
+
+  # An editable member's source, cut down to what its editable build reads, so
+  # an edit to an app's code stops rebuilding the virtualenv. See
+  # lib/editable-src.nix.
+  trimEditableSrc = import ./editable-src.nix { inherit lib; };
+
+  editableSrcOverlay =
+    _final: prev:
+    lib.genAttrs (lib.filter (name: prev ? ${name}) editableMembers) (
+      name:
+      prev.${name}.overrideAttrs (old: {
+        src = trimEditableSrc old.src;
+      })
+    );
+
   # Development: adds editable overlay so workspace packages resolve from source
   editablePythonSet = pythonSet.overrideScope (
     lib.composeManyExtensions [
@@ -208,6 +229,7 @@ let
         # secrets/*.age are tracked and `git add` has to run.
         root = "$FRAPPE_BENCH_ROOT";
       })
+      editableSrcOverlay
       (final: prev: {
         ${rootPkgName} = prev.${rootPkgName}.overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
