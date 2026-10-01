@@ -91,6 +91,17 @@ check "…and says what is reinstalled" says "reinstalling: alpha"
 check "sound packages are untouched" test -f "$AL/node_modules/left-pad/package.json" -a -f "$AL/node_modules/left-pad/native.node"
 check "a nested frontend that was sound keeps its marker" test -f "$AL/desk/node_modules/.yarn-integrity"
 
+echo "── <app>/public/node_modules linked at the app's own ────────────"
+build
+mkdir -p "$AL/alpha/public" "$AL/node_modules/sass"
+ln -s ../../node_modules "$AL/alpha/public/node_modules"
+run --check "$BENCH" alpha
+check "the damage is named once, at the app's own node_modules" test "$(grep -c 'no package.json' <<< "$OUT")" = 1
+check "…not through the link" not_says "alpha/public/node_modules"
+run --full "$BENCH" alpha
+check "the repair goes through" test ! -e "$AL/node_modules/sass"
+check "and leaves the link in place" test -L "$AL/alpha/public/node_modules"
+
 echo "── a package extracted without its package.json ─────────────────"
 build
 mkdir -p "$AL/node_modules/html5-qrcode/cjs"
