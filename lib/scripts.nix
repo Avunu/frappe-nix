@@ -1338,12 +1338,45 @@ HELP
         URL="https://github.com/frappe/$INPUT.git"
       fi
 
-      APP_NAME=$(basename "$URL" .git)
+      REPO_NAME=$(basename "$URL" .git)
+      if [ -d "apps/$REPO_NAME" ]; then
+        echo "Error: App '$REPO_NAME' already exists in apps/$REPO_NAME"
+        exit 1
+      fi
+
+      # The directory under apps/ is the Frappe app's name — the package holding
+      # hooks.py, which is what frappe imports (`<app>.hooks`) and what
+      # sites/apps.txt lists — and that is not always the repository's:
+      # frappe/flow_client ships the app `flow`. Stock `bench get-app` renames
+      # its clone to match; a submodule's path is fixed when it is added, so the
+      # name is read first, from a throwaway clone with no checkout and no file
+      # contents (the folder listing is all this needs).
+      probe="$(mktemp -d)"
+      trap 'rm -rf "$probe"' EXIT
+      probe_args=(--quiet --depth 1 --filter=blob:none --no-checkout)
+      if [ -n "$BRANCH" ]; then
+        probe_args+=(-b "$BRANCH")
+      fi
+      git clone "''${probe_args[@]}" "$URL" "$probe"
+      mapfile -t PACKAGES < <(git -C "$probe" ls-tree -r --name-only HEAD | sed -n 's|^\([^/]*\)/hooks\.py$|\1|p')
+      rm -rf "$probe"
+
+      APP_NAME="$REPO_NAME"
+      if [ "''${#PACKAGES[@]}" -eq 0 ]; then
+        echo "  ⚠  $REPO_NAME has no <package>/hooks.py — it does not look like a Frappe app; keeping the name '$REPO_NAME'" >&2
+      elif [ "''${#PACKAGES[@]}" -eq 1 ]; then
+        APP_NAME="''${PACKAGES[0]}"
+      elif ! printf '%s\n' "''${PACKAGES[@]}" | grep -qxF "$REPO_NAME"; then
+        echo "  ⚠  $REPO_NAME has several packages with a hooks.py (''${PACKAGES[*]}) and none is named for it; keeping the name '$REPO_NAME'" >&2
+      fi
       APP_DIR="apps/$APP_NAME"
 
       if [ -d "$APP_DIR" ]; then
         echo "Error: App '$APP_NAME' already exists in $APP_DIR"
         exit 1
+      fi
+      if [ "$APP_NAME" != "$REPO_NAME" ]; then
+        echo "  $REPO_NAME is the Frappe app '$APP_NAME' ($APP_NAME/hooks.py) — adding it as $APP_DIR"
       fi
 
       echo "Adding git submodule: $URL -> $APP_DIR''${BRANCH:+ ($BRANCH)}"
