@@ -3066,7 +3066,16 @@ in
 
                   [ -f "$config" ] || echo '{}' > "$config"
 
-                  tmp="$(mktemp)"
+                  # Stage beside the target, not in $TMPDIR. A temp file on
+                  # another filesystem (/tmp is usually tmpfs) makes `mv` fall
+                  # back to copy-then-create, which is not atomic and can fail
+                  # with "File exists" if the config is recreated in between
+                  # (seen while a stack was being torn down). In the same
+                  # directory the replace is a single rename(2): it cannot fail
+                  # on an existing file, and a reader sees the old config or the
+                  # new one, never a missing or half-written one.
+                  tmp="$(mktemp "$config.XXXXXX")"
+                  trap 'rm -f "$tmp"' EXIT
                   ${pkgs.jq}/bin/jq --argjson port "$port" '
                     .webserver_port = $port
                     | .socketio_port = $port
@@ -3086,12 +3095,11 @@ in
                   # after the first run this is a no-op and the committed file stays
                   # clean; a diff later means the allocator genuinely had to move.
                   if cmp -s "$tmp" "$config"; then
-                    rm -f "$tmp"
                     exit 0
                   fi
 
                   echo "frappe-nix: serving on http://127.0.0.1:$port (updating sites/common_site_config.json)"
-                  mv "$tmp" "$config"
+                  mv -f -- "$tmp" "$config"
 
                   # boot.py copies socketio_port into bootinfo and sessions.py
                   # caches the whole bootinfo in redis, which survives restarts in
