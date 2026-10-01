@@ -356,7 +356,7 @@ def main():
     if args.lockfiles:
         for app in args.apps:
             for f in drifted_lockfiles(os.path.join(bench, "apps", app)):
-                say(f"apps/{app}/{f} differs from its commit (a nested frontend's non-frozen install rewrites it); left as it is")
+                say(f"apps/{app}/{f} differs from its commit; left as it is")
 
     if not (n_cache or n_mod or n_stale):
         if stamp:
