@@ -242,7 +242,7 @@ app_dist_name() {
   printf '%s' "${n:-$1}"
 }
 
-# A bench directory named after its main app (bench_bjs / apps/bjs) is common,
+# A bench directory named after its main app (bench_acme / apps/acme) is common,
 # and uv refuses a workspace whose root shares a name with a member. Resolved
 # before the template is rendered, since [project].name is a template token.
 resolve_project_name() {
