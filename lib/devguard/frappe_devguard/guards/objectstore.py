@@ -41,7 +41,10 @@ script, not only `cloud_storage`:
 - in ``push`` mode, new objects may be written, but never over an existing
   key: the write is refused if ``HeadObject`` finds the key, and carries
   ``If-None-Match: *`` so the store itself refuses one that appears in the
-  meantime (or that a write-only credential could not ``HeadObject``);
+  meantime (or that a write-only credential could not ``HeadObject``). A store
+  without conditional writes (Backblaze B2 answers 501) sets
+  ``conditional_writes`` off: the header is left out, ``HeadObject`` is the
+  only check, and a key it cannot check is refused;
 - in ``local`` mode, nothing is written at all;
 - everything else — bucket policy, lifecycle rules (which can expire every
   object in a bucket), ACLs, tagging, retention, ``RenameObject`` — is refused
@@ -116,6 +119,15 @@ def install():
     on_import("frappe", _patch_get_site_config)
     on_import("botocore.client", _patch_client)
     on_import("botocore.signers", _patch_signers)
+
+
+def conditional_writes():
+    """Whether the store honours ``If-None-Match`` on writes.
+
+    Backblaze B2 does not: it answers any write carrying it with
+    501 Not Implemented, so ``push`` mode could never write there.
+    """
+    return settings().flag(NAME, "conditional_writes", True)
 
 
 def mode():
@@ -223,7 +235,15 @@ def _refuse_overwrite(original, client, operation, params):
         if _error_code(exc) in _ABSENT:
             return
         # Most often 403 for a write-only credential, which cannot tell
-        # "missing" from "forbidden". If-None-Match still stands behind this.
+        # "missing" from "forbidden". If-None-Match still stands behind this,
+        # unless the store has none, in which case nothing would.
+        if not conditional_writes():
+            block(
+                NAME,
+                f"{operation} {_where(params)}: could not check the key before writing "
+                f"({type(exc).__name__}: {exc}), and this store takes no If-None-Match "
+                "to refuse an overwrite itself",
+            )
         warn(
             NAME,
             f"could not check {_where(params)} before writing "
@@ -260,7 +280,7 @@ def _patch_client(module):
                     f"{operation_name} {_where(api_params)}: conditional overwrite refused",
                 )
             _refuse_overwrite(original, self, operation_name, api_params)
-            if operation_name in _CONDITIONAL:
+            if operation_name in _CONDITIONAL and conditional_writes():
                 api_params = {**api_params, "IfNoneMatch": "*"}
             return original(self, operation_name, api_params)
 
