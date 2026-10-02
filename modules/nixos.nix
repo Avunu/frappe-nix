@@ -170,8 +170,8 @@ let
   # nixos/lib/systemd-lib.nix's environment.PATH = makeBinPath config.path),
   # so a package only in environment.systemPackages is invisible to these
   # services no matter what. cfg.extraPath is the escape hatch for callers
-  # that need a CLI on these services' PATH (e.g. little_cocalico's
-  # caldera-print subprocess calls).
+  # that need a CLI on these services' PATH (e.g. a custom app's
+  # print-server subprocess calls).
   #
   # The four below are what frappe/utils/backups.py resolves with which() at
   # runtime, so they belong here rather than in each consumer's extraPath —

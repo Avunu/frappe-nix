@@ -75,14 +75,14 @@ in
               throw "frappe-nix: `benchName` is required — it fixes this bench's port range and its container image prefix.";
           defaultText = lib.literalMD "the normalized `app.name` in app mode; required otherwise";
           description = "Project identifier used for environment names and container prefixes.";
-          example = "pequea";
+          example = "mybench";
         };
 
         siteName = mkOption {
           type = types.str;
           default = "";
           description = "Default FRAPPE_SITE value. Empty string for multi-tenancy (user sets via .env).";
-          example = "pequea.avu.nu";
+          example = "erp.example.com";
         };
 
         workspaceRoot = mkOption {

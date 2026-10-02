@@ -16,7 +16,7 @@ let
 in
 rec {
   # A shell-variable-safe rendering of a site or secret name.
-  # ("erp.littlecocalico.com" -> "erp_littlecocalico_com")
+  # ("erp.example.com" -> "erp_example_com")
   slug = lib.replaceStrings [ "." "-" " " ] [ "_" "_" "_" ];
 
   # `recipients` is an attrset so every key has a name. Carry that name into the
