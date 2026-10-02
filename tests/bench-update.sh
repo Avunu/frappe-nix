@@ -296,6 +296,181 @@ check "and names the app, branch and remote" \
 check "and points at the .gitmodules entry" grep -q 'submodule.apps/frappe.branch' "$ROOT/pull5.log"
 git config -f .gitmodules submodule.apps/frappe.branch version-16
 
+echo "── a partial clone keeps its branch's folders ───────────────────"
+# The clone shell entry makes (lib/apps-report.nix): version-16 with every
+# commit's folders, anything else commits only (tree:0, its configured filter).
+# A pull fetches version-16, and must ask for the folders, or the new commits
+# arrive as commits alone.
+git -C "$ROOT/remotes/frappe.git" config uploadpack.allowFilter true
+git -C "$ROOT/remotes/frappe.git" config uploadpack.allowAnySHA1InWant true
+git submodule deinit -q -f -- apps/frappe
+rm -rf "$(git rev-parse --git-path modules/apps/frappe)"
+git clone -q --no-checkout --filter=blob:none --single-branch --branch version-16 \
+  "file://$ROOT/remotes/frappe.git" apps/frappe
+git submodule absorbgitdirs -- apps/frappe > /dev/null
+git submodule update -q --init --force -- apps/frappe
+git -C apps/frappe config remote.origin.partialclonefilter tree:0
+for m in "partial 1" "partial 2"; do
+  git -C "$ROOT/seed/frappe" commit -q --allow-empty -m "$m"
+  printf '%s\n' "$m" > "$ROOT/seed/frappe/PARTIAL"
+  git -C "$ROOT/seed/frappe" add -A
+  git -C "$ROOT/seed/frappe" commit -q -m "$m (file)"
+done
+git -C "$ROOT/seed/frappe" push -q origin version-16
+TIP4="$(git -C "$ROOT/seed/frappe" rev-parse HEAD)"
+FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/pull-partial.log" 2>&1 \
+  && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-partial.log"; }
+check_eq "the submodule reaches the tip" "$TIP4" "$(git -C apps/frappe rev-parse HEAD)"
+check "the commits before it came with their folders" \
+  env GIT_NO_LAZY_FETCH=1 git -C apps/frappe cat-file -e "$TIP4~2^{tree}"
+check_eq "and it is still a partial clone, not a shallow one" "true false" \
+  "$(git -C apps/frappe config remote.origin.promisor) $(git -C apps/frappe rev-parse --is-shallow-repository)"
+
+echo "── lockfile dirt in a submodule's tree never stops the pull ──────"
+# What a bench's apps really look like: a postinstall's non-frozen `yarn install`
+# rewrites a tracked lock (or writes an untracked one where upstream ships none),
+# the same checkout carries edits of its own, and the bench has unstaged edits
+# (.gitmodules, the workspace members). A fixture without them passes and real
+# use fails, so every scenario below has all three.
+SEED="$ROOT/seed/frappe"
+up() { # <message>: commit whatever the caller changed in the seed, push, print the tip
+  git -C "$SEED" add -A
+  git -C "$SEED" commit -q -m "$1"
+  git -C "$SEED" push -q origin version-16
+  git -C "$SEED" rev-parse HEAD
+}
+pull() { # <log>: one --pull of the bench; its status is the caller's
+  FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" --pull > "$ROOT/$1.log" 2>&1
+}
+# A second app that sorts after frappe — the one that proves a skipped app does
+# not end the run — and a dirty .gitmodules + pyproject.toml in the bench itself.
+seed_app "$ROOT/seed/zeta" zeta 1.0.0
+git -C "$ROOT/seed/zeta" init -q -b version-16
+git -C "$ROOT/seed/zeta" add -A
+git -C "$ROOT/seed/zeta" commit -q -m "zeta 1.0.0"
+git init -q --bare "$ROOT/remotes/zeta.git"
+git -C "$ROOT/remotes/zeta.git" symbolic-ref HEAD refs/heads/version-16
+git -C "$ROOT/seed/zeta" remote add origin "$ROOT/remotes/zeta.git"
+git -C "$ROOT/seed/zeta" push -q origin version-16
+git submodule add -q -b version-16 "file://$ROOT/remotes/zeta.git" apps/zeta
+sed -i 's|"apps/strayapp"\]|"apps/strayapp", "apps/zeta"]|' pyproject.toml
+git config -f .gitmodules submodule.apps/frappe.fetchRecurseSubmodules false
+# Upstream ships lockfiles: the root's, a nested frontend's, and a nested
+# frontend (banking) whose upstream has a package.json and no lock yet.
+mkdir -p "$SEED/desk" "$SEED/banking"
+printf '{"private":true}\n' > "$SEED/package.json"
+printf '# lock v1\n' > "$SEED/yarn.lock"
+printf '{"name":"desk"}\n' > "$SEED/desk/package.json"
+printf '# desk v1\n' > "$SEED/desk/yarn.lock"
+printf '{"name":"banking"}\n' > "$SEED/banking/package.json"
+up "ship lockfiles" > /dev/null
+pull pull-l0 && ok "baseline --pull exits 0" || { no "baseline --pull exits 0"; cat "$ROOT/pull-l0.log"; }
+check_eq "fixture: the lockfiles arrived tracked" "desk/yarn.lock yarn.lock" \
+  "$(git -C apps/frappe ls-files -- '*yarn.lock' | tr '\n' ' ' | sed 's/ $//')"
+ZETA_TIP="$(git -C apps/zeta rev-parse HEAD)"
+
+echo "  · a tracked yarn.lock that yarn rewrote and upstream also changes"
+printf '# pruned by yarn\n' > apps/frappe/yarn.lock
+printf 'local note\n' >> apps/frappe/NEW
+printf 'scratch\n' > apps/frappe/scratch.txt
+printf '{"private":true,"scripts":{"x":"y"}}\n' > "$SEED/package.json"
+printf '# lock v2\n' > "$SEED/yarn.lock"
+TIP6="$(up "bump the lock")"
+: > "$NODE_LOCKS_CALLS"
+pull pull-l1 && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-l1.log"; }
+check_eq "the app reached upstream's tip" "$TIP6" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "on its branch" "version-16" "$(git -C apps/frappe symbolic-ref --short HEAD)"
+check_eq "with upstream's lock, not the regenerated one" "# lock v2" "$(cat apps/frappe/yarn.lock)"
+check "and says what it discarded and why" grep -q 'discarding local changes to yarn.lock' "$ROOT/pull-l1.log"
+check_eq "the app's own unrelated edit came along" "local note" "$(tail -1 apps/frappe/NEW)"
+check "and its untracked file" test -f apps/frappe/scratch.txt
+check_eq "the steps after the loop ran" "1" "$(lock_calls)"
+check_eq "and the registry records the new commit" "$TIP6" "$(jq -r .frappe.resolution.commit_hash sites/apps.json)"
+check "no skip is reported" bash -c "! grep -q 'not updated' '$ROOT/pull-l1.log'"
+git -C apps/frappe checkout -q -- NEW
+rm apps/frappe/scratch.txt
+
+echo "  · a modified lock that upstream does not touch is left exactly as it is"
+printf '# desk pruned\n' > apps/frappe/desk/yarn.lock
+printf 'local note\n' >> apps/frappe/NEW
+printf '{"name":"desk","version":"2"}\n' > "$SEED/desk/package.json"   # the manifest moves, the lock does not
+TIP7="$(up "desk manifest")"
+pull pull-l2 && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-l2.log"; }
+check_eq "the app reached the tip" "$TIP7" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "the regenerated lock is still there" "# desk pruned" "$(cat apps/frappe/desk/yarn.lock)"
+check "and nothing was discarded" bash -c "! grep -q 'discarding' '$ROOT/pull-l2.log'"
+git -C apps/frappe checkout -q -- desk/yarn.lock NEW
+
+echo "  · an untracked lock where upstream adds one, on a detached HEAD"
+git -C apps/frappe checkout -q --detach
+printf '# banking, written by its postinstall\n' > apps/frappe/banking/yarn.lock
+printf 'local note\n' >> apps/frappe/NEW
+printf '# banking upstream\n' > "$SEED/banking/yarn.lock"
+TIP8="$(up "banking ships its lock")"
+pull pull-l3 && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-l3.log"; }
+check_eq "the app reached the tip" "$TIP8" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "on its branch again" "version-16" "$(git -C apps/frappe symbolic-ref --short HEAD)"
+check_eq "the lock is upstream's" "# banking upstream" "$(cat apps/frappe/banking/yarn.lock)"
+check "and tracked" git -C apps/frappe ls-files --error-unmatch banking/yarn.lock
+check "and says what it removed" grep -q 'discarding local banking/yarn.lock' "$ROOT/pull-l3.log"
+git -C apps/frappe checkout -q -- NEW
+
+echo "  · a lock beside a package.json that is edited too is not regenerated output"
+printf '{"private":true,"scripts":{"x":"y"},"dependencies":{"left-pad":"1"}}\n' > apps/frappe/package.json
+printf '# lock v2 + left-pad\n' > apps/frappe/yarn.lock
+printf '# lock v3\n' > "$SEED/yarn.lock"
+TIP9="$(up "lock v3")"
+pull pull-l4 && ok "--pull exits 0 (a skip is not a failure)" || { no "--pull exits 0 (a skip is not a failure)"; cat "$ROOT/pull-l4.log"; }
+check "it keeps both and says why" grep -q 'keeping yarn.lock: the package.json beside it has local edits too' "$ROOT/pull-l4.log"
+check "and the app is skipped, naming git's reason" grep -q 'frappe: git could not check out' "$ROOT/pull-l4.log"
+check_eq "the hand-edited lock is intact" "# lock v2 + left-pad" "$(cat apps/frappe/yarn.lock)"
+check_eq "the branch did not move" "$TIP8" "$(git -C apps/frappe rev-parse HEAD)"
+git -C apps/frappe checkout -q -- package.json yarn.lock
+
+echo "  · other dirt that upstream touches skips the app, not the run"
+printf 'mine\n' >> apps/frappe/frappe/hooks.py
+printf '# pruned again\n' > apps/frappe/desk/yarn.lock
+printf '# desk v2\n' > "$SEED/desk/yarn.lock"
+printf '# hooks, upstream\n' >> "$SEED/frappe/hooks.py"
+TIP10="$(up "hooks + desk lock")"
+printf '__version__ = "1.1.0"\n' > "$ROOT/seed/zeta/zeta/__init__.py"
+git -C "$ROOT/seed/zeta" commit -q -am "zeta 1.1.0"
+git -C "$ROOT/seed/zeta" push -q origin version-16
+ZETA_TIP2="$(git -C "$ROOT/seed/zeta" rev-parse HEAD)"
+: > "$NODE_LOCKS_CALLS"
+rc=0
+pull pull-l5 || rc=$?
+check_eq "--pull exits 0: a skipped app is reported, not a failure" "0" "$rc"
+check "git's own words are shown" grep -q 'frappe/hooks.py' "$ROOT/pull-l5.log"
+check "with what to do about it" grep -q 'git -C apps/frappe stash' "$ROOT/pull-l5.log"
+check_eq "the blocked app did not move" "$TIP8" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "and is on its branch, not half-checked-out" "version-16" "$(git -C apps/frappe symbolic-ref --short HEAD)"
+check_eq "its edit is intact" "mine" "$(tail -1 apps/frappe/frappe/hooks.py)"
+check_eq "the app after it was still pulled" "$ZETA_TIP2" "$(git -C apps/zeta rev-parse HEAD)"
+check_eq "the steps after the loop ran" "1" "$(lock_calls)"
+check_eq "the registry records what is true: zeta moved" "$ZETA_TIP2" "$(jq -r .zeta.resolution.commit_hash sites/apps.json)"
+check_eq "…and frappe did not" "$TIP8" "$(jq -r .frappe.resolution.commit_hash sites/apps.json)"
+check "the partial pull is named when the loop ends" grep -q 'not updated: frappe' "$ROOT/pull-l5.log"
+check "and again in place of the success line" grep -q 'bench-update complete, but' "$ROOT/pull-l5.log"
+check "the success line is not printed" bash -c "! grep -q '✅ bench-update complete' '$ROOT/pull-l5.log'"
+git -C apps/frappe checkout -q -- frappe/hooks.py
+pull pull-l6 && ok "once the edit is discarded, --pull exits 0" || { no "once the edit is discarded, --pull exits 0"; cat "$ROOT/pull-l6.log"; }
+check_eq "and the app catches up" "$TIP10" "$(git -C apps/frappe rev-parse HEAD)"
+check "with the success line" grep -q '✅ bench-update complete' "$ROOT/pull-l6.log"
+
+echo "  · a lock that was committed here is still a local commit"
+printf '# committed here\n' > apps/frappe/desk/yarn.lock
+git -C apps/frappe commit -q -am "commit the lock"
+MINE2="$(git -C apps/frappe rev-parse HEAD)"
+printf '# regenerated on top\n' > apps/frappe/yarn.lock       # a dirty lock upstream will also change
+printf '# lock v4\n' > "$SEED/yarn.lock"
+up "lock v4" > /dev/null
+pull pull-l7 && ok "--pull exits 0" || { no "--pull exits 0"; cat "$ROOT/pull-l7.log"; }
+check "the divergence is reported" grep -q 'HEAD is not an ancestor' "$ROOT/pull-l7.log"
+check_eq "the commit survives" "$MINE2" "$(git -C apps/frappe rev-parse HEAD)"
+check_eq "and the guard fires before anything is discarded" "# regenerated on top" "$(cat apps/frappe/yarn.lock)"
+check "the skip is in the summary" grep -q 'not updated: frappe' "$ROOT/pull-l7.log"
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails check(s) failed"

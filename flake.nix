@@ -187,6 +187,18 @@
             ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
           '';
 
+          # Frappe- and systemd-independent: stub frappe.utils.logger and
+          # bench.utils modules stand in, JOURNAL_STREAM is pointed at the test's
+          # own stderr, and the assertions are about the <N> prefix on every line
+          # and the bench.log that is never created. The runtime's copy of the
+          # formatter is rendered against the graft's, so the two cannot drift.
+          journald = pkgs.runCommand "frappe-journald-check" { } ''
+            cp -r ${./lib/journald} ./journald
+            chmod -R u+w ./journald
+            ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
+              ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
+          '';
+
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
@@ -201,9 +213,60 @@
                   2>&1 | tee "$out"
               '';
 
-          # What shell entry says about apps/ — and, mostly, that it touches
-          # nothing: entry once checked out any submodule it found without a
-          # checkout, re-cloning apps that had been removed.
+          # The datadir's btrfs NOCOW attribute: set on a fresh one, reported on
+          # one already holding data, and the one-off copy that fixes that.
+          # Branches on the sandbox's own filesystem, so it checks the real
+          # attribute on a btrfs builder and the no-op path everywhere else.
+          db-nocow =
+            pkgs.runCommand "frappe-nix-db-nocow-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.e2fsprogs
+                  pkgs.procps
+                ];
+              }
+              ''
+                bash ${./tests/db-nocow.sh} \
+                  ${import ./lib/db-nocow.nix { inherit pkgs; }}/bin/frappe-nix-db-nocow \
+                  2>&1 | tee "$out"
+              '';
+
+          # The dev shell's watch process: which apps the publisher rule
+          # leaves out (fixture hooks.py files, no frappe), and that its
+          # esbuild preload skips the right-to-left build only where asked
+          # (a stand-in esbuild with getter exports, like the real one).
+          bench-watch =
+            pkgs.runCommand "frappe-nix-bench-watch-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.python3
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                {
+                  python3 ${./tests/bench-watch.py} ${./lib/bench-watch.py}
+                  node ${./tests/esbuild-preload.js} ${./lib/js/esbuild-preload.js}
+                } 2>&1 | tee "$out"
+              '';
+
+          # Native Sass for the watcher: the packaged sass-embedded finds
+          # nixpkgs' compiler and serves the legacy render() frappe's postcss
+          # plugin calls — JS importer and includedFiles included. Linux and
+          # Darwin alike, wherever nixpkgs builds dart-sass.
+          sass-embedded =
+            let
+              sassEmbedded = import ./lib/sass-embedded.nix { inherit pkgs; };
+            in
+            pkgs.runCommand "frappe-nix-sass-embedded-check" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+              export HOME="$PWD"
+              node ${./tests/sass-embedded.js} ${sassEmbedded}/${sassEmbedded.module} 2>&1 | tee "$out"
+            '';
+
+          # What shell entry does about apps/: checks out a fresh clone's apps
+          # once, and past that touches nothing — entry once checked out any
+          # submodule it found without a checkout, re-cloning apps that had
+          # been removed.
           apps-report =
             pkgs.runCommand "frappe-nix-apps-report-check"
               {
@@ -302,6 +365,13 @@
         }
         # edit-secret / rekey-secrets against a real ragenix and real keys.
         // import ./tests/secrets-cli.nix { inherit pkgs; }
+        # Finding and repairing what yarn cannot see is broken, and the Python
+        # half of `bench setup requirements`.
+        // import ./tests/node-verify.nix { inherit pkgs; }
+        // import ./tests/setup-requirements.nix { inherit pkgs; }
+        # The real mariadbd, started through the dev shell's wrapper the way
+        # devenv starts it: argument order, and where its temp files go.
+        // import ./tests/mariadbd-wrapper.nix { inherit pkgs; }
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
@@ -313,6 +383,9 @@
         // import ./tests/assets-reassert.nix { inherit pkgs; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
         // import ./tests/bench-update.nix { inherit pkgs; }
+        # `update-deps`: how it calls yarn in a bench (never writing a lock the
+        # app's repository owns) and in app mode.
+        // import ./tests/update-deps.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix { inherit pkgs; }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
@@ -320,6 +393,8 @@
         // import ./tests/bench-remove-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix { inherit pkgs; }
+        # What an editable workspace member is built from in the dev shell.
+        // import ./tests/editable-src.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
         // import ./tests/node-targets.nix { inherit pkgs; }
         # yarn.lock → offline mirror: the parser, the naming, what is fetched.
@@ -335,6 +410,12 @@
           inherit pkgs;
           frappe-init = frappeInit pkgs;
         }
+        # The journald fields and services.frappe.logging, at evaluation. Linux
+        # only because it evaluates a NixOS system, but no VM: cheap enough for
+        # every PR.
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          import ./tests/logging-fields.nix { inherit self pkgs; }
+        )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           migrate-rollback = pkgs.testers.runNixOSTest (

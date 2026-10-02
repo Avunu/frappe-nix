@@ -20,7 +20,7 @@ provision-site               # (first run, another shell) create the site + inst
 
 `bench` is wrapped so the normal commands Just Work in this environment:
 
-- `bench update` — pull apps, re-lock what moved, migrate, build
+- `bench update` — pull apps, re-lock what moved, migrate, build (an app with local edits git won't overwrite is skipped and named, not fatal; an uncommitted `yarn.lock` is discarded when the pull would overwrite it)
 - `bench get-app <url|alias>` — add an app (git submodule + uv workspace)
 - `bench new-app <name>` — scaffold a new app
 - `bench migrate` / `bench build` / `bench console` — as usual
