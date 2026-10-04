@@ -1047,6 +1047,29 @@ let
             add_header Cache-Control "max-age=31536000";
           '';
         };
+        # The runtime does not serve uploads, so nginx answers /files/ from the
+        # site's public directory, as bench's nginx template does. Markup types
+        # are forced to download so an uploaded page or SVG cannot run script
+        # on the site's origin.
+        "/files/" = {
+          extraConfig = ''
+            try_files /${name}/public$uri =404;
+          '';
+        };
+        "~* ^/files/.*\\.(htm|html|svg|xml)$" = {
+          extraConfig = ''
+            add_header Content-Disposition "attachment";
+            try_files /${name}/public$uri =404;
+          '';
+        };
+        # Frappe checks a private file's permissions, then hands the transfer
+        # back to nginx with X-Accel-Redirect: /protected/<path under the site>.
+        "~ ^/protected/(.*)" = {
+          extraConfig = ''
+            internal;
+            try_files /${name}/$1 =404;
+          '';
+        };
         "/socket.io" = {
           proxyPass = socketioUpstream;
           proxyWebsockets = true;
@@ -1063,6 +1086,7 @@ let
           extraConfig = ''
             ${socketProxyHeaders}
             proxy_set_header X-Frappe-Site-Name ${name};
+            proxy_set_header X-Use-X-Accel-Redirect True;
           '';
         };
       };

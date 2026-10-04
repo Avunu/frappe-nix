@@ -42,6 +42,13 @@ let
             return "unix"
 
         def do_GET(self):
+            # Frappe's send_private_file, minus the permission check.
+            if self.path.startswith("/private/files/") and self.headers.get("X-Use-X-Accel-Redirect"):
+                self.send_response(200)
+                self.send_header("X-Accel-Redirect", "/protected" + self.path)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -193,6 +200,37 @@ in
     assert hdrs["x-forwarded-for"] == "203.0.113.7", hdrs
     # The site name header the module injects still arrives.
     assert hdrs["x-frappe-site-name"] == "${siteName}", hdrs
+
+    # Uploads are served by nginx from the site directory, not proxied.
+    site_dir = "/var/lib/frappe/${siteName}/sites/${siteName}"
+    machine.succeed(
+        f"install -d -o frappe -g frappe {site_dir}/public/files {site_dir}/private/files"
+        f" && echo public-ok > {site_dir}/public/files/a.txt"
+        f" && echo '<svg/>' > {site_dir}/public/files/b.svg"
+        f" && echo private-ok > {site_dir}/private/files/c.txt"
+        f" && chown frappe:frappe {site_dir}/public/files/* {site_dir}/private/files/*"
+    )
+    curl = "curl -sS --unix-socket ${sockDir}/nginx.sock"
+    def fetch(path):
+        out = machine.succeed(f"{curl} -D - -o /tmp/body -w '%{{http_code}}' http://${siteName}{path}")
+        return out, machine.succeed("cat /tmp/body")
+
+    head, body = fetch("/files/a.txt")
+    assert head.endswith("200") and body == "public-ok\n", (head, body)
+    assert "content-disposition" not in head.lower(), head
+    # Markup is forced to download so it cannot run on the site's origin.
+    head, body = fetch("/files/b.svg")
+    assert head.endswith("200"), head
+    assert "content-disposition: attachment" in head.lower(), head
+    head, _ = fetch("/files/missing.txt")
+    assert head.endswith("404"), head
+    # The upstream asks for X-Accel-Redirect, and nginx serves the redirect target.
+    assert hdrs["x-use-x-accel-redirect"] == "True", hdrs
+    head, body = fetch("/private/files/c.txt")
+    assert head.endswith("200") and body == "private-ok\n", (head, body)
+    # /protected/ is reachable only through the redirect.
+    head, _ = fetch("/protected/private/files/c.txt")
+    assert head.endswith("404"), head
 
     # socketio_uds reached the config as well as the unit environment, so the
     # realtime server finds the socket even started outside its unit.
