@@ -30,7 +30,8 @@
   # Exported as ESBUILD_TARGET to builtBench's `bench build`. frappe's es2017
   # default cannot lower async generators or BigInt literals, and the sandbox's
   # common_site_config.json is an empty stub, so its esbuild_target never
-  # applies here.
+  # applies here. Object rest/spread is lowered regardless; see
+  # lib/js/esbuild-preload.js.
   esbuildTarget ? "es2022",
   # Where the fallback locks live — node-locks/<target>/yarn.lock for a target
   # that ships no yarn.lock of its own (or whose upstream one is forced aside).
@@ -446,6 +447,9 @@ let
       mkdir -p $TMPDIR/bench/config/pids
 
       export ESBUILD_TARGET=${lib.escapeShellArg esbuildTarget}
+      # Read by frappe_nodebuild, which prodPythonEnv carries: frappe's build
+      # replaces NODE_OPTIONS, so exporting --require here would not reach it.
+      export FRAPPE_NIX_ESBUILD_PRELOAD=${./js/esbuild-preload.js}
       export FRAPPE_BENCH_ROOT=$TMPDIR/bench
       export SITES_PATH=$TMPDIR/bench/sites
       export PYTHONPATH=${appsPath "$TMPDIR/bench"}

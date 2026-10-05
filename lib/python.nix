@@ -35,6 +35,9 @@
   # Derivation containing a `frappe_journald/` package to graft into *both*
   # virtualenvs, or null. See lib/journald.
   journald ? null,
+  # Derivation containing a `frappe_nodebuild/` package to graft into *both*
+  # virtualenvs, or null. See lib/nodebuild.
+  nodebuild ? null,
   # Overrides the "how to re-lock" half of the stale-lock message. See
   # lib/lock-audit.nix; null keeps its bench-mode default.
   lockAuditRelock ? null,
@@ -166,6 +169,14 @@ let
     ++ lib.optional (journald != null) {
       src = journald;
       module = "frappe_journald";
+    }
+    # frappe_nodebuild ships to BOTH because builtBench builds its assets with
+    # prodPythonEnv's bench. It acts only where FRAPPE_NIX_ESBUILD_PRELOAD is
+    # set — the dev shell and builtBench's build phase — and a deployed host
+    # never builds, so there it does nothing.
+    ++ lib.optional (nodebuild != null) {
+      src = nodebuild;
+      module = "frappe_nodebuild";
     };
 
   withGrafts =
