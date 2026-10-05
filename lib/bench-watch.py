@@ -129,7 +129,11 @@ def main(argv=None):
 
     env = frappe.build.get_node_env()
     if args.preload:
-        env["NODE_OPTIONS"] = f"{env.get('NODE_OPTIONS', '')} --require={args.preload}".strip()
+        flag = f"--require={args.preload}"
+        options = env.get("NODE_OPTIONS", "")
+        # frappe_nodebuild has usually added it already.
+        if flag not in options.split():
+            env["NODE_OPTIONS"] = f"{options} {flag}".strip()
     if args.skip_rtl:
         env["FRAPPE_NIX_SKIP_RTL"] = "1"
     if args.sass:

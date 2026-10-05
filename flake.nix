@@ -199,6 +199,14 @@
               ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
           '';
 
+          # Frappe- and node-independent: a stub frappe.build stands in, and the
+          # assertions are about the NODE_OPTIONS frappe's build hands node.
+          nodebuild = pkgs.runCommand "frappe-nodebuild-check" { } ''
+            cp -r ${./lib/nodebuild} ./nodebuild
+            chmod -R u+w ./nodebuild
+            ${pkgs.python3}/bin/python ./nodebuild/tests/test_nodebuild.py | tee "$out"
+          '';
+
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
@@ -232,9 +240,10 @@
               '';
 
           # The dev shell's watch process: which apps the publisher rule
-          # leaves out (fixture hooks.py files, no frappe), and that its
-          # esbuild preload skips the right-to-left build only where asked
-          # (a stand-in esbuild with getter exports, like the real one).
+          # leaves out (fixture hooks.py files, no frappe), and that the
+          # esbuild preload corrects frappe's builds and no one else's, and
+          # skips the right-to-left build only where asked (a stand-in esbuild
+          # with getter exports, like the real one).
           bench-watch =
             pkgs.runCommand "frappe-nix-bench-watch-check"
               {

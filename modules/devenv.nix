@@ -359,7 +359,10 @@ in
             builtBench.
             Frappe's own default is es2017, which cannot lower async generators or
             BigInt literals — both common in current npm packages (frappe-react-sdk,
-            temporal-polyfill) — so the build fails outright on them. Frappe reads
+            temporal-polyfill) — so the build fails outright on them. Object rest
+            and spread are still lowered as es2017 lowers them, whatever the
+            target: code written against frappe's default relies on a rest-only
+            parameter accepting `undefined` (see lib/js/esbuild-preload.js). Frappe reads
             `esbuild_target` in common_site_config.json ahead of this, but that file
             is the operator's and never reaches the Nix build.
           '';
@@ -1717,6 +1720,19 @@ in
           }/frappe_journald "$out/"
         '';
 
+        # Nothing to bake: frappe_nodebuild reads the preload's path from
+        # FRAPPE_NIX_ESBUILD_PRELOAD, which the shell and builtBench export.
+        nodebuildPkg = pkgs.runCommand "frappe-nodebuild" { } ''
+          mkdir -p "$out"
+          cp -r ${
+            builtins.path {
+              path = ../lib/nodebuild;
+              name = "frappe-nodebuild-src";
+              filter = path: _type: baseNameOf path != "__pycache__";
+            }
+          }/frappe_nodebuild "$out/"
+        '';
+
         # `bench watch`, with the esbuild target `bench build` uses, only the
         # apps someone edits, no right-to-left rebuilds and native Sass. See
         # lib/bench-watch.py and the watch.* options.
@@ -1777,6 +1793,8 @@ in
           # Both envs too; it only acts under a systemd unit, so the dev shell,
           # the OCI images and a terminal on the host keep stock output.
           journald = journaldPkg;
+          # Both envs: builtBench builds its assets with prodPythonEnv's bench.
+          nodebuild = nodebuildPkg;
         };
 
         # A bench still carrying the hash-era options gets a sentence, not an
@@ -2310,6 +2328,9 @@ in
               # Same target builtBench compiles for, so a bundle that builds
               # here builds in the package too. See the esbuildTarget option.
               ESBUILD_TARGET = cfg.esbuildTarget;
+              # frappe_nodebuild hands it to every `bench build` and `bench
+              # watch`, as builtBench's build phase does. See lib/nodebuild.
+              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js/esbuild-preload.js}";
 
               FRAPPE_BENCH_ROOT = benchPath;
               SITES_PATH = benchPath + "/sites";

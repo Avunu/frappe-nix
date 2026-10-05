@@ -505,6 +505,15 @@ Some Frappe apps ship their own JS/CSS build tooling that shadows Frappe's own b
 
 `assets.reassert.hooks` is the fix, and it ships with **zero built-in hooks and names no app**: it is a list of `bench execute`-able dotted paths that you point at your own app's asset-shadow fixup. Whenever `sites/assets/assets.json` names a bundle file that doesn't exist on disk, every configured hook runs, in order, against `siteName`. Two triggers cover the two ways this goes stale: a `frappe:assets-reassert` task runs the check once at `devenv up` (a bench that sat idle with a stale `assets.json` heals before the first page load), and an `assetsWatch` process — using [fswatch](https://github.com/emcrisostomo/fswatch) for the file-change detection, portable across Linux and Darwin — watches `assets.json` for the writes `bench watch`'s own rebuilds make, debounced by `assets.reassert.debounceMs`. esbuild's writer truncates-and-writes with no temp-file-and-rename, so a read can land mid-write; the check retries a failed JSON parse a few times before giving up, and a parse failure is never treated as a missing-file invariant failure — it would otherwise fire the hooks on every rebuild instead of only when something is actually missing. `assets-reassert` (a plain devenv script, present only when hooks are configured) runs the same check on demand.
 
+### Asset builds resolve the way apps assume
+
+Two things about frappe's esbuild pipeline break apps that work on a stock bench, and [lib/js/esbuild-preload.js](lib/js/esbuild-preload.js) corrects both for every build frappe's `esbuild/esbuild.js` starts, in the dev shell and in `builtBench` alike:
+
+-   **frappe's `node_modules` comes first.** A bare import an app's own `node_modules` cannot answer goes through `nodePaths`: every app's `node_modules`, in the order the filesystem lists `apps/`, not `apps.txt`'s. An app that imports a package frappe provides (`vue`, `pinia`) without declaring it gets the copy from whichever app with its own sorts first, while a package only frappe ships keeps resolving from frappe's. One bundle can then carry two copies of a library; for `vue` that means two reactivity systems, and a page that loads its state but never renders it, with no error. A dependency an app declares itself still comes from its own `node_modules`.
+-   **Object rest and spread are lowered** as frappe's es2017 default lowers them, whatever `esbuildTarget` says. Natively, a rest-only parameter (`(name, { ...args }) => …`) throws when the argument is left out; es2017's helper returns `{}`, and code written against that default leaves it out. Only that syntax is lowered — async generators and BigInt, the reason for es2022, stay native.
+
+The preload reaches `bench build` and `bench watch` through `frappe_nodebuild` ([lib/nodebuild](lib/nodebuild)), grafted into both virtualenvs like `frappe_unixsock`: frappe starts node with `NODE_OPTIONS` from `frappe.build.get_node_env()`, which replaces the caller's, so exporting `--require` beforehand never arrives. It appends `--require=$FRAPPE_NIX_ESBUILD_PRELOAD`, which the dev shell and `builtBench`'s build phase set and a deployed host does not; unset it for one command to build stock.
+
 ### Development guard rails
 
 A bench restored from a production backup carries working production credentials in its database and `site_config.json`. Left alone, `devenv up` will mail real customers within minutes, delete production files out of an object store within the hour, and — depending on what is configured — capture real payments, push its dev-mutated database over the production backup rotation, and delete real calendar events.
@@ -1013,6 +1022,7 @@ frappe-nix/
 │   ├── devguard/             # frappe_devguard — guards against reaching production
 │   ├── unixsock/             # frappe_unixsock — unix-socket transport fixes (dev + prod)
 │   ├── journald/             # frappe_journald — journald priorities, no log files (dev + prod, acts only under systemd)
+│   ├── nodebuild/            # frappe_nodebuild — hands frappe's asset builds the esbuild preload (dev + prod builds)
 │   ├── init.nix              # `nix run` entry point: builds frappe-init from sh/*
 │   ├── sh/                   # the scaffolder/migrator, concatenated into one script
 │   │   ├── common.sh         #   presets, naming, output helpers
