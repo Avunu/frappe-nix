@@ -296,7 +296,8 @@ def alter_clauses(doctype, path, custom):
 
 	if path:
 		with open(path) as f:
-			meta = Meta(frappe.get_doc(json.load(f)))
+			# A DocType document, which Meta takes; get_doc is typed as the Document it subclasses.
+			meta = Meta(frappe.get_doc(json.load(f)))  # ty: ignore[invalid-argument-type]
 	else:
 		meta = Meta(doctype)
 
