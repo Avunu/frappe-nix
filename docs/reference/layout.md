@@ -44,6 +44,8 @@ frappe-nix/
 │   │   ├── migrate.sh        #   migrate mode
 │   │   └── main.sh           #   flags and mode dispatch (must be concatenated last)
 │   ├── frappe-workspace.py   # apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json} reconciler (tomlkit)
+│   ├── offline-migrate.py    # alters large tables online ahead of bench migrate (pt-online-schema-change)
+│   ├── offline-migrate.nix   # pt-online-schema-change with its perl
 │   ├── frappe-presets.json   # Frappe version → python / node / branch matrix
 │   └── scripts.nix           # portable bench shell scripts
 ├── templates/
@@ -74,7 +76,7 @@ nix build -L .#checks.x86_64-linux.<NAME>                 # one check
 
 On `x86_64-linux` the checks are:
 
-`agecheck`, `app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `backup-fetch`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-cli`, `setup-requirements`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
+`agecheck`, `app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `backup-fetch`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-cli`, `setup-requirements`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
 
 Two of them, `migrate-rollback` and `socket`, run a NixOS virtual machine that builds a full Frappe bench inside the guest. `socket-runtime` does the same for the unified runtime. They are Linux-only and heavy.
 

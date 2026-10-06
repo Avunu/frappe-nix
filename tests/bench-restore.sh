@@ -63,6 +63,16 @@ done
 exit 0
 STUB
 chmod +x "$BIN/bench"
+# `bench restore` migrates through bench-migrate, which is what puts the offline
+# step in front of the migrate; standing in for it, this is `bench migrate` with
+# the site flag bench-migrate adds.
+cat >"$BIN/bench-migrate" <<STUB
+#!$(command -v bash)
+STUB
+cat >>"$BIN/bench-migrate" <<'STUB'
+exec bench --site "$FRAPPE_SITE" migrate "$@"
+STUB
+chmod +x "$BIN/bench-migrate"
 export PATH="$BIN:$PATH"
 
 # ── a bench root ──────────────────────────────────────────────────────────

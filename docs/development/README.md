@@ -94,3 +94,4 @@ It always does the full scan, and lists lockfiles that differ from their commit:
 - [Memory and disk](memory-and-disk.md): how the stack stays light on a small machine.
 - [Dependencies and locks](locks.md), [Apps in a bench](apps.md) and [Asset builds](assets.md).
 - [Upgrading frappe-nix](upgrading.md).
+- [Migrate large tables online](online-migrations.md): `pt-online-schema-change` in front of `bench migrate`, so an ALTER cannot lock a big table.

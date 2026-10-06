@@ -35,6 +35,12 @@
   restore ? {
     enable = false;
   },
+  # perSystem.frappe-nix.offlineMigrate, plus `ptOsc` (the lib/offline-migrate.nix
+  # binary). `enable = false` leaves `bench migrate` to alter every table itself;
+  # `bench-offline-migrate` is there either way, to run by hand.
+  offlineMigrate ? {
+    enable = false;
+  },
   # App mode: this project is one Frappe app and the bench under it is
   # generated. Everything that edits the bench as if it were a checkout — a
   # submodule pull, a workspace member, a scaffolded app — has no meaning here
@@ -72,6 +78,18 @@ let
       SITE_FLAG="--site $FRAPPE_SITE"
     fi
   '';
+
+  # What lib/offline-migrate.py reads, defaulted rather than exported by the
+  # shell so a caller's own FRAPPE_OFFLINE_MIGRATE_* — `=0` for one migrate that
+  # must run stock — still wins.
+  offlineMigrateEnv = lib.concatStrings [
+    (lib.optionalString (offlineMigrate ? ptOsc) ''
+      export FRAPPE_OFFLINE_MIGRATE_PT_OSC="''${FRAPPE_OFFLINE_MIGRATE_PT_OSC:-${offlineMigrate.ptOsc}}"
+    '')
+    (lib.optionalString (offlineMigrate ? rowThreshold) ''
+      export FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD="''${FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD:-${toString offlineMigrate.rowThreshold}}"
+    '')
+  ];
 
   # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json}
   # contract, shared with the `frappe-init` scaffolder/migrator and the bench
@@ -411,10 +429,26 @@ HELP
     bench $SITE_FLAG console "$@"
   '';
 
+  # Alters the large tables a migrate is about to alter without locking them, and
+  # leaves the rest to `bench migrate`. See lib/offline-migrate.py.
+  bench-offline-migrate.exec = ''
+    export _FRAPPE_BENCH_RAW=1
+    ${atBench}
+    ${offlineMigrateEnv}
+    ${pythonBin} ${./offline-migrate.py} "$@"
+  '';
+
   bench-migrate.exec = ''
     export _FRAPPE_BENCH_RAW=1
     ${atBench}
     ${siteFlag}
+    ${lib.optionalString offlineMigrate.enable ''
+      # Not for --help, and not without a site to look at: the tool takes $FRAPPE_SITE.
+      case " $* " in
+        *" --help "* | *" -h "*) ;;
+        *) if [ -n "''${FRAPPE_SITE:-}" ]; then bench-offline-migrate || exit $?; fi ;;
+      esac
+    ''}
     bench $SITE_FLAG migrate "$@"
   '';
 
@@ -818,8 +852,9 @@ HELP
 
         if $MIGRATE; then
           echo "── Running migrations ───────────────────────────────────────"
-          ${siteFlag}
-          bench $SITE_FLAG migrate
+          # bench-migrate, not `bench migrate`: _FRAPPE_BENCH_RAW is exported here,
+          # so the latter would skip the offline step in front of it.
+          bench-migrate
           echo ""
         fi
 
@@ -1115,7 +1150,7 @@ HELP
 
     if [ "$DO_MIGRATE" = true ]; then
       echo "  running bench migrate…"
-      bench $SITE_FLAG migrate
+      bench-migrate
     fi
 
     echo "✅ restored $FRAPPE_SITE from $FOLDER"

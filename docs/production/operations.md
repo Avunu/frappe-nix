@@ -54,6 +54,8 @@ Frappe migrations perform DDL (`CREATE` and `ALTER TABLE`), which auto-commits i
 3. **On success.** Clear maintenance mode, record the build and prune old snapshots.
 4. **On failure.** Restore the snapshot by dropping all current tables and re-importing the dump, **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero, so the unit shows `failed`. The database is returned to its pre-migrate state.
 
+With `migrate.offline.enable`, step 2 is preceded by an online alteration of the large tables the migrate is about to alter, under the same snapshot and maintenance mode. A failure there takes the failure path in step 4. See [Migrate large tables online](../development/online-migrations.md).
+
 The unit runs as the `frappe` user with the site's own database credentials, so it needs no database root and works for both locally created and externally managed databases.
 
 > [!NOTE]
@@ -67,13 +69,15 @@ journalctl -u frappe-migrate-site1.example.com -p err
 
 ### Tune or disable migration
 
-| Option                      | Default | Effect                                                                           |
-| --------------------------- | ------- | -------------------------------------------------------------------------------- |
-| `migrate.enable`            | `true`  | Run `bench migrate` on each new build.                                           |
-| `migrate.snapshot`          | `true`  | Take the pre-migrate dump.                                                       |
-| `migrate.rollbackOnFailure` | `true`  | Restore the dump on failure. Needs `snapshot`.                                   |
-| `migrate.maintenanceMode`   | `true`  | Use maintenance mode around the migration. It is left on if the migration fails. |
-| `migrate.snapshotRetention` | `3`     | Snapshots kept per site under `<siteDir>/snapshots`.                             |
+| Option                         | Default  | Effect                                                                           |
+| ------------------------------ | -------- | -------------------------------------------------------------------------------- |
+| `migrate.enable`               | `true`   | Run `bench migrate` on each new build.                                           |
+| `migrate.snapshot`             | `true`   | Take the pre-migrate dump.                                                       |
+| `migrate.rollbackOnFailure`    | `true`   | Restore the dump on failure. Needs `snapshot`.                                   |
+| `migrate.maintenanceMode`      | `true`   | Use maintenance mode around the migration. It is left on if the migration fails. |
+| `migrate.snapshotRetention`    | `3`      | Snapshots kept per site under `<siteDir>/snapshots`.                             |
+| `migrate.offline.enable`       | `false`  | Alter large tables online before `bench migrate`. Needs the `TRIGGER` privilege. |
+| `migrate.offline.rowThreshold` | `100000` | Rows at which a table is altered online.                                         |
 
 > [!TIP]
 > A snapshot of a very large database on every deploy is expensive in time and disk. Weigh that against losing the safety net before you set `migrate.snapshot = false`. If you set `migrate.enable = false`, run `bench migrate` yourself after each deploy.

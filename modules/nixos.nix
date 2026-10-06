@@ -456,6 +456,9 @@ let
       pyEnv = pkgPythonEnv pkg;
       benchBin = "${pyEnv}/bin/bench";
       mg = cfg.migrate;
+      runtimeBenchDir = "${siteCfg.siteDir}/bench";
+      # pt-online-schema-change with its perl. See lib/offline-migrate.py.
+      offlineMigrateTool = import ../lib/offline-migrate.nix { inherit pkgs; };
 
       dbName = siteCfg.database.name;
       # Connection flags shared by mysqldump (snapshot) and mysql (rollback).
@@ -541,9 +544,22 @@ let
 
       ${setMaintenance "on"}
 
-      echo "frappe-migrate(${name}): running bench migrate"
-      ${benchBin} --site ${name} migrate
-      RC=$?
+      RC=0
+      ${optionalString mg.offline.enable ''
+        # A failure here is a failed migrate: the snapshot is restored below, so
+        # a half-applied plan is not left behind.
+        echo "frappe-migrate(${name}): altering large tables online"
+        FRAPPE_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
+        FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
+          ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
+          || RC=$?
+      ''}
+
+      if [ "$RC" -eq 0 ]; then
+        echo "frappe-migrate(${name}): running bench migrate"
+        ${benchBin} --site ${name} migrate
+        RC=$?
+      fi
 
       if [ "$RC" -eq 0 ]; then
         ${setMaintenance "off"}
@@ -558,7 +574,7 @@ let
         exit 0
       fi
 
-      echo "<3>>>> frappe-migrate(${name}): MIGRATION FAILED (bench migrate exit $RC) <<<" >&2
+      echo "<3>>>> frappe-migrate(${name}): MIGRATION FAILED (exit $RC) <<<" >&2
 
       ${optionalString (mg.snapshot && mg.rollbackOnFailure) ''
         if [ -n "$SNAP" ] && [ -f "$SNAP" ]; then
@@ -1440,6 +1456,35 @@ in
         type = types.ints.positive;
         default = 3;
         description = "Number of most-recent pre-migrate snapshots to keep per site under <siteDir>/snapshots.";
+      };
+      offline = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Alter large tables without locking them. Before `bench migrate`, the
+            unit works out which tables of at least `rowThreshold` rows the
+            migrate is about to alter and applies those changes with
+            `pt-online-schema-change` — a shadow copy altered and filled in
+            chunks while triggers keep it current, swapped in with one rename —
+            so the ALTER does not hold a metadata lock for the length of the
+            copy. The migrate that follows finds the columns already there.
+
+            Runs inside the same snapshot, maintenance mode and rollback as the
+            migrate, and a failure is a failed migrate. Off by default: it adds
+            percona-toolkit to the closure and needs the TRIGGER privilege on
+            the site's database, which a locally created site user has.
+          '';
+        };
+        rowThreshold = mkOption {
+          type = types.ints.unsigned;
+          default = 100000;
+          description = ''
+            Row count at which a table is altered online rather than by
+            `bench migrate` itself. `0` sends every table with a pending change
+            through pt-online-schema-change.
+          '';
+        };
       };
     };
 

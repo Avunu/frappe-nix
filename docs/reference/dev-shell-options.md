@@ -160,6 +160,15 @@ How `bench restore` fetches a production backup. See [Restore a production backu
 | `restore.migrate`         | bool                       | `true`                                         | Run `bench migrate` after restoring.                                                                                           |
 | `restore.requireDevguard` | bool                       | `true`                                         | Refuse to write production's encryption key into an unguarded bench.                                                           |
 
+## Offline migrate
+
+Alter large tables online in front of `bench migrate`. See [Migrate large tables online](../development/online-migrations.md).
+
+| Option                        | Type | Default  | Notes                                                                                                                                                                                           |
+| ----------------------------- | ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `offlineMigrate.enable`       | bool | `false`  | Run `bench-offline-migrate` in front of every `bench migrate`, so the ALTERs of large tables cannot lock them. Adds percona-toolkit to the closure.                                             |
+| `offlineMigrate.rowThreshold` | int  | `100000` | Rows at which a table is altered online. `0` sends every table with a pending change through pt-online-schema-change. Overridable with `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` or `--threshold`. |
+
 ## Containers
 
 See [Build production images](../production/images.md).
