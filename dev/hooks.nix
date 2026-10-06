@@ -22,6 +22,15 @@
   hooks = {
     # Python. CodeSorter reorders definitions, so ruff runs after it on the
     # result, and the formatter last.
+    #
+    # Manual only (`prek run codesorter --hook-stage manual`): besides
+    # definitions it sorts the string keys of every dict literal and the
+    # keyword arguments of every call, `dict(...)` included, and a dict's order
+    # is its iteration order. Here that is the key order of the apps.json entries
+    # frappe-nix writes to match bench's, and the order of apps (install order,
+    # sites/apps.txt) — the apps-registry, migrate-classic and bench-watch
+    # checks all fail after a full pass. It has no per-site opt-out to mark
+    # those, so it cannot run unattended.
     codesorter = {
       enable = true;
       name = "codesorter";
@@ -29,6 +38,7 @@
       types = [ "python" ];
       require_serial = true;
       before = [ "ruff" ];
+      stages = [ "manual" ];
     };
     ruff = {
       enable = true;
