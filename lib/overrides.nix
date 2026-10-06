@@ -72,7 +72,7 @@
   # for libvips — ctypes.util.find_library won't find it in the Nix store.
   pyvips =
     { pkgs }:
-    final: prev: {
+    _final: prev: {
       pyvips = prev.pyvips.overrideAttrs (old: {
         buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.vips ];
         postPatch = ''

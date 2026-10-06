@@ -10,12 +10,12 @@ from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from typing import Literal, NoReturn
 
+import frappe
 import httpx
+from frappe.realtime import SOCKETIO_SECRET_KEY
 from redis import asyncio as aioredis
 from socketio.exceptions import ConnectionRefusedError
 
-import frappe
-from frappe.realtime import SOCKETIO_SECRET_KEY
 from frappe_runtime.config import RealtimeConfig
 from frappe_runtime.util import get_hostname, get_url, read_header, resolve_site_name
 
@@ -96,23 +96,6 @@ class Session:
 		return bool(body.get("message"))
 
 
-async def authenticate(environ: dict, namespace: str, config: RealtimeConfig) -> Session:
-	"""Authenticate a connection. Port of realtime/middlewares/authenticate.js.
-
-	Auth is delegated to the web process over HTTP (async here, so it never
-	blocks the loop). Refuses the connection as soon as one check fails.
-	"""
-	site = _validate_site(environ, namespace, config)
-	_validate_origin(environ)
-	credentials = _read_credentials(environ)
-
-	secret = await get_socketio_secret(config.redis_queue)
-	request = _make_request(environ, credentials, config, site, secret)
-	user_info = await _get_user_info(request)
-
-	return _make_session(site, user_info, request)
-
-
 def _reject(reason: str, message: str) -> NoReturn:
 	"""Log the reason and refuse the connection."""
 	logger.info("connect reject: %s", reason)
@@ -137,6 +120,16 @@ def _validate_origin(environ: dict) -> None:
 		_reject(f"origin {origin!r} != host {host!r}", "Invalid origin")
 
 
+def _read_sid(cookie_header: str | None) -> str | None:
+	if not cookie_header:
+		return None
+
+	jar = SimpleCookie()
+	jar.load(cookie_header)
+	sid = jar.get("sid")
+	return sid.value if sid else None
+
+
 def _read_credentials(environ: dict) -> Credentials:
 	"""Read the client's sid cookie or Authorization header."""
 	cookie_header = read_header(environ, "Cookie")
@@ -157,46 +150,7 @@ def _read_credentials(environ: dict) -> Credentials:
 	return credentials
 
 
-def _read_sid(cookie_header: str | None) -> str | None:
-	if not cookie_header:
-		return None
-
-	jar = SimpleCookie()
-	jar.load(cookie_header)
-	sid = jar.get("sid")
-	return sid.value if sid else None
-
-
-def _make_request(
-	environ: dict, credentials: Credentials, config: RealtimeConfig, site: str, secret: str
-) -> WebRequest:
-	"""Build the authenticated request helper toward the web (socket.frappe_request port).
-
-	Connect auth and every later permission check share this one coroutine, so
-	their timeout / redirect / cookie handling cannot drift apart."""
-	origin = read_header(environ, "Origin")
-
-	headers = _auth_headers(credentials, site, secret)
-	if config.embedded:
-		return _make_local_request(headers | {"Origin": origin} if origin else headers)
-
-	async def request(
-		path: str,
-		method: HttpMethod = "GET",
-		params: dict | None = None,
-		body: dict | None = None,
-	) -> dict:
-		res = await get_http_client().request(
-			method,
-			get_url(origin, path, config),
-			params=params or {},
-			json=body,
-			headers=headers,
-		)
-		res.raise_for_status()
-		return res.json()
-
-	return request
+_local_client = None
 
 
 def _get_local_client():
@@ -207,9 +161,8 @@ def _get_local_client():
 	overwrite our Cookie header and replay one user's sid onto the next connect."""
 	global _local_client
 	if _local_client is None:
-		from werkzeug.test import Client
-
 		from frappe.app import application
+		from werkzeug.test import Client
 
 		_local_client = Client(application, use_cookies=False)
 	return _local_client
@@ -254,6 +207,62 @@ def _auth_headers(credentials: Credentials, site: str, secret: str) -> dict[str,
 	return credentials.headers() | {"X-Frappe-Site-Name": site, "X-Frappe-Socket-Secret": secret}
 
 
+_http_client: httpx.AsyncClient | None = None
+
+
+class DiscardingCookieJar(CookieJar):
+	"""Cookie jar that drops every Set-Cookie.
+
+	The client is shared by every connection, so a real jar would replay one
+	user's ``sid`` onto the next connect and authenticate it as that user."""
+
+	def extract_cookies(self, response, request) -> None:
+		pass
+
+
+def get_http_client() -> httpx.AsyncClient:
+	"""Shared process-wide AsyncClient (lazy init, one pool).
+
+	Redirects are followed: httpx otherwise returns the 30x, which
+	raise_for_status turns into a refused connect."""
+	global _http_client
+	if _http_client is None or _http_client.is_closed:
+		_http_client = httpx.AsyncClient(timeout=10, follow_redirects=True, cookies=DiscardingCookieJar())
+	return _http_client
+
+
+def _make_request(
+	environ: dict, credentials: Credentials, config: RealtimeConfig, site: str, secret: str
+) -> WebRequest:
+	"""Build the authenticated request helper toward the web (socket.frappe_request port).
+
+	Connect auth and every later permission check share this one coroutine, so
+	their timeout / redirect / cookie handling cannot drift apart."""
+	origin = read_header(environ, "Origin")
+
+	headers = _auth_headers(credentials, site, secret)
+	if config.embedded:
+		return _make_local_request(headers | {"Origin": origin} if origin else headers)
+
+	async def request(
+		path: str,
+		method: HttpMethod = "GET",
+		params: dict | None = None,
+		body: dict | None = None,
+	) -> dict:
+		res = await get_http_client().request(
+			method,
+			get_url(origin, path, config),
+			params=params or {},
+			json=body,
+			headers=headers,
+		)
+		res.raise_for_status()
+		return res.json()
+
+	return request
+
+
 async def _get_user_info(request: WebRequest) -> dict:
 	"""Ask the web who the user is; reject on failure or an empty result."""
 	method = "/api/method/frappe.realtime.get_user_info"
@@ -282,8 +291,6 @@ def _make_session(site: str, user_info: dict, request: WebRequest) -> Session:
 
 
 _secret_client: aioredis.Redis | None = None
-_http_client: httpx.AsyncClient | None = None
-_local_client = None
 
 
 async def get_socketio_secret(redis_url: str) -> str:
@@ -301,25 +308,21 @@ async def get_socketio_secret(redis_url: str) -> str:
 	return value.decode() if isinstance(value, bytes) else value
 
 
-class DiscardingCookieJar(CookieJar):
-	"""Cookie jar that drops every Set-Cookie.
+async def authenticate(environ: dict, namespace: str, config: RealtimeConfig) -> Session:
+	"""Authenticate a connection. Port of realtime/middlewares/authenticate.js.
 
-	The client is shared by every connection, so a real jar would replay one
-	user's ``sid`` onto the next connect and authenticate it as that user."""
+	Auth is delegated to the web process over HTTP (async here, so it never
+	blocks the loop). Refuses the connection as soon as one check fails.
+	"""
+	site = _validate_site(environ, namespace, config)
+	_validate_origin(environ)
+	credentials = _read_credentials(environ)
 
-	def extract_cookies(self, response, request) -> None:
-		pass
+	secret = await get_socketio_secret(config.redis_queue)
+	request = _make_request(environ, credentials, config, site, secret)
+	user_info = await _get_user_info(request)
 
-
-def get_http_client() -> httpx.AsyncClient:
-	"""Shared process-wide AsyncClient (lazy init, one pool).
-
-	Redirects are followed: httpx otherwise returns the 30x, which
-	raise_for_status turns into a refused connect."""
-	global _http_client
-	if _http_client is None or _http_client.is_closed:
-		_http_client = httpx.AsyncClient(timeout=10, follow_redirects=True, cookies=DiscardingCookieJar())
-	return _http_client
+	return _make_session(site, user_info, request)
 
 
 async def close_clients() -> None:

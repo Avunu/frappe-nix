@@ -1,0 +1,69 @@
+# Git hooks, run by prek (https://prek.j178.dev, pre-commit's format in Rust) and
+# by CI (`prek run --all-files`, the `lint` job). Every hook is a pinned upstream
+# repository, so nothing here needs nix or the dev shell, and dependabot's
+# `pre-commit` ecosystem moves the revs (see .github/dependabot.yml).
+#
+#   prek install              # once per clone; the dev shell does it
+#   prek run --all-files      # what CI runs
+#
+# Not here, because no upstream hook runs them without nix or a Rust build:
+#   nixfmt, statix, deadnix   the `nix-lint` flake check
+#   ty                        the `ty` flake check: it needs the dev env's
+#                             interpreter, with the pinned upstream Frappe in it
+#
+# ruff's rev is Frappe's own, not the latest: `sync-frappe-upstream` moves it
+# together with the ruff in dev/uv.lock, and the frappe-upstream-config flake
+# check fails when the two disagree. Dependabot leaves it alone.
+#
+# Fixtures stand in for third-party apps and benches, byte for byte; patches
+# carry trailing whitespace that is part of the hunk; locks are generated.
+# Scaffolding templates hold @PLACEHOLDERS@ and are not valid Nix, TOML or
+# Python until frappe-init fills them in.
+exclude: (^tests/fixtures/|^templates/|\.(patch|diff)$|(^|/)(uv|flake|yarn)\.lock$)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-ast
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: debug-statements
+
+  # Definitions after what they use; the order of everything else is kept. Not
+  # CodeSorter, which also sorts dict keys and keyword arguments, and a dict's
+  # order is its iteration order. ssort parses with the hook's interpreter, so
+  # it runs on the 3.14 the code is written for.
+  - repo: https://github.com/bwhmather/ssort
+    rev: 0.17.0
+    hooks:
+      - id: ssort
+        language_version: python3.14
+
+  # In this order, as Frappe's own config has them: ruff fixes the imports ssort
+  # leaves, then lints, then formats the result.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        name: ruff import sorter
+        args: [--select=I, --fix]
+      - id: ruff-check
+        name: ruff linter
+        args: [--fix]
+      - id: ruff-format
+        name: ruff formatter
+
+  # Whether dev/uv.lock still answers dev/pyproject.toml and runtime/. Needs the
+  # network to re-resolve, which a flake check in the sandbox does not have;
+  # there lib/lock-audit.nix catches a stale lock at evaluation instead.
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.12.23
+    hooks:
+      - id: uv-lock
+        args: [--check, --project, dev]
+        files: ^(dev/(pyproject\.toml|uv\.lock)|runtime/pyproject\.toml)$

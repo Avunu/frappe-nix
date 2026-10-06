@@ -23,58 +23,56 @@ _FALSY = {"0", "false", "no", "off", "f", "n", ""}
 
 
 class UnixSocketPatchError(RuntimeError):
-    """A patch target went missing — Frappe's internals moved.
+	"""A patch target went missing — Frappe's internals moved.
 
-    Raised from inside the post-import hook so the offending ``import`` fails
-    loudly instead of leaving a hop silently back on TCP. Only ever raised for
-    a socket that was actually configured: with no socket in the environment
-    this package installs nothing and cannot fail.
-    """
+	Raised from inside the post-import hook so the offending ``import`` fails
+	loudly instead of leaving a hop silently back on TCP. Only ever raised for
+	a socket that was actually configured: with no socket in the environment
+	this package installs nothing and cannot fail.
+	"""
 
 
 class UnixSocketPathError(ValueError):
-    """A configured socket path cannot work as an AF_UNIX address."""
+	"""A configured socket path cannot work as an AF_UNIX address."""
 
 
 def enabled():
-    value = os.environ.get("FRAPPE_UNIXSOCK_ENABLED")
-    if value is None:
-        return True
-    text = value.strip().lower()
-    if text in _TRUTHY:
-        return True
-    if text in _FALSY:
-        return False
-    return True
+	value = os.environ.get("FRAPPE_UNIXSOCK_ENABLED")
+	if value is None:
+		return True
+	text = value.strip().lower()
+	if text in _TRUTHY:
+		return True
+	if text in _FALSY:
+		return False
+	return True
 
 
 def socket_path(name):
-    """Return the socket path configured in ``name``, or None.
+	"""Return the socket path configured in ``name``, or None.
 
-    Validates eagerly: a too-long path is a configuration error worth naming,
-    not something to discover as an opaque OSError once the server starts.
-    """
-    if not enabled():
-        return None
-    path = (os.environ.get(name) or "").strip()
-    if not path:
-        return None
-    if not path.startswith("/"):
-        raise UnixSocketPathError(
-            f"frappe_unixsock: {name}={path!r} is relative; an AF_UNIX address must be absolute"
-        )
-    if len(path.encode()) > SUN_PATH_MAX:
-        raise UnixSocketPathError(
-            f"frappe_unixsock: {name}={path!r} is {len(path.encode())} bytes, over the "
-            f"{SUN_PATH_MAX}-byte AF_UNIX limit. Put the socket somewhere shorter — "
-            "$DEVENV_RUNTIME in development, or the site's own runtime dir in production."
-        )
-    if not hasattr(socket, "AF_UNIX"):
-        raise UnixSocketPathError(
-            f"frappe_unixsock: {name} is set but this platform has no AF_UNIX support"
-        )
-    return path
+	Validates eagerly: a too-long path is a configuration error worth naming,
+	not something to discover as an opaque OSError once the server starts.
+	"""
+	if not enabled():
+		return None
+	path = (os.environ.get(name) or "").strip()
+	if not path:
+		return None
+	if not path.startswith("/"):
+		raise UnixSocketPathError(
+			f"frappe_unixsock: {name}={path!r} is relative; an AF_UNIX address must be absolute"
+		)
+	if len(path.encode()) > SUN_PATH_MAX:
+		raise UnixSocketPathError(
+			f"frappe_unixsock: {name}={path!r} is {len(path.encode())} bytes, over the "
+			f"{SUN_PATH_MAX}-byte AF_UNIX limit. Put the socket somewhere shorter — "
+			"$DEVENV_RUNTIME in development, or the site's own runtime dir in production."
+		)
+	if not hasattr(socket, "AF_UNIX"):
+		raise UnixSocketPathError(f"frappe_unixsock: {name} is set but this platform has no AF_UNIX support")
+	return path
 
 
 def warn(message):
-    sys.stderr.write(f"WARNING frappe_unixsock {message}\n")
+	sys.stderr.write(f"WARNING frappe_unixsock {message}\n")

@@ -19,19 +19,19 @@ NAME = "webhooks"
 _INSTALLED = False
 
 
-def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    on_import("frappe.integrations.doctype.webhook.webhook", _patch_webhook)
-
-
 def _patch_webhook(module):
-    require(module, "enqueue_webhook")
-    module.enqueue_webhook = no_op(
-        NAME,
-        "webhook.enqueue_webhook",
-        "outbound webhooks are blocked — Webhook rows and the desk UI are untouched",
-    )
+	require(module, "enqueue_webhook")
+	module.enqueue_webhook = no_op(
+		NAME,
+		"webhook.enqueue_webhook",
+		"outbound webhooks are blocked — Webhook rows and the desk UI are untouched",
+	)
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe.integrations.doctype.webhook.webhook", _patch_webhook)

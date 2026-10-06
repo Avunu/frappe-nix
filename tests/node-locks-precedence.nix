@@ -15,7 +15,7 @@ let
       {
         inherit pkgs lib;
         prodPythonEnv = pkgs.emptyDirectory;
-        nodejs = pkgs.nodejs;
+        inherit (pkgs) nodejs;
         workspaceRoot = ./fixtures/node-targets;
         rootPyproject = {
           tool.uv.workspace.members = [ ];
@@ -95,21 +95,19 @@ in
     echo "── the messages follow the caller's labels (app mode) ────────"
     eq "the directory and the command are the caller's" "1" \
       ${sh (
-        has "nix/node-locks/alpha is unused" (
+        has "nix/node-locks/alpha is unused"
           (bench "unused" {
             nodeLocksLabel = "nix/node-locks";
             nodeLocksCommand = "nix run .#relock -- --node-locks";
           }).nodeLockNotices
-        )
       )}
     eq "…in the command too" "1" \
       ${sh (
-        has "override: nix run .#relock -- --node-locks alpha" (
+        has "override: nix run .#relock -- --node-locks alpha"
           (bench "unused" {
             nodeLocksLabel = "nix/node-locks";
             nodeLocksCommand = "nix run .#relock -- --node-locks";
           }).nodeLockNotices
-        )
       )}
 
     echo "── an excluded frontend ──────────────────────────────────────"

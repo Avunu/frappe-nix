@@ -45,43 +45,43 @@ MODULES = ("frappe.bundler", "frappe.build")
 _INSTALLED = False
 
 
-def install():
-    """Hook the modules that define get_node_env, if a preload is set. Idempotent."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    if not os.environ.get(ENV, "").strip():
-        return
-
-    from ._hook import on_import
-
-    for name in MODULES:
-        on_import(name, _patch_build)
-
-
 def _patch_build(module):
-    original = getattr(module, "get_node_env", None)
-    if not callable(original):
-        raise ImportError(
-            f"frappe_nodebuild: {module.__name__}.get_node_env is gone, so {ENV} "
-            "cannot reach frappe's esbuild. Unset it to build without frappe-nix's "
-            "corrections, and update lib/nodebuild for this Frappe."
-        )
+	original = getattr(module, "get_node_env", None)
+	if not callable(original):
+		raise ImportError(
+			f"frappe_nodebuild: {module.__name__}.get_node_env is gone, so {ENV} "
+			"cannot reach frappe's esbuild. Unset it to build without frappe-nix's "
+			"corrections, and update lib/nodebuild for this Frappe."
+		)
 
-    @functools.wraps(original)
-    def get_node_env(*args, **kwargs):
-        env = dict(original(*args, **kwargs))
-        preload = os.environ.get(ENV, "").strip()
-        if preload:
-            flag = f"--require={preload}"
-            options = env.get("NODE_OPTIONS", "")
-            if flag not in options.split():
-                env["NODE_OPTIONS"] = f"{options} {flag}".strip()
-        return env
+	@functools.wraps(original)
+	def get_node_env(*args, **kwargs):
+		env = dict(original(*args, **kwargs))
+		preload = os.environ.get(ENV, "").strip()
+		if preload:
+			flag = f"--require={preload}"
+			options = env.get("NODE_OPTIONS", "")
+			if flag not in options.split():
+				env["NODE_OPTIONS"] = f"{options} {flag}".strip()
+		return env
 
-    module.get_node_env = get_node_env
+	module.get_node_env = get_node_env
 
 
 # NB: install() is called by the .pth bootstrap, not here — see frappe_unixsock.
+
+
+def install():
+	"""Hook the modules that define get_node_env, if a preload is set. Idempotent."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	if not os.environ.get(ENV, "").strip():
+		return
+
+	from ._hook import on_import
+
+	for name in MODULES:
+		on_import(name, _patch_build)

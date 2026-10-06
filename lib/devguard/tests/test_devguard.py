@@ -20,24 +20,24 @@ FAILURES = []
 
 
 def check(label, condition, detail=""):
-    if condition:
-        print(f"ok   {label}")
-    else:
-        print(f"FAIL {label} {detail}")
-        FAILURES.append(label)
+	if condition:
+		print(f"ok   {label}")
+	else:
+		print(f"FAIL {label} {detail}")
+		FAILURES.append(label)
 
 
 def expect_raises(label, exc_type, fn):
-    try:
-        fn()
-    except exc_type:
-        print(f"ok   {label}")
-    except Exception as exc:  # noqa: BLE001 - the point is to report the mismatch
-        print(f"FAIL {label} raised {type(exc).__name__}: {exc}")
-        FAILURES.append(label)
-    else:
-        print(f"FAIL {label} did not raise")
-        FAILURES.append(label)
+	try:
+		fn()
+	except exc_type:
+		print(f"ok   {label}")
+	except Exception as exc:  # the point is to report the mismatch
+		print(f"FAIL {label} raised {type(exc).__name__}: {exc}")
+		FAILURES.append(label)
+	else:
+		print(f"FAIL {label} did not raise")
+		FAILURES.append(label)
 
 
 # --------------------------------------------------------------------------
@@ -46,70 +46,70 @@ def expect_raises(label, exc_type, fn):
 
 
 class _LineServer(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-    greeting = b""
-    replies = {}
-    default_reply = b""
-    quit_command = b""
+	allow_reuse_address = True
+	daemon_threads = True
+	greeting = b""
+	replies: dict[bytes, bytes] = {}  # noqa: RUF012 - replaced per server, never mutated
+	default_reply = b""
+	quit_command = b""
 
 
 class _Handler(socketserver.BaseRequestHandler):
-    def handle(self):
-        stream = self.request.makefile("rwb")
-        stream.write(self.server.greeting)
-        stream.flush()
-        while True:
-            line = stream.readline()
-            if not line:
-                return
-            command = (line.split() or [b""])[0].upper()
-            stream.write(self.server.replies.get(command, self.server.default_reply))
-            stream.flush()
-            if command == self.server.quit_command:
-                return
+	def handle(self):
+		stream = self.request.makefile("rwb")
+		stream.write(self.server.greeting)
+		stream.flush()
+		while True:
+			line = stream.readline()
+			if not line:
+				return
+			command = (line.split() or [b""])[0].upper()
+			stream.write(self.server.replies.get(command, self.server.default_reply))
+			stream.flush()
+			if command == self.server.quit_command:
+				return
 
 
 def start_server(greeting, replies, default_reply, quit_command):
-    server = _LineServer(("127.0.0.1", 0), _Handler)
-    server.greeting = greeting
-    server.replies = replies
-    server.default_reply = default_reply
-    server.quit_command = quit_command
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1]
+	server = _LineServer(("127.0.0.1", 0), _Handler)
+	server.greeting = greeting
+	server.replies = replies
+	server.default_reply = default_reply
+	server.quit_command = quit_command
+	threading.Thread(target=server.serve_forever, daemon=True).start()
+	return server, server.server_address[1]
 
 
 smtp_server, SMTP_PORT = start_server(
-    b"220 stub ESMTP\r\n",
-    {b"EHLO": b"250 stub\r\n", b"HELO": b"250 stub\r\n", b"QUIT": b"221 bye\r\n"},
-    b"250 ok\r\n",
-    b"QUIT",
+	b"220 stub ESMTP\r\n",
+	{b"EHLO": b"250 stub\r\n", b"HELO": b"250 stub\r\n", b"QUIT": b"221 bye\r\n"},
+	b"250 ok\r\n",
+	b"QUIT",
 )
 pop3_server, POP3_PORT = start_server(
-    b"+OK stub POP3\r\n",
-    {b"QUIT": b"+OK bye\r\n"},
-    b"+OK\r\n",
-    b"QUIT",
+	b"+OK stub POP3\r\n",
+	{b"QUIT": b"+OK bye\r\n"},
+	b"+OK\r\n",
+	b"QUIT",
 )
 
 os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "127.0.0.1"
 os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = str(SMTP_PORT)
 os.environ["FRAPPE_DEVGUARD_MAIL_POP3_PORT"] = str(POP3_PORT)
 for stale in ("FRAPPE_DEVGUARD_ENABLED", "FRAPPE_DEVGUARD_DISABLE", "FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"):
-    os.environ.pop(stale, None)
+	os.environ.pop(stale, None)
 
-import imaplib  # noqa: E402
-import poplib  # noqa: E402
-import smtplib  # noqa: E402
+import imaplib
+import poplib
+import smtplib
 
-import frappe_devguard  # noqa: E402
-from frappe_devguard import DevGuardBlocked, DevGuardPatchError  # noqa: E402
+import frappe_devguard
+from frappe_devguard import DevGuardBlocked, DevGuardPatchError
 
 frappe_devguard.install()  # exactly what the .pth bootstrap does
 
-from frappe_devguard._hook import on_import  # noqa: E402
-from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require  # noqa: E402
+from frappe_devguard._hook import on_import
+from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require
 
 # An unresolvable host is the point: if any of these reach DNS, the redirect
 # did not happen and the test fails with gaierror rather than passing quietly.
@@ -129,15 +129,15 @@ check("incoming blocked by default", frappe_devguard.settings().block_incoming)
 # and above baked (so it wins when present) — but crucially it must NOT be the
 # only source, or a bench outside devenv would fall back to the stock 1025 and
 # mail into another project's catcher.
-import json  # noqa: E402
-import tempfile  # noqa: E402
+import json
+import tempfile
 
-from frappe_devguard import _settings as _dgs  # noqa: E402
+from frappe_devguard import _settings as _dgs
 
 _runtime_dir = tempfile.mkdtemp()
 _runtime_file = os.path.join(_runtime_dir, "devguard-runtime.json")
 with open(_runtime_file, "w") as _handle:
-    json.dump({"guards": {"mail": {"port": 24680, "http_port": 24681}}}, _handle)
+	json.dump({"guards": {"mail": {"port": 24680, "http_port": 24681}}}, _handle)
 
 _saved_port = os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT", None)
 os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
@@ -145,8 +145,8 @@ _dgs._RUNTIME_CACHE.clear()
 check("runtime file supplies the allocated port", frappe_devguard.settings().mail_port == 24680)
 check("runtime file supplies the UI port", frappe_devguard.settings().mail_http_port == 24681)
 check(
-    "settings not in the runtime file still fall through",
-    frappe_devguard.settings().mail_sender == "notifications@example.com",
+	"settings not in the runtime file still fall through",
+	frappe_devguard.settings().mail_sender == "notifications@example.com",
 )
 
 os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = "24999"
@@ -156,23 +156,23 @@ os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT")
 os.environ["FRAPPE_DEVGUARD_RUNTIME"] = os.path.join(_runtime_dir, "does-not-exist.json")
 _dgs._RUNTIME_CACHE.clear()
 check(
-    "a missing runtime file falls back rather than raising",
-    frappe_devguard.settings().mail_port == 1025,
+	"a missing runtime file falls back rather than raising",
+	frappe_devguard.settings().mail_port == 1025,
 )
 
 with open(_runtime_file, "w") as _handle:
-    _handle.write("{not json")
+	_handle.write("{not json")
 os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
 _dgs._RUNTIME_CACHE.clear()
 check(
-    "an unreadable runtime file falls back rather than raising",
-    frappe_devguard.settings().mail_port == 1025,
+	"an unreadable runtime file falls back rather than raising",
+	frappe_devguard.settings().mail_port == 1025,
 )
 
 os.environ.pop("FRAPPE_DEVGUARD_RUNTIME")
 _dgs._RUNTIME_CACHE.clear()
 if _saved_port is not None:
-    os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = _saved_port
+	os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = _saved_port
 
 
 # --------------------------------------------------------------------------
@@ -181,9 +181,9 @@ if _saved_port is not None:
 
 session = smtplib.SMTP(ELSEWHERE, 25)
 check(
-    "SMTP() lands on the catcher",
-    session.sock.getpeername()[1] == SMTP_PORT,
-    session.sock.getpeername(),
+	"SMTP() lands on the catcher",
+	session.sock.getpeername()[1] == SMTP_PORT,
+	session.sock.getpeername(),
 )
 check("SMTP.login is faked", session.login("someone", "hunter2")[0] == 235)
 check("SMTP.starttls is a no-op", session.starttls()[0] == 220)
@@ -192,17 +192,17 @@ session.quit()
 session = smtplib.SMTP()
 session.connect(ELSEWHERE, 587)
 check(
-    "explicit .connect() lands on the catcher",
-    session.sock.getpeername()[1] == SMTP_PORT,
-    session.sock.getpeername(),
+	"explicit .connect() lands on the catcher",
+	session.sock.getpeername()[1] == SMTP_PORT,
+	session.sock.getpeername(),
 )
 session.quit()
 
 session = smtplib.SMTP_SSL(ELSEWHERE, 465)
 check(
-    "SMTP_SSL lands on the catcher in plaintext",
-    session.sock.getpeername()[1] == SMTP_PORT and not hasattr(session.sock, "cipher"),
-    session.sock.getpeername(),
+	"SMTP_SSL lands on the catcher in plaintext",
+	session.sock.getpeername()[1] == SMTP_PORT and not hasattr(session.sock, "cipher"),
+	session.sock.getpeername(),
 )
 session.quit()
 
@@ -227,25 +227,25 @@ check("DevGuardBlocked is an OSError", issubclass(DevGuardBlocked, OSError))
 os.environ["FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"] = "1"
 mailbox = poplib.POP3(ELSEWHERE, 110)
 check(
-    "POP3 lands on the catcher when enabled",
-    mailbox.sock.getpeername()[1] == POP3_PORT,
-    mailbox.sock.getpeername(),
+	"POP3 lands on the catcher when enabled",
+	mailbox.sock.getpeername()[1] == POP3_PORT,
+	mailbox.sock.getpeername(),
 )
 check("POP3 credentials are substituted", mailbox.user("real@example.com").startswith(b"+OK"))
 mailbox.quit()
 
 mailbox = poplib.POP3_SSL(ELSEWHERE, 995)
 check(
-    "POP3_SSL lands on the catcher in plaintext",
-    mailbox.sock.getpeername()[1] == POP3_PORT,
-    mailbox.sock.getpeername(),
+	"POP3_SSL lands on the catcher in plaintext",
+	mailbox.sock.getpeername()[1] == POP3_PORT,
+	mailbox.sock.getpeername(),
 )
 mailbox.quit()
 
 expect_raises(
-    "IMAP stays blocked in POP3 mode",
-    DevGuardBlocked,
-    lambda: imaplib.IMAP4(ELSEWHERE, 143),
+	"IMAP stays blocked in POP3 mode",
+	DevGuardBlocked,
+	lambda: imaplib.IMAP4(ELSEWHERE, 143),
 )
 os.environ.pop("FRAPPE_DEVGUARD_MAIL_POP3_ENABLED")
 
@@ -255,31 +255,31 @@ os.environ.pop("FRAPPE_DEVGUARD_MAIL_POP3_ENABLED")
 # --------------------------------------------------------------------------
 
 for label, var, value in (
-    ("globally", "FRAPPE_DEVGUARD_ENABLED", "0"),
-    ("per guard", "FRAPPE_DEVGUARD_DISABLE", "backups,mail"),
+	("globally", "FRAPPE_DEVGUARD_ENABLED", "0"),
+	("per guard", "FRAPPE_DEVGUARD_DISABLE", "backups,mail"),
 ):
-    os.environ[var] = value
-    check(f"mail guard reports disabled ({label})", not frappe_devguard.settings().guard_enabled("mail"))
-    expect_raises(
-        f"disabled SMTP resolves the real host ({label})",
-        socket.gaierror,
-        lambda: smtplib.SMTP(ELSEWHERE, 25, timeout=5),
-    )
-    expect_raises(
-        f"disabled IMAP resolves the real host ({label})",
-        socket.gaierror,
-        lambda: imaplib.IMAP4(ELSEWHERE, 143),
-    )
-    session = smtplib.SMTP("127.0.0.1", SMTP_PORT)
-    check(f"disabled SMTP still connects normally ({label})", session.sock.getpeername()[1] == SMTP_PORT)
-    session.quit()
-    os.environ.pop(var)
+	os.environ[var] = value
+	check(f"mail guard reports disabled ({label})", not frappe_devguard.settings().guard_enabled("mail"))
+	expect_raises(
+		f"disabled SMTP resolves the real host ({label})",
+		socket.gaierror,
+		lambda: smtplib.SMTP(ELSEWHERE, 25, timeout=5),
+	)
+	expect_raises(
+		f"disabled IMAP resolves the real host ({label})",
+		socket.gaierror,
+		lambda: imaplib.IMAP4(ELSEWHERE, 143),
+	)
+	session = smtplib.SMTP("127.0.0.1", SMTP_PORT)
+	check(f"disabled SMTP still connects normally ({label})", session.sock.getpeername()[1] == SMTP_PORT)
+	session.quit()
+	os.environ.pop(var)
 
 os.environ["FRAPPE_DEVGUARD_DISABLE"] = "backups"
 check(
-    "disabling one guard leaves the others alone",
-    frappe_devguard.settings().guard_enabled("mail")
-    and not frappe_devguard.settings().guard_enabled("backups"),
+	"disabling one guard leaves the others alone",
+	frappe_devguard.settings().guard_enabled("mail")
+	and not frappe_devguard.settings().guard_enabled("backups"),
 )
 os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
 
@@ -292,7 +292,7 @@ fired = []
 on_import("json.decoder", lambda module: fired.append(module.__name__))
 sys.modules.pop("json.decoder", None)
 sys.modules.pop("json", None)
-import json  # noqa: E402, F401
+import json
 
 check("post-import hook fires", fired == ["json.decoder"], fired)
 check("hooked module still works", json.loads('{"a": 1}') == {"a": 1})
@@ -308,13 +308,13 @@ check("hook on an imported module fires immediately", already == ["base64"], alr
 
 
 class Base:
-    def send(self):
-        return "base"
+	def send(self):
+		return "base"
 
 
 class EarlySubclass(Base):
-    def send(self):
-        return "escaped"
+	def send(self):
+		return "escaped"
 
 
 disarm_subclasses(Base, ("send",))
@@ -322,40 +322,40 @@ check("existing subclass is disarmed", EarlySubclass().send() == "base")
 
 
 class LateSubclass(Base):
-    """Stands in for a controller imported later by get_controller."""
+	"""Stands in for a controller imported later by get_controller."""
 
-    def send(self):
-        return "escaped"
+	def send(self):
+		return "escaped"
 
 
 check("late subclass is disarmed", LateSubclass().send() == "base")
 
 
 class Untouched(Base):
-    def other(self):
-        return "kept"
+	def other(self):
+		return "kept"
 
 
 check("unrelated attributes survive", Untouched().other() == "kept")
 
 
 def _sample(self, server, port=None, password=None):
-    return (server, port, password)
+	return (server, port, password)
 
 
 args, kwargs = redirect_kwargs(
-    _sample, None, ("real.example.com",), {"password": "hunter2"}, {"server": "127.0.0.1", "port": 1025}
+	_sample, None, ("real.example.com",), {"password": "hunter2"}, {"server": "127.0.0.1", "port": 1025}
 )
 check(
-    "call arguments are rewritten before delegation",
-    _sample(*args, **kwargs) == ("127.0.0.1", 1025, "hunter2"),
-    _sample(*args, **kwargs),
+	"call arguments are rewritten before delegation",
+	_sample(*args, **kwargs) == ("127.0.0.1", 1025, "hunter2"),
+	_sample(*args, **kwargs),
 )
 
 expect_raises(
-    "a missing patch target fails loudly",
-    DevGuardPatchError,
-    lambda: require(Base, "no_such_method"),
+	"a missing patch target fails loudly",
+	DevGuardPatchError,
+	lambda: require(Base, "no_such_method"),
 )
 
 
@@ -363,15 +363,15 @@ expect_raises(
 # the synthesised account used on sites with no Email Account at all
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.mail import _synthetic_account  # noqa: E402
+from frappe_devguard.guards.mail import _synthetic_account
 
 
 class FakeEmailAccount:
-    @classmethod
-    def from_record(cls, record):
-        account = cls()
-        account.record = record
-        return account
+	@classmethod
+	def from_record(cls, record):
+		account = cls()
+		account.record = record
+		return account
 
 
 record = _synthetic_account(FakeEmailAccount).record
@@ -379,16 +379,16 @@ check("synthetic account targets the catcher", record["smtp_server"] == "127.0.0
 check("synthetic account uses the catcher port", record["smtp_port"] == SMTP_PORT)
 check("synthetic account carries no password", "password" not in record)
 check(
-    "synthetic account cannot negotiate TLS",
-    record["use_tls"] == 0 and record["use_ssl_for_outgoing"] == 0,
+	"synthetic account cannot negotiate TLS",
+	record["use_tls"] == 0 and record["use_ssl_for_outgoing"] == 0,
 )
 check(
-    "synthetic account never touches a mailbox",
-    record["enable_incoming"] == 0 and record["append_emails_to_sent_folder"] == 0,
+	"synthetic account never touches a mailbox",
+	record["enable_incoming"] == 0 and record["append_emails_to_sent_folder"] == 0,
 )
 check(
-    "synthetic account preserves the real sender",
-    record["always_use_account_email_id_as_sender"] == 0,
+	"synthetic account preserves the real sender",
+	record["always_use_account_email_id_as_sender"] == 0,
 )
 
 
@@ -396,76 +396,76 @@ check(
 # whitelist swap — a replacement the framework still recognises
 # --------------------------------------------------------------------------
 
-import types  # noqa: E402
+import types
 
 
 def stub_frappe(container=list):
-    """Minimal stand-in for the four registries frappe.whitelist() populates.
+	"""Minimal stand-in for the four registries frappe.whitelist() populates.
 
-    ``container`` is ``list`` on Frappe v15 and ``set`` from v16 on. The swap
-    has to hold for both, so every assertion below runs twice.
-    """
-    stub = types.ModuleType("frappe")
-    stub.whitelisted = container()
-    stub.guest_methods = container()
-    stub.xss_safe_methods = container()
-    stub.allowed_http_methods_for_whitelisted_func = {}
-    stub.logger = lambda *_a, **_k: types.SimpleNamespace(warning=lambda *_a, **_k: None)
-    sys.modules["frappe"] = stub
-    return stub
+	``container`` is ``list`` on Frappe v15 and ``set`` from v16 on. The swap
+	has to hold for both, so every assertion below runs twice.
+	"""
+	stub = types.ModuleType("frappe")
+	stub.whitelisted = container()
+	stub.guest_methods = container()
+	stub.xss_safe_methods = container()
+	stub.allowed_http_methods_for_whitelisted_func = {}
+	stub.logger = lambda *_a, **_k: types.SimpleNamespace(warning=lambda *_a, **_k: None)
+	sys.modules["frappe"] = stub
+	return stub
 
 
 frappe_stub = stub_frappe()
-from frappe_devguard._patch import assert_not_overridden, rewhitelist  # noqa: E402
+from frappe_devguard._patch import assert_not_overridden, rewhitelist
 
 
 def register(registry, fn):
-    (registry.append if isinstance(registry, list) else registry.add)(fn)
+	(registry.append if isinstance(registry, list) else registry.add)(fn)
 
 
 for container in (list, set):
-    kind = container.__name__
-    frappe_stub = stub_frappe(container)
+	kind = container.__name__
+	frappe_stub = stub_frappe(container)
 
-    def take_backup():
-        return "uploaded"
+	def take_backup():
+		return "uploaded"
 
-    register(frappe_stub.whitelisted, take_backup)
-    register(frappe_stub.guest_methods, take_backup)
-    frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
+	register(frappe_stub.whitelisted, take_backup)
+	register(frappe_stub.guest_methods, take_backup)
+	frappe_stub.allowed_http_methods_for_whitelisted_func[take_backup] = ["GET", "POST"]
 
-    def refuse():
-        return "blocked"
+	def refuse():
+		return "blocked"
 
-    replacement = rewhitelist(take_backup, refuse)
+	replacement = rewhitelist(take_backup, refuse)
 
-    check(f"[{kind}] replacement is whitelisted", replacement in frappe_stub.whitelisted)
-    check(f"[{kind}] original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
-    check(
-        f"[{kind}] whitelist did not grow",
-        len(frappe_stub.whitelisted) == 1,
-        frappe_stub.whitelisted,
-    )
-    check(
-        f"[{kind}] http methods follow the replacement",
-        frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
-    )
-    check(
-        f"[{kind}] stale http-methods key is gone",
-        take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
-    )
-    check(f"[{kind}] guest_methods follows too", replacement in frappe_stub.guest_methods)
-    # The guest registries take no fallback registration: the original was never
-    # xss_safe, and adding the replacement there would widen access, not keep it.
-    check(
-        f"[{kind}] xss_safe_methods stays empty",
-        not frappe_stub.xss_safe_methods,
-        frappe_stub.xss_safe_methods,
-    )
-    check(
-        f"[{kind}] replacement keeps the original identity",
-        replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
-    )
+	check(f"[{kind}] replacement is whitelisted", replacement in frappe_stub.whitelisted)
+	check(f"[{kind}] original is no longer whitelisted", take_backup not in frappe_stub.whitelisted)
+	check(
+		f"[{kind}] whitelist did not grow",
+		len(frappe_stub.whitelisted) == 1,
+		frappe_stub.whitelisted,
+	)
+	check(
+		f"[{kind}] http methods follow the replacement",
+		frappe_stub.allowed_http_methods_for_whitelisted_func.get(replacement) == ["GET", "POST"],
+	)
+	check(
+		f"[{kind}] stale http-methods key is gone",
+		take_backup not in frappe_stub.allowed_http_methods_for_whitelisted_func,
+	)
+	check(f"[{kind}] guest_methods follows too", replacement in frappe_stub.guest_methods)
+	# The guest registries take no fallback registration: the original was never
+	# xss_safe, and adding the replacement there would widen access, not keep it.
+	check(
+		f"[{kind}] xss_safe_methods stays empty",
+		not frappe_stub.xss_safe_methods,
+		frappe_stub.xss_safe_methods,
+	)
+	check(
+		f"[{kind}] replacement keeps the original identity",
+		replacement.__name__ == "take_backup" and replacement.__module__ == take_backup.__module__,
+	)
 
 frappe_stub.get_hooks = lambda _name: {"some.other.cmd": ["app.override"]}
 assert_not_overridden("backups", ["protected.cmd"])  # must not raise
@@ -476,58 +476,57 @@ print("ok   assert_not_overridden tolerates an unrelated override map")
 # scheduler denylist — exact match only
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.scheduler import blocked_jobs  # noqa: E402
+from frappe_devguard.guards.scheduler import blocked_jobs
 
 jobs = blocked_jobs()
 check(
-    "core backup jobs are blocked",
-    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
+	"core backup jobs are blocked",
+	"frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
 )
 # Frappe 16 moved these three integrations into the standalone
 # `frappe/offsite_backups` app, which re-registers the same seven jobs under
 # its own dotted paths. blocked_jobs is exact-match, so the old spellings alone
 # would leave a bench with that app installed pushing to production nightly.
 check(
-    "the standalone app's jobs are blocked too",
-    "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily"
-    in jobs,
+	"the standalone app's jobs are blocked too",
+	"offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily"
+	in jobs,
 )
 check(
-    "including google drive's, which is spelled differently",
-    "offsite_backups.offsite_backups.doctype.google_drive.google_drive.daily_backup" in jobs,
+	"including google drive's, which is spelled differently",
+	"offsite_backups.offsite_backups.doctype.google_drive.google_drive.daily_backup" in jobs,
 )
 check(
-    "the local retention reaper is NOT blocked",
-    "frappe.desk.page.backups.backups.delete_downloadable_backups" not in jobs,
+	"the local retention reaper is NOT blocked",
+	"frappe.desk.page.backups.backups.delete_downloadable_backups" not in jobs,
 )
 check("seven entries per layout are listed", len(jobs) == 14, len(jobs))
 
 os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.push_backup"
 check(
-    "extra jobs are unioned in, not replacing",
-    "myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 15,
-    len(blocked_jobs()),
+	"extra jobs are unioned in, not replacing",
+	"myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 15,
+	len(blocked_jobs()),
 )
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
 
 # override_whitelisted_methods is consulted before get_attr, so the cmd strings
 # assert_not_overridden watches have to name both layouts as well.
-from frappe_devguard.guards.backups import _BACKUP_PREFIXES, _PROTECTED_CMDS  # noqa: E402
+from frappe_devguard.guards.backups import _BACKUP_PREFIXES, _PROTECTED_CMDS
 
 check(
-    "both backup layouts are guarded",
-    _BACKUP_PREFIXES == ("frappe.integrations", "offsite_backups.offsite_backups"),
-    _BACKUP_PREFIXES,
+	"both backup layouts are guarded",
+	_BACKUP_PREFIXES == ("frappe.integrations", "offsite_backups.offsite_backups"),
+	_BACKUP_PREFIXES,
 )
 check(
-    "protected endpoints cover core",
-    "frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3"
-    in _PROTECTED_CMDS,
+	"protected endpoints cover core",
+	"frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3" in _PROTECTED_CMDS,
 )
 check(
-    "protected endpoints cover the standalone app",
-    "offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3"
-    in _PROTECTED_CMDS,
+	"protected endpoints cover the standalone app",
+	"offsite_backups.offsite_backups.doctype.s3_backup_settings.s3_backup_settings.take_backups_s3"
+	in _PROTECTED_CMDS,
 )
 check("four endpoints per layout", len(_PROTECTED_CMDS) == 8, len(_PROTECTED_CMDS))
 
@@ -542,52 +541,52 @@ check("four endpoints per layout", len(_PROTECTED_CMDS) == 8, len(_PROTECTED_CMD
 # to a remote site that smtplib never sees.
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.mail import _patch_email_queue  # noqa: E402
+from frappe_devguard.guards.mail import _patch_email_queue
 
 
 class FakeSMTPServer:
-    def __init__(self, server=None, port=None, **_kwargs):
-        self.server = server
-        self.port = port
+	def __init__(self, server=None, port=None, **_kwargs):
+		self.server = server
+		self.port = port
 
 
 class FakeAccount:
-    """Enough of a Document: ``.get()`` reads the attribute."""
+	"""Enough of a Document: ``.get()`` reads the attribute."""
 
-    def __init__(self, service=""):
-        self.service = service
+	def __init__(self, service=""):
+		self.service = service
 
-    def get(self, key, default=None):
-        return getattr(self, key, default)
+	def get(self, key, default=None):
+		return getattr(self, key, default)
 
 
 class FakeQueueDoc:
-    def __init__(self, account):
-        self.account = account
+	def __init__(self, account):
+		self.account = account
 
-    def get_email_account(self, raise_error=False):
-        return self.account
+	def get_email_account(self, raise_error=False):
+		return self.account
 
 
 def email_queue_module(fetch_name):
-    module = types.ModuleType("frappe.email.doctype.email_queue.email_queue")
+	module = types.ModuleType("frappe.email.doctype.email_queue.email_queue")
 
-    class SendMailContext:
-        def __init__(self, account):
-            self.queue_doc = FakeQueueDoc(account)
-            self.smtp_server = None
-            self.frappe_mail_client = "a real Frappe Mail client"
-            self.email_account_doc = None
+	class SendMailContext:
+		def __init__(self, account):
+			self.queue_doc = FakeQueueDoc(account)
+			self.smtp_server = None
+			self.frappe_mail_client = "a real Frappe Mail client"
+			self.email_account_doc = None
 
-    def original(self):
-        raise AssertionError("the original transport lookup must not run")
+	def original(self):
+		raise AssertionError("the original transport lookup must not run")
 
-    if fetch_name:
-        setattr(SendMailContext, fetch_name, original)
-    module.SendMailContext = SendMailContext
-    module.SMTPServer = FakeSMTPServer
-    module.get_hook_method = lambda _name, fallback=None: fallback
-    return module
+	if fetch_name:
+		setattr(SendMailContext, fetch_name, original)
+	module.SendMailContext = SendMailContext
+	module.SMTPServer = FakeSMTPServer
+	module.get_hook_method = lambda _name, fallback=None: fallback
+	return module
 
 
 check("mail guard still enabled here", frappe_devguard.settings().guard_enabled("mail"))
@@ -603,9 +602,9 @@ check("frappe 16's outgoing-server lookup is patched", _ctx.smtp_server is not N
 check("the queue is pointed at the catcher", _ctx.smtp_server.server == _st.mail_host)
 check("on the catcher's port", _ctx.smtp_server.port == _st.mail_port)
 check(
-    "the Frappe Mail HTTP transport is disarmed",
-    _ctx.email_account_doc.service == "",
-    _ctx.email_account_doc.service,
+	"the Frappe Mail HTTP transport is disarmed",
+	_ctx.email_account_doc.service == "",
+	_ctx.email_account_doc.service,
 )
 check("and its client is dropped", _ctx.frappe_mail_client is None)
 
@@ -616,9 +615,9 @@ _ctx15.fetch_smtp_server()
 check("the pre-16 spelling is still patched", _ctx15.smtp_server.server == _st.mail_host)
 
 expect_raises(
-    "neither spelling surviving fails loudly",
-    DevGuardPatchError,
-    lambda: _patch_email_queue(email_queue_module(None)),
+	"neither spelling surviving fails loudly",
+	DevGuardPatchError,
+	lambda: _patch_email_queue(email_queue_module(None)),
 )
 
 
@@ -629,62 +628,62 @@ expect_raises(
 # the guard touches. `calls` records what would have reached the network.
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards import objectstore  # noqa: E402
+from frappe_devguard.guards import objectstore
 
 
 class FakeClientError(Exception):
-    def __init__(self, code):
-        super().__init__(code)
-        self.response = {"Error": {"Code": code}}
+	def __init__(self, code):
+		super().__init__(code)
+		self.response = {"Error": {"Code": code}}
 
 
 def fake_botocore():
-    client_mod = types.ModuleType("botocore.client")
-    signers_mod = types.ModuleType("botocore.signers")
+	client_mod = types.ModuleType("botocore.client")
+	signers_mod = types.ModuleType("botocore.signers")
 
-    class BaseClient:
-        def __init__(self, endpoint="https://s3.example.com", service="s3", existing=(), head_error=None):
-            self.meta = types.SimpleNamespace(
-                endpoint_url=endpoint,
-                service_model=types.SimpleNamespace(service_name=service),
-            )
-            self.existing = set(existing)
-            self.head_error = head_error
-            self.calls = []
+	class BaseClient:
+		def __init__(self, endpoint="https://s3.example.com", service="s3", existing=(), head_error=None):
+			self.meta = types.SimpleNamespace(
+				endpoint_url=endpoint,
+				service_model=types.SimpleNamespace(service_name=service),
+			)
+			self.existing = set(existing)
+			self.head_error = head_error
+			self.calls = []
 
-        def _make_api_call(self, operation_name, api_params):
-            self.calls.append((operation_name, dict(api_params)))
-            if operation_name == "HeadObject":
-                if self.head_error:
-                    raise FakeClientError(self.head_error)
-                if api_params["Key"] not in self.existing:
-                    raise FakeClientError("404")
-                return {"ContentLength": 1}
-            return {"ok": operation_name}
+		def _make_api_call(self, operation_name, api_params):
+			self.calls.append((operation_name, dict(api_params)))
+			if operation_name == "HeadObject":
+				if self.head_error:
+					raise FakeClientError(self.head_error)
+				if api_params["Key"] not in self.existing:
+					raise FakeClientError("404")
+				return {"ContentLength": 1}
+			return {"ok": operation_name}
 
-    def generate_presigned_url(self, ClientMethod, Params=None, **_kwargs):  # noqa: N803
-        return f"https://signed/{ClientMethod}"
+	def generate_presigned_url(self, ClientMethod, Params=None, **_kwargs):
+		return f"https://signed/{ClientMethod}"
 
-    def generate_presigned_post(self, Bucket, Key, **_kwargs):  # noqa: N803
-        return {"url": "https://signed/post"}
+	def generate_presigned_post(self, Bucket, Key, **_kwargs):
+		return {"url": "https://signed/post"}
 
-    client_mod.BaseClient = BaseClient
-    signers_mod.generate_presigned_url = generate_presigned_url
-    signers_mod.generate_presigned_post = generate_presigned_post
-    objectstore._patch_client(client_mod)
-    objectstore._patch_signers(signers_mod)
-    return BaseClient, signers_mod
+	client_mod.BaseClient = BaseClient
+	signers_mod.generate_presigned_url = generate_presigned_url
+	signers_mod.generate_presigned_post = generate_presigned_post
+	objectstore._patch_client(client_mod)
+	objectstore._patch_signers(signers_mod)
+	return BaseClient, signers_mod
 
 
 S3, _signers = fake_botocore()
 
 
 def ops(client):
-    return [name for name, _params in client.calls]
+	return [name for name, _params in client.calls]
 
 
 def put(client, key="new.pdf"):
-    return client._make_api_call("PutObject", {"Bucket": "prod", "Key": key, "Body": b"x"})
+	return client._make_api_call("PutObject", {"Bucket": "prod", "Key": key, "Body": b"x"})
 
 
 os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE", None)
@@ -703,13 +702,13 @@ check("and reports success, as S3 does", _resp["ResponseMetadata"]["HTTPStatusCo
 
 _c = S3()
 _resp = _c._make_api_call(
-    "DeleteObjects", {"Bucket": "prod", "Delete": {"Objects": [{"Key": "a"}, {"Key": "b"}]}}
+	"DeleteObjects", {"Bucket": "prod", "Delete": {"Objects": [{"Key": "a"}, {"Key": "b"}]}}
 )
 check("DeleteObjects never reaches the store", ops(_c) == [], ops(_c))
 check(
-    "and reports every key as not deleted",
-    [e["Key"] for e in _resp["Errors"]] == ["a", "b"] and not _resp.get("Deleted"),
-    _resp,
+	"and reports every key as not deleted",
+	[e["Key"] for e in _resp["Errors"]] == ["a", "b"] and not _resp.get("Deleted"),
+	_resp,
 )
 
 _c = S3()
@@ -717,11 +716,11 @@ expect_raises("local mode refuses writes", DevGuardBlocked, lambda: put(_c))
 check("before anything is sent", ops(_c) == [], ops(_c))
 
 expect_raises(
-    "bucket configuration is refused",
-    DevGuardBlocked,
-    lambda: S3()._make_api_call(
-        "PutBucketLifecycleConfiguration", {"Bucket": "prod", "LifecycleConfiguration": {}}
-    ),
+	"bucket configuration is refused",
+	DevGuardBlocked,
+	lambda: S3()._make_api_call(
+		"PutBucketLifecycleConfiguration", {"Bucket": "prod", "LifecycleConfiguration": {}}
+	),
 )
 
 # -- push mode --
@@ -733,9 +732,9 @@ _c = S3()
 put(_c)
 check("push mode writes a new key", ops(_c) == ["HeadObject", "PutObject"], ops(_c))
 check(
-    "with If-None-Match so the store refuses a racing overwrite",
-    _c.calls[-1][1].get("IfNoneMatch") == "*",
-    _c.calls[-1][1],
+	"with If-None-Match so the store refuses a racing overwrite",
+	_c.calls[-1][1].get("IfNoneMatch") == "*",
+	_c.calls[-1][1],
 )
 
 _c = S3(existing={"taken.pdf"})
@@ -745,23 +744,23 @@ check("the overwrite is never sent", ops(_c) == ["HeadObject"], ops(_c))
 _c = S3(head_error="403")
 put(_c)
 check(
-    "a write-only credential still writes, guarded by If-None-Match",
-    ops(_c) == ["HeadObject", "PutObject"] and _c.calls[-1][1].get("IfNoneMatch") == "*",
-    _c.calls,
+	"a write-only credential still writes, guarded by If-None-Match",
+	ops(_c) == ["HeadObject", "PutObject"] and _c.calls[-1][1].get("IfNoneMatch") == "*",
+	_c.calls,
 )
 
 _c = S3()
 expect_raises(
-    "an explicit If-Match overwrite is refused",
-    DevGuardBlocked,
-    lambda: _c._make_api_call("PutObject", {"Bucket": "prod", "Key": "k", "IfMatch": '"etag"'}),
+	"an explicit If-Match overwrite is refused",
+	DevGuardBlocked,
+	lambda: _c._make_api_call("PutObject", {"Bucket": "prod", "Key": "k", "IfMatch": '"etag"'}),
 )
 
 _c = S3(existing={"big.bin"})
 expect_raises(
-    "a multipart upload onto an existing key fails before any part is sent",
-    DevGuardBlocked,
-    lambda: _c._make_api_call("CreateMultipartUpload", {"Bucket": "prod", "Key": "big.bin"}),
+	"a multipart upload onto an existing key fails before any part is sent",
+	DevGuardBlocked,
+	lambda: _c._make_api_call("CreateMultipartUpload", {"Bucket": "prod", "Key": "big.bin"}),
 )
 
 _c = S3()
@@ -773,9 +772,9 @@ _c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
 check("push mode still drops deletes", ops(_c) == [], ops(_c))
 
 expect_raises(
-    "push mode still refuses tagging",
-    DevGuardBlocked,
-    lambda: S3()._make_api_call("PutObjectTagging", {"Bucket": "prod", "Key": "a", "Tagging": {}}),
+	"push mode still refuses tagging",
+	DevGuardBlocked,
+	lambda: S3()._make_api_call("PutObjectTagging", {"Bucket": "prod", "Key": "a", "Tagging": {}}),
 )
 
 # -- push mode against a store without conditional writes (Backblaze B2) --
@@ -789,32 +788,32 @@ os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES"] = "false"
 _c = S3()
 put(_c)
 check(
-    "without conditional writes, a new key is written without If-None-Match",
-    ops(_c) == ["HeadObject", "PutObject"] and "IfNoneMatch" not in _c.calls[-1][1],
-    _c.calls,
+	"without conditional writes, a new key is written without If-None-Match",
+	ops(_c) == ["HeadObject", "PutObject"] and "IfNoneMatch" not in _c.calls[-1][1],
+	_c.calls,
 )
 
 _c = S3()
 _c._make_api_call("CompleteMultipartUpload", {"Bucket": "prod", "Key": "big.bin", "UploadId": "u"})
 check(
-    "without conditional writes, completing a multipart upload is unconditional",
-    "IfNoneMatch" not in _c.calls[-1][1],
-    _c.calls,
+	"without conditional writes, completing a multipart upload is unconditional",
+	"IfNoneMatch" not in _c.calls[-1][1],
+	_c.calls,
 )
 
 _c = S3(existing={"taken.pdf"})
 expect_raises(
-    "without conditional writes, an existing key is still refused",
-    DevGuardBlocked,
-    lambda: put(_c, "taken.pdf"),
+	"without conditional writes, an existing key is still refused",
+	DevGuardBlocked,
+	lambda: put(_c, "taken.pdf"),
 )
 check("and the overwrite is never sent", ops(_c) == ["HeadObject"], ops(_c))
 
 _c = S3(head_error="403")
 expect_raises(
-    "without conditional writes, a key HeadObject cannot check is refused",
-    DevGuardBlocked,
-    lambda: put(_c),
+	"without conditional writes, a key HeadObject cannot check is refused",
+	DevGuardBlocked,
+	lambda: put(_c),
 )
 check("and the write is never sent", ops(_c) == ["HeadObject"], ops(_c))
 
@@ -823,18 +822,18 @@ os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_CONDITIONAL_WRITES")
 # -- presigning --
 
 check(
-    "presigned reads are issued",
-    _signers.generate_presigned_url(S3(), "get_object") == "https://signed/get_object",
+	"presigned reads are issued",
+	_signers.generate_presigned_url(S3(), "get_object") == "https://signed/get_object",
 )
 expect_raises(
-    "presigned writes are refused",
-    DevGuardBlocked,
-    lambda: _signers.generate_presigned_url(S3(), "put_object"),
+	"presigned writes are refused",
+	DevGuardBlocked,
+	lambda: _signers.generate_presigned_url(S3(), "put_object"),
 )
 expect_raises(
-    "presigned POST is refused",
-    DevGuardBlocked,
-    lambda: _signers.generate_presigned_post(S3(), "prod", "k"),
+	"presigned POST is refused",
+	DevGuardBlocked,
+	lambda: _signers.generate_presigned_post(S3(), "prod", "k"),
 )
 
 # -- scope --
@@ -863,13 +862,13 @@ _frappe_stub = types.ModuleType("frappe")
 _frappe_stub.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
 objectstore._patch_get_site_config(_frappe_stub)
 check(
-    "local mode forces cloud_storage to local disk",
-    _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+	"local mode forces cloud_storage to local disk",
+	_frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local") is True,
 )
 os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "push"
 check(
-    "push mode leaves cloud_storage on the bucket",
-    not _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local"),
+	"push mode leaves cloud_storage on the bucket",
+	not _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local"),
 )
 os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
 
@@ -881,6 +880,6 @@ pop3_server.shutdown()
 
 print()
 if FAILURES:
-    print(f"{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
-    sys.exit(1)
+	print(f"{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
+	sys.exit(1)
 print("all devguard checks passed")

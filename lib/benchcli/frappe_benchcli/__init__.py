@@ -60,64 +60,64 @@ _INSTALLED = False
 _WRAPPERS = []
 
 
-def install():
-    """Hook bench.cli once it is imported. Idempotent."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
-
-    from ._hook import on_import
-
-    on_import("bench.cli", _patch_cli)
-
-
 def route(argv):
-    """Replace this process with the script ``argv`` names, if it names one.
+	"""Replace this process with the script ``argv`` names, if it names one.
 
-    Returns when nothing is to be handed over. Otherwise it does not return: it
-    execs the script, or exits 2 when the script is not there.
-    """
-    if os.environ.get(RAW):
-        return
-    script = ROUTES.get(argv[1]) if len(argv) > 1 else None
-    if script is None:
-        return
+	Returns when nothing is to be handed over. Otherwise it does not return: it
+	execs the script, or exits 2 when the script is not there.
+	"""
+	if os.environ.get(RAW):
+		return
+	script = ROUTES.get(argv[1]) if len(argv) > 1 else None
+	if script is None:
+		return
 
-    command = f"bench {argv[1]}"
-    target = shutil.which(script)
-    if target is None:
-        sys.stderr.write(
-            f"frappe_benchcli: `{command}` is {script} in a frappe-nix bench, and "
-            f"{script} is not on PATH. Enter the dev shell (direnv allow, or nix "
-            "develop) and run it again.\n"
-        )
-        raise SystemExit(2)
+	command = f"bench {argv[1]}"
+	target = shutil.which(script)
+	if target is None:
+		sys.stderr.write(
+			f"frappe_benchcli: `{command}` is {script} in a frappe-nix bench, and "
+			f"{script} is not on PATH. Enter the dev shell (direnv allow, or nix "
+			"develop) and run it again.\n"
+		)
+		raise SystemExit(2)
 
-    sys.stderr.write(
-        f"frappe_benchcli: `{command}` is {script} here. This shell reached the "
-        "virtualenv's bench ahead of the devenv's, which activating ./env does. "
-        f"Running {script}.\n"
-    )
-    sys.stderr.flush()
-    os.execv(target, [script, *argv[2:]])
+	sys.stderr.write(
+		f"frappe_benchcli: `{command}` is {script} here. This shell reached the "
+		"virtualenv's bench ahead of the devenv's, which activating ./env does. "
+		f"Running {script}.\n"
+	)
+	sys.stderr.flush()
+	os.execv(target, [script, *argv[2:]])
 
 
 def _patch_cli(module):
-    original = getattr(module, "cli", None)
-    if not callable(original):
-        raise ImportError(
-            "frappe_benchcli: bench.cli.cli is gone, so `bench update` and `bench "
-            f"build` cannot be handed to frappe-nix's. Set {RAW}=1 to run the stock "
-            "command, and update lib/benchcli for this frappe-bench."
-        )
-    if any(original is wrapper for wrapper in _WRAPPERS):
-        return
+	original = getattr(module, "cli", None)
+	if not callable(original):
+		raise ImportError(
+			"frappe_benchcli: bench.cli.cli is gone, so `bench update` and `bench "
+			f"build` cannot be handed to frappe-nix's. Set {RAW}=1 to run the stock "
+			"command, and update lib/benchcli for this frappe-bench."
+		)
+	if any(original is wrapper for wrapper in _WRAPPERS):
+		return
 
-    @functools.wraps(original)
-    def cli(*args, **kwargs):
-        route(sys.argv)
-        return original(*args, **kwargs)
+	@functools.wraps(original)
+	def cli(*args, **kwargs):
+		route(sys.argv)
+		return original(*args, **kwargs)
 
-    _WRAPPERS.append(cli)
-    module.cli = cli
+	_WRAPPERS.append(cli)
+	module.cli = cli
+
+
+def install():
+	"""Hook bench.cli once it is imported. Idempotent."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	from ._hook import on_import
+
+	on_import("bench.cli", _patch_cli)

@@ -77,7 +77,7 @@ let
   # systemd unit's `environment=` (via siteEnv) and by the imperative
   # `bench` CLI wrapper, so a var like GIT_PYTHON_REFRESH only needs setting
   # once instead of being kept in sync by hand in two places.
-  mkCoreEnv = pkg: {
+  mkCoreEnv = _pkg: {
     DEV_SERVER = "0";
     FRAPPE_ENV_TYPE = "production";
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
@@ -993,8 +993,6 @@ let
   mkSiteNginxVhost =
     name: siteCfg:
     let
-      pkg = sitePackage siteCfg;
-      benchDir = pkgBenchDir pkg;
       viaSocket = siteCfg.nginx.socketPath != "";
       webUpstream =
         if siteCfg.web.socketPath != "" then
@@ -1621,7 +1619,7 @@ in
       users.users = mkIf (cfg.user == "frappe") {
         frappe = {
           isSystemUser = true;
-          group = cfg.group;
+          inherit (cfg) group;
           home = "/var/lib/frappe";
           description = "Frappe service user";
         };
@@ -1637,7 +1635,7 @@ in
 
       # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
       systemd.tmpfiles.rules =
-        mapAttrsToList (name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -") enabledSites
+        mapAttrsToList (_name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -") enabledSites
         # Socket directories gate access to the sockets inside them, since nginx
         # chmods its listen socket to 0666 and gunicorn's follows its umask.
         # 0770, not 0750: nginx *creates* its socket in here and is only a member

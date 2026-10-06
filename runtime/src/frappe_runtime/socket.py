@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from frappe_runtime.auth import Session
 
@@ -76,7 +76,7 @@ class Socket:
 		"""Emit to a room, or to this client (default)."""
 		await self._sio.emit(event, data, to=room or self.sid, namespace=self.namespace)
 
-	def get(self, key: str, default: object = None) -> object:
+	def get(self, key: str, default: Any = None) -> Any:
 		"""Read transient per-socket state from the session."""
 		return self._session.data.get(key, default)
 
@@ -145,30 +145,6 @@ class SyncSocket:
 	def installed_apps(self) -> list[str]:
 		return self._socket.installed_apps
 
-	def join(self, room: str) -> None:
-		self._run(self._socket.join(room))
-
-	def leave(self, room: str) -> None:
-		self._run(self._socket.leave(room))
-
-	def emit(self, event: str, data: object | None = None, room: str | None = None) -> None:
-		self._run(self._socket.emit(event, data, room))
-
-	def get(self, key: str, default: object = None) -> object:
-		return self._socket.get(key, default)
-
-	def set(self, key: str, value: object) -> None:
-		self._run(self._socket.set(key, value))
-
-	def participants(self, room: str) -> list[str]:
-		return self._socket.participants(room)
-
-	def user_of(self, sid: str) -> str | None:
-		return self._run(self._socket.user_of(sid))
-
-	def has_permission(self, doctype: str, name: str | None = None) -> bool:
-		return self._run(self._socket.has_permission(doctype, name))
-
 	def _run(self, coro):
 		"""Submit a coroutine to the server loop and block this thread on it.
 
@@ -184,3 +160,27 @@ class SyncSocket:
 		except TimeoutError:
 			future.cancel()
 			raise
+
+	def join(self, room: str) -> None:
+		self._run(self._socket.join(room))
+
+	def leave(self, room: str) -> None:
+		self._run(self._socket.leave(room))
+
+	def emit(self, event: str, data: object | None = None, room: str | None = None) -> None:
+		self._run(self._socket.emit(event, data, room))
+
+	def get(self, key: str, default: Any = None) -> Any:
+		return self._socket.get(key, default)
+
+	def set(self, key: str, value: object) -> None:
+		self._run(self._socket.set(key, value))
+
+	def participants(self, room: str) -> list[str]:
+		return self._socket.participants(room)
+
+	def user_of(self, sid: str) -> str | None:
+		return self._run(self._socket.user_of(sid))
+
+	def has_permission(self, doctype: str, name: str | None = None) -> bool:
+		return self._run(self._socket.has_permission(doctype, name))

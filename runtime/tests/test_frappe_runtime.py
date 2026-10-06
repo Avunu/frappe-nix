@@ -49,7 +49,6 @@ if "socketio" not in sys.modules and not _socketio_is_installed():
 
 import httpx
 import socketio
-
 from frappe_runtime import auth as auth_mod
 from frappe_runtime import bridge as bridge_mod
 from frappe_runtime import dispatch as dispatch_mod
@@ -134,12 +133,6 @@ class FakeSio:
 		return self.rooms.get(sid, set())
 
 
-def make_config(**overrides: object) -> RealtimeConfig:
-	base = dict(port=9000, redis_queue="redis://127.0.0.1:11311", default_site=None, developer_mode=False)
-	base.update(overrides)
-	return RealtimeConfig(**base)
-
-
 def make_environ(
 	host: str | None = "s1",
 	origin: str | None = "http://s1",
@@ -159,6 +152,12 @@ def make_environ(
 	if authorization:
 		env["HTTP_AUTHORIZATION"] = authorization
 	return env
+
+
+def make_config(**kwargs) -> RealtimeConfig:
+	base = {"port": 9000, "redis_queue": "redis://127.0.0.1:11311"}
+	base.update(kwargs)
+	return RealtimeConfig(**base)
 
 
 class TestAuthHelpers(unittest.TestCase):
@@ -769,7 +768,7 @@ class TestDispatch(unittest.IsolatedAsyncioTestCase):
 	async def test_sync_handler_runs_in_thread(self):
 		seen = []
 
-		def handler(socket: Socket) -> None:
+		def handler(socket: SyncSocket) -> None:
 			socket.join("room1")
 			seen.append((type(socket).__name__, threading.current_thread() is threading.main_thread()))
 
@@ -1060,12 +1059,6 @@ class TestCoreHandlers(unittest.IsolatedAsyncioTestCase):
 
 
 HAS_SOCKETIO = hasattr(socketio, "AsyncServer")
-
-
-def make_config(**kwargs) -> RealtimeConfig:
-	base = {"port": 9000, "redis_queue": "redis://127.0.0.1:11311"}
-	base.update(kwargs)
-	return RealtimeConfig(**base)
 
 
 @unittest.skipUnless(HAS_SOCKETIO, "needs a real python-socketio")

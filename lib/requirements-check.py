@@ -24,51 +24,55 @@ import tomllib
 
 
 def norm(name):
-    return re.sub(r"[-_.]+", "-", name).lower()
+	return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def requirement_name(spec):
-    m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
-    return norm(m.group(1)) if m else None
+	m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", spec)
+	return norm(m.group(1)) if m else None
 
 
 def main():
-    root = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
-    problems = []
+	root = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+	problems = []
 
-    try:
-        with open(os.path.join(root, "sites", "apps.txt"), encoding="utf-8") as f:
-            apps = [a.strip() for a in f if a.strip()]
-    except OSError:
-        apps = []
+	try:
+		with open(os.path.join(root, "sites", "apps.txt"), encoding="utf-8") as f:
+			apps = [a.strip() for a in f if a.strip()]
+	except OSError:
+		apps = []
 
-    locked = None
-    try:
-        with open(os.path.join(root, "uv.lock"), "rb") as f:
-            locked = {norm(p["name"]) for p in tomllib.load(f).get("package", [])}
-    except OSError:
-        problems.append("uv.lock is missing: run `uv lock`")
+	locked = None
+	try:
+		with open(os.path.join(root, "uv.lock"), "rb") as f:
+			locked = {norm(p["name"]) for p in tomllib.load(f).get("package", [])}
+	except OSError:
+		problems.append("uv.lock is missing: run `uv lock`")
 
-    for app in apps:
-        pyproject = os.path.join(root, "apps", app, "pyproject.toml")
-        if locked is not None and os.path.isfile(pyproject):
-            try:
-                with open(pyproject, "rb") as f:
-                    declared = tomllib.load(f).get("project", {}).get("dependencies", [])
-            except (OSError, tomllib.TOMLDecodeError):
-                declared = []
-            missing = sorted({n for n in map(requirement_name, declared) if n and n not in locked})
-            if missing:
-                problems.append(f"apps/{app} requires {', '.join(missing)}, which uv.lock does not have: run `uv lock`")
-        if importlib.util.find_spec(app.replace("-", "_")) is None:
-            problems.append(f"{app} is in sites/apps.txt but does not import in this environment: is it a [tool.uv.workspace] member? then `uv lock` and re-enter the shell")
+	for app in apps:
+		pyproject = os.path.join(root, "apps", app, "pyproject.toml")
+		if locked is not None and os.path.isfile(pyproject):
+			try:
+				with open(pyproject, "rb") as f:
+					declared = tomllib.load(f).get("project", {}).get("dependencies", [])
+			except (OSError, tomllib.TOMLDecodeError):
+				declared = []
+			missing = sorted({n for n in map(requirement_name, declared) if n and n not in locked})
+			if missing:
+				problems.append(
+					f"apps/{app} requires {', '.join(missing)}, which uv.lock does not have: run `uv lock`"
+				)
+		if importlib.util.find_spec(app.replace("-", "_")) is None:
+			problems.append(
+				f"{app} is in sites/apps.txt but does not import in this environment: is it a [tool.uv.workspace] member? then `uv lock` and re-enter the shell"
+			)
 
-    for p in problems:
-        print(f"  ✗ {p}", file=sys.stderr)
-    if not problems:
-        print(f"  ✓ python: {len(apps)} app(s), every requirement locked, every app importable")
-    return 1 if problems else 0
+	for p in problems:
+		print(f"  ✗ {p}", file=sys.stderr)
+	if not problems:
+		print(f"  ✓ python: {len(apps)} app(s), every requirement locked, every app importable")
+	return 1 if problems else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+	sys.exit(main())

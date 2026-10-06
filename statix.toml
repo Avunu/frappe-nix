@@ -1,0 +1,4 @@
+# repeated_keys: this codebase writes `inputs.x.follows = …;` and
+# `packages.a = …; packages.b = …;` as separate dotted keys on purpose, so each
+# can carry its own comment. Merging them into one attrset loses that.
+disabled = ["repeated_keys"]

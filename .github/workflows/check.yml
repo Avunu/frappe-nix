@@ -1,16 +1,22 @@
 name: check
 
 # CI gate for this repo. Auto-merge (Dependabot PRs, and the weekly flake.lock PR) is
-# only as safe as what runs here, so this is what you mark required on `main`.
+# only as safe as what runs here, so these are what you mark required on `main`.
 #
-# The `flake` job is the cheap, always-on gate: it evaluates every flake output on
+# The `lint` job is every hook in .pre-commit-config.yaml over the whole tree, run by prek:
+# the command a developer's commit runs, with no nix involved.
+#
+# The `flake` job is the always-on nix gate: it evaluates every flake output on
 # x86_64-linux, which is what actually breaks when nixpkgs or uv2nix move under us
-# (renamed attrs, changed function signatures, dropped packages).
+# (renamed attrs, changed function signatures, dropped packages), then builds the checks
+# that need nix: the Nix linters and ty, which the hooks cannot run.
+#
+# Every job that uses nix sets up magic-nix-cache, so a run reuses what earlier runs built.
 #
 # The VM tests are not on the PR path on purpose — they build a full Frappe bench inside
-# a NixOS guest, which is far past what a hosted runner does in a reasonable time without
-# a binary cache. Run them with "Run workflow", or move them onto `pull_request` once
-# this repo has a Cachix/Attic cache to pull from.
+# a NixOS guest, which is far past what a hosted runner does in a reasonable time. Run them
+# with "Run workflow", or move them onto `pull_request` once this repo has a Cachix/Attic
+# cache to pull from.
 
 on:
   push:
@@ -19,12 +25,35 @@ on:
   workflow_dispatch:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # `prek run --all-files --show-diff-on-failure`: a hook that rewrites a file fails the
+      # job, so what merges is what the hooks would have left.
+      - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
+
   flake:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      # Evaluating the dev shell makes devenv fetch its own pinned nixpkgs and rust-overlay
+      # (fetchFromGitHub, then `import`): import-from-derivation, which `nix flake check
+      # --no-build` cannot build and fails on with "path ... is not valid". `nix eval` can, so
+      # realise those sources first and the evaluation below finds them in the store.
+      - name: Fetch what the dev shell imports from derivation
+        run: nix eval --raw .#devShells.x86_64-linux.default.drvPath
 
       # Evaluates checks/packages/apps/devShells and the NixOS module without building
       # the VM tests. Catches the overwhelming majority of flake.lock breakage.
@@ -38,7 +67,9 @@ jobs:
 
       # Offline checks (no network, no VM): the devguard unit tests, the
       # `frappe-init --migrate` end-to-end runs over a synthetic classic bench,
-      # and the online-ALTER step in front of `bench migrate`.
+      # the online-ALTER step in front of `bench migrate`, nixfmt, statix and
+      # deadnix, ty over the tree, and the check that the ruff config and pins
+      # still match the pinned upstream Frappe's.
       - name: Run the offline checks
         run: |
           nix build -L --show-trace \
@@ -47,7 +78,10 @@ jobs:
             .#checks.x86_64-linux.migrate-versions \
             .#checks.x86_64-linux.offline-migrate \
             .#checks.x86_64-linux.offline-migrate-scripts \
-            .#checks.x86_64-linux.offline-migrate-unit
+            .#checks.x86_64-linux.offline-migrate-unit \
+            .#checks.x86_64-linux.frappe-upstream-config \
+            .#checks.x86_64-linux.nix-lint \
+            .#checks.x86_64-linux.ty
 
   vm-tests:
     # Manual only — see the header note.
@@ -60,7 +94,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
 
       - name: Run the ${{ matrix.test }} NixOS test
         run: nix build .#checks.x86_64-linux.${{ matrix.test }} -L --show-trace

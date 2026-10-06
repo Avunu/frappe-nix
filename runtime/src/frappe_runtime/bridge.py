@@ -33,7 +33,8 @@ class RealtimeEvent:
 
 	@classmethod
 	def from_raw(cls, raw: str | bytes | bytearray | None) -> RealtimeEvent:
-		data = json.loads(raw)
+		# None raises TypeError here, which _handle reports as a malformed message.
+		data = json.loads(raw)  # ty: ignore[invalid-argument-type]
 		return cls(
 			event=data["event"],
 			message=data.get("message"),
@@ -63,45 +64,6 @@ class RedisBridge:
 		self.redis_url = redis_url
 		self._task: asyncio.Task | None = None
 
-	def start(self) -> asyncio.Task:
-		"""Spawn the subscriber task on the running loop. Returns the task."""
-		self._task = asyncio.create_task(self._run())
-		return self._task
-
-	async def stop(self) -> None:
-		if not self._task:
-			return
-		self._task.cancel()
-		with suppress(asyncio.CancelledError):
-			await self._task
-		self._task = None
-
-	async def _run(self) -> None:
-		while True:
-			try:
-				await self._listen()
-			except asyncio.CancelledError:
-				raise
-			except RedisError as e:
-				logger.warning("Redis bridge connection lost (%s); reconnecting in %ss", e, RECONNECT_DELAY)
-			except Exception:
-				logger.exception("Redis bridge crashed; reconnecting in %ss", RECONNECT_DELAY)
-			await asyncio.sleep(RECONNECT_DELAY)
-
-	async def _listen(self) -> None:
-		"""Subscribe and pump messages until the connection drops."""
-		client = redis.asyncio.from_url(self.redis_url)
-		try:
-			pubsub = client.pubsub(ignore_subscribe_messages=True)
-			await pubsub.subscribe(EVENTS_CHANNEL)
-			logger.info("Redis bridge subscribed to %r on %s", EVENTS_CHANNEL, self.redis_url)
-			async for message in pubsub.listen():
-				if message.get("type") == "message":
-					await self._handle(message.get("data"))
-		finally:
-			with suppress(Exception):
-				await client.aclose()
-
 	async def _handle(self, raw: str | bytes | bytearray | None) -> None:
 		try:
 			evt = RealtimeEvent.from_raw(raw)
@@ -129,3 +91,42 @@ class RedisBridge:
 			# No room -> broadcast to every connected site namespace (build events).
 			for ns in list(self.sio.manager.rooms.keys()):
 				await self.sio.emit(evt.event, evt.message, namespace=ns, ignore_queue=True)
+
+	async def _listen(self) -> None:
+		"""Subscribe and pump messages until the connection drops."""
+		client = redis.asyncio.from_url(self.redis_url)
+		try:
+			pubsub = client.pubsub(ignore_subscribe_messages=True)
+			await pubsub.subscribe(EVENTS_CHANNEL)
+			logger.info("Redis bridge subscribed to %r on %s", EVENTS_CHANNEL, self.redis_url)
+			async for message in pubsub.listen():
+				if message.get("type") == "message":
+					await self._handle(message.get("data"))
+		finally:
+			with suppress(Exception):
+				await client.aclose()
+
+	async def _run(self) -> None:
+		while True:
+			try:
+				await self._listen()
+			except asyncio.CancelledError:
+				raise
+			except RedisError as e:
+				logger.warning("Redis bridge connection lost (%s); reconnecting in %ss", e, RECONNECT_DELAY)
+			except Exception:
+				logger.exception("Redis bridge crashed; reconnecting in %ss", RECONNECT_DELAY)
+			await asyncio.sleep(RECONNECT_DELAY)
+
+	def start(self) -> asyncio.Task:
+		"""Spawn the subscriber task on the running loop. Returns the task."""
+		self._task = asyncio.create_task(self._run())
+		return self._task
+
+	async def stop(self) -> None:
+		if not self._task:
+			return
+		self._task.cancel()
+		with suppress(asyncio.CancelledError):
+			await self._task
+		self._task = None

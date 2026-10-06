@@ -42,47 +42,47 @@ ENV = "FRAPPE_WEB_SOCKET"
 _INSTALLED = False
 
 
-def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+def _bind_unix(real, path):
+	"""Replace the (host, port) pair with a unix address.
 
-    on_import("frappe.app", _patch_app)
+	The port is dropped rather than passed through: werkzeug ignores it for
+	``AF_UNIX``, and `bench serve --port` still has a meaning in this setup —
+	it is the port nginx is listening on out front, which callers keep passing.
+	"""
+
+	def run_simple(_hostname, _port, application, **kwargs):
+		return real(f"unix://{path}", 0, application, **kwargs)
+
+	return mark(run_simple, "werkzeug.serving.run_simple")
 
 
 def _patch_app(module):
-    # Resolve the setting before touching Frappe: with no socket configured
-    # this package must leave the module exactly as it found it, so that a
-    # TCP deployment cannot be broken by a patch target moving upstream.
-    if socket_path(ENV) is None:
-        return
+	# Resolve the setting before touching Frappe: with no socket configured
+	# this package must leave the module exactly as it found it, so that a
+	# TCP deployment cannot be broken by a patch target moving upstream.
+	if socket_path(ENV) is None:
+		return
 
-    original = require(module, "serve")
+	original = require(module, "serve")
 
-    def serve(*args, **kwargs):
-        path = socket_path(ENV)
-        if path is None:  # unset between import and call, e.g. FRAPPE_UNIXSOCK_ENABLED=0
-            return original(*args, **kwargs)
+	def serve(*args, **kwargs):
+		path = socket_path(ENV)
+		if path is None:  # unset between import and call, e.g. FRAPPE_UNIXSOCK_ENABLED=0
+			return original(*args, **kwargs)
 
-        import werkzeug.serving
+		import werkzeug.serving
 
-        announce(NAME, f"development server binding unix://{path}")
-        with swapped(werkzeug.serving, "run_simple", lambda real: _bind_unix(real, path)):
-            return original(*args, **kwargs)
+		announce(NAME, f"development server binding unix://{path}")
+		with swapped(werkzeug.serving, "run_simple", lambda real: _bind_unix(real, path)):
+			return original(*args, **kwargs)
 
-    module.serve = mark(serve, "frappe.app.serve")
+	module.serve = mark(serve, "frappe.app.serve")
 
 
-def _bind_unix(real, path):
-    """Replace the (host, port) pair with a unix address.
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    The port is dropped rather than passed through: werkzeug ignores it for
-    ``AF_UNIX``, and `bench serve --port` still has a meaning in this setup —
-    it is the port nginx is listening on out front, which callers keep passing.
-    """
-
-    def run_simple(_hostname, _port, application, **kwargs):
-        return real(f"unix://{path}", 0, application, **kwargs)
-
-    return mark(run_simple, "werkzeug.serving.run_simple")
+	on_import("frappe.app", _patch_app)

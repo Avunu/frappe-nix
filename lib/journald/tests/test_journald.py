@@ -31,40 +31,40 @@ FAILURES = []
 
 
 def check(label, condition, detail=""):
-    if condition:
-        print(f"ok   {label}")
-    else:
-        print(f"FAIL {label} {detail}")
-        FAILURES.append(label)
+	if condition:
+		print(f"ok   {label}")
+	else:
+		print(f"FAIL {label} {detail}")
+		FAILURES.append(label)
 
 
-import frappe_journald  # noqa: E402
-from frappe_journald import _format, _patches  # noqa: E402
-from frappe_journald._format import JournaldFormatter, priority  # noqa: E402
+import frappe_journald
+from frappe_journald import _format, _patches
+from frappe_journald._format import JournaldFormatter, priority
 
 SITE = "erp.example.com"
 
 
 def clear_env():
-    for name in ("JOURNAL_STREAM", "FRAPPE_SITE", "FRAPPE_LOG_LEVEL"):
-        os.environ.pop(name, None)
+	for name in ("JOURNAL_STREAM", "FRAPPE_SITE", "FRAPPE_LOG_LEVEL"):
+		os.environ.pop(name, None)
 
 
 def point_journal_at_stderr():
-    st = os.fstat(2)
-    os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"
+	st = os.fstat(2)
+	os.environ["JOURNAL_STREAM"] = f"{st.st_dev}:{st.st_ino}"
 
 
 def render(formatter, level, msg, name="frappe.test", exc=False):
-    """Format one record the way a handler would."""
-    exc_info = None
-    if exc:
-        try:
-            raise ValueError("boom")
-        except ValueError:
-            exc_info = sys.exc_info()
-    record = logging.LogRecord(name, level, __file__, 1, msg, None, exc_info)
-    return formatter.format(record)
+	"""Format one record the way a handler would."""
+	exc_info = None
+	if exc:
+		try:
+			raise ValueError("boom")
+		except ValueError:
+			exc_info = sys.exc_info()
+	record = logging.LogRecord(name, level, __file__, 1, msg, None, exc_info)
+	return formatter.format(record)
 
 
 # --------------------------------------------------------------------------
@@ -72,16 +72,16 @@ def render(formatter, level, msg, name="frappe.test", exc=False):
 # --------------------------------------------------------------------------
 print("== priority ==")
 for level, expected in (
-    (logging.DEBUG, 7),
-    (logging.INFO, 6),
-    (logging.WARNING, 4),
-    (logging.ERROR, 3),
-    (logging.CRITICAL, 2),
-    (15, 7),  # bench's LOG level rounds down to debug
-    (25, 6),
-    (logging.NOTSET, 7),
+	(logging.DEBUG, 7),
+	(logging.INFO, 6),
+	(logging.WARNING, 4),
+	(logging.ERROR, 3),
+	(logging.CRITICAL, 2),
+	(15, 7),  # bench's LOG level rounds down to debug
+	(25, 6),
+	(logging.NOTSET, 7),
 ):
-    check(f"level {level} -> <{expected}>", priority(level) == expected, priority(level))
+	check(f"level {level} -> <{expected}>", priority(level) == expected, priority(level))
 
 
 # --------------------------------------------------------------------------
@@ -156,36 +156,36 @@ print("== frappe.utils.logger ==")
 
 
 def make_frappe_logger():
-    """A stand-in for frappe/utils/logger.py with v16's get_logger signature."""
-    stub = types.ModuleType("frappe.utils.logger")
-    stub.default_log_level = logging.ERROR
-    stub.loggers = {}
-    stub.calls = []
+	"""A stand-in for frappe/utils/logger.py with v16's get_logger signature."""
+	stub = types.ModuleType("frappe.utils.logger")
+	stub.default_log_level = logging.ERROR
+	stub.loggers = {}
+	stub.calls = []
 
-    def get_logger(
-        module=None,
-        with_more_info=False,
-        allow_site=True,
-        filter=None,
-        max_size=100_000,
-        file_count=20,
-        stream_only=False,
-    ):
-        stub.calls.append(stream_only)
-        key = f"{module}-all"
-        if key in stub.loggers:
-            return stub.loggers[key]
-        logger = logging.getLogger(f"journald-test-{key}-{len(stub.calls)}")
-        logger.propagate = False
-        logger.setLevel(stub.default_log_level)
-        handler = logging.StreamHandler(io.StringIO())
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s x %(message)s"))
-        logger.addHandler(handler)
-        stub.loggers[key] = logger
-        return logger
+	def get_logger(
+		module=None,
+		with_more_info=False,
+		allow_site=True,
+		filter=None,
+		max_size=100_000,
+		file_count=20,
+		stream_only=False,
+	):
+		stub.calls.append(stream_only)
+		key = f"{module}-all"
+		if key in stub.loggers:
+			return stub.loggers[key]
+		logger = logging.getLogger(f"journald-test-{key}-{len(stub.calls)}")
+		logger.propagate = False
+		logger.setLevel(stub.default_log_level)
+		handler = logging.StreamHandler(io.StringIO())
+		handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s x %(message)s"))
+		logger.addHandler(handler)
+		stub.loggers[key] = logger
+		return logger
 
-    stub.get_logger = get_logger
-    return stub
+	stub.get_logger = get_logger
+	return stub
 
 
 clear_env()
@@ -234,24 +234,24 @@ BENCH_LOG_LEVEL = 15
 
 
 def make_bench_utils():
-    """bench.utils.setup_logging as bench 5.x ships it."""
-    module = types.ModuleType("bench.utils")
+	"""bench.utils.setup_logging as bench 5.x ships it."""
+	module = types.ModuleType("bench.utils")
 
-    def setup_logging(bench_path="."):
-        logging.addLevelName(BENCH_LOG_LEVEL, "LOG")
-        module.log_override_installed = True
-        if os.path.exists(os.path.join(bench_path, "logs")):
-            hdlr = logging.FileHandler(os.path.join(bench_path, "logs", "bench.log"))
-        else:
-            hdlr = logging.NullHandler()
-        logger = logging.getLogger("journald-test-bench")
-        hdlr.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        logger.addHandler(hdlr)
-        logger.setLevel(logging.DEBUG)
-        return logger
+	def setup_logging(bench_path="."):
+		logging.addLevelName(BENCH_LOG_LEVEL, "LOG")
+		module.log_override_installed = True
+		if os.path.exists(os.path.join(bench_path, "logs")):
+			hdlr = logging.FileHandler(os.path.join(bench_path, "logs", "bench.log"))
+		else:
+			hdlr = logging.NullHandler()
+		logger = logging.getLogger("journald-test-bench")
+		hdlr.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+		logger.addHandler(hdlr)
+		logger.setLevel(logging.DEBUG)
+		return logger
 
-    module.setup_logging = setup_logging
-    return module
+	module.setup_logging = setup_logging
+	return module
 
 
 clear_env()
@@ -260,12 +260,12 @@ os.makedirs(os.path.join(bench_dir, "logs"))
 cwd = os.getcwd()
 os.chdir(bench_dir)
 try:
-    utils = make_bench_utils()
-    _patches.patch_bench_utils(utils)
-    logger = utils.setup_logging()
-    logger = utils.setup_logging(bench_path=bench_dir)
+	utils = make_bench_utils()
+	_patches.patch_bench_utils(utils)
+	logger = utils.setup_logging()
+	logger = utils.setup_logging(bench_path=bench_dir)
 finally:
-    os.chdir(cwd)
+	os.chdir(cwd)
 
 check("bench.log is never created", not os.path.exists(os.path.join(bench_dir, "logs", "bench.log")))
 check("upstream's own setup still ran", getattr(utils, "log_override_installed", False))
@@ -277,7 +277,11 @@ check("...and it is a stream", type(journald_handlers[0]) is logging.StreamHandl
 stream = io.StringIO()
 journald_handlers[0].setStream(stream)
 logger.warning("bench update failed")
-check("bench lines carry a priority", stream.getvalue() == "<4>bench bench update failed\n", repr(stream.getvalue()))
+check(
+	"bench lines carry a priority",
+	stream.getvalue() == "<4>bench bench update failed\n",
+	repr(stream.getvalue()),
+)
 logger.handlers.clear()
 
 moved = types.ModuleType("bench.utils")
@@ -292,28 +296,28 @@ print()
 print("== install() on the journal ==")
 stubs = tempfile.mkdtemp()
 for path, body in {
-    "frappe/__init__.py": "",
-    "frappe/utils/__init__.py": "",
-    "frappe/utils/logger.py": """
+	"frappe/__init__.py": "",
+	"frappe/utils/__init__.py": "",
+	"frappe/utils/logger.py": """
         import logging
         default_log_level = logging.ERROR
         def get_logger(module=None, with_more_info=False, allow_site=True, filter=None,
                        max_size=100_000, file_count=20, stream_only=False):
             return logging.getLogger("journald-e2e")
     """,
-    "bench/__init__.py": "",
-    "bench/utils/__init__.py": """
+	"bench/__init__.py": "",
+	"bench/utils/__init__.py": """
         import logging
         def setup_logging(bench_path="."):
             return logging.getLogger("journald-e2e-bench")
     """,
-    # What bench.cli does: a from-import, bound after bench.utils has loaded.
-    "bench/cli.py": "from bench.utils import setup_logging\n",
+	# What bench.cli does: a from-import, bound after bench.utils has loaded.
+	"bench/cli.py": "from bench.utils import setup_logging\n",
 }.items():
-    full = os.path.join(stubs, path)
-    os.makedirs(os.path.dirname(full), exist_ok=True)
-    with open(full, "w") as f:
-        f.write(textwrap.dedent(body))
+	full = os.path.join(stubs, path)
+	os.makedirs(os.path.dirname(full), exist_ok=True)
+	with open(full, "w") as f:
+		f.write(textwrap.dedent(body))
 sys.path.insert(0, stubs)
 
 clear_env()
@@ -328,7 +332,7 @@ check("FRAPPE_LOG_LEVEL applied on import", logger_mod.default_log_level == logg
 check("bench.cli binds the patched setup_logging", getattr(cli.setup_logging, "__journald__", None))
 clear_env()
 for name in [m for m in sys.modules if m == "frappe" or m.startswith(("frappe.", "bench"))]:
-    del sys.modules[name]
+	del sys.modules[name]
 
 
 # --------------------------------------------------------------------------
@@ -337,30 +341,35 @@ for name in [m for m in sys.modules if m == "frappe" or m.startswith(("frappe.",
 print()
 print("== runtime copy ==")
 runtime_path = (
-    sys.argv[1]
-    if len(sys.argv) > 1
-    else os.path.join(HERE, "..", "..", "..", "runtime", "src", "frappe_runtime", "journald.py")
+	sys.argv[1]
+	if len(sys.argv) > 1
+	else os.path.join(HERE, "..", "..", "..", "runtime", "src", "frappe_runtime", "journald.py")
 )
 spec = importlib.util.spec_from_file_location("runtime_journald", runtime_path)
 runtime = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runtime)
 
 check(
-    "priority mapping agrees at every level",
-    all(runtime.priority(n) == priority(n) for n in range(0, 61)),
+	"priority mapping agrees at every level",
+	all(runtime.priority(n) == priority(n) for n in range(0, 61)),
 )
 for site in (None, SITE):
-    clear_env()
-    if site:
-        os.environ["FRAPPE_SITE"] = site
-    for module in (None, "frappe.web"):
-        for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
-            for exc in (False, True):
-                ours = render(JournaldFormatter(module), level, "a\nb", exc=exc)
-                theirs = render(runtime.JournaldFormatter(module), level, "a\nb", exc=exc)
-                if ours != theirs:
-                    check(f"render agrees ({site}, {module}, {level}, {exc})", False, f"{ours!r} != {theirs!r}")
-check("render agrees for every level, site, module and traceback", not any("render agrees (" in f for f in FAILURES))
+	clear_env()
+	if site:
+		os.environ["FRAPPE_SITE"] = site
+	for module in (None, "frappe.web"):
+		for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
+			for exc in (False, True):
+				ours = render(JournaldFormatter(module), level, "a\nb", exc=exc)
+				theirs = render(runtime.JournaldFormatter(module), level, "a\nb", exc=exc)
+				if ours != theirs:
+					check(
+						f"render agrees ({site}, {module}, {level}, {exc})", False, f"{ours!r} != {theirs!r}"
+					)
+check(
+	"render agrees for every level, site, module and traceback",
+	not any("render agrees (" in f for f in FAILURES),
+)
 
 point_journal_at_stderr()
 check("journal detection agrees", runtime.journal_stream() is _format.journal_stream() is True)
@@ -369,6 +378,6 @@ check("...off the journal too", runtime.journal_stream() is _format.journal_stre
 
 print()
 if FAILURES:
-    print(f"{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
-    sys.exit(1)
+	print(f"{len(FAILURES)} failure(s): {', '.join(FAILURES)}")
+	sys.exit(1)
 print("all journald checks passed")

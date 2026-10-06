@@ -10,7 +10,7 @@
 { pkgs }:
 
 let
-  mariadb = pkgs.mariadb;
+  inherit (pkgs) mariadb;
   wrapped = import ../lib/mariadbd-wrapper.nix {
     inherit (pkgs) lib;
     inherit pkgs mariadb;

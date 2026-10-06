@@ -27,35 +27,35 @@ silent, but they are not the same guarantee.
 from ._settings import DevGuardBlocked, DevGuardPatchError, settings
 
 __all__ = [
-    "DevGuardBlocked",
-    "DevGuardPatchError",
-    "install",
-    "settings",
-    "status",
+	"DevGuardBlocked",
+	"DevGuardPatchError",
+	"install",
+	"settings",
+	"status",
 ]
 
 _INSTALLED = False
 
 
 def install():
-    """Install every enabled guard. Idempotent; safe to call from anywhere."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	"""Install every enabled guard. Idempotent; safe to call from anywhere."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    from .guards import GUARDS
+	from .guards import GUARDS
 
-    for guard in GUARDS:
-        if settings().guard_enabled(guard.NAME):
-            guard.install()
+	for guard in GUARDS:
+		if settings().guard_enabled(guard.NAME):
+			guard.install()
 
 
 def status():
-    """Per-target report: patched, or never reached because its SDK is absent."""
-    from ._patch import STATUS
+	"""Per-target report: patched, or never reached because its SDK is absent."""
+	from ._patch import STATUS
 
-    return dict(STATUS)
+	return dict(STATUS)
 
 
 # NB: install() is called by the .pth bootstrap, not here. Importing the guard

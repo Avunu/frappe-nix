@@ -5,11 +5,10 @@
 # being added to it.
 #
 # Usage:
-#   import ./lib/rich-python.nix { inherit pkgs python; }                     # rich only
-#   import ./lib/rich-python.nix { inherit pkgs python; extraPackages = ps: [ ps.click ]; }
+#   import ./lib/rich-python.nix { inherit python; }                     # rich only
+#   import ./lib/rich-python.nix { inherit python; extraPackages = ps: [ ps.click ]; }
 
 {
-  pkgs,
   python,
   extraPackages ? (_ps: [ ]),
 }:

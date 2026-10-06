@@ -36,11 +36,11 @@ command.
 from ._settings import UnixSocketPatchError, UnixSocketPathError, enabled
 
 __all__ = [
-    "UnixSocketPathError",
-    "UnixSocketPatchError",
-    "enabled",
-    "install",
-    "status",
+	"UnixSocketPatchError",
+	"UnixSocketPathError",
+	"enabled",
+	"install",
+	"status",
 ]
 
 _INSTALLED = False
@@ -50,26 +50,26 @@ _MODULES = ("web", "database")
 
 
 def install():
-    """Install every patch whose socket is configured. Idempotent."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	"""Install every patch whose socket is configured. Idempotent."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    if not enabled():
-        return
+	if not enabled():
+		return
 
-    from importlib import import_module
+	from importlib import import_module
 
-    for name in _MODULES:
-        import_module(f"{__name__}.{name}").install()
+	for name in _MODULES:
+		import_module(f"{__name__}.{name}").install()
 
 
 def status():
-    """Per-target report of what was actually redirected."""
-    from ._patch import STATUS
+	"""Per-target report of what was actually redirected."""
+	from ._patch import STATUS
 
-    return dict(STATUS)
+	return dict(STATUS)
 
 
 # NB: install() is called by the .pth bootstrap, not here — importing the patch
