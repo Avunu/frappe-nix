@@ -970,6 +970,7 @@ Lifecycle scripts are not run in the sandbox (every native piece a Frappe fronte
 ```
 frappe-nix/
 ├── flake.nix                 # flakeModules / nixosModules / lib outputs
+├── LICENSE                   # MIT
 ├── lib/
 │   ├── python.nix            # mkPythonEnvs — prod + editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn install --offline from each yarn.lock), benchRoot
@@ -1012,3 +1013,7 @@ frappe-nix/
 ```
 
 `lib/sh/*.sh` are concatenated into a single `writeShellApplication`, so shellcheck sees the whole program at build time; `main.sh` holds the only top-level code and must stay last.
+
+## License
+
+frappe-nix is released under the [MIT License](LICENSE). Copyright (c) 2026 Avunu LLC.
