@@ -32,6 +32,7 @@ frappe-nix/
 │   ├── unixsock/             # frappe_unixsock: unix-socket transport fixes (dev and prod)
 │   ├── journald/             # frappe_journald: journald priorities, no log files (dev and prod, acts only under systemd)
 │   ├── nodebuild/            # frappe_nodebuild: hands Frappe's asset builds the esbuild preload (dev and prod builds)
+│   ├── benchcli/             # frappe_benchcli: the virtualenv's `bench update` / `bench build` hand over to bench-update / bench-build (dev only)
 │   ├── init.nix              # `nix run` entry point: builds frappe-init from sh/*
 │   ├── sh/                   # the scaffolder and migrator, concatenated into one script
 │   │   ├── common.sh         #   presets, naming, output helpers
@@ -76,7 +77,7 @@ nix build -L .#checks.x86_64-linux.<NAME>                 # one check
 
 On `x86_64-linux` the checks are:
 
-`agecheck`, `app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `backup-fetch`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-cli`, `setup-requirements`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
+`agecheck`, `app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `backup-fetch`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-cli`, `setup-requirements`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
 
 Two of them, `migrate-rollback` and `socket`, run a NixOS virtual machine that builds a full Frappe bench inside the guest. `socket-runtime` does the same for the unified runtime. They are Linux-only and heavy.
 

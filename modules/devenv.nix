@@ -1774,6 +1774,19 @@ in
           }/frappe_nodebuild "$out/"
         '';
 
+        # Nothing to bake: the two routes are fixed, and mirror the umbrella
+        # wrapper's `case` in lib/scripts.nix. Dev env only; lib/python.nix.
+        benchcliPkg = pkgs.runCommand "frappe-benchcli" { } ''
+          mkdir -p "$out"
+          cp -r ${
+            builtins.path {
+              path = ../lib/benchcli;
+              name = "frappe-benchcli-src";
+              filter = path: _type: baseNameOf path != "__pycache__";
+            }
+          }/frappe_benchcli "$out/"
+        '';
+
         # `bench watch`, with the esbuild target `bench build` uses, only the
         # apps someone edits, no right-to-left rebuilds and native Sass. See
         # lib/bench-watch.py and the watch.* options.
@@ -1836,6 +1849,10 @@ in
           journald = journaldPkg;
           # Both envs: builtBench builds its assets with prodPythonEnv's bench.
           nodebuild = nodebuildPkg;
+          # The dev env only, whatever devguard.enable says: it is routing, not
+          # a guard, and the shell's `bench` is not the only one a terminal can
+          # reach.
+          benchcli = benchcliPkg;
         };
 
         # A bench still carrying the hash-era options gets a sentence, not an
@@ -2385,6 +2402,11 @@ in
               # frappe_nodebuild hands it to every `bench build` and `bench
               # watch`, as builtBench's build phase does. See lib/nodebuild.
               FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js/esbuild-preload.js}";
+              # Frappe ends a build by running every app's `yarn build` in turn
+              # and stops at the first that fails, leaving the apps after it
+              # unbuilt. The preload carries on, builds the rest and still exits
+              # 1. Not builtBench, which should stop at the first failure.
+              FRAPPE_NIX_KEEP_GOING = "1";
 
               FRAPPE_BENCH_ROOT = benchPath;
               SITES_PATH = benchPath + "/sites";

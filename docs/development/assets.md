@@ -29,6 +29,12 @@ The preload reaches `bench build` and `bench watch` through `frappe_nodebuild` (
 env -u FRAPPE_NIX_ESBUILD_PRELOAD bench build --app <APP>
 ```
 
+The preload also changes what happens when an app's own build fails. Frappe ends a build by running `yarn build` in every app that has one, in the order the filesystem lists `apps/`, and the first app to fail ends the loop: the apps after it are never started. With `FRAPPE_NIX_KEEP_GOING=1`, which the dev shell sets, the failure is named where it happens, that app's remaining commands are skipped, the other apps are built, and the process exits 1 when they have been. Only a command that ran and exited non-zero is carried past. A signal such as Ctrl-C, or a `yarn` that cannot start, still ends the build. `builtBench` leaves it unset, so an image build stops at the first failure. Unset it for one command to build the way Frappe does:
+
+```bash
+env -u FRAPPE_NIX_KEEP_GOING bench build
+```
+
 ## Asset-shadow staleness
 
 Some Frappe apps ship their own JS and CSS build tooling that shadows Frappe's own bundle keys in `sites/assets/assets.json`. Carbon-themed desk skins are the case this was found from, though frappe-nix has no knowledge of any specific one.

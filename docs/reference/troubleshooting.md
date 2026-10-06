@@ -85,6 +85,18 @@ The app is importable but not installed on the site. With `siteName` set, `deven
 
 A bench root whose `patches.txt` has no record of the patches that frappe-bench ships fails this way, and stays failed, because the failed run rewrites the file as one empty byte. The shell reconciles `patches.txt` on every entry, so entering the shell repairs it. See the note in [Everyday commands](../development/commands.md#what-the-wrapper-redirects).
 
+### `bench update` prints `frappe_benchcli:` and runs `bench-update`
+
+```text
+frappe_benchcli: `bench update` is bench-update here. This shell reached the virtualenv's bench ahead of the devenv's, which activating ./env does. Running bench-update.
+```
+
+The virtualenv's own `bench` ran, not the wrapper, because something put `env/bin` ahead of it on `PATH`: `source env/bin/activate`, or an editor that activates `./env` in its terminals. frappe-nix handed the command to `bench-update` (and `bench build` to `bench-build`) for you. Without that, the stock `bench update` exits 1 within a second: it runs `git show upstream/<branch>:<app>/__init__.py`, and the apps here are submodules with an `origin` remote and no `upstream`. The notice stops when the shell no longer activates `./env`. See [Everyday commands](../development/commands.md#what-the-wrapper-redirects).
+
+### `bench build` fails in one app, and the log ends with `✗ N app build(s) failed`
+
+Frappe ends a build by running `yarn build` in every app that has one, and stops at the first that fails, so every app after it is left unbuilt. In the dev shell frappe-nix carries on: each failure is named where it happens, the other apps are built, and `bench build` still exits 1. Fix the error from the app named, then rebuild it with `bench build --app <APP>`. `builtBench` does not carry on; an image build stops at the first failure. See [Resolution the way apps assume](../development/assets.md#resolution-the-way-apps-assume).
+
 ### `provision-site` asks for the MariaDB root password
 
 Leave it blank and press Enter. The development MariaDB root has none.
