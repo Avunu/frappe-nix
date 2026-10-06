@@ -48,6 +48,13 @@ jobs:
           diagnostic-endpoint: ""
           use-flakehub: false
 
+      # Evaluating the dev shell makes devenv fetch its own pinned nixpkgs and rust-overlay
+      # (fetchFromGitHub, then `import`): import-from-derivation, which `nix flake check
+      # --no-build` cannot build and fails on with "path ... is not valid". `nix eval` can, so
+      # realise those sources first and the evaluation below finds them in the store.
+      - name: Fetch what the dev shell imports from derivation
+        run: nix eval --raw .#devShells.x86_64-linux.default.drvPath
+
       # Evaluates checks/packages/apps/devShells and the NixOS module without building
       # the VM tests. Catches the overwhelming majority of flake.lock breakage.
       - name: Evaluate all flake outputs
