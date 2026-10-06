@@ -47,53 +47,53 @@ _INSTALLED = False
 
 
 def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    on_import("frappe", _patch_frappe)
+	on_import("frappe", _patch_frappe)
 
 
 def _patch_frappe(module):
-    if socket_path(ENV) is None:
-        return
+	if socket_path(ENV) is None:
+		return
 
-    original = require(module, "connect_replica")
+	original = require(module, "connect_replica")
 
-    def connect_replica(*args, **kwargs):
-        path = socket_path(ENV)
-        if path is None:
-            return original(*args, **kwargs)
+	def connect_replica(*args, **kwargs):
+		path = socket_path(ENV)
+		if path is None:
+			return original(*args, **kwargs)
 
-        import frappe.database
+		import frappe.database
 
-        announce(NAME, f"read replica connecting over unix://{path}")
-        with swapped(frappe.database, "get_db", lambda real: _via_socket(real, path)):
-            return original(*args, **kwargs)
+		announce(NAME, f"read replica connecting over unix://{path}")
+		with swapped(frappe.database, "get_db", lambda real: _via_socket(real, path)):
+			return original(*args, **kwargs)
 
-    module.connect_replica = mark(connect_replica, "frappe.connect_replica")
+	module.connect_replica = mark(connect_replica, "frappe.connect_replica")
 
 
 def _via_socket(real, path):
-    """Force the replica's connection onto the socket.
+	"""Force the replica's connection onto the socket.
 
-    ``host`` is cleared as well as ``socket`` being set. MariaDB ignores the
-    host once ``unix_socket`` is present, but Postgres reads
-    ``self.host or self.socket``, so leaving ``replica_host`` in place would
-    keep it on TCP. An explicitly configured replica socket outranks the host.
-    """
+	``host`` is cleared as well as ``socket`` being set. MariaDB ignores the
+	host once ``unix_socket`` is present, but Postgres reads
+	``self.host or self.socket``, so leaving ``replica_host`` in place would
+	keep it on TCP. An explicitly configured replica socket outranks the host.
+	"""
 
-    def get_db(*args, **kwargs):
-        if args:
-            # get_db() is keyword-only at every call site in Frappe; a
-            # positional call would collide with the overrides below, and
-            # guessing which position is which is how this starts connecting
-            # to the wrong database.
-            warn(f"{ENV} is set but get_db() was called positionally; leaving the replica on TCP")
-            return real(*args, **kwargs)
-        kwargs["socket"] = path
-        kwargs["host"] = None
-        return real(**kwargs)
+	def get_db(*args, **kwargs):
+		if args:
+			# get_db() is keyword-only at every call site in Frappe; a
+			# positional call would collide with the overrides below, and
+			# guessing which position is which is how this starts connecting
+			# to the wrong database.
+			warn(f"{ENV} is set but get_db() was called positionally; leaving the replica on TCP")
+			return real(*args, **kwargs)
+		kwargs["socket"] = path
+		kwargs["host"] = None
+		return real(**kwargs)
 
-    return mark(get_db, "frappe.database.get_db")
+	return mark(get_db, "frappe.database.get_db")

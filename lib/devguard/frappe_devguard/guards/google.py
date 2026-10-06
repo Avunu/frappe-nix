@@ -18,8 +18,8 @@ from .._patch import blocking, require
 NAME = "google"
 
 _BLOCKED = (
-    "Google API access is blocked in this development bench — the OAuth tokens "
-    "in this database are production's, and Calendar/Contacts sync writes back."
+	"Google API access is blocked in this development bench — the OAuth tokens "
+	"in this database are production's, and Calendar/Contacts sync writes back."
 )
 _BANNER = "Google Calendar, Contacts and Drive access is blocked"
 
@@ -27,22 +27,20 @@ _INSTALLED = False
 
 
 def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    on_import("frappe.integrations.google_oauth", _patch_google_oauth)
+	on_import("frappe.integrations.google_oauth", _patch_google_oauth)
 
 
 def _patch_google_oauth(module):
-    google_oauth = require(module, "GoogleOAuth")
-    require(google_oauth, "get_google_service_object")
-    require(google_oauth, "refresh_access_token")
+	google_oauth = require(module, "GoogleOAuth")
+	require(google_oauth, "get_google_service_object")
+	require(google_oauth, "refresh_access_token")
 
-    google_oauth.get_google_service_object = blocking(
-        NAME, "GoogleOAuth.get_google_service_object", _BLOCKED, _BANNER
-    )
-    google_oauth.refresh_access_token = blocking(
-        NAME, "GoogleOAuth.refresh_access_token", _BLOCKED, _BANNER
-    )
+	google_oauth.get_google_service_object = blocking(
+		NAME, "GoogleOAuth.get_google_service_object", _BLOCKED, _BANNER
+	)
+	google_oauth.refresh_access_token = blocking(NAME, "GoogleOAuth.refresh_access_token", _BLOCKED, _BANNER)

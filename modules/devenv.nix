@@ -1800,9 +1800,7 @@ in
           )
           ++ lib.optional (!cfg.watch.rtl) "--skip-rtl"
           ++ lib.optional cfg.watch.nativeSass "--sass=${sassEmbedded}/${sassEmbedded.module}"
-          ++ lib.optional (
-            !cfg.watch.rtl || cfg.watch.nativeSass
-          ) "--preload=${../lib/js/esbuild-preload.js}"
+          ++ lib.optional (!cfg.watch.rtl || cfg.watch.nativeSass) "--preload=${../lib/js/esbuild-preload.js}"
         );
         sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
 
@@ -2604,17 +2602,15 @@ in
                 --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
                 --bench-root "$FRAPPE_BENCH_ROOT" \
                 --port "''${_port:-${toString webBase}}" \
-                ${lib.optionalString appMode
-                  "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"
-                } \
-                ${lib.optionalString (cfg.siteName != "")
-                  "--site-name ${lib.escapeShellArg cfg.siteName}"
-                } \
+                ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
+                ${lib.optionalString (cfg.siteName != "") "--site-name ${lib.escapeShellArg cfg.siteName}"} \
                 ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
-                ${lib.optionalString mailEnabled (
-                  "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
-                  + lib.optionalString mc.pop3.enable " --mail-pop3"
-                )} \
+                ${
+                  lib.optionalString mailEnabled (
+                    "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
+                    + lib.optionalString mc.pop3.enable " --mail-pop3"
+                  )
+                } \
                 ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
             '';
 

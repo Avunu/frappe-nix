@@ -81,9 +81,7 @@ def create_sio(config: RealtimeConfig) -> socketio.AsyncServer:
 
 	Origin / namespace / auth enforcement lives in auth.py; CORS is left open here
 	so python-socketio does not pre-reject before that gate runs."""
-	manager = (
-		TolerantRedisManager(config.redis_queue) if config.redis_manager else TolerantManager()
-	)
+	manager = TolerantRedisManager(config.redis_queue) if config.redis_manager else TolerantManager()
 	return socketio.AsyncServer(
 		async_mode="asgi",
 		cors_allowed_origins="*",

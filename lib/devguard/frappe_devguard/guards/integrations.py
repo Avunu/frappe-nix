@@ -31,33 +31,33 @@ _INSTALLED = False
 
 
 def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    on_import("frappe.integrations.utils", _patch_utils)
+	on_import("frappe.integrations.utils", _patch_utils)
 
 
 def allowed(url):
-    host = (urlsplit(url).hostname or "").lower()
-    if not host or host in _LOOPBACK:
-        return True
-    return host in {entry.lower() for entry in settings().items(NAME, "allow_hosts")}
+	host = (urlsplit(url).hostname or "").lower()
+	if not host or host in _LOOPBACK:
+		return True
+	return host in {entry.lower() for entry in settings().items(NAME, "allow_hosts")}
 
 
 def _patch_utils(module):
-    original = require(module, "make_request")
+	original = require(module, "make_request")
 
-    def make_request(method, url, *args, **kwargs):
-        if not settings().guard_enabled(NAME) or allowed(url):
-            return original(method, url, *args, **kwargs)
-        announce(
-            NAME,
-            "outbound integration HTTP is blocked — add hosts to "
-            "devguard.integrations.allowHosts to permit specific ones",
-        )
-        block(NAME, f"{method} {url}: outbound integration request blocked")
+	def make_request(method, url, *args, **kwargs):
+		if not settings().guard_enabled(NAME) or allowed(url):
+			return original(method, url, *args, **kwargs)
+		announce(
+			NAME,
+			"outbound integration HTTP is blocked — add hosts to "
+			"devguard.integrations.allowHosts to permit specific ones",
+		)
+		block(NAME, f"{method} {url}: outbound integration request blocked")
 
-    # make_get_request and friends call this by module-global name.
-    module.make_request = mark(make_request, "frappe.integrations.utils.make_request")
+	# make_get_request and friends call this by module-global name.
+	module.make_request = mark(make_request, "frappe.integrations.utils.make_request")

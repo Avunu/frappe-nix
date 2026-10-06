@@ -87,13 +87,13 @@ _DELETES = {"DeleteObject", "DeleteObjects"}
 #: send anything over its 8 MiB threshold). Aborting only discards an
 #: unfinished upload's parts, never a stored object.
 _WRITES = {
-    "PutObject",
-    "CopyObject",
-    "CreateMultipartUpload",
-    "UploadPart",
-    "UploadPartCopy",
-    "CompleteMultipartUpload",
-    "AbortMultipartUpload",
+	"PutObject",
+	"CopyObject",
+	"CreateMultipartUpload",
+	"UploadPart",
+	"UploadPartCopy",
+	"CompleteMultipartUpload",
+	"AbortMultipartUpload",
 }
 
 #: Writes that name a destination key, checked with HeadObject before they run.
@@ -111,54 +111,54 @@ _INSTALLED = False
 
 
 def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    on_import("frappe", _patch_get_site_config)
-    on_import("botocore.client", _patch_client)
-    on_import("botocore.signers", _patch_signers)
+	on_import("frappe", _patch_get_site_config)
+	on_import("botocore.client", _patch_client)
+	on_import("botocore.signers", _patch_signers)
 
 
 def conditional_writes():
-    """Whether the store honours ``If-None-Match`` on writes.
+	"""Whether the store honours ``If-None-Match`` on writes.
 
-    Backblaze B2 does not: it answers any write carrying it with
-    501 Not Implemented, so ``push`` mode could never write there.
-    """
-    return settings().flag(NAME, "conditional_writes", True)
+	Backblaze B2 does not: it answers any write carrying it with
+	501 Not Implemented, so ``push`` mode could never write there.
+	"""
+	return settings().flag(NAME, "conditional_writes", True)
 
 
 def mode():
-    value = settings().text(NAME, "mode", "local").strip().lower()
-    if value not in MODES:
-        warn(NAME, f"unknown mode {value!r}; falling back to 'local'")
-        return "local"
-    return value
+	value = settings().text(NAME, "mode", "local").strip().lower()
+	if value not in MODES:
+		warn(NAME, f"unknown mode {value!r}; falling back to 'local'")
+		return "local"
+	return value
 
 
 def _patch_get_site_config(module):
-    original = require(module, "get_site_config")
+	original = require(module, "get_site_config")
 
-    def get_site_config(*args, **kwargs):
-        config = original(*args, **kwargs)
-        if not settings().guard_enabled(NAME) or mode() != "local":
-            return config
-        for block_name, flag in _LOCAL_MODE_KEYS.items():
-            section = config.get(block_name)
-            if isinstance(section, dict) and not section.get(flag):
-                section[flag] = True
-                announce(
-                    NAME,
-                    f"{block_name} is forced to local disk — this bench will not write to, "
-                    "or delete from, the configured object store",
-                )
-        return config
+	def get_site_config(*args, **kwargs):
+		config = original(*args, **kwargs)
+		if not settings().guard_enabled(NAME) or mode() != "local":
+			return config
+		for block_name, flag in _LOCAL_MODE_KEYS.items():
+			section = config.get(block_name)
+			if isinstance(section, dict) and not section.get(flag):
+				section[flag] = True
+				announce(
+					NAME,
+					f"{block_name} is forced to local disk — this bench will not write to, "
+					"or delete from, the configured object store",
+				)
+		return config
 
-    # frappe.init does `local.conf = _dict(get_site_config())`, resolving this
-    # name from the frappe module at call time, so the wrapper is picked up.
-    module.get_site_config = mark(get_site_config, "frappe.get_site_config")
+	# frappe.init does `local.conf = _dict(get_site_config())`, resolving this
+	# name from the frappe module at call time, so the wrapper is picked up.
+	module.get_site_config = mark(get_site_config, "frappe.get_site_config")
 
 
 # --------------------------------------------------------------------------
@@ -167,164 +167,158 @@ def _patch_get_site_config(module):
 
 
 def _is_loopback(client):
-    endpoint = getattr(getattr(client, "meta", None), "endpoint_url", None) or ""
-    return (urlsplit(endpoint).hostname or "").lower() in _LOOPBACK
+	endpoint = getattr(getattr(client, "meta", None), "endpoint_url", None) or ""
+	return (urlsplit(endpoint).hostname or "").lower() in _LOOPBACK
 
 
 def _guarded(client):
-    """Is this an S3 client the guard applies to, right now?"""
-    if not settings().guard_enabled(NAME):
-        return False
-    service = getattr(getattr(client, "meta", None), "service_model", None)
-    if getattr(service, "service_name", None) != "s3":
-        return False
-    return not _is_loopback(client)
+	"""Is this an S3 client the guard applies to, right now?"""
+	if not settings().guard_enabled(NAME):
+		return False
+	service = getattr(getattr(client, "meta", None), "service_model", None)
+	if getattr(service, "service_name", None) != "s3":
+		return False
+	return not _is_loopback(client)
 
 
 def _is_read(operation):
-    return operation.startswith(("Get", "Head", "List")) or operation in _READS
+	return operation.startswith(("Get", "Head", "List")) or operation in _READS
 
 
 def _where(params):
-    bucket = params.get("Bucket", "?")
-    key = params.get("Key")
-    return f"s3://{bucket}/{key}" if key else f"s3://{bucket}"
+	bucket = params.get("Bucket", "?")
+	key = params.get("Key")
+	return f"s3://{bucket}/{key}" if key else f"s3://{bucket}"
 
 
 def _error_code(exc):
-    response = getattr(exc, "response", None)
-    if not isinstance(response, dict):
-        return None
-    return str(response.get("Error", {}).get("Code", "")) or None
+	response = getattr(exc, "response", None)
+	if not isinstance(response, dict):
+		return None
+	return str(response.get("Error", {}).get("Code", "")) or None
 
 
 def _dropped_delete(operation, params):
-    announce(
-        NAME,
-        "object-store deletes are dropped — this bench never removes objects "
-        "from the configured bucket",
-    )
-    meta = {"HTTPStatusCode": 204 if operation == "DeleteObject" else 200}
-    if operation == "DeleteObject":
-        warn(NAME, f"kept {_where(params)}: DeleteObject dropped")
-        return {"ResponseMetadata": meta}
+	announce(
+		NAME,
+		"object-store deletes are dropped — this bench never removes objects from the configured bucket",
+	)
+	meta = {"HTTPStatusCode": 204 if operation == "DeleteObject" else 200}
+	if operation == "DeleteObject":
+		warn(NAME, f"kept {_where(params)}: DeleteObject dropped")
+		return {"ResponseMetadata": meta}
 
-    objects = params.get("Delete", {}).get("Objects", [])
-    warn(NAME, f"kept {len(objects)} object(s) in {_where(params)}: DeleteObjects dropped")
-    return {
-        "ResponseMetadata": meta,
-        "Errors": [
-            {
-                "Key": obj.get("Key"),
-                "Code": "AccessDenied",
-                "Message": "dropped by frappe_devguard",
-            }
-            for obj in objects
-        ],
-    }
+	objects = params.get("Delete", {}).get("Objects", [])
+	warn(NAME, f"kept {len(objects)} object(s) in {_where(params)}: DeleteObjects dropped")
+	return {
+		"ResponseMetadata": meta,
+		"Errors": [
+			{
+				"Key": obj.get("Key"),
+				"Code": "AccessDenied",
+				"Message": "dropped by frappe_devguard",
+			}
+			for obj in objects
+		],
+	}
 
 
 def _refuse_overwrite(original, client, operation, params):
-    """Raise if ``params`` names a key that already exists."""
-    if operation not in _CREATES_KEY or "Key" not in params:
-        return
-    probe = {"Bucket": params.get("Bucket"), "Key": params["Key"]}
-    try:
-        original(client, "HeadObject", probe)
-    except Exception as exc:  # noqa: BLE001 - classified below, never swallowed blindly
-        if _error_code(exc) in _ABSENT:
-            return
-        # Most often 403 for a write-only credential, which cannot tell
-        # "missing" from "forbidden". If-None-Match still stands behind this,
-        # unless the store has none, in which case nothing would.
-        if not conditional_writes():
-            block(
-                NAME,
-                f"{operation} {_where(params)}: could not check the key before writing "
-                f"({type(exc).__name__}: {exc}), and this store takes no If-None-Match "
-                "to refuse an overwrite itself",
-            )
-        warn(
-            NAME,
-            f"could not check {_where(params)} before writing "
-            f"({type(exc).__name__}: {exc}); relying on If-None-Match",
-        )
-        return
-    block(
-        NAME,
-        f"{operation} {_where(params)}: the key already exists in the object store, "
-        "and this bench only adds objects, never replaces them",
-    )
+	"""Raise if ``params`` names a key that already exists."""
+	if operation not in _CREATES_KEY or "Key" not in params:
+		return
+	probe = {"Bucket": params.get("Bucket"), "Key": params["Key"]}
+	try:
+		original(client, "HeadObject", probe)
+	except Exception as exc:  # noqa: BLE001 - classified below, never swallowed blindly
+		if _error_code(exc) in _ABSENT:
+			return
+		# Most often 403 for a write-only credential, which cannot tell
+		# "missing" from "forbidden". If-None-Match still stands behind this,
+		# unless the store has none, in which case nothing would.
+		if not conditional_writes():
+			block(
+				NAME,
+				f"{operation} {_where(params)}: could not check the key before writing "
+				f"({type(exc).__name__}: {exc}), and this store takes no If-None-Match "
+				"to refuse an overwrite itself",
+			)
+		warn(
+			NAME,
+			f"could not check {_where(params)} before writing "
+			f"({type(exc).__name__}: {exc}); relying on If-None-Match",
+		)
+		return
+	block(
+		NAME,
+		f"{operation} {_where(params)}: the key already exists in the object store, "
+		"and this bench only adds objects, never replaces them",
+	)
 
 
 def _patch_client(module):
-    base = require(module, "BaseClient")
-    original = require(base, "_make_api_call")
+	base = require(module, "BaseClient")
+	original = require(base, "_make_api_call")
 
-    def _make_api_call(self, operation_name, api_params):
-        if not _guarded(self) or _is_read(operation_name):
-            return original(self, operation_name, api_params)
+	def _make_api_call(self, operation_name, api_params):
+		if not _guarded(self) or _is_read(operation_name):
+			return original(self, operation_name, api_params)
 
-        if operation_name in _DELETES:
-            return _dropped_delete(operation_name, api_params)
+		if operation_name in _DELETES:
+			return _dropped_delete(operation_name, api_params)
 
-        if operation_name in _WRITES and mode() == "push":
-            announce(
-                NAME,
-                "push mode — new objects may be written to the configured bucket; "
-                "overwrites and deletes are refused",
-            )
-            if api_params.get("IfMatch"):
-                block(
-                    NAME,
-                    f"{operation_name} {_where(api_params)}: conditional overwrite refused",
-                )
-            _refuse_overwrite(original, self, operation_name, api_params)
-            if operation_name in _CONDITIONAL and conditional_writes():
-                api_params = {**api_params, "IfNoneMatch": "*"}
-            return original(self, operation_name, api_params)
+		if operation_name in _WRITES and mode() == "push":
+			announce(
+				NAME,
+				"push mode — new objects may be written to the configured bucket; "
+				"overwrites and deletes are refused",
+			)
+			if api_params.get("IfMatch"):
+				block(
+					NAME,
+					f"{operation_name} {_where(api_params)}: conditional overwrite refused",
+				)
+			_refuse_overwrite(original, self, operation_name, api_params)
+			if operation_name in _CONDITIONAL and conditional_writes():
+				api_params = {**api_params, "IfNoneMatch": "*"}
+			return original(self, operation_name, api_params)
 
-        if operation_name in _WRITES:
-            reason = (
-                "writes to the object store are off in local mode — set "
-                "devguard.objectstore.mode = \"push\" to push new files"
-            )
-        else:
-            reason = "only object reads and new-object writes are permitted"
-        announce(NAME, "the configured object store is read-only from this bench")
-        block(NAME, f"{operation_name} {_where(api_params)}: {reason}")
+		if operation_name in _WRITES:
+			reason = (
+				"writes to the object store are off in local mode — set "
+				'devguard.objectstore.mode = "push" to push new files'
+			)
+		else:
+			reason = "only object reads and new-object writes are permitted"
+		announce(NAME, "the configured object store is read-only from this bench")
+		block(NAME, f"{operation_name} {_where(api_params)}: {reason}")
 
-    base._make_api_call = mark(_make_api_call, "botocore.client.BaseClient._make_api_call")
+	base._make_api_call = mark(_make_api_call, "botocore.client.BaseClient._make_api_call")
 
 
 def _patch_signers(module):
-    # Each client class gets these as attributes at creation, looked up from
-    # this module by name (handlers.add_generate_presigned_url/_post), so
-    # replacing the module globals covers every client created afterwards.
-    original_url = require(module, "generate_presigned_url")
-    original_post = require(module, "generate_presigned_post")
+	# Each client class gets these as attributes at creation, looked up from
+	# this module by name (handlers.add_generate_presigned_url/_post), so
+	# replacing the module globals covers every client created afterwards.
+	original_url = require(module, "generate_presigned_url")
+	original_post = require(module, "generate_presigned_post")
 
-    def generate_presigned_url(self, ClientMethod, *args, **kwargs):  # noqa: N803 - botocore's name
-        if _guarded(self) and ClientMethod not in _PRESIGNABLE:
-            block(
-                NAME,
-                f"presigned {ClientMethod} refused: only reads may be presigned, since the "
-                "request would bypass this guard",
-            )
-        return original_url(self, ClientMethod, *args, **kwargs)
+	def generate_presigned_url(self, ClientMethod, *args, **kwargs):  # noqa: N803 - botocore's name
+		if _guarded(self) and ClientMethod not in _PRESIGNABLE:
+			block(
+				NAME,
+				f"presigned {ClientMethod} refused: only reads may be presigned, since the "
+				"request would bypass this guard",
+			)
+		return original_url(self, ClientMethod, *args, **kwargs)
 
-    def generate_presigned_post(self, *args, **kwargs):
-        if _guarded(self):
-            block(
-                NAME,
-                "presigned POST refused: it lets a browser write to the object store, "
-                "bypassing this guard",
-            )
-        return original_post(self, *args, **kwargs)
+	def generate_presigned_post(self, *args, **kwargs):
+		if _guarded(self):
+			block(
+				NAME,
+				"presigned POST refused: it lets a browser write to the object store, bypassing this guard",
+			)
+		return original_post(self, *args, **kwargs)
 
-    module.generate_presigned_url = mark(
-        generate_presigned_url, "botocore.signers.generate_presigned_url"
-    )
-    module.generate_presigned_post = mark(
-        generate_presigned_post, "botocore.signers.generate_presigned_post"
-    )
+	module.generate_presigned_url = mark(generate_presigned_url, "botocore.signers.generate_presigned_url")
+	module.generate_presigned_post = mark(generate_presigned_post, "botocore.signers.generate_presigned_post")

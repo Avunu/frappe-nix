@@ -21,31 +21,31 @@ _INSTALLED = False
 
 
 def install():
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    on_import(f"{_PREFIX}.plaid_settings", _patch_settings)
-    on_import(f"{_PREFIX}.plaid_connector", _patch_connector)
+	on_import(f"{_PREFIX}.plaid_settings", _patch_settings)
+	on_import(f"{_PREFIX}.plaid_connector", _patch_connector)
 
 
 def _patch_settings(module):
-    require(module, "automatic_synchronization")
-    module.automatic_synchronization = no_op(
-        NAME,
-        "plaid_settings.automatic_synchronization",
-        "Plaid bank synchronisation is blocked",
-    )
+	require(module, "automatic_synchronization")
+	module.automatic_synchronization = no_op(
+		NAME,
+		"plaid_settings.automatic_synchronization",
+		"Plaid bank synchronisation is blocked",
+	)
 
 
 def _patch_connector(module):
-    connector = require(module, "PlaidConnector")
-    require(connector, "__init__")
-    connector.__init__ = blocking(
-        NAME,
-        "PlaidConnector.__init__",
-        "Plaid access is blocked in this development bench — the access tokens "
-        "in this database are production's.",
-        "Plaid bank synchronisation is blocked",
-    )
+	connector = require(module, "PlaidConnector")
+	require(connector, "__init__")
+	connector.__init__ = blocking(
+		NAME,
+		"PlaidConnector.__init__",
+		"Plaid access is blocked in this development bench — the access tokens "
+		"in this database are production's.",
+		"Plaid bank synchronisation is blocked",
+	)

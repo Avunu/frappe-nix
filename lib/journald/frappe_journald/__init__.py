@@ -27,20 +27,20 @@ _INSTALLED = False
 
 
 def install():
-    """Hook the two patch targets when stderr is the journal. Idempotent."""
-    global _INSTALLED
-    if _INSTALLED:
-        return
-    _INSTALLED = True
+	"""Hook the two patch targets when stderr is the journal. Idempotent."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
 
-    if not journal_stream():
-        return
+	if not journal_stream():
+		return
 
-    from ._hook import on_import
-    from ._patches import patch_bench_utils, patch_frappe_logger
+	from ._hook import on_import
+	from ._patches import patch_bench_utils, patch_frappe_logger
 
-    on_import("frappe.utils.logger", patch_frappe_logger)
-    on_import("bench.utils", patch_bench_utils)
+	on_import("frappe.utils.logger", patch_frappe_logger)
+	on_import("bench.utils", patch_bench_utils)
 
 
 # NB: install() is called by the .pth bootstrap, not here — see frappe_unixsock.

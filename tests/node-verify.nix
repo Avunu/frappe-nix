@@ -17,7 +17,9 @@
       }
       ''
         export HOME="$PWD"
-        bash ${./node-verify.sh} ${import ../lib/node-verify.nix { inherit pkgs; }}/bin/frappe-nix-node-verify 2>&1 | tee "$out"
+        bash ${./node-verify.sh} ${
+          import ../lib/node-verify.nix { inherit pkgs; }
+        }/bin/frappe-nix-node-verify 2>&1 | tee "$out"
       '';
 
   requirements-check =
