@@ -17,8 +17,8 @@ let
     pkgs.runCommand "stub-bench"
       {
         passthru = {
+          inherit (pkgs) nodejs;
           pythonEnv = pkgs.emptyDirectory;
-          nodejs = pkgs.nodejs;
           appsPath = _: "/stub/apps";
         };
       }

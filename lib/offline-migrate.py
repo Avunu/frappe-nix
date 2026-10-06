@@ -123,7 +123,9 @@ def option_file(user, password, host=None, port=None, socket=None):
     return "\n".join(lines) + "\n"
 
 
-def build_command(pt_osc, database, table, alter, defaults_file, dry_run=False, extra=()):
+def build_command(
+    pt_osc, database, table, alter, defaults_file, dry_run=False, extra=()
+):
     """The pt-online-schema-change invocation. ``extra`` goes last, so it wins."""
     return [
         pt_osc,
@@ -195,7 +197,9 @@ def pending_doctypes():
     for name, path in doctype_files().items():
         if not frappe.db.get_value("DocType", name, "modified"):
             continue
-        stored = frappe.db.get_value("DocType", name, "migration_hash") if hashed else None
+        stored = (
+            frappe.db.get_value("DocType", name, "migration_hash") if hashed else None
+        )
         if stored and stored == calculate_hash(path):
             continue
         pending[name] = path
@@ -219,13 +223,17 @@ def synced_custom_fields():
                     continue
                 with open(os.path.join(folder, name)) as f:
                     data = json.load(f)
-                if not data.get("sync_on_migrate") or not frappe.db.exists("DocType", data["doctype"]):
+                if not data.get("sync_on_migrate") or not frappe.db.exists(
+                    "DocType", data["doctype"]
+                ):
                     continue
                 for custom in data.get("custom_fields") or []:
                     dt = custom.get("dt")
                     fields.setdefault(dt, {}).setdefault(custom["fieldname"], custom)
                     existing = frappe.db.get_value(
-                        "Custom Field", {"dt": dt, "fieldname": custom["fieldname"]}, "modified"
+                        "Custom Field",
+                        {"dt": dt, "fieldname": custom["fieldname"]},
+                        "modified",
                     )
                     shipped = custom.get("modified")
                     if not existing or (shipped and existing < get_datetime(shipped)):
@@ -246,7 +254,9 @@ def setup_custom_fields(doctype):
         except AttributeError:
             continue
         except Exception as e:
-            say(f"offline-migrate: {app}.setup.get_custom_fields() failed ({e}); its fields are not planned")
+            say(
+                f"offline-migrate: {app}.setup.get_custom_fields() failed ({e}); its fields are not planned"
+            )
             continue
         if not isinstance(declared, dict):
             continue
@@ -377,11 +387,15 @@ def run_online(plan, pt_osc, db, dry_run, extra):
     alter = combine(plan.clauses)
     table = f"tab{plan.doctype}"
 
-    handle = tempfile.NamedTemporaryFile("w", prefix="offline-migrate-", suffix=".cnf", delete=False)
+    handle = tempfile.NamedTemporaryFile(
+        "w", prefix="offline-migrate-", suffix=".cnf", delete=False
+    )
     try:
         with handle:  # created 0600
             handle.write(option_file(db.user, db.password, db.host, db.port, db.socket))
-        cmd = build_command(pt_osc, db.cur_db_name, table, alter, handle.name, dry_run, extra)
+        cmd = build_command(
+            pt_osc, db.cur_db_name, table, alter, handle.name, dry_run, extra
+        )
 
         say(f"\noffline-migrate: {plan.doctype} ({plan.rows:,} rows)")
         say(f"  ALTER TABLE `{table}` {alter}")
@@ -407,11 +421,22 @@ def parse_args(argv):
         description="Alter large tables online before bench migrate. Arguments after -- go to pt-online-schema-change.",
     )
     p.add_argument("--site", default=os.environ.get("FRAPPE_SITE"))
-    p.add_argument("--bench-root", default=os.environ.get("FRAPPE_BENCH_ROOT") or os.getcwd())
-    p.add_argument("--threshold", help=f"rows at which a table is altered online (default {DEFAULT_THRESHOLD:,})")
+    p.add_argument(
+        "--bench-root", default=os.environ.get("FRAPPE_BENCH_ROOT") or os.getcwd()
+    )
+    p.add_argument(
+        "--threshold",
+        help=f"rows at which a table is altered online (default {DEFAULT_THRESHOLD:,})",
+    )
     mode = p.add_mutually_exclusive_group()
-    mode.add_argument("--plan", action="store_true", help="report what would be done; change nothing")
-    mode.add_argument("--dry-run", action="store_true", help="rehearse with pt-online-schema-change --dry-run")
+    mode.add_argument(
+        "--plan", action="store_true", help="report what would be done; change nothing"
+    )
+    mode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="rehearse with pt-online-schema-change --dry-run",
+    )
     p.add_argument("extra", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = p.parse_args(argv)
     args.extra = [a for a in args.extra if a != "--"]
@@ -424,7 +449,9 @@ def main(argv=None):
     args = parse_args(sys.argv[1:] if argv is None else argv)
 
     if os.environ.get(ENV_ENABLED, "").strip().lower() in OFF:
-        say(f"offline-migrate: skipped ({ENV_ENABLED}={os.environ[ENV_ENABLED]}); bench migrate alters every table itself")
+        say(
+            f"offline-migrate: skipped ({ENV_ENABLED}={os.environ[ENV_ENABLED]}); bench migrate alters every table itself"
+        )
         return 0
 
     import frappe
@@ -434,11 +461,15 @@ def main(argv=None):
     frappe.connect()
     try:
         if frappe.db.db_type != "mariadb":
-            say(f"offline-migrate: {frappe.db.db_type} is not supported; bench migrate alters every table itself")
+            say(
+                f"offline-migrate: {frappe.db.db_type} is not supported; bench migrate alters every table itself"
+            )
             return 0
 
         threshold = resolve_threshold(args.threshold)
-        say(f"offline-migrate: {args.site}: tables of {threshold:,}+ rows with schema changes pending…")
+        say(
+            f"offline-migrate: {args.site}: tables of {threshold:,}+ rows with schema changes pending…"
+        )
         plans = large_tables(threshold)
 
         # The planning read a snapshot and holds a metadata lock on every table
@@ -449,23 +480,31 @@ def main(argv=None):
         online = [p for p in plans if p.clauses]
         for plan in plans:
             if not plan.clauses:
-                say(f"offline-migrate: {plan.doctype} ({plan.rows:,} rows) is left to bench migrate: {plan.left}")
+                say(
+                    f"offline-migrate: {plan.doctype} ({plan.rows:,} rows) is left to bench migrate: {plan.left}"
+                )
         if not online:
             say("offline-migrate: nothing to alter online")
             return 0
         if args.plan:
             for plan in online:
-                say(f"offline-migrate: {plan.doctype} ({plan.rows:,} rows)\n  ALTER TABLE `tab{plan.doctype}` {combine(plan.clauses)}")
+                say(
+                    f"offline-migrate: {plan.doctype} ({plan.rows:,} rows)\n  ALTER TABLE `tab{plan.doctype}` {combine(plan.clauses)}"
+                )
             return 0
 
         pt_osc = find_pt_osc()
         if not pt_osc:
-            say(f"offline-migrate: {PT_OSC} (percona-toolkit) is not installed, and {len(online)} table(s) need it")
+            say(
+                f"offline-migrate: {PT_OSC} (percona-toolkit) is not installed, and {len(online)} table(s) need it"
+            )
             return 1
 
         for plan in online:
             if not run_online(plan, pt_osc, frappe.local.db, args.dry_run, args.extra):
-                say(f"\noffline-migrate: {plan.doctype} FAILED; stopping before bench migrate")
+                say(
+                    f"\noffline-migrate: {plan.doctype} FAILED; stopping before bench migrate"
+                )
                 return 1
             say(f"offline-migrate: {plan.doctype} done")
 
