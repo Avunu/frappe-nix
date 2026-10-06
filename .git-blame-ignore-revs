@@ -1,0 +1,4 @@
+# Mechanical reformatting; `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+
+# style: format Python with Frappe's ruff config, Nix with nixfmt
+80008d6a62dbc5b862dbe077a3542e00ee89a99e
