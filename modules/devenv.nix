@@ -1158,6 +1158,47 @@ in
           };
         };
 
+        offlineMigrate = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Alter large tables without locking them when `bench migrate` runs.
+
+              A plain `ALTER TABLE` on a table of millions of rows holds a
+              metadata lock for as long as the copy takes, and everything that
+              touches the table queues behind it — which is how a migrate on a
+              busy site ends in `Lock wait timeout exceeded`. With this on,
+              `bench migrate` (and `bench update`, `bench restore`) first works
+              out which tables of at least `rowThreshold` rows the migrate is
+              about to alter, and applies those changes with
+              `pt-online-schema-change`: a shadow copy is altered and filled in
+              chunks while triggers keep it current, then swapped in with one
+              rename. The migrate that follows finds the columns already there.
+
+              Off by default: it adds percona-toolkit and its Perl closure, and
+              reads every doctype's JSON once more before each migrate.
+              `bench-offline-migrate --plan` reports what it would do without
+              changing anything, and works whether or not this is on.
+              `FRAPPE_OFFLINE_MIGRATE=0 bench migrate` skips it for one run.
+            '';
+          };
+
+          rowThreshold = mkOption {
+            type = types.ints.unsigned;
+            default = 100000;
+            description = ''
+              Row count at which a table is altered online rather than by
+              `bench migrate` itself. Below it a plain ALTER finishes before
+              anything notices; `0` sends every table with a pending change
+              through pt-online-schema-change.
+
+              Overridable at runtime with `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD`
+              or `bench-offline-migrate --threshold`.
+            '';
+          };
+        };
+
         extraScripts = mkOption {
           type = types.attrsOf types.anything;
           default = { };
@@ -1881,6 +1922,15 @@ in
             # and is nobody's problem.
             devguard = dg.enable;
           };
+          # percona-toolkit is in the closure only when it will be used. With
+          # `enable` off, a hand-run `bench-offline-migrate` still plans — it
+          # needs no pt-osc to say what it would do — and for a real run looks
+          # for the tool on PATH.
+          offlineMigrate =
+            cfg.offlineMigrate
+            // lib.optionalAttrs cfg.offlineMigrate.enable {
+              ptOsc = "${ptOscTool}/bin/frappe-nix-pt-osc";
+            };
           nodeModulesBin = "${nodeModulesTool}/bin/frappe-nix-node-modules";
           nodeVerifyBin = "${nodeVerifyTool}/bin/frappe-nix-node-verify";
           pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
@@ -1907,6 +1957,10 @@ in
         # Finds and repairs what yarn cannot see is broken in the cache and in
         # node_modules, ahead of that install. See lib/node-verify.py.
         nodeVerifyTool = import ../lib/node-verify.nix { inherit pkgs; };
+
+        # pt-online-schema-change with its perl, for bench-offline-migrate. See
+        # lib/offline-migrate.py.
+        ptOscTool = import ../lib/offline-migrate.nix { inherit pkgs; };
 
         # Keeps the MariaDB datadir off btrfs copy-on-write — see
         # lib/db-nocow.nix and the mariadb.noCow option.

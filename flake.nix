@@ -199,6 +199,15 @@
               ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
           '';
 
+          # Frappe-, MariaDB- and percona-independent: a stub frappe.local.db
+          # stands in for the database and a shell script for
+          # pt-online-schema-change, and the assertions are about what planning
+          # may write (nothing), what is on the command line (no credential) and
+          # what is left behind (no option file). lib/offline-migrate.py.
+          offline-migrate = pkgs.runCommand "frappe-nix-offline-migrate-check" { } ''
+            ${pkgs.python3}/bin/python ${./tests/test_offline_migrate.py} ${./lib/offline-migrate.py} | tee "$out"
+          '';
+
           # Frappe- and node-independent: a stub frappe.build stands in, and the
           # assertions are about the NODE_OPTIONS frappe's build hands node.
           nodebuild = pkgs.runCommand "frappe-nodebuild-check" { } ''
@@ -384,6 +393,9 @@
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix { inherit pkgs; }
+        # `bench-migrate` and `bench-offline-migrate`: the step in front of the
+        # migrate, over stubs.
+        // import ./tests/offline-migrate-scripts.nix { inherit pkgs; }
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
         // import ./tests/reconcile-apps.nix { inherit pkgs; }
@@ -424,6 +436,8 @@
         # every PR.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           import ./tests/logging-fields.nix { inherit self pkgs; }
+          # What services.frappe.migrate.offline puts in the migrate unit, on and off.
+          // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
         )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

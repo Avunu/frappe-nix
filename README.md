@@ -375,6 +375,8 @@ Set `runtime.src = null` to hand version control back to `uv.lock`.
 | restore.carryConfigKeys | list of str | [ "encryption_key" "backup_encryption_key" ] | Allowlist of keys copied from the backup's site config. |
 | restore.migrate | bool | true | Run bench migrate after restoring. |
 | restore.requireDevguard | bool | true | Refuse to write production's encryption key into an unguarded bench. |
+| offlineMigrate.enable | bool | false | Alter large tables online (pt-online-schema-change) in front of every bench migrate, so the ALTER cannot lock them. See Large tables migrate online. |
+| offlineMigrate.rowThreshold | int | 100000 | Rows at which a table is altered online. 0 sends every table with a pending change through it. |
 | containers.enable | bool | false | Build the OCI images. |
 | containers.registry | str | "" | Registry URL prefix. |
 
@@ -567,6 +569,30 @@ Recursion is avoided with a `_FRAPPE_BENCH_RAW` env guard the specialized script
 
 Because those two caveats leave the real `bench update` reachable — `_FRAPPE_BENCH_RAW=1 bench update --reset`, or just `env/bin/bench` — the shell also keeps its first step working. `bench update` starts with `bench.patches.run()`, which executes every entry in the `patches.txt` frappe-bench ships that the **bench root's** `patches.txt` does not record as done. bench deleted the v3/v4 patch modules in 2022 but still lists them, so a bench root with no record dies immediately on `ModuleNotFoundError: No module named 'bench.patches.v3'` — and stays dead, because the failed run rewrites the root file as one empty byte. `bench init` avoids this by copying the shipped list in verbatim; frappe-nix never runs `bench init`, and the file is gitignored, so `enterShell` reconciles it instead — on every shell entry, non-destructively, and silently unless it changes something. See [`lib/bench-patches.nix`](lib/bench-patches.nix) for why _every_ patch is recorded as done rather than only the two that cannot import.
 
+### Large tables migrate online
+
+`bench migrate` alters a table with a plain `ALTER TABLE`. On a table of millions of rows that copy runs for minutes, takes a metadata lock on the table where it starts and where it ends, and queues every other connection that touches the table behind it — so on a busy site a migrate ends in `Lock wait timeout exceeded`, its own or somebody else's. With `offlineMigrate.enable = true` the migrate is preceded by [`lib/offline-migrate.py`](lib/offline-migrate.py), which works out which tables the migrate is about to alter and, for each one of at least `offlineMigrate.rowThreshold` rows (default 100,000), applies the change with [`pt-online-schema-change`](https://docs.percona.com/percona-toolkit/pt-online-schema-change.html): a shadow copy is altered and filled in chunks while triggers keep it current, then swapped in with one rename. Nothing waits. When `bench migrate` runs next, those columns exist already and its own sync finds nothing to alter on them.
+
+```nix
+perSystem.frappe-nix.offlineMigrate = {
+  enable = true;
+  rowThreshold = 100000;   # the default
+};
+```
+
+It is in front of `bench migrate`, `bench update` and `bench restore` alike, because they all migrate through `bench-migrate`. It stops the migrate if a table fails, rather than letting it run on a half-applied plan. `bench-offline-migrate --plan` shows what would happen, and works with the option off; `FRAPPE_OFFLINE_MIGRATE=0 bench migrate` skips it for one run; `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` and `--threshold` override the threshold for one command, the flag winning.
+
+What it plans from is what `bench migrate` itself derives a table's schema from: the DocType JSON an installed app ships, judged changed by the same hash test `bench migrate` applies, and the Custom Field JSON an app syncs on migrate. Frappe's own `MariaDBTable` produces the ALTER, with its DDL captured instead of run, so the change is the one the migrate would have made. Some things it deliberately does not do:
+
+-   **It will not write a row.** `MariaDBTable.alter()` backfills NULLs with a real `UPDATE` before a change to NOT NULL. Planning refuses every statement but a read, so such a table is reported as left to `bench migrate` — the backfill is the migrate's to run, and pt-online-schema-change would not give those rows Frappe's default.
+-   **It does not run patches**, and it runs before they do. A `pre_model_sync` patch that renames a column in a table the step has already widened — `rename_field` onto a name the step added — fails on the duplicate column. Run that one migrate with `FRAPPE_OFFLINE_MIGRATE=0`.
+-   **It does not see Property Setters** from `custom/*.json`, so a column whose length or type one changes is still altered by `bench migrate`, in place.
+-   **It assumes one node.** A site's database user owns its database and nothing else, so it may not run `SHOW SLAVE STATUS`, which pt-online-schema-change would otherwise issue to look for replicas and for a row-based source. The defaults are `--recursion-method=none` and `--force`; a bench that replicates passes `-- --recursion-method=processlist` (or `hosts`).
+
+pt-online-schema-change needs the `TRIGGER` privilege on the site's database, which a locally created site user has, and one primary key per table, which every Frappe table does. Its progress streams as it runs. Credentials go to it in a `0600` option file that is deleted afterwards, never on its command line. nixpkgs' percona-toolkit scripts start with `#!/usr/bin/env perl` and die under a systemd unit's PATH, so frappe-nix hands it a [wrapper](lib/offline-migrate.nix) with perl beside it.
+
+On NixOS, `services.frappe.migrate.offline.enable` puts the same step inside the `frappe-migrate-<site>` unit, after the snapshot and the switch to maintenance mode and in front of `bench migrate`. A failure there is a failed migrate: the snapshot is restored and the site stays in maintenance mode.
+
 ### A stale `uv.lock` is an evaluation error
 
 `apps/*` are git submodules and `uv.lock` is a committed, resolved snapshot of what they all declare. Move an app to a commit whose `pyproject.toml` gained a dependency and the two disagree — uv2nix then looks up a name the lock never recorded, and the bench fails to **evaluate**:
@@ -593,7 +619,8 @@ These back the wrapper and are also callable directly:
 | provision-site [admin-pass] | Create $FRAPPE_SITE and install every app from sites/apps.txt. |
 | reconcile-apps [site] | Install whatever sites/apps.txt names that $SITE (or the given site) doesn't have installed yet. Idempotent; also runs automatically — see appsReconcile.enable. |
 | bench-update [--pull\|--migrate\|--build\|--node-locks] | Submodule-aware replacement for bench update. --pull fetches each submodule's .gitmodules branch from the remote that carries its declared URL (origin is often a developer's fork), refuses to discard local commits (a shallow clone whose pin and tip share no history at all — the shape a depth-limited fetch leaves behind, and what git shows as a phantom "1 ahead" — is deepened back to the pin's date and re-checked first, since that is never a local commit), clears the one kind of local change that is only tool output — an uncommitted yarn.lock / package-lock.json the pull would overwrite (its package.json unedited), or an untracked one upstream adds — and says which, carries every other edit across, and when git still refuses skips only that app, shows git's reason and lists the apps not updated when it finishes (the rest of the pull, the registry, migrate and build still run), checks out a registered submodule that has no checkout (a fresh clone's, a deinitialized one's) before pulling it with the rest, skips local apps and reports stray repos; then regenerates sites/apps.json for the new pins, the fallback locks in node-locks/ for the apps without a yarn.lock whose package.json moved, and re-locks the workspace (uv lock) when a pyproject.toml did. --node-locks [target…] regenerates node-locks/ for every app and nested frontend without a yarn.lock of its own; a named target gets a lock forced over the yarn.lock it ships. In app mode, --migrate and --build only. |
-| bench-migrate / bench-build / bench-clear-cache / bench-console | Thin bench wrappers honoring $FRAPPE_SITE. |
+| bench-migrate / bench-build / bench-clear-cache / bench-console | Thin bench wrappers honoring $FRAPPE_SITE. With offlineMigrate.enable, bench-migrate runs bench-offline-migrate first and does not migrate if it fails. |
+| bench-offline-migrate [--plan\|--dry-run] [--threshold ] [-- ] | Alter the large tables the next bench migrate would alter, online. --plan says what it would do and changes nothing (needs no percona-toolkit); --dry-run has pt-online-schema-change rehearse it; arguments after -- go to pt-online-schema-change. Works whether or not offlineMigrate.enable is on. See Large tables migrate online. |
 | bench-restore [\|--at \|--list] | Restore from a SQL backup, or from the latest one in the object store. See Restoring from production. |
 | setup-backup-access | Prompt for the object-store credentials, test them against the bucket, and write backup-access.age. |
 | edit-secret | Decrypt a secret into $EDITOR and re-encrypt it to the declared recipients. Reads stdin when it is not a terminal, so a secret can be piped in. |
@@ -817,6 +844,8 @@ The final `site_config.json` is written to the site's state directory with mode 
 | migrate.rollbackOnFailure | bool | true | Restore the snapshot if the migration fails. |
 | migrate.maintenanceMode | bool | true | Toggle maintenance mode around migrate; left on if it fails. |
 | migrate.snapshotRetention | int | 3 | Snapshots to keep per site under /snapshots. |
+| migrate.offline.enable | bool | false | Alter large tables online before bench migrate, inside the same snapshot and maintenance mode. See Large tables migrate online. |
+| migrate.offline.rowThreshold | int | 100000 | Rows at which a table is altered online rather than by bench migrate itself. |
 
 **Per-site (`services.frappe.sites.<name>`):**
 
@@ -850,6 +879,8 @@ Because Frappe migrations perform DDL (`CREATE`/`ALTER TABLE`), which auto-commi
 2.  **Migrate** — `bench --site <name> migrate`, with the site in maintenance mode.
 3.  **On success** — clear maintenance mode, record the build, prune old snapshots.
 4.  **On failure** — restore the snapshot (drop all current tables, re-import the dump), **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero (the unit shows `failed`). The database is returned to its pre-migrate state; recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
+
+With `migrate.offline.enable`, step 2 is preceded by an online alteration of the large tables the migrate is about to alter, under the same snapshot and maintenance mode — see [Large tables migrate online](#large-tables-migrate-online). A failure there takes the failure path in step 4.
 
 It runs as the `frappe` user with the site's own DB credentials (no DB-root needed), so it works for both locally-created and externally-managed databases. Tune or disable it via the `services.frappe.migrate.*` options above (e.g. `migrate.snapshot = false` for very large databases where a snapshot per deploy is too costly).
 
@@ -999,6 +1030,8 @@ frappe-nix/
 │   │   ├── migrate.sh        #   migrate mode
 │   │   └── main.sh           #   flags + mode dispatch (must be concatenated last)
 │   ├── frappe-workspace.py   # apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json} reconciler (tomlkit)
+│   ├── offline-migrate.py    # alters large tables online ahead of bench migrate (pt-online-schema-change)
+│   ├── offline-migrate.nix   # pt-online-schema-change with its perl
 │   ├── frappe-presets.json   # frappe version → python / node / branch matrix
 │   └── scripts.nix           # portable bench shell scripts
 ├── templates/

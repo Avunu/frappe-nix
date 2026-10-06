@@ -36,14 +36,18 @@ jobs:
       - name: Build the bench scaffolder
         run: nix build .#default --show-trace
 
-      # Offline checks (no network, no VM): the devguard unit tests and the
-      # `frappe-init --migrate` end-to-end runs over a synthetic classic bench.
+      # Offline checks (no network, no VM): the devguard unit tests, the
+      # `frappe-init --migrate` end-to-end runs over a synthetic classic bench,
+      # and the online-ALTER step in front of `bench migrate`.
       - name: Run the offline checks
         run: |
           nix build -L --show-trace \
             .#checks.x86_64-linux.devguard \
             .#checks.x86_64-linux.migrate-classic \
-            .#checks.x86_64-linux.migrate-versions
+            .#checks.x86_64-linux.migrate-versions \
+            .#checks.x86_64-linux.offline-migrate \
+            .#checks.x86_64-linux.offline-migrate-scripts \
+            .#checks.x86_64-linux.offline-migrate-unit
 
   vm-tests:
     # Manual only — see the header note.
