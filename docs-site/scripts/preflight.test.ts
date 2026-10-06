@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { checkJx, checkSlug, preflight } from "./preflight.ts";
+import { atLeast, checkJx, checkSlug, MINIMUM_JX, preflight } from "./preflight.ts";
 import { cleanup, makeTree } from "./lib/test-utils.ts";
 
 afterAll(cleanup);
@@ -13,7 +13,6 @@ const config = {
   domain: "frappe-nix.avunu.net",
   license: "MIT",
 };
-const PARSER = ["src/content-routes.ts", "src/content-links.ts", "src/alerts.ts"];
 
 const repo = (
   over: {
@@ -21,7 +20,8 @@ const repo = (
     project?: object;
     cname?: string | null;
     docs?: boolean;
-    parser?: string[] | null;
+    /** Installed @jxsuite versions by package name; null leaves a package out; absent installs the minimum. */
+    jx?: Record<string, string | null>;
     snapshot?: string[] | null;
     docsFiles?: Record<string, string>;
   } = {},
@@ -42,12 +42,10 @@ const repo = (
     files["docs-site/data/projects.snapshot.json"] = JSON.stringify({
       projects: over.snapshot.map((slug) => ({ slug })),
     });
-  const parser = over.parser === undefined ? PARSER : over.parser;
-  if (parser) {
-    files["docs-site/node_modules/@jxsuite/parser/package.json"] = JSON.stringify({
-      version: "2.0.0",
-    });
-    for (const file of parser) files[`docs-site/node_modules/@jxsuite/parser/${file}`] = "";
+  for (const [name, minimum] of Object.entries(MINIMUM_JX)) {
+    const version = over.jx && name in over.jx ? over.jx[name] : minimum;
+    if (version)
+      files[`docs-site/node_modules/@jxsuite/${name}/package.json`] = JSON.stringify({ version });
   }
   return `${makeTree(files)}/docs-site`;
 };
@@ -90,14 +88,32 @@ test("an invalid configuration lists what is wrong", () => {
   expect(errors.some((e) => e.includes("platform"))).toBe(true);
 });
 
-test("a Jx without the vault-content features is an error that says what to do", () => {
-  const dir = repo({ parser: ["src/md.ts"] });
+test("a Jx older than the release this site needs is an error that says what to do", () => {
+  const dir = repo({ jx: { parser: "1.8.2", compiler: "4.0.2" } });
   const message = checkJx(dir)!;
-  expect(message).toContain("predates the vault-content features");
-  expect(message).toContain("link:jx");
-  expect(preflight(dir).errors.some((e) => e.includes("vault-content"))).toBe(true);
-  expect(checkJx(repo({ parser: null }))).toContain("not installed");
+  expect(message).toContain(
+    "@jxsuite/parser (1.8.2) is older than this site needs (2.0.0 or newer)",
+  );
+  expect(message).toContain(
+    "@jxsuite/compiler (4.0.2) is older than this site needs (5.0.0 or newer)",
+  );
+  expect(message).toContain("bun update");
+  expect(message).not.toContain("link:jx");
+  expect(preflight(dir).errors.some((e) => e.includes("is older than this site needs"))).toBe(true);
+  expect(checkJx(repo({ jx: { parser: null } }))).toContain("@jxsuite/parser is not installed");
   expect(checkJx(repo())).toBeNull();
+  expect(
+    checkJx(repo({ jx: { parser: "2.3.1", compiler: "5.1.0", search: "0.10.0" } })),
+  ).toBeNull();
+});
+
+test("version comparison is numeric, not alphabetical", () => {
+  expect(atLeast("2.0.0", "2.0.0")).toBe(true);
+  expect(atLeast("10.0.0", "2.0.0")).toBe(true);
+  expect(atLeast("0.10.0", "0.4.0")).toBe(true);
+  expect(atLeast("4.0.2", "4.0.3")).toBe(false);
+  expect(atLeast("1.99.99", "2.0.0")).toBe(false);
+  expect(atLeast("2.0.0-rc.1", "2.0.0")).toBe(true);
 });
 
 test("the placeholder tagline is an error, init has to be given a real one", () => {

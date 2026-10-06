@@ -163,3 +163,35 @@ test("the home page's <title> does not say the project's name twice", () => {
     "Documentation · frappe-nix",
   );
 });
+
+test("the landing page's cards show titles and descriptions as text, whatever they hold", () => {
+  const landing = JSON.parse(readFileSync(join(ROOT, "pages", "index.json"), "utf8")) as {
+    state: Record<string, { body?: string }>;
+  };
+  const state = {
+    nav: {
+      data: {
+        featured: [
+          {
+            title: "Set ${HOME} safely & <b>",
+            description: "Use ${1+1} & <angle> brackets.",
+            url: "/docs/templated/",
+            section: "Guides ${x}",
+          },
+          { title: "Plain", description: "", url: "/docs/plain/", section: "" },
+        ],
+      },
+    },
+  };
+  const cards = new Function("state", landing.state.featuredNodes!.body!)(state) as Array<any>;
+  const spans = (card: any) => card.children[0].children as Array<Record<string, any>>;
+  expect(spans(cards[0]).map((span) => span.innerHTML)).toEqual([
+    "Guides &#36;{x}",
+    "Set &#36;{HOME} safely &amp; &lt;b&gt;",
+    "Use &#36;{1+1} &amp; &lt;angle&gt; brackets.",
+  ]);
+  for (const card of cards)
+    for (const span of spans(card)) expect(span.textContent).toBeUndefined();
+  expect(spans(cards[1]).map((span) => span.innerHTML)).toEqual(["Documentation", "Plain", ""]);
+  expect(cards[0].children[0].attributes.href).toBe("/docs/templated/");
+});

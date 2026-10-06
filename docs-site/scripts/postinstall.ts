@@ -1,6 +1,6 @@
 // Runs after `bun install`: generates the editor schemas (project.schema.json, document.schema.json)
 // that project.json and the layouts point at. Failing to generate them never fails the install, and
-// installing a Jx release that predates the vault-content features is reported by `bun run build`.
+// installing Jx packages older than the release this site needs is reported by `bun run build`.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { ROOT } from "./lib/config.ts";

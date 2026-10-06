@@ -1,5 +1,5 @@
-// Checks, before anything is built, that the site is set up and that the installed Jx has the
-// vault-content features the documentation depends on. `bun run build` and `bun run dev` run it.
+// Checks, before anything is built, that the site is set up and that the installed Jx packages are
+// the releases the documentation depends on. `bun run build` and `bun run dev` run it.
 //
 //   bun scripts/preflight.ts
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -33,32 +33,65 @@ export function checkSlug(root: string, slug: string): { error?: string; warning
   };
 }
 
-/** The parser files that only exist in a Jx release with the vault-content features. */
-export const REQUIRED_PARSER_FILES = [
-  "src/content-routes.ts",
-  "src/content-links.ts",
-  "src/alerts.ts",
-];
+/**
+ * The released Jx packages this site is written against: the oldest version of each that works.
+ * `package.json` asks for the same ranges; this catches a `bun.lock` or `node_modules` left behind
+ * by an older checkout (a parser 1.x does not read GitHub alerts, `exclude`/`where`/`route` or
+ * relative links, and a compiler 4.x cannot run a parser 2.x).
+ */
+export const MINIMUM_JX: Record<string, string> = {
+  parser: "2.0.0",
+  compiler: "5.0.0",
+  search: "0.4.0",
+  runtime: "4.0.3",
+};
+
+const parts = (version: string): number[] =>
+  version
+    .split("-")[0]!
+    .split(".")
+    .map((part) => Number.parseInt(part, 10) || 0);
+
+/** Whether `version` is `minimum` or newer (numeric, a pre-release suffix is ignored). */
+export function atLeast(version: string, minimum: string): boolean {
+  const have = parts(version);
+  const need = parts(minimum);
+  for (let i = 0; i < Math.max(have.length, need.length); i++) {
+    const a = have[i] ?? 0;
+    const b = need[i] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return true;
+}
 
 export function checkJx(root: string = ROOT): string | null {
-  const parser = join(root, "node_modules", "@jxsuite", "parser");
-  if (!existsSync(parser)) return "@jxsuite/parser is not installed. Run bun install.";
-  const missing = REQUIRED_PARSER_FILES.filter((file) => !existsSync(join(parser, file)));
-  if (missing.length === 0) return null;
-  const version = (() => {
-    try {
-      return (
-        (JSON.parse(readFileSync(join(parser, "package.json"), "utf8")) as { version?: string })
-          .version ?? "unknown"
-      );
-    } catch {
-      return "unknown";
+  const problems: string[] = [];
+  for (const [name, minimum] of Object.entries(MINIMUM_JX)) {
+    const manifest = join(root, "node_modules", "@jxsuite", name, "package.json");
+    if (!existsSync(manifest)) {
+      problems.push(`@jxsuite/${name} is not installed. Run bun install.`);
+      continue;
     }
-  })();
+    let version = "unknown";
+    try {
+      version =
+        (JSON.parse(readFileSync(manifest, "utf8")) as { version?: string }).version ?? version;
+    } catch {
+      // an unreadable manifest is reported as an unknown version below
+    }
+    if (version === "unknown" || !atLeast(version, minimum)) {
+      problems.push(
+        `The installed @jxsuite/${name} (${version}) is older than this site needs (${minimum} or newer).`,
+      );
+    }
+  }
+  if (problems.length === 0) return null;
+  const outdated = problems.some((problem) => problem.includes("is older"));
   return (
-    `The installed @jxsuite/parser (${version}) predates the vault-content features this site needs ` +
-    "(GitHub alerts, relative links, route templates; jxsuite/jx pull request 426). " +
-    "Install the release that includes them (parser 2.0.0 or newer), or link a checkout: bun run link:jx /path/to/jx. See the README."
+    problems.join(" ") +
+    (outdated
+      ? ' Update them and commit bun.lock: bun update @jxsuite/compiler @jxsuite/parser @jxsuite/runtime @jxsuite/search @jxsuite/server. See the README ("Jx version").'
+      : "")
   );
 }
 

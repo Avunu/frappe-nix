@@ -16,18 +16,17 @@
     "check:links": "bun scripts/check-links.ts",
     "check:contrast": "bun scripts/check-contrast.ts",
     "init": "bun scripts/init.ts",
-    "link:jx": "bun scripts/link-jx.ts",
     "schema": "bunx --bun jx schema",
     "preview": "bunx --bun jx preview"
   },
   "dependencies": {
-    "@jxsuite/compiler": "^4.0.2",
-    "@jxsuite/parser": "^1.8.2 || ^2.0.0",
-    "@jxsuite/runtime": "^4.0.2",
-    "@jxsuite/search": "^0.3.1"
+    "@jxsuite/compiler": "^5.0.0",
+    "@jxsuite/parser": "^2.0.0",
+    "@jxsuite/runtime": "^4.0.3",
+    "@jxsuite/search": "^0.4.0"
   },
   "devDependencies": {
-    "@jxsuite/server": "^4.4.1"
+    "@jxsuite/server": "^4.4.3"
   },
   "engines": {
     "bun": ">=1.4.0"

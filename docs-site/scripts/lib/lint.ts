@@ -152,7 +152,7 @@ export function lintMarkdown(source: string, file: string, skip = 0): LintIssue[
           line.index,
           "warning",
           "template-link",
-          `The link "${dest.value.slice(0, 50)}" contains \${...}, which Jx evaluates and then drops the link. Write it as %24%7B...%7D.`,
+          `The link "${dest.value.slice(0, 50)}" contains \${...}, which Jx runs as an expression (the address changes, or the link is lost when the expression cannot be evaluated; in the text around a link it stays as written). Write it as %24%7B...%7D.`,
         );
       }
     }

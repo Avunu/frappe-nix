@@ -37,7 +37,7 @@ test("a checkout never keeps the token in the repository's git config", () => {
   const checkouts = [...steps("build"), ...steps("deploy")].filter((s) =>
     String(s.uses ?? "").startsWith("actions/checkout@"),
   );
-  expect(checkouts.length).toBe(2);
+  expect(checkouts.length).toBe(1);
   for (const step of checkouts) expect(step.with["persist-credentials"]).toBe(false);
 });
 
@@ -82,28 +82,26 @@ test("the build installs from the lockfile and runs the whole check", () => {
   expect(runs).toContain("bun scripts/sync-projects.ts --soft");
 });
 
-test("a pre-release Jx is built only from a full commit SHA, checked before it is fetched", () => {
+test("the site is built from what the lockfile pins: no other repository is fetched, no Jx is linked", () => {
   const list = steps("build");
-  const check = list.findIndex((s) => String(s.name).startsWith("Require a commit SHA"));
-  const checkout = list.findIndex((s) => String(s.name).startsWith("Check out Jx"));
-  expect(check).toBeGreaterThan(-1);
-  expect(check).toBeLessThan(checkout);
-  expect(list[check]!.env).toEqual({ JX_REF: "${{ vars.DOCS_JX_REF }}" });
-  const run = String(list[check]!.run);
-  const verdict = (ref: string) =>
-    Bun.spawnSync(["bash", "-e", "-c", run], { env: { ...process.env, JX_REF: ref } }).exitCode;
-  expect(verdict("d20df3bf8c18b6599446b9f1f73c9cf328da64de")).toBe(0);
-  for (const bad of [
-    "feat/parser-vault-content",
-    "main",
-    "v1.2.3",
-    "d20df3bf",
-    "D20DF3BF8C18B6599446B9F1F73C9CF328DA64DE",
-    "d20df3bf8c18b6599446b9f1f73c9cf328da64de; echo x",
-  ])
-    expect(verdict(bad), bad).toBe(1);
-  expect(String(list[checkout]!.with.ref)).toBe("${{ vars.DOCS_JX_REF }}");
-  expect(list[checkout]!.with["persist-credentials"]).toBe(false);
+  // The only checkout is the repository itself (no `repository:` input, so nothing else is fetched).
+  for (const step of list.filter((s) => String(s.uses ?? "").startsWith("actions/checkout@")))
+    expect(step.with.repository).toBeUndefined();
+  // Nothing else downloads or links code: the install step is the only place packages arrive.
+  for (const step of list) {
+    const run = String(step.run ?? "");
+    expect(run, String(step.name)).not.toMatch(
+      /\bgit\s+clone\b|\bcurl\b|\bwget\b|link:jx|bun\s+link\b/,
+    );
+  }
+  // The install comes before anything that runs the site's scripts.
+  const names = list.map((s) => String(s.name));
+  const install = names.indexOf("Install dependencies");
+  expect(install).toBeGreaterThan(-1);
+  expect(install).toBeLessThan(names.indexOf("Check and build"));
+  // The variable that once pointed the build at a Jx commit is gone, in the file and in its comments.
+  expect(text).not.toContain("DOCS_JX_REF");
+  expect(text).not.toMatch(/\.jx\b/);
 });
 
 test("pull requests upload the site for review, other runs hand it to Pages", () => {

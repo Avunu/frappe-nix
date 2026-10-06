@@ -2,7 +2,7 @@
 //
 //   bun run check [--lenient]
 //
-//   preflight   the site is set up and Jx has the vault-content features
+//   preflight   the site is set up and the installed Jx packages are the releases it needs
 //   tests       bun test scripts (the helpers, the sidebar, init, the post-build fixes, the layouts)
 //   contrast    WCAG AA for every colour pair, light and dark
 //   build       nav data, jx build, post-build fixes; document problems fail the build

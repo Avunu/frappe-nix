@@ -19,7 +19,6 @@ Run them from this folder. They need [Bun](https://bun.sh) 1.4 or newer.
 | `bun run nav -- --print` | Stages `docs/`, writes `.generated/nav.json` and prints the sidebar the build would produce.                                           |
 | `bun run sync:projects`  | Refreshes the project list of the switcher from `https://avunu.net/projects.json`.                                                     |
 | `bun scripts/init.ts`    | Fills in `docs.config.json`, the address and the workflow (once, after copying this folder in; again after an update, with `--force`). |
-| `bun run link:jx <path>` | Uses a local Jx checkout instead of the npm packages (see "Jx version").                                                               |
 
 ## How the site is built
 
@@ -98,7 +97,7 @@ Jx drops or reshapes a few constructs that GitHub and Obsidian handle. The build
 | A `<div>` or `<details>` with a blank line inside           | An empty element, then the content   | warning     |
 | Task lists (`- [ ]`)                                        | Plain list items                     | warning     |
 | Table column alignment (`:--:`)                             | Columns are left-aligned             | warning     |
-| `${...}` in a link address                                  | Jx evaluates it and drops the link   | warning     |
+| `${...}` in a link or image address                         | Jx runs it as an expression          | warning     |
 
 Block HTML that does not have a blank line in it (`<p align="center"><img …></p>`) works, as do `<br>`, `<img>` and HTML comments. Write `[![Build](badge.svg)](https://…)` for a badge.
 
@@ -125,18 +124,17 @@ The list is baked into every page from `data/projects.snapshot.json`, so the men
 
 ## Jx version
 
-The site needs the Jx release that includes the vault-content features (GitHub alerts, relative link resolution, `exclude`/`where`/`route` for content types): `@jxsuite/parser` 2.0.0 or newer together with the compiler, search and schema releases cut with it ([jxsuite/jx pull request 426](https://github.com/jxsuite/jx/pull/426)). `bun run build` stops with a message when the installed parser is older.
+The site runs on released Jx packages from npm, pinned by `bun.lock`: `@jxsuite/parser` 2.0.0, `@jxsuite/compiler` 5.0.0, `@jxsuite/search` 0.4.0 and `@jxsuite/runtime` 4.0.3 (and `@jxsuite/server` 4.4.3 for `bun run dev`) or newer in the same major versions. `bun install` is the whole set-up, locally and in CI (`bun install --frozen-lockfile`); there is no variable to set and nothing to check out. `bun run build` and `bun run check` stop with a message when an installed package is older than that (a `node_modules` or lockfile left over from before the release).
 
-Until that release is published, use a checkout of Jx at the commit your maintainers use (the repository variable `DOCS_JX_REF`):
+To take a newer Jx release: `bun update @jxsuite/compiler @jxsuite/parser @jxsuite/runtime @jxsuite/search @jxsuite/server`, `bun run check`, commit `package.json` and `bun.lock`. Dependabot proposes the same update weekly; a person merges it (see "Publishing").
 
-```bash
-git clone https://github.com/jxsuite/jx /tmp/jx
-git -C /tmp/jx checkout <the commit in DOCS_JX_REF>
-(cd /tmp/jx && bun install && bun run build)
-bun install && bun run link:jx /tmp/jx
-```
+Parser 2.0.0 changed three defaults that a page can feel:
 
-Run `bun run link:jx` again after every `bun install`, which restores the npm copies (it links `@jxsuite/compiler`, `parser`, `search` and `server`). In CI, set the repository variable `DOCS_JX_REF` to the **full commit SHA** and the workflow does the same (a branch or a tag is refused). When the release is out, delete `DOCS_JX_REF`, run `bun update @jxsuite/parser @jxsuite/compiler @jxsuite/search @jxsuite/runtime @jxsuite/server` and commit `bun.lock`.
+- **Callouts are on by default.** GitHub alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`) render for every content type; this site still names the five types in `project.json` so each is drawn by `components/docs-callout.json`.
+- **A `README.md` or `index.md` in a subfolder is the folder's page and takes the folder's id**: `docs/guides/README.md` is `guides` (it was `guides/README`) and is published at `/docs/guides/`. A file `docs/guides.md` beside a folder `docs/guides/` that has a README has the same id and address: a strict build (CI) fails and says so, and only the README is published.
+- **`${...}` is literal in Markdown content** (prose, code spans, code blocks, headings): write `${HOME}` and it stays `${HOME}`. It is still an expression in a link or image address (`[x](https://example.com/${id})`), which the build warns about; write it as `%24%7B...%7D`.
+
+To try an unreleased Jx change on this site, use Bun's own linking rather than anything in this folder: in the Jx checkout `cd extensions/parser && bun link` (and `packages/compiler`, `extensions/search`), then here `bun link @jxsuite/parser` (and the others). Bun links them into `node_modules` without touching `package.json`; `bun install` puts the npm copies back. Do not build or deploy from a linked checkout.
 
 ## Publishing
 
@@ -144,8 +142,11 @@ The workflow does nothing until the repository variable `DOCS_SITE_ENABLED` is `
 
 1. Settings, Pages, Source: **GitHub Actions**; Custom domain: the `domain` of `docs.config.json`.
 2. In DNS, a `CNAME` from that domain's first label to `avunu.github.io`, **DNS only** until GitHub has issued the certificate; then tick **Enforce HTTPS**.
-3. Settings, Secrets and variables, Actions, Variables: `DOCS_SITE_ENABLED` = `true` (and `DOCS_JX_REF`, see above).
-4. Merge. Every push to the default branch that touches `docs/` or this folder deploys; Actions, Docs, **Run workflow** repeats a deployment.
+3. Before the variable exists: exclude `dependabot/bun/docs-site` branches from any auto-merge workflow the repository has (`!startsWith(github.head_ref, 'dependabot/bun/docs-site')` in its job's `if:`), and protect the default branch (require a pull request and the repository's CI check), so that a package update for this site cannot merge and deploy without a person. Auto-merge never waits for the `Docs` workflow, which is not a required check.
+4. Settings, Secrets and variables, Actions, Variables: `DOCS_SITE_ENABLED` = `true`.
+5. Merge. Every push to the default branch that touches `docs/` or this folder deploys; Actions, Docs, **Run workflow** repeats a deployment.
+
+This workflow is a copy in each repository: the plan's shared reusable workflow in an `Avunu/.github` repository has not been created yet (a pull request cannot create a repository). When it exists, `docs.yml` becomes a short caller; the starter's README, "The workflow is copied, not shared", has the steps.
 
 The branch in the workflow's trigger is the one `init` found as the repository's default branch. If the default branch is renamed or changes (an Odoo repository moving from `18.0` to `19.0`), run `bun scripts/init.ts --branch <new branch> --force` from this folder and commit `.github/workflows/docs.yml` and `docs.config.json`.
 
@@ -156,20 +157,20 @@ The look, the components and the scripts come from Avunu's shared project docs s
 ```bash
 STARTER=/path/to/project-docs-starter
 NEW=$(mktemp -d) && git -C "$STARTER" archive HEAD template | tar -x -C "$NEW" --strip-components=1
-# what differs (files that are only in docs-site/ are yours, or no longer in the template)
+# what differs (files that are only in docs-site/ are yours, or no longer in the template: delete the latter with git rm)
 diff -rq --exclude=node_modules --exclude=dist --exclude=.generated --exclude=bun.lock "$NEW" docs-site
-# copy everything except what is yours: docs.config.json, public/CNAME and the catalog snapshot
-(cd "$NEW" && tar --exclude=./docs.config.json --exclude=./public/CNAME --exclude=./data -cf - .) | tar -x -C docs-site
+# copy everything except what is yours: docs.config.json, public/CNAME, the catalog snapshot and the Dependabot entries
+(cd "$NEW" && tar --exclude=./docs.config.json --exclude=./public/CNAME --exclude=./data --exclude=./.github/dependabot.yml -cf - .) | tar -x -C docs-site
 cd docs-site && bun scripts/init.ts --force && bun install && bun run check
 ```
 
-`init` keeps what `docs.config.json` says, writes the name and address back into `project.json` and `package.json`, and with `--force` replaces the workflow at `.github/workflows/docs.yml` with the new one (look at `git diff` if you changed it). An existing `.github/dependabot.yml` is never replaced.
+`init` keeps what `docs.config.json` says, writes the name and address back into `project.json` and `package.json`, and with `--force` replaces the workflow at `.github/workflows/docs.yml` with the new one (look at `git diff` if you changed it). The repository's `.github/dependabot.yml` is never replaced. Commit `bun.lock`: `bun install` updates it when the template's package ranges changed, and CI installs with `--frozen-lockfile`.
 
 ## Troubleshooting
 
 - **"docs.config.json still has the template values"**: run `bun scripts/init.ts` (with `--name`, `--tagline` and `--license` when the catalog does not list the repository).
 - **"slug … is not in the project catalog, but … is"**: the slug has the catalog's spelling, with its underscores (`erpnext_taskview`). Set `slug` in `docs.config.json`; the domain keeps its hyphens.
-- **"predates the vault-content features"**: see "Jx version".
+- **"The installed @jxsuite/… is older than this site needs"**: `bun install` left an old copy (a lockfile from before the Jx release): run the `bun update` line of "Jx version" and commit `bun.lock`.
 - **"the sidebar links to /docs/x/, which was not built"**: the file name produces an address that `scripts/lib/slug.ts` and Jx disagree on. Rename the file to plain letters, digits, spaces and hyphens, or report it.
 - **A link is plain text in the page**: the build named it. The target does not exist, is a draft, or is not in the repository. Links to files of the repository outside `docs/` are rewritten to GitHub, so this is a typo or a draft.
 - **`lint: error: docs/…`**: reference-style links or footnotes, which the site cannot show. Write the links inline (`[text](url)`) and put a footnote in the sentence.

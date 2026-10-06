@@ -17,11 +17,10 @@ name: Docs
 # GitHub Pages (Settings > Pages > Source: GitHub Actions) and set the variable to `true`, the
 # workflow runs, skips everything and stays green. The README of the site says how.
 #
-# DOCS_JX_REF (optional repository variable): the full commit SHA of jxsuite/jx to build and use
-# instead of the npm packages. Needed only while the Jx release with the vault-content features is
-# unpublished; delete the variable once the site installs a release that has them. A branch or tag
-# is refused: the job that builds it makes the site that is deployed, so the code must not be able
-# to change between a review and the build.
+# The site is built from what docs-site/bun.lock pins: the released Jx packages from npm, installed
+# with --frozen-lockfile, and nothing else. The job that builds the site is the job whose output is
+# deployed, so it never fetches code from anywhere that a review of this repository has not seen.
+# A Jx update is a pull request that changes docs-site/package.json and docs-site/bun.lock.
 #
 # The path filter keeps commits that do not touch the documentation from rebuilding it. Do not make
 # this workflow a required check unless the filter is removed: a skipped path-filtered workflow
@@ -71,38 +70,8 @@ jobs:
           bun-version: "1.4"
           no-cache: true # the install is a few seconds, and a shared cache is a poisoning risk for a deploy job
 
-      - name: Require a commit SHA for Jx (pre-release builds only)
-        if: ${{ vars.DOCS_JX_REF != '' }}
-        env:
-          JX_REF: ${{ vars.DOCS_JX_REF }}
-        run: |
-          if ! [[ "$JX_REF" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error title=DOCS_JX_REF::must be a full 40-character commit SHA of jxsuite/jx, not a branch or tag (got '$JX_REF')"
-            exit 1
-          fi
-
-      - name: Check out Jx (pre-release builds only)
-        if: ${{ vars.DOCS_JX_REF != '' }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: jxsuite/jx
-          ref: ${{ vars.DOCS_JX_REF }}
-          path: .jx
-          persist-credentials: false
-
-      - name: Build Jx (pre-release builds only)
-        if: ${{ vars.DOCS_JX_REF != '' }}
-        working-directory: .jx
-        run: |
-          bun install --frozen-lockfile
-          bun run build
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Use the Jx build (pre-release builds only)
-        if: ${{ vars.DOCS_JX_REF != '' }}
-        run: bun run link:jx "$GITHUB_WORKSPACE/.jx"
 
       # A build must not depend on avunu.net being up: --soft keeps the committed snapshot when the
       # catalog cannot be fetched or is not valid.

@@ -12,7 +12,7 @@
     "featuredNodes": {
       "$prototype": "Function",
       "timing": "compiler",
-      "body": "return state.nav.data.featured.map((f) => ({ tagName: 'li', children: [{ tagName: 'a', attributes: { class: 'card', href: f.url }, children: [{ tagName: 'span', attributes: { class: 'k' }, textContent: f.section || 'Documentation' }, { tagName: 'span', attributes: { class: 't' }, textContent: f.title }, { tagName: 'span', attributes: { class: 'd' }, textContent: f.description }] }] }));"
+      "body": "const esc = (t) => String(t).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('${', '&#36;{');\nreturn state.nav.data.featured.map((f) => ({ tagName: 'li', children: [{ tagName: 'a', attributes: { class: 'card', href: f.url }, children: [{ tagName: 'span', attributes: { class: 'k' }, innerHTML: esc(f.section || 'Documentation') }, { tagName: 'span', attributes: { class: 't' }, innerHTML: esc(f.title) }, { tagName: 'span', attributes: { class: 'd' }, innerHTML: esc(f.description) }] }] }));"
     },
     "hasFeatured": {
       "$prototype": "Function",
