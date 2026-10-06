@@ -1,5 +1,6 @@
 # frappe-nix's own development environment: the pinned upstream Frappe that
-# the editor, ty and the hooks resolve against, plus the lint toolchain.
+# the editor and ty resolve against, plus the editor's ruff. The commit hooks do
+# not run from here: prek installs its own, from .pre-commit-config.yaml.
 #
 # Not a bench and not shipped: nothing outside dev/ reads this file. It lives
 # here rather than at the repository root so that a consumer resolving
@@ -9,9 +10,10 @@
 # Built by frappe-nix's own lib/python.nix (see dev/env.nix), so a stale
 # uv.lock is reported by lib/lock-audit.nix exactly as it is in a bench.
 #
-# Bump Frappe with `update-frappe`; the ruff pin and dev/frappe-ruff.toml
-# follow it (dev/frappe-upstream.py), and the frappe-upstream-config check fails
-# when either drifts.
+# Bump Frappe with `update-frappe`; the ruff pin, the ruff-pre-commit rev in
+# .pre-commit-config.yaml and dev/frappe-ruff.toml follow it
+# (dev/frappe-upstream.py), and the frappe-upstream-config check fails when any
+# of them drifts.
 [project]
 name = "frappe-nix-dev"
 version = "0.0.0"
@@ -23,7 +25,6 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "codesorter>=0.2.8",
     # lib/banner.py's one dependency (it runs under lib/rich-python.nix).
     "rich",
     "ruff==0.14.10",

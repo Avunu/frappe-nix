@@ -6,12 +6,14 @@ Three things follow the Frappe that dev/uv.lock pins:
   URL for one commit of the branch named in [tool.frappe-nix].frappe-branch;
 - dev/frappe-ruff.toml: that commit's pyproject.toml [tool.ruff], verbatim, in
   ruff.toml form. The root ruff.toml extends it;
-- the ruff in dev/pyproject.toml's dev group: the ruff-pre-commit rev in that
-  commit's .pre-commit-config.yaml, so formatting here matches upstream.
+- the ruff in dev/pyproject.toml's dev group (the editor's) and the
+  ruff-pre-commit rev in this repository's .pre-commit-config.yaml (the
+  commit hook's and CI's): both the rev in that commit's own
+  .pre-commit-config.yaml, so formatting here matches upstream.
 
   frappe-upstream pin   ROOT      point the URL at the branch tip
-  frappe-upstream sync  SRC ROOT  rewrite frappe-ruff.toml and the ruff pin
-  frappe-upstream check SRC ROOT  exit 1 if either has drifted from SRC
+  frappe-upstream sync  SRC ROOT  rewrite frappe-ruff.toml and the ruff pins
+  frappe-upstream check SRC ROOT  exit 1 if any has drifted from SRC
 
 SRC is the unpacked Frappe source; ROOT is the frappe-nix checkout. `check` is
 the frappe-upstream-config flake check.
@@ -34,6 +36,13 @@ HEADER = """\
 """
 
 RUFF_REV = re.compile(r"repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s+rev:\s*v?(\S+)")
+# The same line, up to the rev, so `sync` can rewrite it in place.
+RUFF_PIN = re.compile(r"(repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s+rev:\s*)\S+")
+
+
+def hook_ruff_version(root: Path) -> str | None:
+	match = RUFF_REV.search((root / ".pre-commit-config.yaml").read_text())
+	return match.group(1) if match else None
 
 
 def locked_version(root: Path, name: str) -> str | None:
@@ -60,6 +69,10 @@ def check(src: Path, root: Path) -> None:
 	want, have = upstream_ruff_version(src), locked_version(root, "ruff")
 	if want != have:
 		drift.append(f"dev/uv.lock has ruff {have}; the pinned Frappe's pre-commit config uses {want}.")
+	if (hooked := hook_ruff_version(root)) != want:
+		drift.append(
+			f".pre-commit-config.yaml has ruff-pre-commit {hooked}; the pinned Frappe's uses {want}."
+		)
 	if drift:
 		sys.exit(
 			"\n".join(drift) + "\n\nRun `sync-frappe-upstream` in the dev shell (or `update-frappe` to move"
@@ -102,7 +115,13 @@ def sync(src: Path, root: Path) -> None:
 	else:
 		dev[idx] = f"ruff=={version}"
 	path.write_text(tomlkit.dumps(doc))
-	print(f"dev/frappe-ruff.toml synced; ruff=={version}")
+
+	hooks = root / ".pre-commit-config.yaml"
+	text, pinned = RUFF_PIN.subn(rf"\g<1>v{version}", hooks.read_text())
+	if not pinned:
+		sys.exit("frappe-upstream: no ruff-pre-commit rev in .pre-commit-config.yaml")
+	hooks.write_text(text)
+	print(f"dev/frappe-ruff.toml synced; ruff=={version} in dev/pyproject.toml and .pre-commit-config.yaml")
 
 
 def main() -> None:

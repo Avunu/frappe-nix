@@ -29,8 +29,8 @@ updates:
       nix:
         patterns: ["*"]
 
-  # frappe-nix's own dev environment (dev/pyproject.toml, dev/uv.lock): ty and
-  # CodeSorter. Two packages are pinned by something else and left alone here:
+  # frappe-nix's own dev environment (dev/pyproject.toml, dev/uv.lock): ty, and
+  # what the editor loads. Two packages are pinned by something else and left alone here:
   # frappe moves with `update-frappe`, and ruff is whatever Frappe's own
   # .pre-commit-config.yaml pins (the frappe-upstream-config check would fail a
   # bump that disagreed).
@@ -45,6 +45,24 @@ updates:
       - dependency-name: ruff
     groups:
       dev-tools:
+        patterns: ["*"]
+
+  # The hook revs in .pre-commit-config.yaml: pre-commit-hooks, ssort, uv. Dependabot
+  # names these by repository URL, which is what `ignore` has to say.
+  #
+  # ruff-pre-commit is left alone for the same reason ruff is above: its rev is Frappe's,
+  # moved by `update-frappe` and `sync-frappe-upstream`, and the frappe-upstream-config check
+  # would fail a bump that disagreed.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    ignore:
+      - dependency-name: https://github.com/astral-sh/ruff-pre-commit
+    groups:
+      pre-commit-hooks:
         patterns: ["*"]
 
   # GitHub Actions used by the workflows in .github/workflows.

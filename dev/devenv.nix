@@ -2,8 +2,9 @@
 #
 # What a bench gets from frappe-nix, pointed back at frappe-nix: an `env/`
 # virtualenv with the upstream Frappe that dev/uv.lock pins, so the editor and ty
-# resolve `import frappe` in runtime/ and lib/; and the git hooks in
-# dev/hooks.nix, installed through devenv's git-hooks module (prek).
+# resolve `import frappe` in runtime/ and lib/; and prek, wired to the commit
+# hook on entry for .pre-commit-config.yaml. That file is plain pre-commit
+# config, not generated from here: it works the same without this shell.
 #
 # No services. The parts of frappe-nix that need a database are exercised by its
 # flake checks and NixOS VM tests, not by this shell.
@@ -17,10 +18,6 @@
 
 let
   dev = import ./env.nix { inherit pkgs inputs; };
-  hookSet = import ./hooks.nix {
-    inherit pkgs;
-    env = dev.devPythonEnv;
-  };
   root = config.devenv.root;
   system = pkgs.stdenv.hostPlatform.system;
 in
@@ -36,6 +33,7 @@ in
 
   packages = [
     dev.devPythonEnv
+    pkgs.prek
     pkgs.uv
     pkgs.nixfmt
     pkgs.statix
@@ -62,13 +60,9 @@ in
     UV_NO_SYNC = "1";
   };
 
-  git-hooks = {
-    inherit (hookSet) hooks excludes;
-  };
-
   scripts = {
     sync-frappe-upstream = {
-      description = "Re-mirror Frappe's ruff config and ruff pin from the revision dev/uv.lock pins";
+      description = "Re-mirror Frappe's ruff config and ruff pins (dev/uv.lock, .pre-commit-config.yaml) from the revision dev/uv.lock pins";
       # Resolved through the flake rather than $FRAPPE_UPSTREAM_SRC, which is the
       # revision this shell was entered with: after `update-frappe` re-locks,
       # that is the old one.
@@ -93,5 +87,11 @@ in
   enterShell = ''
     # Where a bench keeps its virtualenv, so editor settings carry over.
     ln -sfn ${dev.devPythonEnv} "${root}/env"
+
+    # The commit hook for .pre-commit-config.yaml. Idempotent; a failure (say a
+    # core.hooksPath of your own) is shown and does not stop the shell.
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      prek install >/dev/null || true
+    fi
   '';
 }
