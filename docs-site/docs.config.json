@@ -1,0 +1,9 @@
+{
+  "name": "frappe-nix",
+  "tagline": "Reproducible Nix infrastructure for Frappe and ERPNext, from the development shell to OCI containers and a multi-site NixOS module.",
+  "slug": "frappe-nix",
+  "platform": "nixos",
+  "repo": "https://github.com/Avunu/frappe-nix",
+  "domain": "frappe-nix.avunu.net",
+  "license": "MIT"
+}

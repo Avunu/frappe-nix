@@ -1,0 +1,512 @@
+{
+  "$schema": "../document.schema.json",
+  "$layout": "./layouts/base.json",
+  "$description": "Documentation shell inside the base layout: a sticky sidebar built from .generated/nav.json (see scripts/nav.ts) beside <main id=\"main\"> in the default slot. Under 960px the sidebar becomes a Menu button that opens a drawer. Used by pages/[...path].json; the landing page and the 404 page use the base layout alone.",
+  "tagName": "div",
+  "children": [
+    {
+      "tagName": "div",
+      "style": {
+        "flex": "1 0 auto",
+        "boxSizing": "border-box",
+        "maxWidth": "var(--container)",
+        "margin": "0 auto",
+        "width": "100%",
+        "padding": "0 var(--gutter)",
+        "display": "grid",
+        "gridTemplateColumns": "var(--sidebar-w) minmax(0, 1fr)",
+        "columnGap": "48px",
+        "alignItems": "start",
+        "& > .side": {
+          "position": "sticky",
+          "top": "var(--header-h)",
+          "alignSelf": "start",
+          "maxHeight": "calc(100dvh - var(--header-h))",
+          "overflowY": "auto",
+          "overscrollBehavior": "contain",
+          "padding": "32px 0 40px",
+          "gridColumn": "1"
+        },
+        "& > main": {
+          "gridColumn": "2",
+          "minWidth": "0"
+        },
+        "& > .mobile-bar": {
+          "display": "none",
+          "gridColumn": "1 / -1",
+          "padding": "10px 0",
+          "borderBottom": "1px solid var(--color-surface-border)"
+        },
+        "& .menu-btn": {
+          "display": "inline-flex",
+          "alignItems": "center",
+          "gap": "8px",
+          "minHeight": "var(--hit)",
+          "padding": "0 16px 0 12px",
+          "border": "1px solid var(--color-rule)",
+          "borderRadius": "var(--radius-pill)",
+          "backgroundColor": "var(--color-surface)",
+          "color": "var(--color-text)",
+          "fontSize": "14px",
+          "fontWeight": "500"
+        },
+        "& .menu-btn:hover": {
+          "borderColor": "var(--color-text-caption)"
+        },
+        "& .drawer": {
+          "position": "fixed",
+          "inset": "0 auto 0 0",
+          "margin": "0",
+          "width": "min(340px, 88vw)",
+          "height": "100dvh",
+          "maxHeight": "none",
+          "padding": "12px 16px 32px",
+          "overflowY": "auto",
+          "backgroundColor": "var(--color-bg)",
+          "color": "var(--color-text)",
+          "border": "0",
+          "borderRight": "1px solid var(--color-surface-border)",
+          "boxShadow": "var(--shadow-dropdown)"
+        },
+        "& .drawer::backdrop": {
+          "backgroundColor": "var(--color-backdrop)"
+        },
+        "& .drawer-head": {
+          "display": "flex",
+          "alignItems": "center",
+          "justifyContent": "space-between",
+          "padding": "0 0 8px 10px",
+          "fontWeight": "600"
+        },
+        "& .drawer-close": {
+          "display": "inline-flex",
+          "alignItems": "center",
+          "justifyContent": "center",
+          "width": "var(--hit)",
+          "height": "var(--hit)",
+          "border": "0",
+          "borderRadius": "50%",
+          "backgroundColor": "transparent",
+          "color": "var(--color-text)"
+        },
+        "& .drawer-close:hover": {
+          "backgroundColor": "var(--color-surface-muted)"
+        },
+        "@(prefers-reduced-motion: no-preference)": {
+          "& .drawer": {
+            "transform": "translateX(-12px)",
+            "opacity": "0",
+            "transition": "transform 0.15s ease, opacity 0.15s ease, display 0.15s allow-discrete, overlay 0.15s allow-discrete"
+          },
+          "& .drawer:popover-open": {
+            "transform": "none",
+            "opacity": "1"
+          },
+          "@starting-style": {
+            "& .drawer:popover-open": {
+              "transform": "translateX(-12px)",
+              "opacity": "0"
+            }
+          }
+        },
+        "@--nav": {
+          "gridTemplateColumns": "minmax(0, 1fr)",
+          "& > .side": {
+            "display": "none"
+          },
+          "& > .mobile-bar": {
+            "display": "block"
+          },
+          "& > main": {
+            "gridColumn": "1"
+          }
+        }
+      },
+      "children": [
+        {
+          "tagName": "div",
+          "attributes": {
+            "class": "mobile-bar"
+          },
+          "children": [
+            {
+              "tagName": "button",
+              "attributes": {
+                "type": "button",
+                "class": "menu-btn",
+                "popovertarget": "docs-drawer",
+                "aria-haspopup": "dialog",
+                "aria-controls": "docs-drawer",
+                "aria-expanded": "false"
+              },
+              "children": [
+                {
+                  "tagName": "docs-icon",
+                  "$props": {
+                    "name": "menu",
+                    "size": "18"
+                  }
+                },
+                {
+                  "tagName": "span",
+                  "children": ["Documentation menu"]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tagName": "div",
+          "attributes": {
+            "class": "side"
+          },
+          "children": [
+            {
+              "tagName": "docs-sidebar",
+              "children": [
+                {
+                  "tagName": "nav",
+                  "attributes": {
+                    "aria-label": "Documentation"
+                  },
+                  "children": [
+                    {
+                      "tagName": "ul",
+                      "attributes": {
+                        "class": "top"
+                      },
+                      "children": [
+                        {
+                          "tagName": "li",
+                          "children": [
+                            {
+                              "tagName": "a",
+                              "attributes": {
+                                "href": "${state.nav.data.home.url}",
+                                "aria-current": "${state.nav.data.home.url === state.here ? 'page' : 'false'}"
+                              },
+                              "textContent": "${state.nav.data.home.label}"
+                            }
+                          ]
+                        },
+                        {
+                          "$prototype": "Array",
+                          "items": {
+                            "$ref": "#/state/nav/data/loose"
+                          },
+                          "map": {
+                            "tagName": "li",
+                            "children": [
+                              {
+                                "tagName": "a",
+                                "attributes": {
+                                  "href": "${$map.item.url}",
+                                  "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                },
+                                "textContent": "${$map.item.label}"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "$prototype": "Array",
+                      "items": {
+                        "$ref": "#/state/nav/data/sections"
+                      },
+                      "map": {
+                        "tagName": "details",
+                        "attributes": {
+                          "class": "section",
+                          "open": "${state.nav.data.expandAll || $map.item.urls.includes(state.here)}"
+                        },
+                        "children": [
+                          {
+                            "tagName": "summary",
+                            "textContent": "${$map.item.label}"
+                          },
+                          {
+                            "tagName": "ul",
+                            "children": [
+                              {
+                                "$prototype": "Array",
+                                "items": {
+                                  "$ref": "$map/item/pages"
+                                },
+                                "map": {
+                                  "tagName": "li",
+                                  "children": [
+                                    {
+                                      "tagName": "a",
+                                      "attributes": {
+                                        "href": "${$map.item.url}",
+                                        "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                      },
+                                      "textContent": "${$map.item.label}"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "$prototype": "Array",
+                                "items": {
+                                  "$ref": "$map/item/groups"
+                                },
+                                "map": {
+                                  "tagName": "li",
+                                  "children": [
+                                    {
+                                      "tagName": "details",
+                                      "attributes": {
+                                        "class": "group",
+                                        "open": "${state.nav.data.expandAll || $map.item.urls.includes(state.here)}"
+                                      },
+                                      "children": [
+                                        {
+                                          "tagName": "summary",
+                                          "textContent": "${$map.item.label}"
+                                        },
+                                        {
+                                          "tagName": "ul",
+                                          "children": [
+                                            {
+                                              "$prototype": "Array",
+                                              "items": {
+                                                "$ref": "$map/item/pages"
+                                              },
+                                              "map": {
+                                                "tagName": "li",
+                                                "children": [
+                                                  {
+                                                    "tagName": "a",
+                                                    "attributes": {
+                                                      "href": "${$map.item.url}",
+                                                      "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                                    },
+                                                    "textContent": "${$map.item.label}"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tagName": "main",
+          "attributes": {
+            "id": "main",
+            "tabindex": "-1"
+          },
+          "children": [
+            {
+              "tagName": "slot"
+            }
+          ]
+        },
+        {
+          "tagName": "div",
+          "attributes": {
+            "id": "docs-drawer",
+            "class": "drawer",
+            "popover": "auto",
+            "role": "dialog",
+            "aria-label": "Documentation menu"
+          },
+          "children": [
+            {
+              "tagName": "div",
+              "attributes": {
+                "class": "drawer-head"
+              },
+              "children": [
+                {
+                  "tagName": "span",
+                  "children": ["Documentation"]
+                },
+                {
+                  "tagName": "button",
+                  "attributes": {
+                    "type": "button",
+                    "class": "drawer-close",
+                    "popovertarget": "docs-drawer",
+                    "popovertargetaction": "hide",
+                    "aria-label": "Close the documentation menu"
+                  },
+                  "children": [
+                    {
+                      "tagName": "docs-icon",
+                      "$props": {
+                        "name": "x",
+                        "size": "20"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tagName": "docs-sidebar",
+              "children": [
+                {
+                  "tagName": "nav",
+                  "attributes": {
+                    "aria-label": "Documentation"
+                  },
+                  "children": [
+                    {
+                      "tagName": "ul",
+                      "attributes": {
+                        "class": "top"
+                      },
+                      "children": [
+                        {
+                          "tagName": "li",
+                          "children": [
+                            {
+                              "tagName": "a",
+                              "attributes": {
+                                "href": "${state.nav.data.home.url}",
+                                "aria-current": "${state.nav.data.home.url === state.here ? 'page' : 'false'}"
+                              },
+                              "textContent": "${state.nav.data.home.label}"
+                            }
+                          ]
+                        },
+                        {
+                          "$prototype": "Array",
+                          "items": {
+                            "$ref": "#/state/nav/data/loose"
+                          },
+                          "map": {
+                            "tagName": "li",
+                            "children": [
+                              {
+                                "tagName": "a",
+                                "attributes": {
+                                  "href": "${$map.item.url}",
+                                  "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                },
+                                "textContent": "${$map.item.label}"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "$prototype": "Array",
+                      "items": {
+                        "$ref": "#/state/nav/data/sections"
+                      },
+                      "map": {
+                        "tagName": "details",
+                        "attributes": {
+                          "class": "section",
+                          "open": "${state.nav.data.expandAll || $map.item.urls.includes(state.here)}"
+                        },
+                        "children": [
+                          {
+                            "tagName": "summary",
+                            "textContent": "${$map.item.label}"
+                          },
+                          {
+                            "tagName": "ul",
+                            "children": [
+                              {
+                                "$prototype": "Array",
+                                "items": {
+                                  "$ref": "$map/item/pages"
+                                },
+                                "map": {
+                                  "tagName": "li",
+                                  "children": [
+                                    {
+                                      "tagName": "a",
+                                      "attributes": {
+                                        "href": "${$map.item.url}",
+                                        "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                      },
+                                      "textContent": "${$map.item.label}"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "$prototype": "Array",
+                                "items": {
+                                  "$ref": "$map/item/groups"
+                                },
+                                "map": {
+                                  "tagName": "li",
+                                  "children": [
+                                    {
+                                      "tagName": "details",
+                                      "attributes": {
+                                        "class": "group",
+                                        "open": "${state.nav.data.expandAll || $map.item.urls.includes(state.here)}"
+                                      },
+                                      "children": [
+                                        {
+                                          "tagName": "summary",
+                                          "textContent": "${$map.item.label}"
+                                        },
+                                        {
+                                          "tagName": "ul",
+                                          "children": [
+                                            {
+                                              "$prototype": "Array",
+                                              "items": {
+                                                "$ref": "$map/item/pages"
+                                              },
+                                              "map": {
+                                                "tagName": "li",
+                                                "children": [
+                                                  {
+                                                    "tagName": "a",
+                                                    "attributes": {
+                                                      "href": "${$map.item.url}",
+                                                      "aria-current": "${$map.item.url === state.here ? 'page' : 'false'}"
+                                                    },
+                                                    "textContent": "${$map.item.label}"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

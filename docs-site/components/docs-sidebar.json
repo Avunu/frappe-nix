@@ -1,0 +1,92 @@
+{
+  "$schema": "../document.schema.json",
+  "$id": "DocsSidebar",
+  "$description": "Styling for the documentation navigation. Put a <nav aria-label=\"Documentation\"> with nested lists in the default slot: top-level links, then <details> sections whose <summary> is the section name (open when it holds the current page), then groups inside sections. A link with aria-current=\"page\" is highlighted. Used twice by layouts/docs.json: the sticky desktop sidebar and the mobile drawer.",
+  "tagName": "docs-sidebar",
+  "style": {
+    "display": "block",
+    "fontSize": "14px",
+    "& ul": {
+      "listStyle": "none",
+      "margin": "0",
+      "padding": "0",
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "1px"
+    },
+    "& a": {
+      "display": "block",
+      "padding": "7px 10px",
+      "borderRadius": "var(--radius-sm)",
+      "color": "var(--color-text-muted)",
+      "textDecoration": "none",
+      "lineHeight": "1.4"
+    },
+    "& a:hover": {
+      "backgroundColor": "var(--color-surface-muted)",
+      "color": "var(--color-text)"
+    },
+    "& a[aria-current=\"page\"]": {
+      "backgroundColor": "var(--color-tint)",
+      "color": "var(--color-on-tint)",
+      "fontWeight": "600"
+    },
+    "& details": {
+      "margin": "0"
+    },
+    "& details > summary": {
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "space-between",
+      "gap": "8px",
+      "padding": "7px 10px",
+      "borderRadius": "var(--radius-sm)",
+      "color": "var(--color-text)",
+      "fontWeight": "600",
+      "listStyle": "none",
+      "cursor": "pointer",
+      "lineHeight": "1.4"
+    },
+    "& details > summary::-webkit-details-marker": {
+      "display": "none"
+    },
+    "& details > summary:hover": {
+      "backgroundColor": "var(--color-surface-muted)"
+    },
+    "& details > summary::after": {
+      "content": "''",
+      "flex": "none",
+      "width": "7px",
+      "height": "7px",
+      "borderRight": "1.6px solid var(--color-text-caption)",
+      "borderBottom": "1.6px solid var(--color-text-caption)",
+      "transform": "rotate(-45deg)",
+      "marginRight": "2px"
+    },
+    "& details[open] > summary::after": {
+      "transform": "rotate(45deg)"
+    },
+    "& details > ul": {
+      "paddingLeft": "10px",
+      "marginLeft": "10px",
+      "borderLeft": "1px solid var(--color-rule)",
+      "marginTop": "2px",
+      "marginBottom": "6px"
+    },
+    "& .top": {
+      "marginBottom": "6px"
+    },
+    "@(pointer: coarse)": {
+      "& a, & details > summary": {
+        "minHeight": "var(--hit)",
+        "display": "flex",
+        "alignItems": "center"
+      }
+    }
+  },
+  "children": [
+    {
+      "tagName": "slot"
+    }
+  ]
+}

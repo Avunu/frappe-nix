@@ -1,0 +1,186 @@
+{
+  "$schema": "../document.schema.json",
+  "$id": "DocsFooter",
+  "$description": "The Night footer of every docs page: the Avunu wordmark, the line \"Part of Avunu's open-source work\" with a link to avunu.net/open-source/, and the project links. Props: name, repo, license (SPDX id, shown when set), docs (the docs home).",
+  "tagName": "docs-footer",
+  "state": {
+    "name": "Project",
+    "repo": "",
+    "license": "",
+    "docs": "/docs/"
+  },
+  "style": {
+    "display": "block",
+    "backgroundColor": "var(--color-night)",
+    "color": "var(--color-night-text)",
+    "marginTop": "auto",
+    "--color-focus": "var(--color-night-focus)",
+    "& .inner": {
+      "maxWidth": "var(--container)",
+      "margin": "0 auto",
+      "padding": "40px var(--gutter)",
+      "display": "flex",
+      "flexWrap": "wrap",
+      "gap": "24px 48px",
+      "alignItems": "flex-start",
+      "justifyContent": "space-between"
+    },
+    "& .about": {
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "12px",
+      "maxWidth": "34rem"
+    },
+    "& .about img": {
+      "display": "block",
+      "height": "26px",
+      "width": "128px"
+    },
+    "& .about p": {
+      "margin": "0",
+      "color": "var(--color-night-text-soft)",
+      "fontSize": "15px",
+      "lineHeight": "1.55"
+    },
+    "& a": {
+      "color": "var(--color-night-link)",
+      "textUnderlineOffset": "0.18em"
+    },
+    "& a:hover": {
+      "color": "var(--color-night-link-hover)"
+    },
+    "& ul": {
+      "listStyle": "none",
+      "margin": "0",
+      "padding": "0",
+      "display": "flex",
+      "flexWrap": "wrap",
+      "gap": "4px 20px",
+      "fontSize": "14px"
+    },
+    "& li a": {
+      "display": "inline-flex",
+      "alignItems": "center",
+      "minHeight": "var(--hit)"
+    },
+    "& .meta": {
+      "flex": "1 1 100%",
+      "margin": "0",
+      "paddingTop": "20px",
+      "borderTop": "1px solid var(--color-night-rule)",
+      "fontSize": "13px",
+      "color": "var(--color-night-muted)"
+    }
+  },
+  "children": [
+    {
+      "tagName": "footer",
+      "children": [
+        {
+          "tagName": "div",
+          "attributes": {
+            "class": "inner"
+          },
+          "children": [
+            {
+              "tagName": "div",
+              "attributes": {
+                "class": "about"
+              },
+              "children": [
+                {
+                  "tagName": "a",
+                  "attributes": {
+                    "href": "https://avunu.net/",
+                    "aria-label": "Avunu, go to avunu.net"
+                  },
+                  "children": [
+                    {
+                      "tagName": "img",
+                      "attributes": {
+                        "src": "/brand/avunu-logo-light.svg",
+                        "alt": "Avunu",
+                        "width": "128",
+                        "height": "26"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "tagName": "p",
+                  "children": [
+                    "Part of Avunu's open-source work. ",
+                    {
+                      "tagName": "a",
+                      "attributes": {
+                        "href": "https://avunu.net/open-source/"
+                      },
+                      "children": ["See every project at avunu.net/open-source"]
+                    },
+                    "."
+                  ]
+                }
+              ]
+            },
+            {
+              "tagName": "nav",
+              "attributes": {
+                "aria-label": "Project links"
+              },
+              "children": [
+                {
+                  "tagName": "ul",
+                  "children": [
+                    {
+                      "tagName": "li",
+                      "children": [
+                        {
+                          "tagName": "a",
+                          "attributes": {
+                            "href": "${state.docs}"
+                          },
+                          "textContent": "Documentation"
+                        }
+                      ]
+                    },
+                    {
+                      "tagName": "li",
+                      "children": [
+                        {
+                          "tagName": "a",
+                          "attributes": {
+                            "href": "${state.repo}"
+                          },
+                          "textContent": "GitHub"
+                        }
+                      ]
+                    },
+                    {
+                      "tagName": "li",
+                      "children": [
+                        {
+                          "tagName": "a",
+                          "attributes": {
+                            "href": "https://avunu.net/"
+                          },
+                          "textContent": "Back to avunu.net"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tagName": "p",
+              "attributes": {
+                "class": "meta"
+              },
+              "textContent": "${state.name}${state.license ? ' is released under the ' + state.license + ' license.' : '.'} Documentation by Avunu LLC."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

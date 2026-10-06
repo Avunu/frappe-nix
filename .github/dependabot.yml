@@ -39,3 +39,19 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # The documentation site's own packages (docs-site/, built from docs/). Its Docs workflow
+  # (.github/workflows/docs.yml) pins its actions by SHA, and the github-actions entry above already
+  # covers that file, so only the Bun ecosystem is added here. These pull requests are deliberately
+  # left out of auto-merge (see dependabot-auto-merge.yml): the Docs workflow is not a required check.
+  - package-ecosystem: bun
+    directory: /docs-site
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docs-site-packages:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
