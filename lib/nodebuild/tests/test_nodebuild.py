@@ -1,7 +1,8 @@
 """Self-contained tests for frappe_nodebuild.
 
-Runs without Frappe and without node. A stub ``frappe.build`` is written to disk
-so the post-import hook sees a real import, and each case runs in a fresh
+Runs without Frappe and without node. A stub ``frappe.build`` (or, for Frappe
+16.50 and later, ``frappe.bundler`` behind a ``frappe.build`` shim) is written to
+disk so the post-import hook sees a real import, and each case runs in a fresh
 interpreter, since install() and the hook act once per process. The assertions
 are about the ``NODE_OPTIONS`` frappe's build would hand node — the only
 property that matters.
@@ -37,6 +38,18 @@ def node_env():
     return {"NODE_OPTIONS": "--max_old_space_size=4096"}
 """
 
+# Frappe 16.50: the build code is frappe/bundler.py, and frappe/build/ is the
+# Build module's package, whose __init__ re-exports it. The star import copies
+# get_node_env under frappe.build; bundle() keeps calling bundler's own.
+BUNDLER_LAYOUT = {
+    "bundler.py": STOCK_BUILD,
+    "build/__init__.py": "from frappe.bundler import *\n",
+}
+BUNDLER_MOVED_LAYOUT = {
+    "bundler.py": MOVED_BUILD,
+    "build/__init__.py": "",
+}
+
 
 def check(label, condition, detail=""):
     if condition:
@@ -47,7 +60,7 @@ def check(label, condition, detail=""):
 
 
 def run(build_source, preload, script, install_first=True):
-    """Run ``script`` with a stub frappe.build on sys.path.
+    """Run ``script`` with a stub frappe build module (or modules) on sys.path.
 
     install() runs first, as the .pth bootstrap does, unless ``install_first``
     is False, when ``script`` calls it itself.
@@ -56,8 +69,13 @@ def run(build_source, preload, script, install_first=True):
         os.makedirs(os.path.join(root, "frappe"))
         with open(os.path.join(root, "frappe", "__init__.py"), "w") as f:
             f.write("")
-        with open(os.path.join(root, "frappe", "build.py"), "w") as f:
-            f.write(textwrap.dedent(build_source))
+        # A string is the pre-16.50 layout: frappe/build.py.
+        files = build_source if isinstance(build_source, dict) else {"build.py": build_source}
+        for rel, source in files.items():
+            path = os.path.join(root, "frappe", rel)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(textwrap.dedent(source))
 
         env = {k: v for k, v in os.environ.items() if k != "FRAPPE_NIX_ESBUILD_PRELOAD"}
         if preload is not None:
@@ -117,6 +135,38 @@ check(
     "patched twice, the preload is required once",
     patched_twice == f"--max_old_space_size=4096 --require={PRELOAD}",
     patched_twice,
+)
+
+print("== Frappe 16.50: frappe.bundler, behind a frappe.build shim ==")
+BUNDLE = "import frappe.bundler as b; print(json.dumps(b.bundle()))"
+WANT = f"--max_old_space_size=4096 --require={PRELOAD}"
+check(
+    "bundle() gets the preload: it calls bundler's own get_node_env, not the shim's copy",
+    node_options(BUNDLER_LAYOUT, PRELOAD, BUNDLE) == WANT,
+    node_options(BUNDLER_LAYOUT, PRELOAD, BUNDLE),
+)
+check(
+    "reaching it through the shim, which re-exports bundle(), does too",
+    node_options(BUNDLER_LAYOUT, PRELOAD, "import frappe.build as b; print(json.dumps(b.bundle()))") == WANT,
+)
+shim_env = node_options(
+    BUNDLER_LAYOUT,
+    PRELOAD,
+    "import frappe.bundler\nimport frappe.build as b\nprint(json.dumps(b.get_node_env()))",
+)
+check("the shim's copy, patched on top of an already patched original, requires the preload once", shim_env == WANT, shim_env)
+check(
+    "unset, the 16.50 layout is untouched",
+    node_options(BUNDLER_LAYOUT, None, BUNDLE) == "--max_old_space_size=4096",
+    node_options(BUNDLER_LAYOUT, None, BUNDLE),
+)
+bundler_moved = run(BUNDLER_MOVED_LAYOUT, PRELOAD, "import frappe.bundler")
+check(
+    "frappe.bundler without get_node_env fails the import, naming the module and the variable",
+    bundler_moved.returncode != 0
+    and "frappe.bundler.get_node_env" in bundler_moved.stderr
+    and "FRAPPE_NIX_ESBUILD_PRELOAD" in bundler_moved.stderr,
+    bundler_moved.stderr.strip().splitlines()[-1:] if bundler_moved.stderr else "",
 )
 
 print("== not configured ==")

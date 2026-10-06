@@ -38,6 +38,9 @@
   # Derivation containing a `frappe_nodebuild/` package to graft into *both*
   # virtualenvs, or null. See lib/nodebuild.
   nodebuild ? null,
+  # Derivation containing a `frappe_benchcli/` package to graft into the
+  # *development* virtualenv, or null. See lib/benchcli.
+  benchcli ? null,
   # Overrides the "how to re-lock" half of the stale-lock message. See
   # lib/lock-audit.nix; null keeps its bench-mode default.
   lockAuditRelock ? null,
@@ -177,6 +180,14 @@ let
     ++ lib.optional (nodebuild != null) {
       src = nodebuild;
       module = "frappe_nodebuild";
+    }
+    # frappe_benchcli is DEVELOPMENT ONLY: it hands `bench update` and `bench
+    # build` to the dev shell's bench-update and bench-build, which a deployed
+    # host does not have, and whose units call this venv's bench for workers
+    # and the scheduler.
+    ++ lib.optional (kind == "dev" && benchcli != null) {
+      src = benchcli;
+      module = "frappe_benchcli";
     };
 
   withGrafts =

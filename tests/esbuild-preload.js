@@ -1,6 +1,7 @@
 // Checks for lib/js/esbuild-preload.js: frappe's esbuild/esbuild.js gets
 // frappe's node_modules first and object rest/spread lowered, the right-to-left
-// stylesheet build is skipped when asked, and nothing else about the module —
+// stylesheet build is skipped when asked, a failed per-app build command is carried past
+// when asked, and nothing else about the module —
 // or about any other caller's build — changes. A stand-in esbuild exports its API as getters, the
 // way the real one does — which is why the preload cannot patch it in place.
 //
@@ -10,7 +11,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 
 const preload = path.resolve(process.argv[2]);
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "esbuild-preload-"));
@@ -122,6 +123,81 @@ check(
   "and its options reach esbuild untouched",
   [NODE_PATHS, undefined],
   [elsewhere.jsBuild.nodePaths, elsewhere.jsBuild.supported]
+);
+
+// FRAPPE_NIX_KEEP_GOING: esbuild.js's per-app loop runs each app's commands
+// with execSync in that app's directory. Three apps, the middle one failing in
+// its first command, each command leaving a line in apps/log.
+const KEEP_APPS = ["a1", "b2", "c3"];
+const keepDriver = `const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+const apps = path.join(__dirname, "..", "apps");
+for (const app of fs.readdirSync(apps).filter((name) => name !== "log").sort()) {
+  process.chdir(path.join(apps, app));
+  for (const command of fs.readFileSync("commands", "utf8").trim().split("\\n")) {
+    execSync(command, { encoding: "utf8", stdio: "inherit" });
+  }
+}
+console.log("DONE");
+process.exit(0);
+`;
+write("keep/esbuild/esbuild.js", keepDriver);
+write("keep/scripts/other.js", keepDriver);
+
+const setApps = (b2First) => {
+  fs.rmSync(path.join(root, "keep/apps"), { recursive: true, force: true });
+  for (const app of KEEP_APPS) {
+    const first = app === "b2" ? b2First : `echo ${app}-install >> ../log`;
+    write(`keep/apps/${app}/commands`, `${first}\necho ${app}-build >> ../log\n`);
+  }
+  fs.writeFileSync(path.join(root, "keep/apps/log"), "");
+};
+const keepRun = (script, keep, b2First) => {
+  setApps(b2First);
+  const result = spawnSync(process.execPath, ["--require", preload, script], {
+    cwd: root,
+    env: { ...process.env, FRAPPE_NIX_KEEP_GOING: keep ? "1" : "" },
+    encoding: "utf8",
+  });
+  const log = fs.readFileSync(path.join(root, "keep/apps/log"), "utf8").trim().split("\n").filter(Boolean);
+  return { status: result.status, done: result.stdout.includes("DONE"), log, stderr: result.stderr };
+};
+const FAIL_B2 = "echo b2-install >> ../log; exit 7";
+
+const carried = keepRun("keep/esbuild/esbuild.js", true, FAIL_B2);
+check(
+  "with FRAPPE_NIX_KEEP_GOING, the apps after a failed one are still built",
+  ["a1-install", "a1-build", "b2-install", "c3-install", "c3-build"],
+  carried.log
+);
+check("the failed app's remaining commands are skipped, not run against its failed install", false, carried.log.includes("b2-build"));
+check("the driver reaches the end, and the process still exits 1", [true, 1], [carried.done, carried.status]);
+check(
+  "the failure is named where it happens, and again in the summary",
+  [true, true, true],
+  [
+    carried.stderr.includes(`✗ b2: \`${FAIL_B2}\` exited 7`),
+    carried.stderr.includes("1 app build(s) failed: b2"),
+    carried.stderr.includes("bench build --app <name>"),
+  ]
+);
+
+const stock = keepRun("keep/esbuild/esbuild.js", false, FAIL_B2);
+check("without it, the first failure ends the loop, as in frappe", [["a1-install", "a1-build", "b2-install"], false, true], [stock.log, stock.done, stock.status !== 0]);
+
+const other = keepRun("keep/scripts/other.js", true, FAIL_B2);
+check("another script's execSync is left alone", [["a1-install", "a1-build", "b2-install"], false, true], [other.log, other.done, other.status !== 0]);
+
+const clean = keepRun("keep/esbuild/esbuild.js", true, "echo b2-install >> ../log");
+check("when nothing fails there is nothing to report, and the exit is 0", [true, 0, ""], [clean.done, clean.status, clean.stderr]);
+check("and every command ran", 6, clean.log.length);
+
+const killed = keepRun("keep/esbuild/esbuild.js", true, "echo b2-install >> ../log; kill -9 $$");
+check(
+  "a command ended by a signal still ends the build",
+  [["a1-install", "a1-build", "b2-install"], false, true],
+  [killed.log, killed.done, killed.status !== 0]
 );
 
 // require("sass"): frappe's JS build of Sass, or the native one named by

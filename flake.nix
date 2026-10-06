@@ -216,6 +216,15 @@
             ${pkgs.python3}/bin/python ./nodebuild/tests/test_nodebuild.py | tee "$out"
           '';
 
+          # Frappe- and bench-independent: a stub bench.cli and two stub scripts
+          # stand in, and the assertions are about which command runs. Given
+          # lib/scripts.nix, it also checks that the routes are the wrapper's.
+          benchcli = pkgs.runCommand "frappe-benchcli-check" { } ''
+            cp -r ${./lib/benchcli} ./benchcli
+            chmod -R u+w ./benchcli
+            ${pkgs.python3}/bin/python ./benchcli/tests/test_benchcli.py ${./lib/scripts.nix} | tee "$out"
+          '';
+
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
