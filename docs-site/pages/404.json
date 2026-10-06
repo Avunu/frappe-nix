@@ -1,0 +1,101 @@
+{
+  "$schema": "../document.schema.json",
+  "$layout": "./layouts/base.json",
+  "$description": "The not-found page GitHub Pages serves for any address that is not a page. It is kept out of search engines.",
+  "title": "Page not found · ${state.config.data.name}",
+  "state": {
+    "robots": {
+      "timing": "compiler",
+      "default": "noindex, nofollow"
+    },
+    "ogTitle": {
+      "timing": "compiler",
+      "default": "Page not found"
+    }
+  },
+  "children": [
+    {
+      "tagName": "main",
+      "attributes": {
+        "id": "main",
+        "tabindex": "-1"
+      },
+      "style": {
+        "flex": "1 0 auto",
+        "maxWidth": "var(--container-prose)",
+        "width": "100%",
+        "margin": "0 auto",
+        "padding": "clamp(56px, 10vw, 120px) var(--gutter)",
+        "& p": {
+          "margin": "20px 0 0",
+          "fontSize": "18px",
+          "lineHeight": "1.55",
+          "color": "var(--color-text-muted)"
+        },
+        "& .actions": {
+          "display": "flex",
+          "flexWrap": "wrap",
+          "gap": "12px",
+          "marginTop": "32px"
+        },
+        "& .btn": {
+          "display": "inline-flex",
+          "alignItems": "center",
+          "justifyContent": "center",
+          "gap": "8px",
+          "minHeight": "var(--hit)",
+          "padding": "0 22px",
+          "borderRadius": "var(--radius-pill)",
+          "fontSize": "16px",
+          "fontWeight": "500",
+          "textDecoration": "none",
+          "border": "1px solid transparent",
+          "backgroundColor": "var(--color-action)",
+          "color": "var(--color-on-action)"
+        },
+        "& .btn:hover": {
+          "backgroundColor": "var(--color-action-hover)",
+          "color": "var(--color-on-action)"
+        },
+        "& .btn.secondary": {
+          "backgroundColor": "var(--color-action-soft)",
+          "color": "var(--color-on-action-soft)"
+        }
+      },
+      "children": [
+        {
+          "tagName": "h1",
+          "textContent": "Page not found"
+        },
+        {
+          "tagName": "p",
+          "textContent": "There is no page at this address. It may have moved, or the link may be mistyped."
+        },
+        {
+          "tagName": "div",
+          "attributes": {
+            "class": "actions"
+          },
+          "children": [
+            {
+              "tagName": "a",
+              "attributes": {
+                "class": "btn",
+                "href": "/docs/"
+              },
+              "children": ["Browse the documentation"]
+            },
+            {
+              "tagName": "a",
+              "attributes": {
+                "class": "btn secondary",
+                "href": "/"
+              },
+              "textContent": "${state.config.data.name} home"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

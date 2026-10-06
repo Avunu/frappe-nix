@@ -1,0 +1,136 @@
+{
+  "$schema": "../document.schema.json",
+  "$id": "DocsHeader",
+  "$description": "The compact docs header bar. It styles what the layout puts in its slot: a .left cluster (the Avunu mark linking to avunu.net, a separator, the project name, the project switcher) and a .right cluster (search, theme toggle, the GitHub link). The bar is sticky and one row at every width; the search field collapses to an icon under 760px, and under 380px the separator and the GitHub link (which the footer repeats) give their room to the project name.",
+  "tagName": "docs-header",
+  "style": {
+    "display": "block",
+    "position": "sticky",
+    "top": "0",
+    "zIndex": "50",
+    "backgroundColor": "var(--color-bg)",
+    "borderBottom": "1px solid var(--color-surface-border)",
+    "& .bar": {
+      "maxWidth": "var(--container)",
+      "margin": "0 auto",
+      "padding": "0 var(--gutter)",
+      "minHeight": "var(--header-h)",
+      "display": "flex",
+      "alignItems": "center",
+      "justifyContent": "space-between",
+      "gap": "8px"
+    },
+    "& .left, & .right": {
+      "display": "flex",
+      "alignItems": "center",
+      "gap": "2px",
+      "minWidth": "0"
+    },
+    "& .left": {
+      "flex": "1 1 auto"
+    },
+    "& .right": {
+      "flex": "none",
+      "gap": "4px"
+    },
+    "& .mark": {
+      "display": "inline-flex",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "width": "var(--hit)",
+      "height": "var(--hit)",
+      "marginLeft": "-8px",
+      "borderRadius": "var(--radius-md)",
+      "flex": "none"
+    },
+    "& .mark img": {
+      "display": "block",
+      "width": "28px",
+      "height": "28px"
+    },
+    "& .sep": {
+      "color": "var(--color-text-caption)",
+      "padding": "0 2px",
+      "flex": "none"
+    },
+    "& .name": {
+      "display": "inline-flex",
+      "alignItems": "center",
+      "minHeight": "var(--hit)",
+      "padding": "0 8px",
+      "borderRadius": "var(--radius-pill)",
+      "color": "var(--color-text)",
+      "fontWeight": "600",
+      "fontSize": "17px",
+      "letterSpacing": "var(--tracking-soft)",
+      "textDecoration": "none",
+      "minWidth": "0",
+      "overflow": "hidden",
+      "textOverflow": "ellipsis",
+      "whiteSpace": "nowrap"
+    },
+    "& .name:hover": {
+      "backgroundColor": "var(--color-surface-muted)",
+      "color": "var(--color-text)"
+    },
+    "& .gh": {
+      "display": "inline-flex",
+      "alignItems": "center",
+      "justifyContent": "center",
+      "width": "var(--hit)",
+      "height": "var(--hit)",
+      "borderRadius": "50%",
+      "color": "var(--color-text-muted)",
+      "textDecoration": "none"
+    },
+    "& .gh:hover": {
+      "backgroundColor": "var(--color-surface-muted)",
+      "color": "var(--color-text)"
+    },
+    "& docs-search": {
+      "display": "block",
+      "width": "min(280px, 28vw)"
+    },
+    "@--md": {
+      "& docs-search": {
+        "width": "auto"
+      },
+      "& docs-search button[data-variant]": {
+        "width": "var(--hit)",
+        "padding": "0",
+        "justifyContent": "center",
+        "borderColor": "transparent",
+        "backgroundColor": "transparent",
+        "minWidth": "var(--hit)",
+        "flex": "none"
+      },
+      "& docs-search button[data-variant]:hover": {
+        "backgroundColor": "var(--color-surface-muted)"
+      },
+      "& docs-search button[data-variant] .label, & docs-search button[data-variant] kbd": {
+        "display": "none"
+      }
+    },
+    "@(max-width: 380px)": {
+      "& .sep": {
+        "display": "none"
+      },
+      "& .gh": {
+        "display": "none"
+      }
+    }
+  },
+  "children": [
+    {
+      "tagName": "header",
+      "attributes": {
+        "class": "bar"
+      },
+      "children": [
+        {
+          "tagName": "slot"
+        }
+      ]
+    }
+  ]
+}
