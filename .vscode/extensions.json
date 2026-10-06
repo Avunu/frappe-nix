@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "astral-sh.ty",
+    "charliermarsh.ruff",
+    "jnoortheen.nix-ide",
+    "mkhl.direnv"
+  ]
+}

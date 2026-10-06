@@ -1,0 +1,18 @@
+[environment]
+# The dev shell links the dev/uv.lock virtualenv here, as a bench does.
+python = "./env"
+# The oldest interpreter this code runs under (see ruff.toml).
+python-version = "3.11"
+# The working tree's packages. They reach the dev env through PYTHONPATH and an
+# editable .pth that runs code at startup, which a static checker does not do.
+# Keep in step with sourceRoots in dev/env.nix.
+extra-paths = [
+    "runtime/src",
+    "lib/devguard",
+    "lib/unixsock",
+    "lib/journald",
+    "lib/nodebuild",
+]
+
+[src]
+exclude = ["tests/fixtures"]

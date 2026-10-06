@@ -458,6 +458,18 @@
           );
           socket = pkgs.testers.runNixOSTest (import ./tests/socket.nix { inherit self pkgs; });
         }
+        # frappe-nix's own lint and type checks, and the drift check that keeps
+        # its ruff config on the pinned upstream Frappe's. See dev/.
+        // import ./dev/checks.nix { inherit pkgs inputs; }
       );
+
+      # frappe-nix's own dev shell: what a bench gets, pointed back at this
+      # repository. `.envrc` enters it; see dev/devenv.nix.
+      devShells = forAllSystems (pkgs: {
+        default = inputs.devenv.lib.mkShell {
+          inherit inputs pkgs;
+          modules = [ ./dev/devenv.nix ];
+        };
+      });
     };
 }

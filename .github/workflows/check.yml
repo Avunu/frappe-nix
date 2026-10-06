@@ -38,7 +38,9 @@ jobs:
 
       # Offline checks (no network, no VM): the devguard unit tests, the
       # `frappe-init --migrate` end-to-end runs over a synthetic classic bench,
-      # and the online-ALTER step in front of `bench migrate`.
+      # the online-ALTER step in front of `bench migrate`, and frappe-nix's own
+      # hooks (dev/hooks.nix) plus the check that its ruff config still matches
+      # the pinned upstream Frappe's.
       - name: Run the offline checks
         run: |
           nix build -L --show-trace \
@@ -47,7 +49,9 @@ jobs:
             .#checks.x86_64-linux.migrate-versions \
             .#checks.x86_64-linux.offline-migrate \
             .#checks.x86_64-linux.offline-migrate-scripts \
-            .#checks.x86_64-linux.offline-migrate-unit
+            .#checks.x86_64-linux.offline-migrate-unit \
+            .#checks.x86_64-linux.frappe-upstream-config \
+            .#checks.x86_64-linux.pre-commit
 
   vm-tests:
     # Manual only — see the header note.

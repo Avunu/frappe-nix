@@ -1,0 +1,20 @@
+{
+  "[python]": {
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff"
+  },
+  "[nix]": {
+    "editor.defaultFormatter": "jnoortheen.nix-ide"
+  },
+  "editor.formatOnSave": true,
+  "python.defaultInterpreterPath": "${workspaceFolder}/env/bin/python",
+  "python.languageServer": "None",
+  "ruff.importStrategy": "fromEnvironment",
+  "ty.path": ["${workspaceFolder}/env/bin/ty"],
+  "nix.enableLanguageServer": true,
+  "nix.serverPath": "nixd",
+  "nix.formatterPath": "nixfmt"
+}

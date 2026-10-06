@@ -56,6 +56,10 @@
   # assembled workspace free of the framework's bytes: it is rebuilt every time
   # the app's own source moves, i.e. on every commit.
   srcOverrides ? { },
+  # Where the dev env's editable `.pth` files point, as a string the interpreter
+  # expands at startup. A bench's members live at `<bench>/apps/<name>`; frappe-nix's
+  # own dev env (dev/env.nix) has its project in dev/ and reaches runtime/ as `../`.
+  editableRoot ? "$FRAPPE_BENCH_ROOT",
 }:
 
 let
@@ -249,7 +253,7 @@ let
         # editable finder resolves `<root>/apps/<name>`, which is a bench path by
         # construction. REPO_ROOT keeps its literal meaning — the worktree where
         # secrets/*.age are tracked and `git add` has to run.
-        root = "$FRAPPE_BENCH_ROOT";
+        root = editableRoot;
       })
       editableSrcOverlay
       (final: prev: {
