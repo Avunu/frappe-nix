@@ -201,7 +201,7 @@ in
     hostRecipients = mkOption {
       type = types.attrsOf sshKey;
       default = { };
-      example = literalExpression ''{ lcserver = "ssh-ed25519 AAAAC3Nza…"; }'';
+      example = literalExpression ''{ appserver = "ssh-ed25519 AAAAC3Nza…"; }'';
       description = ''
         Public keys of deployment hosts. These are added to the per-site secrets
         — the ones `services.frappe` consumes — but not to developer-only
