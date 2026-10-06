@@ -40,6 +40,14 @@
 # clone made before this — is brought to the same shape in place, once: the
 # checkout does not move, only history is fetched. See needs_history.
 #
+# Every one of these clones is set never to recurse into submodules on fetch.
+# An app with submodules of its own (hrms has frontend/frappe-ui) otherwise
+# has git diff each commit a fetch brings in, looking for a moved gitlink, and
+# in a treeless clone each of those trees is a lazy fetch from the remote: one
+# round trip per commit on any other branch. hrms's conversion made thousands,
+# for most of an hour. Those nested submodules are never checked out here
+# (see above), so the check has nothing to find. See no_submodule_fetch.
+#
 # The classifier, not `git submodule status`, names what each apps/<x> is:
 # the latter dies on the first gitlink with no .gitmodules entry, which is one
 # of the shapes this exists to report.
@@ -102,15 +110,25 @@ pkgs.writeShellApplication {
       [ "$(git -C "$1" rev-parse --is-shallow-repository 2>/dev/null)" = true ]
     }
 
+    # A treeless clone's own fetches (yours, an editor's autofetch, the next
+    # one here) skip the on-demand submodule check — see the header. In the
+    # clone's config, and only where it says nothing of its own, so a value
+    # someone set there by hand stands.
+    no_submodule_fetch() { # <path>
+      git -C "$1" config --local --get fetch.recurseSubmodules > /dev/null 2>&1 \
+        || git -C "$1" config fetch.recurseSubmodules false
+    }
+
     # Every branch, commits only, from here on. The refspec goes into the
     # config only once the fetch has worked, so a clone the fetch failed on
     # still reads as needing it (see needs_history) and the next entry retries.
     track_all_branches() { # <path>
-      local args=(--filter=tree:0)
+      local args=(--filter=tree:0 --no-recurse-submodules)
       if is_shallow "$1"; then args+=(--unshallow); fi
       git -C "$1" fetch -q "''${args[@]}" origin '+refs/heads/*:refs/remotes/origin/*' < /dev/null || return 1
       git -C "$1" config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
       git -C "$1" config remote.origin.partialclonefilter tree:0
+      no_submodule_fetch "$1"
     }
 
     # The clone the first entry makes (see the header), at the pinned commit.
@@ -173,7 +191,7 @@ pkgs.writeShellApplication {
       branch="$(branch_of "$2")"
       if [ -n "$branch" ]; then
         if is_shallow "$1"; then args+=(--unshallow); fi
-        git -C "$1" fetch -q "''${args[@]}" --filter=blob:none origin \
+        git -C "$1" fetch -q "''${args[@]}" --filter=blob:none --no-recurse-submodules origin \
           "+refs/heads/$branch:refs/remotes/origin/$branch" < /dev/null \
           || echo "frappe-nix: could not fetch $1's '$branch' history — fetching every branch's commits alone" >&2
       fi
@@ -237,6 +255,10 @@ pkgs.writeShellApplication {
     done
 
     for app in "''${checked[@]}"; do
+      # A clone made treeless by a frappe-nix from before no_submodule_fetch.
+      if [ "$(git -C "apps/$app" config --get remote.origin.partialclonefilter 2>/dev/null)" = tree:0 ]; then
+        no_submodule_fetch "apps/$app"
+      fi
       needs_history "apps/$app" || continue
       name="$(name_of "apps/$app")"
       echo "frappe-nix: apps/$app is a shallow or single-branch clone — fetching its branch's history" >&2
