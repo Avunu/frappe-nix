@@ -52,19 +52,6 @@ def enabled():
 	return settings().guard_enabled(NAME)
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe", _patch_frappe)
-	on_import("frappe.email.smtp", _patch_smtp)
-	on_import("frappe.email.doctype.email_account.email_account", _patch_email_account)
-	on_import("frappe.email.doctype.email_queue.email_queue", _patch_email_queue)
-	on_import("frappe.email.doctype.email_domain.email_domain", _patch_email_domain)
-
-
 # --------------------------------------------------------------------------
 # frappe
 # --------------------------------------------------------------------------
@@ -136,6 +123,35 @@ def _patch_smtp(module):
 		self._port = st.mail_port
 
 	smtp_server.__init__ = __init__
+
+
+def _synthetic_account(cls):
+	st = settings()
+	account = cls.from_record(
+		{
+			"name": ACCOUNT_NAME,
+			"email_account_name": ACCOUNT_NAME,
+			"email_id": st.mail_sender,
+			"enable_outgoing": 1,
+			"default_outgoing": 1,
+			"enable_incoming": 0,
+			"use_imap": 0,
+			"append_emails_to_sent_folder": 0,
+			"smtp_server": st.mail_host,
+			"smtp_port": st.mail_port,
+			"use_tls": 0,
+			"use_ssl_for_outgoing": 0,
+			"auth_method": "Basic",
+			"no_smtp_authentication": 1,
+			"awaiting_password": 0,
+			# Leave the sender the code actually meant to send as: rewriting it
+			# would hide who sent what in the catcher's UI.
+			"always_use_account_email_id_as_sender": 0,
+			"always_use_account_name_as_sender_name": 0,
+		}
+	)
+	account._from_site_config = True
+	return account
 
 
 # --------------------------------------------------------------------------
@@ -292,35 +308,6 @@ def _patch_email_account(module):
 	disarm_subclasses(email_account, _EMAIL_ACCOUNT_OVERRIDES)
 
 
-def _synthetic_account(cls):
-	st = settings()
-	account = cls.from_record(
-		{
-			"name": ACCOUNT_NAME,
-			"email_account_name": ACCOUNT_NAME,
-			"email_id": st.mail_sender,
-			"enable_outgoing": 1,
-			"default_outgoing": 1,
-			"enable_incoming": 0,
-			"use_imap": 0,
-			"append_emails_to_sent_folder": 0,
-			"smtp_server": st.mail_host,
-			"smtp_port": st.mail_port,
-			"use_tls": 0,
-			"use_ssl_for_outgoing": 0,
-			"auth_method": "Basic",
-			"no_smtp_authentication": 1,
-			"awaiting_password": 0,
-			# Leave the sender the code actually meant to send as: rewriting it
-			# would hide who sent what in the catcher's UI.
-			"always_use_account_email_id_as_sender": 0,
-			"always_use_account_name_as_sender_name": 0,
-		}
-	)
-	account._from_site_config = True
-	return account
-
-
 # --------------------------------------------------------------------------
 # frappe.email.doctype.email_queue.email_queue
 # --------------------------------------------------------------------------
@@ -401,6 +388,19 @@ def _patch_email_domain(module):
 	email_domain.validate = validate
 
 	disarm_subclasses(email_domain, _EMAIL_DOMAIN_OVERRIDES)
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe", _patch_frappe)
+	on_import("frappe.email.smtp", _patch_smtp)
+	on_import("frappe.email.doctype.email_account.email_account", _patch_email_account)
+	on_import("frappe.email.doctype.email_queue.email_queue", _patch_email_queue)
+	on_import("frappe.email.doctype.email_domain.email_domain", _patch_email_domain)
 
 
 # ``announce`` is re-exported for guards that want the shared one-shot banner.

@@ -67,127 +67,6 @@ class Config:
 		return bool(self.restart_after_requests or self.restart_after_jobs or self.restart_idle_seconds)
 
 
-class WebServer:
-	"""Uvicorn and the ASGI app of frappe."""
-
-	def __init__(self, config: Config, traffic: Traffic):
-		import uvicorn
-
-		self.app = TrafficMiddleware.load(config, traffic)
-		# A unix socket wins over host/port. uvicorn binds without unlinking first, so
-		# a socket file left behind by a killed process would fail the bind; the
-		# standalone realtime path in server.py does the same unlink.
-		binding: dict[str, Any]
-		if config.uds:
-			with suppress(FileNotFoundError):
-				os.unlink(config.uds)
-			binding = {"uds": config.uds}
-		else:
-			binding = {"host": config.host, "port": config.port}
-
-		self.server = uvicorn.Server(
-			uvicorn.Config(
-				self.app,
-				log_config=None,
-				access_log=False,
-				# Annotated int, but uvicorn hands it to asyncio.wait_for, which takes a float.
-				timeout_graceful_shutdown=config.request_drain_seconds,  # ty: ignore[invalid-argument-type]
-				**binding,
-			)
-		)
-		self.handle_exit = self.server.handle_exit
-
-	def serve(self, on_signal) -> None:
-		"""Run the server until a signal comes. Uvicorn sends its signals to on_signal."""
-		self.server.handle_exit = on_signal
-		self.server.run()
-
-	def stop(self, sig, frame=None) -> None:
-		self.handle_exit(sig, frame)
-
-	def close_realtime(self) -> None:
-		self.app.close_realtime()
-
-
-class TrafficMiddleware:
-	"""The ASGI app of the runner. It counts the web requests and the realtime
-	requests separately, and it disconnects the realtime clients at shutdown."""
-
-	def __init__(self, app, traffic: Traffic):
-		self.app = app
-		self.traffic = traffic
-		self.loop = None
-
-	@classmethod
-	def load(cls, config: Config, traffic: Traffic) -> TrafficMiddleware:
-		"""Initialize frappe and get its ASGI app."""
-		if config.dev:
-			os.environ["FRAPPE_SERVE_ASSETS"] = "1"
-		if config.web_threads:
-			os.environ["FRAPPE_WEB_THREADS"] = str(config.web_threads)
-
-		# Do this before the import of frappe.asgi. That module reads FRAPPE_SERVE_ASSETS
-		# to know if it must send the static files, and it builds the embedded realtime
-		# server. frappe.app also needs an initialized frappe.
-		# frappe.init defaults sites_path to ".", so every later lookup resolves against
-		# the cwd. Started anywhere but sites/, get_config() then reads a
-		# common_site_config.json that is not there and silently falls back to its
-		# defaults -- wrong redis, wrong port, no error. frappe/app.py resolves the same
-		# path from SITES_PATH, so agree with it and keep "." as the fallback.
-		frappe.init(site="", sites_path=os.environ.get("SITES_PATH") or ".")
-
-		from frappe_runtime.asgi import application
-
-		return cls(application, traffic)
-
-	async def __call__(self, scope, receive, send):
-		if scope["type"] == "lifespan":
-			self.loop = asyncio.get_running_loop()
-			await self.app(scope, receive, send)
-		elif scope["type"] == "websocket" or scope["path"].startswith(SOCKETIO_PATH):
-			self.traffic.count("realtime")
-			await self.app(scope, receive, send)
-		elif scope["path"] in HEALTH_CHECK_PATHS:
-			await self.app(scope, receive, send)
-		else:
-			await self.serve_web(scope, receive, send)
-
-	async def serve_web(self, scope, receive, send):
-		recorder = StatusRecorder(send)
-		with self.traffic.busy():
-			try:
-				await self.app(scope, receive, recorder)
-			finally:
-				self.traffic.count_web(recorder.status)
-
-	def close_realtime(self) -> None:
-		"""Disconnect the realtime clients from a different thread.
-
-		An open long-poll request of a client stops the shutdown of uvicorn until
-		engine.io gets a timeout. The web requests continue to their end.
-		"""
-		sio = getattr(self.app, "engineio_server", None)
-		if sio is None or self.loop is None:
-			return
-		asyncio.run_coroutine_threadsafe(self._close_realtime(sio), self.loop)
-
-	async def _close_realtime(self, sio) -> None:
-		from engineio import packet
-
-		open_sockets = [s for s in list(sio.eio.sockets.values()) if not (s.closed or s.closing)]
-		logger.info("realtime: disconnect %d client(s)", len(open_sockets))
-		for socket in open_sockets:
-			# The NOOP packet completes the poll request that the client holds. The abort
-			# then gives a 400 response to the next poll request. Without the abort, that
-			# request waits for one more ping timeout. The client reads the two packets as
-			# a failure of the transport, and it connects again. The client reads a CLOSE
-			# packet as an intentional disconnection by the server, and does not connect
-			# again.
-			await socket.send(packet.Packet(packet.NOOP))
-			await socket.close(wait=False, abort=True)
-		await sio.shutdown()
-
-
 class StatusRecorder:
 	"""The send function of one ASGI request. It keeps the status of the response."""
 
@@ -243,25 +122,125 @@ class Traffic:
 		return ", ".join(f"{name} {count}" for name, count in self.counts.items())
 
 
-class BackgroundJobs:
-	"""The job threads of the runner. Each thread runs one job at a time."""
+class TrafficMiddleware:
+	"""The ASGI app of the runner. It counts the web requests and the realtime
+	requests separately, and it disconnects the realtime clients at shutdown."""
+
+	def __init__(self, app, traffic: Traffic):
+		self.app = app
+		self.traffic = traffic
+		self.loop = None
+
+	@classmethod
+	def load(cls, config: Config, traffic: Traffic) -> TrafficMiddleware:
+		"""Initialize frappe and get its ASGI app."""
+		if config.dev:
+			os.environ["FRAPPE_SERVE_ASSETS"] = "1"
+		if config.web_threads:
+			os.environ["FRAPPE_WEB_THREADS"] = str(config.web_threads)
+
+		# Do this before the import of frappe.asgi. That module reads FRAPPE_SERVE_ASSETS
+		# to know if it must send the static files, and it builds the embedded realtime
+		# server. frappe.app also needs an initialized frappe.
+		# frappe.init defaults sites_path to ".", so every later lookup resolves against
+		# the cwd. Started anywhere but sites/, get_config() then reads a
+		# common_site_config.json that is not there and silently falls back to its
+		# defaults -- wrong redis, wrong port, no error. frappe/app.py resolves the same
+		# path from SITES_PATH, so agree with it and keep "." as the fallback.
+		frappe.init(site="", sites_path=os.environ.get("SITES_PATH") or ".")
+
+		from frappe_runtime.asgi import application
+
+		return cls(application, traffic)
+
+	async def serve_web(self, scope, receive, send):
+		recorder = StatusRecorder(send)
+		with self.traffic.busy():
+			try:
+				await self.app(scope, receive, recorder)
+			finally:
+				self.traffic.count_web(recorder.status)
+
+	async def _close_realtime(self, sio) -> None:
+		from engineio import packet
+
+		open_sockets = [s for s in list(sio.eio.sockets.values()) if not (s.closed or s.closing)]
+		logger.info("realtime: disconnect %d client(s)", len(open_sockets))
+		for socket in open_sockets:
+			# The NOOP packet completes the poll request that the client holds. The abort
+			# then gives a 400 response to the next poll request. Without the abort, that
+			# request waits for one more ping timeout. The client reads the two packets as
+			# a failure of the transport, and it connects again. The client reads a CLOSE
+			# packet as an intentional disconnection by the server, and does not connect
+			# again.
+			await socket.send(packet.Packet(packet.NOOP))
+			await socket.close(wait=False, abort=True)
+		await sio.shutdown()
+
+	def close_realtime(self) -> None:
+		"""Disconnect the realtime clients from a different thread.
+
+		An open long-poll request of a client stops the shutdown of uvicorn until
+		engine.io gets a timeout. The web requests continue to their end.
+		"""
+		sio = getattr(self.app, "engineio_server", None)
+		if sio is None or self.loop is None:
+			return
+		asyncio.run_coroutine_threadsafe(self._close_realtime(sio), self.loop)
+
+	async def __call__(self, scope, receive, send):
+		if scope["type"] == "lifespan":
+			self.loop = asyncio.get_running_loop()
+			await self.app(scope, receive, send)
+		elif scope["type"] == "websocket" or scope["path"].startswith(SOCKETIO_PATH):
+			self.traffic.count("realtime")
+			await self.app(scope, receive, send)
+		elif scope["path"] in HEALTH_CHECK_PATHS:
+			await self.app(scope, receive, send)
+		else:
+			await self.serve_web(scope, receive, send)
+
+
+class WebServer:
+	"""Uvicorn and the ASGI app of frappe."""
 
 	def __init__(self, config: Config, traffic: Traffic):
-		self.threads = [JobThread(config, traffic, index) for index in range(config.job_threads)]
+		import uvicorn
 
-	def start(self) -> None:
-		for thread in self.threads:
-			thread.start()
+		self.app = TrafficMiddleware.load(config, traffic)
+		# A unix socket wins over host/port. uvicorn binds without unlinking first, so
+		# a socket file left behind by a killed process would fail the bind; the
+		# standalone realtime path in server.py does the same unlink.
+		binding: dict[str, Any]
+		if config.uds:
+			with suppress(FileNotFoundError):
+				os.unlink(config.uds)
+			binding = {"uds": config.uds}
+		else:
+			binding = {"host": config.host, "port": config.port}
 
-	def stop(self) -> None:
-		for thread in self.threads:
-			thread.stop()
+		self.server = uvicorn.Server(
+			uvicorn.Config(
+				self.app,
+				log_config=None,
+				access_log=False,
+				# Annotated int, but uvicorn hands it to asyncio.wait_for, which takes a float.
+				timeout_graceful_shutdown=config.request_drain_seconds,  # ty: ignore[invalid-argument-type]
+				**binding,
+			)
+		)
+		self.handle_exit = self.server.handle_exit
 
-	def wait(self, timeout: float) -> None:
-		"""Wait for the threads. All of them together get the time of the timeout."""
-		deadline = time.monotonic() + timeout
-		for thread in self.threads:
-			thread.wait(max(0.0, deadline - time.monotonic()))
+	def serve(self, on_signal) -> None:
+		"""Run the server until a signal comes. Uvicorn sends its signals to on_signal."""
+		self.server.handle_exit = on_signal
+		self.server.run()
+
+	def stop(self, sig, frame=None) -> None:
+		self.handle_exit(sig, frame)
+
+	def close_realtime(self) -> None:
+		self.app.close_realtime()
 
 
 def _init_frappe_for_thread() -> None:
@@ -282,59 +261,6 @@ def _init_frappe_for_thread() -> None:
 	resolution in TrafficMiddleware.load.
 	"""
 	frappe.init(site="", sites_path=os.environ.get("SITES_PATH") or ".")
-
-
-class JobThread:
-	"""One no-fork worker of frappe on a daemon thread. It stops between two jobs."""
-
-	def __init__(self, config: Config, traffic: Traffic, index: int):
-		self.config = config
-		self.traffic = traffic
-		self.stopping = threading.Event()
-		self.worker = None
-		self.thread = threading.Thread(target=self._work, name=f"rq-worker-{index}", daemon=True)
-
-	def start(self) -> None:
-		self.thread.start()
-
-	def stop(self) -> None:
-		self.stopping.set()
-		if self.worker:
-			self.worker.stop()
-
-	def wait(self, timeout: float) -> None:
-		if not self.thread.is_alive():
-			return
-		self.thread.join(timeout)
-		if self.thread.is_alive():
-			logger.warning("the job continues after %.0fs: the runner stops without it", timeout)
-
-	def _work(self) -> None:
-		_init_frappe_for_thread()
-		# work() returns after RQ_MAX_JOBS jobs. Thus make a new worker and continue.
-		while not self.stopping.is_set():
-			queues = get_queue_list(self.config.queue_names, build_queue_name=True)
-			self.worker = ThreadedWorker(queues, self.traffic, connection=get_redis_conn())
-			logger.info("%s: jobs on %s", self.thread.name, ", ".join(q.name for q in self.worker.queues))
-			self.worker.work(logging_level="INFO" if self.config.verbose else "WARNING")
-
-
-class Scheduler:
-	"""The scheduler of frappe on a daemon thread of its own.
-
-	start_scheduler holds a lock file of the bench. A second scheduler, in this
-	process or in a different one, sees the lock and stops immediately.
-	"""
-
-	def __init__(self):
-		self.thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
-
-	def _run(self) -> None:
-		_init_frappe_for_thread()
-		start_scheduler()
-
-	def start(self) -> None:
-		self.thread.start()
 
 
 class ThreadedWorker(FrappeWorkerNoFork):
@@ -380,6 +306,180 @@ class ThreadedWorker(FrappeWorkerNoFork):
 	def _install_signal_handlers(self):
 		# signal.signal() causes the error "signal only works in main thread".
 		pass
+
+
+class JobThread:
+	"""One no-fork worker of frappe on a daemon thread. It stops between two jobs."""
+
+	def _work(self) -> None:
+		_init_frappe_for_thread()
+		# work() returns after RQ_MAX_JOBS jobs. Thus make a new worker and continue.
+		while not self.stopping.is_set():
+			queues = get_queue_list(self.config.queue_names, build_queue_name=True)
+			self.worker = ThreadedWorker(queues, self.traffic, connection=get_redis_conn())
+			logger.info("%s: jobs on %s", self.thread.name, ", ".join(q.name for q in self.worker.queues))
+			self.worker.work(logging_level="INFO" if self.config.verbose else "WARNING")
+
+	def __init__(self, config: Config, traffic: Traffic, index: int):
+		self.config = config
+		self.traffic = traffic
+		self.stopping = threading.Event()
+		self.worker = None
+		self.thread = threading.Thread(target=self._work, name=f"rq-worker-{index}", daemon=True)
+
+	def start(self) -> None:
+		self.thread.start()
+
+	def stop(self) -> None:
+		self.stopping.set()
+		if self.worker:
+			self.worker.stop()
+
+	def wait(self, timeout: float) -> None:
+		if not self.thread.is_alive():
+			return
+		self.thread.join(timeout)
+		if self.thread.is_alive():
+			logger.warning("the job continues after %.0fs: the runner stops without it", timeout)
+
+
+class BackgroundJobs:
+	"""The job threads of the runner. Each thread runs one job at a time."""
+
+	def __init__(self, config: Config, traffic: Traffic):
+		self.threads = [JobThread(config, traffic, index) for index in range(config.job_threads)]
+
+	def start(self) -> None:
+		for thread in self.threads:
+			thread.start()
+
+	def stop(self) -> None:
+		for thread in self.threads:
+			thread.stop()
+
+	def wait(self, timeout: float) -> None:
+		"""Wait for the threads. All of them together get the time of the timeout."""
+		deadline = time.monotonic() + timeout
+		for thread in self.threads:
+			thread.wait(max(0.0, deadline - time.monotonic()))
+
+
+class Scheduler:
+	"""The scheduler of frappe on a daemon thread of its own.
+
+	start_scheduler holds a lock file of the bench. A second scheduler, in this
+	process or in a different one, sees the lock and stops immediately.
+	"""
+
+	def _run(self) -> None:
+		_init_frappe_for_thread()
+		start_scheduler()
+
+	def __init__(self):
+		self.thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
+
+	def start(self) -> None:
+		self.thread.start()
+
+
+class RestartWatch:
+	"""Send SIGHUP when the process is at a limit, or idle, and nothing is in flight."""
+
+	def _watch(self) -> None:
+		while not self.draining.wait(RESTART_CHECK_SECONDS):
+			if self.traffic.in_flight:
+				continue
+			if self.is_limit_reached or self.is_idle:
+				logger.info(
+					"restart (%s), idle %.0fs",
+					self.traffic.summary,
+					self.traffic.idle_seconds,
+				)
+				os.kill(os.getpid(), signal.SIGHUP)
+				return
+
+	def __init__(self, config: Config, traffic: Traffic, draining: threading.Event):
+		self.config = config
+		self.traffic = traffic
+		self.draining = draining
+		self.thread = threading.Thread(target=self._watch, name="restart-watch", daemon=True)
+
+	def start(self) -> None:
+		self.thread.start()
+
+	@property
+	def is_limit_reached(self) -> bool:
+		counts = self.traffic.counts
+		config = self.config
+		return bool(config.restart_after_requests and counts["web"] >= config.restart_after_requests) or bool(
+			config.restart_after_jobs and counts["jobs"] >= config.restart_after_jobs
+		)
+
+	@property
+	def is_idle(self) -> bool:
+		"""No web request for the configured time, after some work. A process that did
+		nothing holds nothing to release, thus an unused bench does not restart."""
+		return bool(
+			self.config.restart_idle_seconds
+			and any(self.traffic.counts.values())
+			and self.traffic.idle_seconds >= self.config.restart_idle_seconds
+		)
+
+
+class SourceWatch:
+	"""Reload when the python source of an app changes.
+
+	SIGHUP already drains the web app and the jobs and then re-execs, thus one signal
+	brings uvicorn, the job threads and the scheduler back on the new code. Only the
+	python package of each app is watched, so node_modules and .git stay out.
+
+	watchdog wants no more than dispatch() on a handler, so this class is its own."""
+
+	# inotify calls a plain read "opened" and "closed_no_write", and an import reads
+	# the file it loads. Anything wider than a real write reloads without end.
+	CHANGES = frozenset(("created", "modified", "moved", "deleted"))
+
+	def __init__(self, draining: threading.Event):
+		self.draining = draining
+		self.fired = threading.Event()
+
+	def start(self) -> None:
+		try:
+			from watchdog.observers import Observer
+		except ImportError as e:
+			# --dev promises a reload. Not starting beats reloading in silence.
+			raise SystemExit("--dev needs watchdog: pip install 'frappe[dev]'") from e
+
+		paths = []
+		for app in frappe.get_all_apps():
+			# apps.txt can name an app that this bench cannot import. build.setup()
+			# steps over those as well.
+			with suppress(ImportError):
+				paths.append(frappe.get_app_path(app))
+		observer = Observer()
+		observer.daemon = True
+		for path in paths:
+			# Duck-typed: watchdog only calls dispatch(), and importing its base
+			# class at module level would make watchdog a hard dependency.
+			observer.schedule(self, path, recursive=True)  # ty: ignore[invalid-argument-type]
+		observer.start()
+		logger.info("dev: watching %s", ", ".join(paths))
+
+	def dispatch(self, event) -> None:
+		"""One reload for each change. The process re-execs, thus this fires once."""
+		# A rename carries both paths; the new name holds the code now.
+		path = getattr(event, "dest_path", "") or event.src_path
+		if event.is_directory or event.event_type not in self.CHANGES or not path.endswith(".py"):
+			return
+		if self.draining.is_set() or self.fired.is_set():
+			return
+		self.fired.set()
+		logger.info("dev: %s changed, reloading", path)
+		threading.Timer(SOURCE_QUIET_SECONDS, self.reload).start()
+
+	def reload(self) -> None:
+		if not self.draining.is_set():
+			os.kill(os.getpid(), signal.SIGHUP)
 
 
 class Runner:
@@ -441,106 +541,6 @@ class Runner:
 		# the ASGI lifespan shutdown. In that shutdown realtime releases its redis
 		# bridge and its clients. A second signal stops the process immediately.
 		self.web.stop(sig, frame)
-
-
-class RestartWatch:
-	"""Send SIGHUP when the process is at a limit, or idle, and nothing is in flight."""
-
-	def __init__(self, config: Config, traffic: Traffic, draining: threading.Event):
-		self.config = config
-		self.traffic = traffic
-		self.draining = draining
-		self.thread = threading.Thread(target=self._watch, name="restart-watch", daemon=True)
-
-	def start(self) -> None:
-		self.thread.start()
-
-	@property
-	def is_limit_reached(self) -> bool:
-		counts = self.traffic.counts
-		config = self.config
-		return bool(config.restart_after_requests and counts["web"] >= config.restart_after_requests) or bool(
-			config.restart_after_jobs and counts["jobs"] >= config.restart_after_jobs
-		)
-
-	@property
-	def is_idle(self) -> bool:
-		"""No web request for the configured time, after some work. A process that did
-		nothing holds nothing to release, thus an unused bench does not restart."""
-		return bool(
-			self.config.restart_idle_seconds
-			and any(self.traffic.counts.values())
-			and self.traffic.idle_seconds >= self.config.restart_idle_seconds
-		)
-
-	def _watch(self) -> None:
-		while not self.draining.wait(RESTART_CHECK_SECONDS):
-			if self.traffic.in_flight:
-				continue
-			if self.is_limit_reached or self.is_idle:
-				logger.info(
-					"restart (%s), idle %.0fs",
-					self.traffic.summary,
-					self.traffic.idle_seconds,
-				)
-				os.kill(os.getpid(), signal.SIGHUP)
-				return
-
-
-class SourceWatch:
-	"""Reload when the python source of an app changes.
-
-	SIGHUP already drains the web app and the jobs and then re-execs, thus one signal
-	brings uvicorn, the job threads and the scheduler back on the new code. Only the
-	python package of each app is watched, so node_modules and .git stay out.
-
-	watchdog wants no more than dispatch() on a handler, so this class is its own."""
-
-	# inotify calls a plain read "opened" and "closed_no_write", and an import reads
-	# the file it loads. Anything wider than a real write reloads without end.
-	CHANGES = frozenset(("created", "modified", "moved", "deleted"))
-
-	def __init__(self, draining: threading.Event):
-		self.draining = draining
-		self.fired = threading.Event()
-
-	def start(self) -> None:
-		try:
-			from watchdog.observers import Observer
-		except ImportError as e:
-			# --dev promises a reload. Not starting beats reloading in silence.
-			raise SystemExit("--dev needs watchdog: pip install 'frappe[dev]'") from e
-
-		paths = []
-		for app in frappe.get_all_apps():
-			# apps.txt can name an app that this bench cannot import. build.setup()
-			# steps over those as well.
-			with suppress(ImportError):
-				paths.append(frappe.get_app_path(app))
-		observer = Observer()
-		observer.daemon = True
-		for path in paths:
-			# Duck-typed: watchdog only calls dispatch(), and importing its base
-			# class at module level would make watchdog a hard dependency.
-			observer.schedule(self, path, recursive=True)  # ty: ignore[invalid-argument-type]
-		observer.start()
-		logger.info("dev: watching %s", ", ".join(paths))
-
-	def dispatch(self, event) -> None:
-		"""One reload for each change. The process re-execs, thus this fires once."""
-		# A rename carries both paths; the new name holds the code now.
-		path = getattr(event, "dest_path", "") or event.src_path
-		if event.is_directory or event.event_type not in self.CHANGES or not path.endswith(".py"):
-			return
-		if self.draining.is_set() or self.fired.is_set():
-			return
-		self.fired.set()
-		logger.info("dev: %s changed, reloading", path)
-		threading.Timer(SOURCE_QUIET_SECONDS, self.reload).start()
-
-	def reload(self) -> None:
-		if not self.draining.is_set():
-			os.kill(os.getpid(), signal.SIGHUP)
 
 
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):

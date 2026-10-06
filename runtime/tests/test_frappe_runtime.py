@@ -154,6 +154,12 @@ def make_environ(
 	return env
 
 
+def make_config(**kwargs) -> RealtimeConfig:
+	base = {"port": 9000, "redis_queue": "redis://127.0.0.1:11311"}
+	base.update(kwargs)
+	return RealtimeConfig(**base)
+
+
 class TestAuthHelpers(unittest.TestCase):
 	def test_get_hostname(self):
 		self.assertEqual(auth_mod.get_hostname("http://site.local:8000"), "site.local")
@@ -1053,12 +1059,6 @@ class TestCoreHandlers(unittest.IsolatedAsyncioTestCase):
 
 
 HAS_SOCKETIO = hasattr(socketio, "AsyncServer")
-
-
-def make_config(**kwargs) -> RealtimeConfig:
-	base = {"port": 9000, "redis_queue": "redis://127.0.0.1:11311"}
-	base.update(kwargs)
-	return RealtimeConfig(**base)
 
 
 @unittest.skipUnless(HAS_SOCKETIO, "needs a real python-socketio")

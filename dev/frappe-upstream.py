@@ -36,6 +36,22 @@ HEADER = """\
 RUFF_REV = re.compile(r"repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s+rev:\s*v?(\S+)")
 
 
+def locked_version(root: Path, name: str) -> str | None:
+	lock = tomllib.loads((root / "dev" / "uv.lock").read_text())
+	return next((p["version"] for p in lock.get("package", []) if p["name"] == name), None)
+
+
+def upstream_ruff(src: Path) -> dict:
+	return tomllib.loads((src / "pyproject.toml").read_text())["tool"]["ruff"]
+
+
+def upstream_ruff_version(src: Path) -> str:
+	match = RUFF_REV.search((src / ".pre-commit-config.yaml").read_text())
+	if not match:
+		sys.exit("frappe-upstream: no ruff-pre-commit rev in Frappe's .pre-commit-config.yaml")
+	return match.group(1)
+
+
 def check(src: Path, root: Path) -> None:
 	drift = []
 	mirrored = tomllib.loads((root / "dev" / "frappe-ruff.toml").read_text())
@@ -50,24 +66,6 @@ def check(src: Path, root: Path) -> None:
 			"\nto the branch tip first) and commit the result."
 		)
 	print("frappe-upstream: in sync")
-
-
-def locked_version(root: Path, name: str) -> str | None:
-	lock = tomllib.loads((root / "dev" / "uv.lock").read_text())
-	return next((p["version"] for p in lock.get("package", []) if p["name"] == name), None)
-
-
-def main() -> None:
-	cmd, *args = sys.argv[1:] or [""]
-	match cmd, args:
-		case "pin", [root]:
-			pin(Path(root))
-		case "sync", [src, root]:
-			sync(Path(src), Path(root))
-		case "check", [src, root]:
-			check(Path(src), Path(root))
-		case _:
-			sys.exit(__doc__)
 
 
 def pin(root: Path) -> None:
@@ -107,15 +105,17 @@ def sync(src: Path, root: Path) -> None:
 	print(f"dev/frappe-ruff.toml synced; ruff=={version}")
 
 
-def upstream_ruff(src: Path) -> dict:
-	return tomllib.loads((src / "pyproject.toml").read_text())["tool"]["ruff"]
-
-
-def upstream_ruff_version(src: Path) -> str:
-	match = RUFF_REV.search((src / ".pre-commit-config.yaml").read_text())
-	if not match:
-		sys.exit("frappe-upstream: no ruff-pre-commit rev in Frappe's .pre-commit-config.yaml")
-	return match.group(1)
+def main() -> None:
+	cmd, *args = sys.argv[1:] or [""]
+	match cmd, args:
+		case "pin", [root]:
+			pin(Path(root))
+		case "sync", [src, root]:
+			sync(Path(src), Path(root))
+		case "check", [src, root]:
+			check(Path(src), Path(root))
+		case _:
+			sys.exit(__doc__)
 
 
 if __name__ == "__main__":

@@ -45,22 +45,6 @@ MODULES = ("frappe.bundler", "frappe.build")
 _INSTALLED = False
 
 
-def install():
-	"""Hook the modules that define get_node_env, if a preload is set. Idempotent."""
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	if not os.environ.get(ENV, "").strip():
-		return
-
-	from ._hook import on_import
-
-	for name in MODULES:
-		on_import(name, _patch_build)
-
-
 def _patch_build(module):
 	original = getattr(module, "get_node_env", None)
 	if not callable(original):
@@ -85,3 +69,19 @@ def _patch_build(module):
 
 
 # NB: install() is called by the .pth bootstrap, not here — see frappe_unixsock.
+
+
+def install():
+	"""Hook the modules that define get_node_env, if a preload is set. Idempotent."""
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	if not os.environ.get(ENV, "").strip():
+		return
+
+	from ._hook import on_import
+
+	for name in MODULES:
+		on_import(name, _patch_build)

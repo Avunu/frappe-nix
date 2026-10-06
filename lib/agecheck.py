@@ -114,6 +114,12 @@ def load_rules(path: str) -> dict[str, list[str]]:
 		return json.load(fh)
 
 
+def stem(rel: str) -> str:
+	"""secrets/erp.example.com/db-password.age -> erp.example.com/db-password"""
+	parts = rel.split(os.sep)
+	return os.sep.join(parts[1:])[: -len(".age")] if len(parts) > 1 else rel[: -len(".age")]
+
+
 def cmd_check(rules_path: str, root: str) -> int:
 	rules = load_rules(rules_path)
 	problems: list[str] = []
@@ -185,12 +191,6 @@ def cmd_check(rules_path: str, root: str) -> int:
 
 	print(f"frappe-nix: {len(rules)} secret(s) encrypted to their declared recipients.")
 	return 0
-
-
-def stem(rel: str) -> str:
-	"""secrets/erp.example.com/db-password.age -> erp.example.com/db-password"""
-	parts = rel.split(os.sep)
-	return os.sep.join(parts[1:])[: -len(".age")] if len(parts) > 1 else rel[: -len(".age")]
 
 
 def own_keys() -> list[tuple[str, str, str]]:

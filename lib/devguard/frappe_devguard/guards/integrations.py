@@ -30,15 +30,6 @@ _LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe.integrations.utils", _patch_utils)
-
-
 def allowed(url):
 	host = (urlsplit(url).hostname or "").lower()
 	if not host or host in _LOOPBACK:
@@ -61,3 +52,12 @@ def _patch_utils(module):
 
 	# make_get_request and friends call this by module-global name.
 	module.make_request = mark(make_request, "frappe.integrations.utils.make_request")
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe.integrations.utils", _patch_utils)

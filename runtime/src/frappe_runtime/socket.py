@@ -145,6 +145,22 @@ class SyncSocket:
 	def installed_apps(self) -> list[str]:
 		return self._socket.installed_apps
 
+	def _run(self, coro):
+		"""Submit a coroutine to the server loop and block this thread on it.
+
+		Bounded: a loop that stops mid-handler would never resolve the future,
+		wedging the thread and the executor join that process exit waits on."""
+		if self._loop.is_closed():
+			coro.close()
+			raise RuntimeError("realtime event loop is closed")
+
+		future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+		try:
+			return future.result(LOOP_CALL_TIMEOUT)
+		except TimeoutError:
+			future.cancel()
+			raise
+
 	def join(self, room: str) -> None:
 		self._run(self._socket.join(room))
 
@@ -168,19 +184,3 @@ class SyncSocket:
 
 	def has_permission(self, doctype: str, name: str | None = None) -> bool:
 		return self._run(self._socket.has_permission(doctype, name))
-
-	def _run(self, coro):
-		"""Submit a coroutine to the server loop and block this thread on it.
-
-		Bounded: a loop that stops mid-handler would never resolve the future,
-		wedging the thread and the executor join that process exit waits on."""
-		if self._loop.is_closed():
-			coro.close()
-			raise RuntimeError("realtime event loop is closed")
-
-		future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-		try:
-			return future.result(LOOP_CALL_TIMEOUT)
-		except TimeoutError:
-			future.cancel()
-			raise

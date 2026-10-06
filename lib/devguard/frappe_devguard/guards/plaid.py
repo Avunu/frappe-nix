@@ -20,16 +20,6 @@ _PREFIX = "erpnext.erpnext_integrations.doctype.plaid_settings"
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import(f"{_PREFIX}.plaid_settings", _patch_settings)
-	on_import(f"{_PREFIX}.plaid_connector", _patch_connector)
-
-
 def _patch_settings(module):
 	require(module, "automatic_synchronization")
 	module.automatic_synchronization = no_op(
@@ -49,3 +39,13 @@ def _patch_connector(module):
 		"in this database are production's.",
 		"Plaid bank synchronisation is blocked",
 	)
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import(f"{_PREFIX}.plaid_settings", _patch_settings)
+	on_import(f"{_PREFIX}.plaid_connector", _patch_connector)

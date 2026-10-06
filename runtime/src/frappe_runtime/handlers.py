@@ -82,6 +82,26 @@ async def doc_unsubscribe(socket: Socket, doctype: str, docname: str) -> None:
 	await socket.leave(doc_room(doctype, docname))
 
 
+async def notify_doc_viewers(socket: Socket, doctype: str, docname: str) -> None:
+	"""Emit doc_viewers to everyone in the open-doc room. Port of notify_subscribed_doc_users."""
+	if not (doctype and docname):
+		return
+	room = open_doc_room(doctype, docname)
+	users = []
+	for sid in socket.participants(room):
+		user = await socket.user_of(sid)
+		if user:
+			users.append(user)
+	# Don't send an update to a lone viewer about themselves.
+	if len(users) == 1 and users[0] == socket.user:
+		return
+	await socket.emit(
+		"doc_viewers",
+		{"doctype": doctype, "docname": docname, "users": list(dict.fromkeys(users))},
+		room=room,
+	)
+
+
 @realtime.on("doc_open", allow_guest=True)
 async def doc_open(socket: Socket, doctype: str, docname: str) -> None:
 	if not await socket.has_permission(doctype, docname):
@@ -111,26 +131,6 @@ async def doc_close(socket: Socket, doctype: str, docname: str) -> None:
 async def on_disconnect(socket: Socket) -> None:
 	for doctype, docname in socket.get("subscribed_documents", []):
 		await notify_doc_viewers(socket, doctype, docname)
-
-
-async def notify_doc_viewers(socket: Socket, doctype: str, docname: str) -> None:
-	"""Emit doc_viewers to everyone in the open-doc room. Port of notify_subscribed_doc_users."""
-	if not (doctype and docname):
-		return
-	room = open_doc_room(doctype, docname)
-	users = []
-	for sid in socket.participants(room):
-		user = await socket.user_of(sid)
-		if user:
-			users.append(user)
-	# Don't send an update to a lone viewer about themselves.
-	if len(users) == 1 and users[0] == socket.user:
-		return
-	await socket.emit(
-		"doc_viewers",
-		{"doctype": doctype, "docname": docname, "users": list(dict.fromkeys(users))},
-		room=room,
-	)
 
 
 @realtime.on("open_in_editor")

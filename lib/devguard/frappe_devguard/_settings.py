@@ -130,6 +130,10 @@ def _as_bool(value, fallback):
 	return fallback
 
 
+def warn(message):
+	sys.stderr.write(f"WARNING frappe_devguard {message}\n")
+
+
 def _as_int(value, fallback):
 	try:
 		return int(str(value).strip())
@@ -276,7 +280,3 @@ _SETTINGS = Settings()
 
 def settings():
 	return _SETTINGS
-
-
-def warn(message):
-	sys.stderr.write(f"WARNING frappe_devguard {message}\n")

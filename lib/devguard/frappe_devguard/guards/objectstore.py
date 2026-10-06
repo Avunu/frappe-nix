@@ -110,17 +110,6 @@ _PRESIGNABLE = {"get_object", "head_object"}
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe", _patch_get_site_config)
-	on_import("botocore.client", _patch_client)
-	on_import("botocore.signers", _patch_signers)
-
-
 def conditional_writes():
 	"""Whether the store honours ``If-None-Match`` on writes.
 
@@ -322,3 +311,14 @@ def _patch_signers(module):
 
 	module.generate_presigned_url = mark(generate_presigned_url, "botocore.signers.generate_presigned_url")
 	module.generate_presigned_post = mark(generate_presigned_post, "botocore.signers.generate_presigned_post")
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe", _patch_get_site_config)
+	on_import("botocore.client", _patch_client)
+	on_import("botocore.signers", _patch_signers)

@@ -26,15 +26,6 @@ _BANNER = "Google Calendar, Contacts and Drive access is blocked"
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe.integrations.google_oauth", _patch_google_oauth)
-
-
 def _patch_google_oauth(module):
 	google_oauth = require(module, "GoogleOAuth")
 	require(google_oauth, "get_google_service_object")
@@ -44,3 +35,12 @@ def _patch_google_oauth(module):
 		NAME, "GoogleOAuth.get_google_service_object", _BLOCKED, _BANNER
 	)
 	google_oauth.refresh_access_token = blocking(NAME, "GoogleOAuth.refresh_access_token", _BLOCKED, _BANNER)
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe.integrations.google_oauth", _patch_google_oauth)

@@ -46,35 +46,6 @@ ENV = "FRAPPE_REPLICA_DB_SOCKET"
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe", _patch_frappe)
-
-
-def _patch_frappe(module):
-	if socket_path(ENV) is None:
-		return
-
-	original = require(module, "connect_replica")
-
-	def connect_replica(*args, **kwargs):
-		path = socket_path(ENV)
-		if path is None:
-			return original(*args, **kwargs)
-
-		import frappe.database
-
-		announce(NAME, f"read replica connecting over unix://{path}")
-		with swapped(frappe.database, "get_db", lambda real: _via_socket(real, path)):
-			return original(*args, **kwargs)
-
-	module.connect_replica = mark(connect_replica, "frappe.connect_replica")
-
-
 def _via_socket(real, path):
 	"""Force the replica's connection onto the socket.
 
@@ -97,3 +68,32 @@ def _via_socket(real, path):
 		return real(**kwargs)
 
 	return mark(get_db, "frappe.database.get_db")
+
+
+def _patch_frappe(module):
+	if socket_path(ENV) is None:
+		return
+
+	original = require(module, "connect_replica")
+
+	def connect_replica(*args, **kwargs):
+		path = socket_path(ENV)
+		if path is None:
+			return original(*args, **kwargs)
+
+		import frappe.database
+
+		announce(NAME, f"read replica connecting over unix://{path}")
+		with swapped(frappe.database, "get_db", lambda real: _via_socket(real, path)):
+			return original(*args, **kwargs)
+
+	module.connect_replica = mark(connect_replica, "frappe.connect_replica")
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe", _patch_frappe)

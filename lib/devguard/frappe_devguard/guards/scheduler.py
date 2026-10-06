@@ -23,15 +23,6 @@ NAME = "scheduler"
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	on_import("frappe.core.doctype.scheduled_job_type.scheduled_job_type", _patch_scheduled_job_type)
-
-
 def blocked_jobs():
 	"""Exact dotted paths to refuse.
 
@@ -42,23 +33,6 @@ def blocked_jobs():
 	"""
 	st = settings()
 	return set(st.items(NAME, "blocked_jobs")) | set(st.items(NAME, "extra_blocked_jobs"))
-
-
-def _patch_scheduled_job_type(module):
-	scheduled_job_type = require(module, "ScheduledJobType")
-	original_execute = require(scheduled_job_type, "execute")
-
-	def execute(self):
-		reason = _refusal(self)
-		if reason is None:
-			return original_execute(self)
-
-		announce(NAME, "scheduled jobs that reach production services are skipped")
-		warn(NAME, f"skipping scheduled job {self.method!r}: {reason}")
-		_mark_ran(self)
-		return None
-
-	scheduled_job_type.execute = execute
 
 
 def _refusal(job):
@@ -87,3 +61,29 @@ def _mark_ran(job):
 
 	job.db_set("last_execution", now_datetime(), update_modified=False)
 	frappe.db.commit()
+
+
+def _patch_scheduled_job_type(module):
+	scheduled_job_type = require(module, "ScheduledJobType")
+	original_execute = require(scheduled_job_type, "execute")
+
+	def execute(self):
+		reason = _refusal(self)
+		if reason is None:
+			return original_execute(self)
+
+		announce(NAME, "scheduled jobs that reach production services are skipped")
+		warn(NAME, f"skipping scheduled job {self.method!r}: {reason}")
+		_mark_ran(self)
+		return None
+
+	scheduled_job_type.execute = execute
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	on_import("frappe.core.doctype.scheduled_job_type.scheduled_job_type", _patch_scheduled_job_type)

@@ -64,23 +64,6 @@ _PROTECTED_CMDS = tuple(
 _INSTALLED = False
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	for prefix in _BACKUP_PREFIXES:
-		on_import(f"{prefix}.offsite_backup_utils", _patch_offsite_utils)
-		on_import(f"{prefix}.doctype.dropbox_settings.dropbox_settings", _patch_dropbox)
-		on_import(f"{prefix}.doctype.s3_backup_settings.s3_backup_settings", _patch_s3)
-		on_import(f"{prefix}.doctype.google_drive.google_drive", _patch_google_drive)
-
-	# Not part of the move: frappecloud is still in core on both branches.
-	on_import("frappe.integrations.frappe_providers.frappecloud", _patch_frappecloud)
-	on_import("frappe.integrations.frappe_providers", _rebind_frappe_providers)
-
-
 _BANNER = "offsite backup upload is blocked; local backups still work"
 
 
@@ -211,3 +194,20 @@ def _rebind_frappe_providers(module):
 
 	module.frappecloud_migrator = _blocked("frappe_providers.frappecloud_migrator")
 	module.migrate_to = _blocked("frappe_providers.migrate_to")
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	for prefix in _BACKUP_PREFIXES:
+		on_import(f"{prefix}.offsite_backup_utils", _patch_offsite_utils)
+		on_import(f"{prefix}.doctype.dropbox_settings.dropbox_settings", _patch_dropbox)
+		on_import(f"{prefix}.doctype.s3_backup_settings.s3_backup_settings", _patch_s3)
+		on_import(f"{prefix}.doctype.google_drive.google_drive", _patch_google_drive)
+
+	# Not part of the move: frappecloud is still in core on both branches.
+	on_import("frappe.integrations.frappe_providers.frappecloud", _patch_frappecloud)
+	on_import("frappe.integrations.frappe_providers", _rebind_frappe_providers)

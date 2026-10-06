@@ -19,19 +19,6 @@ STATUS = {}
 _ANNOUNCED = set()
 
 
-def announce(guard, detail):
-	"""Emit a guard's activation banner once per process, on first use.
-
-	Deferred rather than printed at import so the many Python processes a bench
-	starts which never reach a guarded code path (`bench build`, tooling,
-	editor helpers) stay quiet.
-	"""
-	if guard in _ANNOUNCED:
-		return
-	_ANNOUNCED.add(guard)
-	warn(guard, f"ACTIVE — {detail}")
-
-
 def warn(guard, message):
 	"""Announce loudly, by two routes.
 
@@ -50,6 +37,19 @@ def warn(guard, message):
 		pass
 
 
+def announce(guard, detail):
+	"""Emit a guard's activation banner once per process, on first use.
+
+	Deferred rather than printed at import so the many Python processes a bench
+	starts which never reach a guarded code path (`bench build`, tooling,
+	editor helpers) stay quiet.
+	"""
+	if guard in _ANNOUNCED:
+		return
+	_ANNOUNCED.add(guard)
+	warn(guard, f"ACTIVE — {detail}")
+
+
 def block(guard, message):
 	"""Announce and raise. For code paths where failing is the right answer."""
 	warn(guard, message)
@@ -66,6 +66,17 @@ def throw(guard, message):
 
 	warn(guard, message)
 	frappe.throw(message, title="Blocked by frappe-devguard")
+
+
+def mark(fn, target):
+	"""Tag a replacement so it is identifiable after ``update_wrapper``.
+
+	``rewhitelist`` copies the original's ``__name__``/``__module__`` on
+	purpose, so introspection cannot otherwise tell a guarded endpoint from an
+	untouched one.
+	"""
+	fn.__devguard__ = target
+	return fn
 
 
 def no_op(guard, what, banner=None):
@@ -108,17 +119,6 @@ def throwing(guard, what, message, banner=None):
 		throw(guard, f"{what}: {message}")
 
 	return mark(replacement, what)
-
-
-def mark(fn, target):
-	"""Tag a replacement so it is identifiable after ``update_wrapper``.
-
-	``rewhitelist`` copies the original's ``__name__``/``__module__`` on
-	purpose, so introspection cannot otherwise tell a guarded endpoint from an
-	untouched one.
-	"""
-	fn.__devguard__ = target
-	return fn
 
 
 def is_guarded(fn):

@@ -116,6 +116,32 @@ class RealtimeServer:
 	loop uvicorn runs.
 	"""
 
+	async def _on_startup(self) -> None:
+		if self.config.worker_threads:
+			asyncio.get_running_loop().set_default_executor(
+				ThreadPoolExecutor(
+					max_workers=self.config.worker_threads,
+					thread_name_prefix="realtime-worker",
+				)
+			)
+
+		self.bridge.start()
+
+	async def _on_shutdown(self) -> None:
+		await self.bridge.stop()
+		await close_clients()
+
+	def _get_uvicorn_config(self) -> uvicorn.Config:
+		"""Bind to the UDS path if configured, else to the port on all interfaces."""
+		binding: dict[str, Any]
+		if self.config.uds:
+			binding = {"uds": self.config.uds}
+		else:
+			binding = {"host": "0.0.0.0", "port": self.config.port}
+		# log_config=None keeps the caller's logging setup; access logs would record
+		# every polling request.
+		return uvicorn.Config(self.app, log_config=None, access_log=False, **binding)
+
 	def __init__(self, config: RealtimeConfig | None = None, other_asgi_app=None):
 		self.config = config or get_config()
 		self.sio = create_sio(self.config)
@@ -147,32 +173,6 @@ class RealtimeServer:
 	def stop(self) -> None:
 		"""Ask the server to shut down. run() returns once shutdown completes."""
 		self._server.should_exit = True
-
-	async def _on_startup(self) -> None:
-		if self.config.worker_threads:
-			asyncio.get_running_loop().set_default_executor(
-				ThreadPoolExecutor(
-					max_workers=self.config.worker_threads,
-					thread_name_prefix="realtime-worker",
-				)
-			)
-
-		self.bridge.start()
-
-	async def _on_shutdown(self) -> None:
-		await self.bridge.stop()
-		await close_clients()
-
-	def _get_uvicorn_config(self) -> uvicorn.Config:
-		"""Bind to the UDS path if configured, else to the port on all interfaces."""
-		binding: dict[str, Any]
-		if self.config.uds:
-			binding = {"uds": self.config.uds}
-		else:
-			binding = {"host": "0.0.0.0", "port": self.config.port}
-		# log_config=None keeps the caller's logging setup; access logs would record
-		# every polling request.
-		return uvicorn.Config(self.app, log_config=None, access_log=False, **binding)
 
 
 def serve(config: RealtimeConfig | None = None) -> None:

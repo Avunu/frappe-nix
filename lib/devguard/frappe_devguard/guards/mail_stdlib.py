@@ -41,17 +41,6 @@ def announce_mail():
 	announce(NAME, f"{detail}. Web UI: http://{st.mail_host}:{st.mail_http_port}")
 
 
-def install():
-	global _INSTALLED
-	if _INSTALLED:
-		return
-	_INSTALLED = True
-
-	_patch_smtplib()
-	_patch_imaplib()
-	_patch_poplib()
-
-
 # --------------------------------------------------------------------------
 # SMTP
 # --------------------------------------------------------------------------
@@ -167,3 +156,14 @@ def _patch_poplib():
 	poplib.POP3.user = user
 	poplib.POP3.pass_ = pass_
 	poplib.POP3_SSL._create_socket = _create_socket  # ty: ignore[unresolved-attribute]
+
+
+def install():
+	global _INSTALLED
+	if _INSTALLED:
+		return
+	_INSTALLED = True
+
+	_patch_smtplib()
+	_patch_imaplib()
+	_patch_poplib()
