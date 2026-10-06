@@ -260,6 +260,47 @@ mv "$ROOT/remotes/fresh.git.away" "$ROOT/remotes/fresh.git"
 run
 check "and the next entry tries again" at_pin fresh
 
+echo "── an app with submodules of its own ────────────────────────────"
+# As hrms has frappe-ui. A fetch's on-demand submodule check diffs every commit
+# it brings in for a moved gitlink, and in a treeless clone each of those trees
+# is a lazy fetch from the remote: one round trip per commit on another branch,
+# thousands of them for hrms's conversion, and more on every fetch after it.
+seed_remote ui
+seed_remote nested
+git -C "$ROOT/seed/nested" checkout -q develop
+git -C "$ROOT/seed/nested" submodule add -q "file://$ROOT/remotes/ui.git" frontend/ui
+git -C "$ROOT/seed/nested" commit -q -m "add ui"
+git -C "$ROOT/seed/nested" push -q "$ROOT/remotes/nested.git" develop
+commit_to nested version-x "version-x 2"
+mkdir -p "$ROOT/nestbench/apps"
+cd "$ROOT/nestbench"
+git init -q -b main
+git submodule add -q -b develop "file://$ROOT/remotes/nested.git" apps/nested
+git commit -q -m bench
+git clone -q "$ROOT/nestbench" "$ROOT/nestclone"
+cd "$ROOT/nestclone"
+run
+check_eq "exits 0" 0 "$RC"
+check "checks it out as a partial clone of every branch" partial_all_branches apps/nested
+check_not "…without fetching another branch's folders to look for submodule changes" \
+  has_obj apps/nested 'origin/version-x^{tree}'
+check_eq "…nor on a later fetch, which the clone is set up not to recurse on" \
+  false "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+commit_to nested version-x "version-x 3"
+git -C apps/nested fetch -q
+check_not "…so a plain git fetch in it does not fetch them either" \
+  has_obj apps/nested 'origin/version-x^{tree}'
+# A clone converted before the setting existed.
+git -C apps/nested config --unset fetch.recurseSubmodules || true
+run
+check_eq "an existing treeless clone gets the setting on the next entry" \
+  false "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+check_eq "…silently" "" "$OUT"
+git -C apps/nested config fetch.recurseSubmodules on-demand
+run
+check_eq "but one set by hand is left as it is" \
+  on-demand "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+
 echo "── not a bench ──────────────────────────────────────────────────"
 mkdir -p "$ROOT/empty"
 OUT="$("$TOOL" "$ROOT/empty" 2>&1)" && RC=0 || RC=$?
