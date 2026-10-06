@@ -1,121 +1,26 @@
 name: Docs
 
-# Builds the documentation site (docs-site/, from the Markdown in docs/) and publishes it to GitHub
-# Pages at the project's address (https://<project>.avunu.net).
-#
-#   build    every pull request and every push to the default branch: `bun run check` (set-up check,
-#            unit tests, colour contrast, a build in which any document problem fails, and a link
-#            check of the built site). Pull requests also get the built site as a downloadable artifact.
-#   deploy   pushes to the default branch and manual runs on it only: configure-pages, then
-#            deploy-pages into the `github-pages` environment.
-#
-# The branch in `on.push.branches` is the repository's default branch: `init` writes it there (it
-# cannot be an expression), and the deploy job compares against github.event.repository.default_branch,
-# so a site never publishes from anything else.
-#
-# Every job is gated by the repository variable DOCS_SITE_ENABLED: until a maintainer has enabled
-# GitHub Pages (Settings > Pages > Source: GitHub Actions) and set the variable to `true`, the
-# workflow runs, skips everything and stays green. The README of the site says how.
-#
-# The site is built from what docs-site/bun.lock pins: the released Jx packages from npm, installed
-# with --frozen-lockfile, and nothing else. The job that builds the site is the job whose output is
-# deployed, so it never fetches code from anywhere that a review of this repository has not seen.
-# A Jx update is a pull request that changes docs-site/package.json and docs-site/bun.lock.
-#
-# The path filter keeps commits that do not touch the documentation from rebuilding it. Do not make
-# this workflow a required check unless the filter is removed: a skipped path-filtered workflow
-# leaves the check pending.
+# Checks the documentation on every pull request that touches it. The work is done by the shared
+# workflow of Avunu/docusystem, pinned to a commit (Dependabot's github-actions entry moves the pin).
+# Nothing here can publish: the token is read-only. Publishing is docs-publish.yml.
 on:
   pull_request:
     paths:
-      - "docs/**"
-      - "docs-site/**"
-      - ".github/workflows/docs.yml"
-  push:
-    branches: ["main"]
-    paths:
-      - "docs/**"
-      - "docs-site/**"
-      - ".github/workflows/docs.yml"
-  workflow_dispatch:
+      - docs/**
+      - docs-site/**
+      - .github/workflows/docs.yml
+      - .github/workflows/docs-publish.yml
 
-# Nothing gets a token by default; each job asks for what it needs.
 permissions: {}
 
 concurrency:
-  # A newer push to a pull request supersedes the older run; main and manual runs always finish.
-  group: docs-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build
-    if: ${{ vars.DOCS_SITE_ENABLED == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
     permissions:
-      contents: read # checkout only
-    defaults:
-      run:
-        working-directory: docs-site
-    steps:
-      - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: "1.4"
-          no-cache: true # the install is a few seconds, and a shared cache is a poisoning risk for a deploy job
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      # A build must not depend on avunu.net being up: --soft keeps the committed snapshot when the
-      # catalog cannot be fetched or is not valid.
-      - name: Refresh the project catalog for the switcher
-        run: bun scripts/sync-projects.ts --soft
-
-      - name: Check and build
-        run: bun run check
-
-      - name: Upload the site for review
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: docs-site
-          path: docs-site/dist
-          retention-days: 7
-          if-no-files-found: error
-
-      - name: Package the site for GitHub Pages
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: docs-site/dist
-
-  deploy:
-    name: Deploy
-    needs: build
-    if: ${{ vars.DOCS_SITE_ENABLED == 'true' && github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      pages: write # publish the artifact
-      id-token: write # prove to Pages that this run made it
-    concurrency:
-      group: pages
-      cancel-in-progress: false # never cancel a deployment half way
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      # Fails with a plain message when Pages is not enabled, before anything is published.
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      contents: read # checkout
+    uses: Avunu/docusystem/.github/workflows/docs-build.yml@5f97ba8d997b882044ad6d6e7c66dca9194a8422 # v0.1.0
+    with:
+      site-directory: docs-site

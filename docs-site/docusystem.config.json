@@ -1,4 +1,5 @@
 {
+  "$schema": "./node_modules/@avunu/docusystem/config.schema.json",
   "name": "frappe-nix",
   "tagline": "Reproducible Nix infrastructure for Frappe and ERPNext, from the development shell to OCI containers and a multi-site NixOS module.",
   "slug": "frappe-nix",

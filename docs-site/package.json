@@ -5,30 +5,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "postinstall": "bun scripts/postinstall.ts",
-    "dev": "bun scripts/dev.ts",
-    "build": "bun scripts/build.ts",
-    "check": "bun scripts/check.ts",
-    "lint:docs": "bun scripts/lint-docs.ts",
-    "test": "bun test scripts",
-    "nav": "bun scripts/nav.ts",
-    "sync:projects": "bun scripts/sync-projects.ts",
-    "check:links": "bun scripts/check-links.ts",
-    "check:contrast": "bun scripts/check-contrast.ts",
-    "init": "bun scripts/init.ts",
-    "schema": "bunx --bun jx schema",
-    "preview": "bunx --bun jx preview"
+    "dev": "docusystem dev",
+    "build": "docusystem build",
+    "check": "docusystem check"
   },
   "dependencies": {
-    "@jxsuite/compiler": "^5.0.0",
-    "@jxsuite/parser": "^2.0.0",
-    "@jxsuite/runtime": "^4.0.3",
-    "@jxsuite/search": "^0.4.0"
-  },
-  "devDependencies": {
-    "@jxsuite/server": "^4.4.3"
-  },
-  "engines": {
-    "bun": ">=1.4.0"
+    "@avunu/docusystem": "^0.1.0"
   }
 }

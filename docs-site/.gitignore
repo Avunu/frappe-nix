@@ -7,3 +7,4 @@ project.schema.json
 document.schema.json
 
 node_modules/
+.docusystem/

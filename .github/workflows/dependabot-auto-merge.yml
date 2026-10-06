@@ -17,9 +17,9 @@ jobs:
   auto-merge:
     runs-on: ubuntu-latest
     # The documentation site's package updates (docs-site/) are reviewed by a person: the Docs
-    # workflow that builds the site is gated by a repository variable and is not a required check, so
+    # check is path-filtered and cannot be a required check, so
     # nothing but the `flake` job would stand between such a pull request and main.
-    if: ${{ github.actor == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/bun/docs-site') }}
+    if: ${{ github.actor == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/npm_and_yarn/docs-site') && !startsWith(github.head_ref, 'dependabot/github_actions/') }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
