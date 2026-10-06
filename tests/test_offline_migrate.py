@@ -269,12 +269,12 @@ check(
 	recorded.splitlines()[1] == "MODE 600",
 	recorded.splitlines()[1],
 )
-cnf = [a for a in argv_line.split() if a.startswith("--defaults-file=")][0].split("=", 1)[1]
+cnf = next(a for a in argv_line.split() if a.startswith("--defaults-file=")).split("=", 1)[1]
 check("the option file is gone afterwards", not os.path.exists(cnf), cnf)
 
 os.environ["PT_STUB_RC"] = "3"
 ok, out = says(om.run_online, plan, fake, dbinfo, False, [])
-cnf = [a for a in open(record).read().splitlines()[0].split() if a.startswith("--defaults-file=")][0].split(
+cnf = next(a for a in open(record).read().splitlines()[0].split() if a.startswith("--defaults-file=")).split(
 	"=", 1
 )[1]
 del os.environ["PT_STUB_RC"]
