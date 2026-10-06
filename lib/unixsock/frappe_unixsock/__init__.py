@@ -36,8 +36,8 @@ command.
 from ._settings import UnixSocketPatchError, UnixSocketPathError, enabled
 
 __all__ = [
-	"UnixSocketPathError",
 	"UnixSocketPatchError",
+	"UnixSocketPathError",
 	"enabled",
 	"install",
 	"status",

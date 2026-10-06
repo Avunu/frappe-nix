@@ -49,7 +49,6 @@ if "socketio" not in sys.modules and not _socketio_is_installed():
 
 import httpx
 import socketio
-
 from frappe_runtime import auth as auth_mod
 from frappe_runtime import bridge as bridge_mod
 from frappe_runtime import dispatch as dispatch_mod
@@ -132,12 +131,6 @@ class FakeSio:
 
 	def rooms_of(self, sid: str) -> set[str]:
 		return self.rooms.get(sid, set())
-
-
-def make_config(**overrides: object) -> RealtimeConfig:
-	base = dict(port=9000, redis_queue="redis://127.0.0.1:11311", default_site=None, developer_mode=False)
-	base.update(overrides)
-	return RealtimeConfig(**base)
 
 
 def make_environ(
@@ -769,7 +762,7 @@ class TestDispatch(unittest.IsolatedAsyncioTestCase):
 	async def test_sync_handler_runs_in_thread(self):
 		seen = []
 
-		def handler(socket: Socket) -> None:
+		def handler(socket: SyncSocket) -> None:
 			socket.join("room1")
 			seen.append((type(socket).__name__, threading.current_thread() is threading.main_thread()))
 

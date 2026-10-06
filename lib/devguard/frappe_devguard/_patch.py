@@ -46,7 +46,7 @@ def warn(guard, message):
 		import frappe
 
 		frappe.logger("frappe_devguard").warning(f"[{guard}] {message}")
-	except Exception:  # noqa: BLE001 - logging must never be the thing that fails
+	except Exception:  # logging must never be the thing that fails
 		pass
 
 
@@ -256,7 +256,7 @@ def assert_not_overridden(guard, cmds):
 
 	try:
 		overrides = frappe.get_hooks("override_whitelisted_methods") or {}
-	except Exception:  # noqa: BLE001 - no site context; nothing to check against
+	except Exception:  # no site context; nothing to check against
 		return
 	for cmd in cmds:
 		if cmd in overrides:

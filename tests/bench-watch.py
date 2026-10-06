@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory() as apps_dir:
 	)
 	check(
 		"another publisher can be left out too",
-		(["mine", "unparseable", "computed", "nohooks"], frappe_apps + ["vendored"]),
+		(["mine", "unparseable", "computed", "nohooks"], [*frappe_apps, "vendored"]),
 		bench_watch.select_apps(all_apps, None, ["Frappe Technologies", "AgriTheory"], publisher),
 	)
 	check(

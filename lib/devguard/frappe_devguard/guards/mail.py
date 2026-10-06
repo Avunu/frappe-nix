@@ -260,7 +260,8 @@ def _patch_email_account(module):
 
 	def get_frappe_mail_client(self):
 		if not enabled():
-			return original_frappe_mail_client(self)
+			# Only installed when Frappe has it: see `is not None` below.
+			return original_frappe_mail_client(self)  # ty: ignore[call-non-callable]
 		announce_mail()
 		# Frappe Mail is a second outgoing transport that posts the message to
 		# a remote Frappe site over HTTP (frappe.email.frappemail), so neither

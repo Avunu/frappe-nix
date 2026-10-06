@@ -32,7 +32,7 @@ def expect_raises(label, exc_type, fn):
 		fn()
 	except exc_type:
 		print(f"ok   {label}")
-	except Exception as exc:  # noqa: BLE001 - the point is to report the mismatch
+	except Exception as exc:  # the point is to report the mismatch
 		print(f"FAIL {label} raised {type(exc).__name__}: {exc}")
 		FAILURES.append(label)
 	else:
@@ -40,10 +40,12 @@ def expect_raises(label, exc_type, fn):
 		FAILURES.append(label)
 
 
-from frappe_unixsock import _settings, database, web  # noqa: E402
-from frappe_unixsock._settings import UnixSocketPathError  # noqa: E402
-from frappe_unixsock._patch import require, swapped  # noqa: E402
-from frappe_unixsock._settings import UnixSocketPatchError  # noqa: E402
+from frappe_unixsock import _settings, database, web
+from frappe_unixsock._patch import require, swapped
+from frappe_unixsock._settings import (
+	UnixSocketPatchError,
+	UnixSocketPathError,
+)
 
 SOCK = "/run/user/1000/devenv-abcdef0/web.sock"
 

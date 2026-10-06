@@ -9,13 +9,13 @@ FRAPPE_SERVE_ASSETS to also send /assets and /files, as when there is no proxy.
 import os
 
 from a2wsgi import WSGIMiddleware
-
 from frappe.app import application as wsgi_application
 from frappe.app import application_with_statics
+from frappe.utils.data import sbool
+
 from frappe_runtime.config import get_config as get_socketio_config
 from frappe_runtime.server import RealtimeServer
 from frappe_runtime.util import default_site_middleware
-from frappe.utils.data import sbool
 
 DEFAULT_WEB_THREADS = 8
 web_threads = int(os.environ.get("FRAPPE_WEB_THREADS") or DEFAULT_WEB_THREADS)

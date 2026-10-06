@@ -79,7 +79,7 @@
           {
             inputs ? { },
             ...
-          }@consumerArgs:
+          }:
           config:
           flake-parts.lib.mkFlake {
             inputs = self.inputs // inputs;

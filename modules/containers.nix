@@ -9,10 +9,7 @@
 # Volume contract:
 #   /bench/sites  — mount a persistent volume here for site state
 #   /secrets/     — mount secret files (db_password, encryption_key, *.json)
-{
-  lib,
-  ...
-}:
+_:
 
 {
   config = {
@@ -21,7 +18,6 @@
         config,
         pkgs,
         lib,
-        system,
         ...
       }:
       let
@@ -57,7 +53,7 @@
             freetype
             openssl
             libffi
-            (cfg.mariadb.package).client
+            cfg.mariadb.package.client
             liberation_ttf
             noto-fonts
           ]
@@ -68,7 +64,7 @@
           pkgs.openssl
           pkgs.libffi
           pkgs.file.out
-          (cfg.mariadb.package).client
+          cfg.mariadb.package.client
           pkgs.cairo
           pkgs.pango
           pkgs.gdk-pixbuf

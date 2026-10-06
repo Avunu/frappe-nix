@@ -87,7 +87,9 @@ class _Registry:
 
 		if spec is None or spec.loader is None:
 			return None
-		spec.loader = _Loader(spec.loader, fullname, self)
+		# Duck-typed: _Loader delegates through __getattr__, so it is not an
+		# importlib.abc.Loader subclass (which would shadow that delegation).
+		spec.loader = _Loader(spec.loader, fullname, self)  # ty: ignore[invalid-assignment]
 		return spec
 
 

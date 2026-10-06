@@ -7,19 +7,19 @@
 `python -m frappe.runner` from the bench root — the natural place, and where `bench`'s own CLI resolves its bench from — does not work. Three distinct failures, in the order you meet them:
 
 1.  **Startup dies on handler discovery.**
-    
+
     ```
     File "frappe/realtime/registry.py", line 114, in discover_app_handlers
         for app in frappe.get_all_apps(with_internal_apps=False, sites_path=sites_path):
     OSError: b'/path/to/bench/apps.txt' Not Found
     ```
-    
+
     `sites_path` resolved to the bench root, so `apps.txt` is looked for one level too high.
-    
+
 2.  **Realtime silently loses its configuration.** Past that, `get_config()` reads `common_site_config.json` relative to the same wrong path. Nothing is found and every value falls back to its default — `socketio_port`, `socketio_uds`, `default_site`. `_get_common_site_config` returns an empty dict for a missing file rather than raising, so there is no warning at all. (`redis_queue` survives only if `FRAPPE_REDIS_QUEUE` is set, via `_apply_common_env_overrides`.)
-    
+
 3.  **Every background job fails.**
-    
+
     ```
     File "frappe/utils/background_jobs.py", line 255, in execute_job
         frappe.init(site, force=True, is_job=True)
@@ -27,7 +27,7 @@
         raise IncorrectSitePath(error_msg)
     frappe.exceptions.IncorrectSitePath: 404 Not Found: mysite.localhost does not exist.
     ```
-    
+
 
 ## Reproduction
 

@@ -46,8 +46,9 @@ def _install_compat_shim() -> None:
 	"""
 	import frappe.realtime
 
-	frappe.realtime.Socket = Socket
-	frappe.realtime.realtime = realtime
+	# New names on Frappe's module, by design: see above.
+	frappe.realtime.Socket = Socket  # ty: ignore[unresolved-attribute]
+	frappe.realtime.realtime = realtime  # ty: ignore[unresolved-attribute]
 
 
 _install_compat_shim()

@@ -33,7 +33,8 @@ class RealtimeEvent:
 
 	@classmethod
 	def from_raw(cls, raw: str | bytes | bytearray | None) -> RealtimeEvent:
-		data = json.loads(raw)
+		# None raises TypeError here, which _handle reports as a malformed message.
+		data = json.loads(raw)  # ty: ignore[invalid-argument-type]
 		return cls(
 			event=data["event"],
 			message=data.get("message"),

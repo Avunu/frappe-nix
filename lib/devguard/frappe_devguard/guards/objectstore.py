@@ -230,7 +230,7 @@ def _refuse_overwrite(original, client, operation, params):
 	probe = {"Bucket": params.get("Bucket"), "Key": params["Key"]}
 	try:
 		original(client, "HeadObject", probe)
-	except Exception as exc:  # noqa: BLE001 - classified below, never swallowed blindly
+	except Exception as exc:  # classified below, never swallowed blindly
 		if _error_code(exc) in _ABSENT:
 			return
 		# Most often 403 for a write-only credential, which cannot tell
@@ -303,7 +303,7 @@ def _patch_signers(module):
 	original_url = require(module, "generate_presigned_url")
 	original_post = require(module, "generate_presigned_post")
 
-	def generate_presigned_url(self, ClientMethod, *args, **kwargs):  # noqa: N803 - botocore's name
+	def generate_presigned_url(self, ClientMethod, *args, **kwargs):  # botocore's name
 		if _guarded(self) and ClientMethod not in _PRESIGNABLE:
 			block(
 				NAME,

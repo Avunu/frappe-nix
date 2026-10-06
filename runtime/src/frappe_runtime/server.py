@@ -26,6 +26,7 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import socketio
 import uvicorn
@@ -59,7 +60,8 @@ class _TolerantConnect:
 	"""
 
 	async def connect(self, eio_sid: str, namespace: str) -> str | None:
-		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)
+		# A mixin: super() and sid_from_eio_sid are the manager it is combined with.
+		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)  # ty: ignore[unresolved-attribute]
 
 
 class TolerantManager(_TolerantConnect, socketio.AsyncManager):
@@ -163,6 +165,7 @@ class RealtimeServer:
 
 	def _get_uvicorn_config(self) -> uvicorn.Config:
 		"""Bind to the UDS path if configured, else to the port on all interfaces."""
+		binding: dict[str, Any]
 		if self.config.uds:
 			binding = {"uds": self.config.uds}
 		else:

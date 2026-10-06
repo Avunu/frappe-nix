@@ -38,9 +38,9 @@ def check(label, condition, detail=""):
 		FAILURES.append(label)
 
 
-import frappe_journald  # noqa: E402
-from frappe_journald import _format, _patches  # noqa: E402
-from frappe_journald._format import JournaldFormatter, priority  # noqa: E402
+import frappe_journald
+from frappe_journald import _format, _patches
+from frappe_journald._format import JournaldFormatter, priority
 
 SITE = "erp.example.com"
 

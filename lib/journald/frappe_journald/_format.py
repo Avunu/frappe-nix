@@ -83,7 +83,7 @@ def current_site():
 	if local is not None:
 		try:
 			site = getattr(local, "site", None)
-		except Exception:  # noqa: BLE001 - a torn-down Local must not lose the record
+		except Exception:  # a torn-down Local must not lose the record
 			site = None
 		if site:
 			return site

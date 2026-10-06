@@ -29,7 +29,7 @@ for line (v15 and v16):
 - Native Sass, with --sass. frappe compiles stylesheets with Dart Sass compiled
   to JavaScript; --sass names a sass-embedded module (lib/sass-embedded.nix)
   that the --preload module hands to frappe's require("sass") instead — the
-  same API on the native compiler, 3–6x faster on the stylesheets measured.
+  same API on the native compiler, 3-6x faster on the stylesheets measured.
 
 Run from sites/, as bench runs every frappe command, for frappe.init("") to find
 the sites.

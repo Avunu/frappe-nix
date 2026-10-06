@@ -10,12 +10,12 @@ from http.cookiejar import CookieJar
 from http.cookies import SimpleCookie
 from typing import Literal, NoReturn
 
+import frappe
 import httpx
+from frappe.realtime import SOCKETIO_SECRET_KEY
 from redis import asyncio as aioredis
 from socketio.exceptions import ConnectionRefusedError
 
-import frappe
-from frappe.realtime import SOCKETIO_SECRET_KEY
 from frappe_runtime.config import RealtimeConfig
 from frappe_runtime.util import get_hostname, get_url, read_header, resolve_site_name
 
@@ -207,9 +207,8 @@ def _get_local_client():
 	overwrite our Cookie header and replay one user's sid onto the next connect."""
 	global _local_client
 	if _local_client is None:
-		from werkzeug.test import Client
-
 		from frappe.app import application
+		from werkzeug.test import Client
 
 		_local_client = Client(application, use_cookies=False)
 	return _local_client

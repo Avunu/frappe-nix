@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from frappe_runtime.auth import Session
 
@@ -76,7 +76,7 @@ class Socket:
 		"""Emit to a room, or to this client (default)."""
 		await self._sio.emit(event, data, to=room or self.sid, namespace=self.namespace)
 
-	def get(self, key: str, default: object = None) -> object:
+	def get(self, key: str, default: Any = None) -> Any:
 		"""Read transient per-socket state from the session."""
 		return self._session.data.get(key, default)
 
@@ -154,7 +154,7 @@ class SyncSocket:
 	def emit(self, event: str, data: object | None = None, room: str | None = None) -> None:
 		self._run(self._socket.emit(event, data, room))
 
-	def get(self, key: str, default: object = None) -> object:
+	def get(self, key: str, default: Any = None) -> Any:
 		return self._socket.get(key, default)
 
 	def set(self, key: str, value: object) -> None:

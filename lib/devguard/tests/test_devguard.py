@@ -32,7 +32,7 @@ def expect_raises(label, exc_type, fn):
 		fn()
 	except exc_type:
 		print(f"ok   {label}")
-	except Exception as exc:  # noqa: BLE001 - the point is to report the mismatch
+	except Exception as exc:  # the point is to report the mismatch
 		print(f"FAIL {label} raised {type(exc).__name__}: {exc}")
 		FAILURES.append(label)
 	else:
@@ -49,7 +49,7 @@ class _LineServer(socketserver.ThreadingTCPServer):
 	allow_reuse_address = True
 	daemon_threads = True
 	greeting = b""
-	replies = {}
+	replies: dict[bytes, bytes] = {}  # noqa: RUF012 - replaced per server, never mutated
 	default_reply = b""
 	quit_command = b""
 
@@ -99,17 +99,17 @@ os.environ["FRAPPE_DEVGUARD_MAIL_POP3_PORT"] = str(POP3_PORT)
 for stale in ("FRAPPE_DEVGUARD_ENABLED", "FRAPPE_DEVGUARD_DISABLE", "FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"):
 	os.environ.pop(stale, None)
 
-import imaplib  # noqa: E402
-import poplib  # noqa: E402
-import smtplib  # noqa: E402
+import imaplib
+import poplib
+import smtplib
 
-import frappe_devguard  # noqa: E402
-from frappe_devguard import DevGuardBlocked, DevGuardPatchError  # noqa: E402
+import frappe_devguard
+from frappe_devguard import DevGuardBlocked, DevGuardPatchError
 
 frappe_devguard.install()  # exactly what the .pth bootstrap does
 
-from frappe_devguard._hook import on_import  # noqa: E402
-from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require  # noqa: E402
+from frappe_devguard._hook import on_import
+from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require
 
 # An unresolvable host is the point: if any of these reach DNS, the redirect
 # did not happen and the test fails with gaierror rather than passing quietly.
@@ -129,10 +129,10 @@ check("incoming blocked by default", frappe_devguard.settings().block_incoming)
 # and above baked (so it wins when present) — but crucially it must NOT be the
 # only source, or a bench outside devenv would fall back to the stock 1025 and
 # mail into another project's catcher.
-import json  # noqa: E402
-import tempfile  # noqa: E402
+import json
+import tempfile
 
-from frappe_devguard import _settings as _dgs  # noqa: E402
+from frappe_devguard import _settings as _dgs
 
 _runtime_dir = tempfile.mkdtemp()
 _runtime_file = os.path.join(_runtime_dir, "devguard-runtime.json")
@@ -292,7 +292,7 @@ fired = []
 on_import("json.decoder", lambda module: fired.append(module.__name__))
 sys.modules.pop("json.decoder", None)
 sys.modules.pop("json", None)
-import json  # noqa: E402, F401
+import json
 
 check("post-import hook fires", fired == ["json.decoder"], fired)
 check("hooked module still works", json.loads('{"a": 1}') == {"a": 1})
@@ -363,7 +363,7 @@ expect_raises(
 # the synthesised account used on sites with no Email Account at all
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.mail import _synthetic_account  # noqa: E402
+from frappe_devguard.guards.mail import _synthetic_account
 
 
 class FakeEmailAccount:
@@ -396,7 +396,7 @@ check(
 # whitelist swap — a replacement the framework still recognises
 # --------------------------------------------------------------------------
 
-import types  # noqa: E402
+import types
 
 
 def stub_frappe(container=list):
@@ -416,7 +416,7 @@ def stub_frappe(container=list):
 
 
 frappe_stub = stub_frappe()
-from frappe_devguard._patch import assert_not_overridden, rewhitelist  # noqa: E402
+from frappe_devguard._patch import assert_not_overridden, rewhitelist
 
 
 def register(registry, fn):
@@ -476,7 +476,7 @@ print("ok   assert_not_overridden tolerates an unrelated override map")
 # scheduler denylist — exact match only
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.scheduler import blocked_jobs  # noqa: E402
+from frappe_devguard.guards.scheduler import blocked_jobs
 
 jobs = blocked_jobs()
 check(
@@ -512,7 +512,7 @@ os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
 
 # override_whitelisted_methods is consulted before get_attr, so the cmd strings
 # assert_not_overridden watches have to name both layouts as well.
-from frappe_devguard.guards.backups import _BACKUP_PREFIXES, _PROTECTED_CMDS  # noqa: E402
+from frappe_devguard.guards.backups import _BACKUP_PREFIXES, _PROTECTED_CMDS
 
 check(
 	"both backup layouts are guarded",
@@ -541,7 +541,7 @@ check("four endpoints per layout", len(_PROTECTED_CMDS) == 8, len(_PROTECTED_CMD
 # to a remote site that smtplib never sees.
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards.mail import _patch_email_queue  # noqa: E402
+from frappe_devguard.guards.mail import _patch_email_queue
 
 
 class FakeSMTPServer:
@@ -628,7 +628,7 @@ expect_raises(
 # the guard touches. `calls` records what would have reached the network.
 # --------------------------------------------------------------------------
 
-from frappe_devguard.guards import objectstore  # noqa: E402
+from frappe_devguard.guards import objectstore
 
 
 class FakeClientError(Exception):
@@ -661,10 +661,10 @@ def fake_botocore():
 				return {"ContentLength": 1}
 			return {"ok": operation_name}
 
-	def generate_presigned_url(self, ClientMethod, Params=None, **_kwargs):  # noqa: N803
+	def generate_presigned_url(self, ClientMethod, Params=None, **_kwargs):
 		return f"https://signed/{ClientMethod}"
 
-	def generate_presigned_post(self, Bucket, Key, **_kwargs):  # noqa: N803
+	def generate_presigned_post(self, Bucket, Key, **_kwargs):
 		return {"url": "https://signed/post"}
 
 	client_mod.BaseClient = BaseClient

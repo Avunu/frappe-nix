@@ -20,7 +20,7 @@ let
       {
         passthru = {
           pythonEnv = pkgs.emptyDirectory;
-          nodejs = pkgs.nodejs;
+          inherit (pkgs) nodejs;
           appsPath = _: "/stub/apps";
         };
       }

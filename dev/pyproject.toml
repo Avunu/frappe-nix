@@ -24,6 +24,8 @@ dependencies = [
 [dependency-groups]
 dev = [
     "codesorter>=0.2.8",
+    # lib/banner.py's one dependency (it runs under lib/rich-python.nix).
+    "rich",
     "ruff==0.14.10",
     "ty",
 ]

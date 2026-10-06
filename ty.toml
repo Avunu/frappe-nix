@@ -16,3 +16,19 @@ extra-paths = [
 
 [src]
 exclude = ["tests/fixtures"]
+
+[analysis]
+# Written by lib/devguard.nix at build time from the Nix options.
+allowed-unresolved-imports = ["frappe_devguard._baked"]
+
+# The suites stand Frappe, bench, botocore and socketio up as hand-built stub
+# modules and fakes, so the shapes ty infers for those are the stubs', not the
+# real thing's. Imports, names and syntax are still checked.
+[[overrides]]
+include = ["**/tests/**", "tests/**"]
+
+[overrides.rules]
+unresolved-attribute = "ignore"
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+invalid-attribute-access = "ignore"

@@ -49,10 +49,10 @@ def patch_frappe_logger(module):
 
 	original = getattr(module, "get_logger", None)
 	try:
-		signature = inspect.signature(original)
+		signature = inspect.signature(original) if original is not None else None
 	except (TypeError, ValueError):
 		signature = None
-	if signature is None or "stream_only" not in signature.parameters:
+	if original is None or signature is None or "stream_only" not in signature.parameters:
 		warn("frappe.utils.logger.get_logger has moved; Frappe's loggers keep their stock format")
 		return
 
@@ -75,9 +75,9 @@ def patch_frappe_logger(module):
 				handler.setFormatter(JournaldFormatter(name))
 		return logger
 
-	get_logger.__wrapped__ = original
+	get_logger.__wrapped__ = original  # ty: ignore[unresolved-attribute]
 	get_logger.__doc__ = original.__doc__
-	get_logger.__journald__ = "frappe.utils.logger.get_logger"
+	get_logger.__journald__ = "frappe.utils.logger.get_logger"  # ty: ignore[unresolved-attribute]
 	module.get_logger = get_logger
 
 
@@ -122,6 +122,6 @@ def patch_bench_utils(module):
 			logger.addHandler(handler)
 		return logger
 
-	setup_logging.__wrapped__ = original
-	setup_logging.__journald__ = "bench.utils.setup_logging"
+	setup_logging.__wrapped__ = original  # ty: ignore[unresolved-attribute]
+	setup_logging.__journald__ = "bench.utils.setup_logging"  # ty: ignore[unresolved-attribute]
 	module.setup_logging = setup_logging

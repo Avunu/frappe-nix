@@ -61,7 +61,7 @@ def _patch_smtplib():
 	original_connect = smtplib.SMTP.connect
 	original_starttls = smtplib.SMTP.starttls
 	original_login = smtplib.SMTP.login
-	original_get_socket = smtplib.SMTP_SSL._get_socket
+	original_get_socket = smtplib.SMTP_SSL._get_socket  # ty: ignore[unresolved-attribute]
 
 	def connect(self, host="localhost", port=0, source_address=None):
 		if not enabled():
@@ -91,12 +91,12 @@ def _patch_smtplib():
 		if not enabled():
 			return original_get_socket(self, host, port, timeout)
 		# No implicit TLS: the catcher does not speak it on the SMTP port.
-		return smtplib.SMTP._get_socket(self, host, port, timeout)
+		return smtplib.SMTP._get_socket(self, host, port, timeout)  # ty: ignore[unresolved-attribute]
 
 	smtplib.SMTP.connect = connect
 	smtplib.SMTP.starttls = starttls
 	smtplib.SMTP.login = login
-	smtplib.SMTP_SSL._get_socket = _get_socket
+	smtplib.SMTP_SSL._get_socket = _get_socket  # ty: ignore[unresolved-attribute]
 
 
 # --------------------------------------------------------------------------
@@ -127,7 +127,7 @@ def _patch_poplib():
 	import poplib
 
 	original_init = poplib.POP3.__init__
-	original_create_socket = poplib.POP3_SSL._create_socket
+	original_create_socket = poplib.POP3_SSL._create_socket  # ty: ignore[unresolved-attribute]
 	original_user = poplib.POP3.user
 	original_pass = poplib.POP3.pass_
 
@@ -147,7 +147,7 @@ def _patch_poplib():
 	def _create_socket(self, timeout):
 		if not enabled():
 			return original_create_socket(self, timeout)
-		return poplib.POP3._create_socket(self, timeout)
+		return poplib.POP3._create_socket(self, timeout)  # ty: ignore[unresolved-attribute]
 
 	def user(self, user):
 		st = settings()
@@ -166,4 +166,4 @@ def _patch_poplib():
 	poplib.POP3.__init__ = __init__
 	poplib.POP3.user = user
 	poplib.POP3.pass_ = pass_
-	poplib.POP3_SSL._create_socket = _create_socket
+	poplib.POP3_SSL._create_socket = _create_socket  # ty: ignore[unresolved-attribute]

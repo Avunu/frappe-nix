@@ -16,13 +16,13 @@ import threading
 import time
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
-
-from rq.timeouts import TimerDeathPenalty
-from rq.worker import StopRequested
+from typing import Any
 
 import frappe
 from frappe.utils.background_jobs import FrappeWorkerNoFork, get_queue_list, get_redis_conn
 from frappe.utils.scheduler import start_scheduler
+from rq.timeouts import TimerDeathPenalty
+from rq.worker import StopRequested
 
 from frappe_runtime.journald import setup_logging
 
@@ -77,6 +77,7 @@ class WebServer:
 		# A unix socket wins over host/port. uvicorn binds without unlinking first, so
 		# a socket file left behind by a killed process would fail the bind; the
 		# standalone realtime path in server.py does the same unlink.
+		binding: dict[str, Any]
 		if config.uds:
 			with suppress(FileNotFoundError):
 				os.unlink(config.uds)
@@ -89,7 +90,8 @@ class WebServer:
 				self.app,
 				log_config=None,
 				access_log=False,
-				timeout_graceful_shutdown=config.request_drain_seconds,
+				# Annotated int, but uvicorn hands it to asyncio.wait_for, which takes a float.
+				timeout_graceful_shutdown=config.request_drain_seconds,  # ty: ignore[invalid-argument-type]
 				**binding,
 			)
 		)
@@ -518,7 +520,9 @@ class SourceWatch:
 		observer = Observer()
 		observer.daemon = True
 		for path in paths:
-			observer.schedule(self, path, recursive=True)
+			# Duck-typed: watchdog only calls dispatch(), and importing its base
+			# class at module level would make watchdog a hard dependency.
+			observer.schedule(self, path, recursive=True)  # ty: ignore[invalid-argument-type]
 		observer.start()
 		logger.info("dev: watching %s", ", ".join(paths))
 

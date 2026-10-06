@@ -59,7 +59,6 @@ in
     {
       config,
       pkgs,
-      system,
       ...
     }:
     {
@@ -1290,7 +1289,6 @@ in
         config,
         pkgs,
         lib,
-        system,
         ...
       }:
       let
@@ -1342,7 +1340,7 @@ in
         provenanceOf =
           a:
           let
-            src = a.src;
+            inherit (a) src;
             # A plain path (the app under development as `./.`) has no metadata.
             isInput = builtins.isAttrs src;
             rev =
@@ -1673,12 +1671,12 @@ in
           enabled = dg.enable;
           guards = {
             mail = {
-              enable = mc.enable;
-              host = mc.host;
+              inherit (mc) enable;
+              inherit (mc) host;
               port = mc.smtpPort;
               http_port = mc.httpPort;
-              sender = mc.sender;
-              unmute = mc.unmute;
+              inherit (mc) sender;
+              inherit (mc) unmute;
               pop3_enabled = mc.pop3.enable;
               pop3_port = mc.pop3.port;
               pop3_user = mc.pop3.user;
@@ -1830,9 +1828,9 @@ in
             // lib.optionalAttrs (cfg.runtime.enable && cfg.runtime.src != null) {
               frappe-runtime = cfg.runtime.src;
             };
-          pyproject-nix = inputs.pyproject-nix;
-          pyproject-build-systems = inputs.pyproject-build-systems;
-          uv2nix = inputs.uv2nix;
+          inherit (inputs) pyproject-nix;
+          inherit (inputs) pyproject-build-systems;
+          inherit (inputs) uv2nix;
           extraOverrides = lib.composeManyExtensions [
             builtinOverrides
             cfg.pythonOverrides
@@ -2009,7 +2007,6 @@ in
         # column-aligned by hand and degrade ungracefully (no width awareness)
         # compared to a real renderer.
         richPython = import ../lib/rich-python.nix {
-          inherit pkgs;
           inherit (cfg) python;
         };
 
@@ -3130,7 +3127,7 @@ in
                   # of its own. The UI port is a real check: Mailpit only serves
                   # it once its listeners are up.
                   ready.http.get = {
-                    host = mc.host;
+                    inherit (mc) host;
                     port = config.processes.mailpit.ports.ui.value;
                     path = "/";
                   };
