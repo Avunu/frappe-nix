@@ -1,0 +1,57 @@
+{
+  "$schema": "../document.schema.json",
+  "$id": "DocsPager",
+  "$description": "Previous and next page cards at the end of an article. Put a <nav aria-label=\"Previous and next pages\"> with up to two links in the default slot: a.prev and a.next, each holding a .hint line and a .title line. A link with the hidden attribute is omitted.",
+  "tagName": "docs-pager",
+  "style": {
+    "display": "block",
+    "& nav": {
+      "display": "grid",
+      "gridTemplateColumns": "1fr 1fr",
+      "gap": "12px"
+    },
+    "& a": {
+      "display": "flex",
+      "flexDirection": "column",
+      "gap": "4px",
+      "padding": "16px 18px",
+      "backgroundColor": "var(--color-surface)",
+      "border": "1px solid var(--color-surface-border)",
+      "borderRadius": "var(--radius-panel)",
+      "color": "var(--color-text)",
+      "textDecoration": "none",
+      "fontSize": "15px",
+      "transition": "border-color 0.15s"
+    },
+    "& a:hover": {
+      "borderColor": "var(--color-action)"
+    },
+    "& a.next": {
+      "textAlign": "right",
+      "gridColumn": "2"
+    },
+    "& a.prev": {
+      "gridColumn": "1"
+    },
+    "& .hint": {
+      "fontSize": "13px",
+      "color": "var(--color-text-caption)"
+    },
+    "& .title": {
+      "fontWeight": "600"
+    },
+    "@--sm": {
+      "& nav": {
+        "gridTemplateColumns": "1fr"
+      },
+      "& a.next, & a.prev": {
+        "gridColumn": "1"
+      }
+    }
+  },
+  "children": [
+    {
+      "tagName": "slot"
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+{
+  "$schema": "../document.schema.json",
+  "$layout": "./layouts/base.json",
+  "$description": "The landing page: the project name, its tagline, the links to read the docs and open the repository, the first few documentation pages as cards, and a line about Avunu. All of it comes from docs.config.json and the generated nav data.",
+  "title": "${state.config.data.name}: documentation",
+  "state": {
+    "platformLabel": {
+      "$prototype": "Function",
+      "timing": "compiler",
+      "body": "return ({ frappe: 'Frappe & ERPNext', odoo: 'Odoo', wordpress: 'WordPress', nixos: 'NixOS', general: 'General' })[state.config.data.platform] || state.config.data.platform;"
+    },
+    "featuredNodes": {
+      "$prototype": "Function",
+      "timing": "compiler",
+      "body": "return state.nav.data.featured.map((f) => ({ tagName: 'li', children: [{ tagName: 'a', attributes: { class: 'card', href: f.url }, children: [{ tagName: 'span', attributes: { class: 'k' }, textContent: f.section || 'Documentation' }, { tagName: 'span', attributes: { class: 't' }, textContent: f.title }, { tagName: 'span', attributes: { class: 'd' }, textContent: f.description }] }] }));"
+    },
+    "hasFeatured": {
+      "$prototype": "Function",
+      "timing": "compiler",
+      "body": "return state.nav.data.featured.length > 0;"
+    }
+  },
+  "children": [
+    {
+      "tagName": "main",
+      "attributes": {
+        "id": "main",
+        "tabindex": "-1"
+      },
+      "style": {
+        "flex": "1 0 auto",
+        "width": "100%",
+        "& .hero": {
+          "maxWidth": "var(--container)",
+          "margin": "0 auto",
+          "padding": "clamp(48px, 9vw, 112px) var(--gutter) clamp(40px, 6vw, 72px)",
+          "display": "flex",
+          "flexDirection": "column",
+          "alignItems": "flex-start",
+          "gap": "0"
+        },
+        "& .eyebrow": {
+          "display": "inline-flex",
+          "alignItems": "center",
+          "gap": "8px",
+          "margin": "0 0 24px",
+          "padding": "6px 14px",
+          "backgroundColor": "var(--color-surface)",
+          "border": "1px solid var(--color-surface-border)",
+          "borderRadius": "var(--radius-pill)",
+          "fontSize": "13px",
+          "color": "var(--color-text-muted)"
+        },
+        "& .eyebrow::before": {
+          "content": "''",
+          "width": "8px",
+          "height": "8px",
+          "borderRadius": "50%",
+          "backgroundColor": "var(--color-signal)"
+        },
+        "& h1": {
+          "fontSize": "var(--text-display)",
+          "letterSpacing": "var(--tracking-tight)",
+          "lineHeight": "1.02",
+          "overflowWrap": "anywhere",
+          "maxWidth": "16em"
+        },
+        "& .lede": {
+          "margin": "24px 0 0",
+          "maxWidth": "36em",
+          "fontSize": "clamp(18px, 2vw, 22px)",
+          "lineHeight": "1.5",
+          "color": "var(--color-text-muted)"
+        },
+        "& .actions": {
+          "display": "flex",
+          "flexWrap": "wrap",
+          "gap": "12px",
+          "margin": "36px 0 0"
+        },
+        "& .btn": {
+          "display": "inline-flex",
+          "alignItems": "center",
+          "justifyContent": "center",
+          "gap": "8px",
+          "minHeight": "var(--hit)",
+          "padding": "0 22px",
+          "borderRadius": "var(--radius-pill)",
+          "fontSize": "16px",
+          "fontWeight": "500",
+          "textDecoration": "none",
+          "border": "1px solid transparent"
+        },
+        "& .btn.primary": {
+          "backgroundColor": "var(--color-action)",
+          "color": "var(--color-on-action)"
+        },
+        "& .btn.primary:hover": {
+          "backgroundColor": "var(--color-action-hover)",
+          "color": "var(--color-on-action)"
+        },
+        "& .btn.secondary": {
+          "backgroundColor": "var(--color-action-soft)",
+          "color": "var(--color-on-action-soft)"
+        },
+        "& .btn.secondary:hover": {
+          "borderColor": "var(--color-on-action-soft)"
+        },
+        "& .facts": {
+          "display": "flex",
+          "flexWrap": "wrap",
+          "gap": "8px 24px",
+          "margin": "28px 0 0",
+          "padding": "0",
+          "listStyle": "none",
+          "fontSize": "14px",
+          "color": "var(--color-text-muted)"
+        },
+        "& .facts b": {
+          "color": "var(--color-text)",
+          "fontWeight": "600"
+        },
+        "& .start": {
+          "maxWidth": "var(--container)",
+          "margin": "0 auto",
+          "padding": "0 var(--gutter) clamp(48px, 8vw, 96px)"
+        },
+        "& .start h2": {
+          "fontSize": "var(--text-h3)",
+          "marginBottom": "20px"
+        },
+        "& .cards": {
+          "display": "grid",
+          "gridTemplateColumns": "repeat(auto-fill, minmax(280px, 1fr))",
+          "gap": "16px",
+          "listStyle": "none",
+          "margin": "0",
+          "padding": "0"
+        },
+        "& .card": {
+          "display": "flex",
+          "flexDirection": "column",
+          "gap": "8px",
+          "height": "100%",
+          "padding": "20px",
+          "backgroundColor": "var(--color-surface)",
+          "border": "1px solid var(--color-surface-border)",
+          "borderRadius": "var(--radius-lg)",
+          "color": "var(--color-text)",
+          "textDecoration": "none",
+          "transition": "border-color 0.15s"
+        },
+        "& .card:hover": {
+          "borderColor": "var(--color-action)"
+        },
+        "& .card .k": {
+          "fontSize": "12px",
+          "fontWeight": "600",
+          "color": "var(--color-text-caption)"
+        },
+        "& .card .t": {
+          "fontSize": "var(--text-title)",
+          "fontWeight": "500",
+          "letterSpacing": "var(--tracking-soft)"
+        },
+        "& .card .d": {
+          "fontSize": "15px",
+          "lineHeight": "1.5",
+          "color": "var(--color-text-muted)"
+        },
+        "& .band": {
+          "backgroundColor": "var(--color-bg-lavender)"
+        },
+        "& .band .inner": {
+          "maxWidth": "var(--container)",
+          "margin": "0 auto",
+          "padding": "32px var(--gutter)",
+          "display": "flex",
+          "flexWrap": "wrap",
+          "alignItems": "center",
+          "justifyContent": "space-between",
+          "gap": "16px 32px"
+        },
+        "& .band p": {
+          "margin": "0",
+          "maxWidth": "40em",
+          "fontSize": "17px",
+          "lineHeight": "1.5"
+        }
+      },
+      "children": [
+        {
+          "tagName": "section",
+          "attributes": {
+            "class": "hero",
+            "aria-labelledby": "home-title"
+          },
+          "children": [
+            {
+              "tagName": "p",
+              "attributes": {
+                "class": "eyebrow"
+              },
+              "textContent": "Open source · ${state.platformLabel}"
+            },
+            {
+              "tagName": "h1",
+              "attributes": {
+                "id": "home-title"
+              },
+              "textContent": "${state.config.data.name}"
+            },
+            {
+              "tagName": "p",
+              "attributes": {
+                "class": "lede"
+              },
+              "textContent": "${state.config.data.tagline}"
+            },
+            {
+              "tagName": "div",
+              "attributes": {
+                "class": "actions"
+              },
+              "children": [
+                {
+                  "tagName": "a",
+                  "attributes": {
+                    "class": "btn primary",
+                    "href": "/docs/"
+                  },
+                  "children": [
+                    "Read the documentation",
+                    {
+                      "tagName": "docs-icon",
+                      "$props": {
+                        "name": "arrow-right",
+                        "size": "18"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "tagName": "a",
+                  "attributes": {
+                    "class": "btn secondary",
+                    "href": "${state.config.data.repo}"
+                  },
+                  "children": [
+                    {
+                      "tagName": "docs-icon",
+                      "$props": {
+                        "name": "github",
+                        "size": "18"
+                      }
+                    },
+                    "View on GitHub"
+                  ]
+                }
+              ]
+            },
+            {
+              "tagName": "ul",
+              "attributes": {
+                "class": "facts",
+                "aria-label": "Project facts"
+              },
+              "children": [
+                {
+                  "tagName": "li",
+                  "children": [
+                    {
+                      "tagName": "b",
+                      "textContent": "License "
+                    },
+                    {
+                      "tagName": "span",
+                      "textContent": "${state.config.data.license}"
+                    }
+                  ]
+                },
+                {
+                  "tagName": "li",
+                  "children": [
+                    {
+                      "tagName": "b",
+                      "textContent": "Platform "
+                    },
+                    {
+                      "tagName": "span",
+                      "textContent": "${state.platformLabel}"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tagName": "section",
+          "attributes": {
+            "class": "start",
+            "aria-labelledby": "start-title",
+            "hidden": "${!state.hasFeatured}"
+          },
+          "children": [
+            {
+              "tagName": "h2",
+              "attributes": {
+                "id": "start-title"
+              },
+              "textContent": "Start here"
+            },
+            {
+              "tagName": "ul",
+              "attributes": {
+                "class": "cards"
+              },
+              "children": "${state.featuredNodes}"
+            }
+          ]
+        },
+        {
+          "tagName": "section",
+          "attributes": {
+            "class": "band",
+            "aria-label": "About Avunu"
+          },
+          "children": [
+            {
+              "tagName": "div",
+              "attributes": {
+                "class": "inner"
+              },
+              "children": [
+                {
+                  "tagName": "p",
+                  "textContent": "${state.config.data.name} is part of Avunu's open-source work: tools we build for our own client projects and share with everyone."
+                },
+                {
+                  "tagName": "a",
+                  "attributes": {
+                    "class": "btn secondary",
+                    "href": "https://avunu.net/open-source/"
+                  },
+                  "children": [
+                    "See every project",
+                    {
+                      "tagName": "docs-icon",
+                      "$props": {
+                        "name": "arrow-up-right",
+                        "size": "18"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
