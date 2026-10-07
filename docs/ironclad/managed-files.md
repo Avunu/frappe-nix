@@ -107,6 +107,10 @@ What can be read from the tracked tree is never declared: the desk and web scrip
 
 Sync deletes, and `--check` reports as `legacy file`: a second release, auto-merge or dependabot workflow beside the managed callers (`release-please-action`, `gh pr merge --auto`, `dependabot/fetch-metadata`; docusystem's `docs*.yml` excepted), `.github/workflows/check.yml` and `version-branch-guard.yml`, `.oxfmtrc.json`, eslint and prettier configs, `.flake8`, a flake8-only `setup.cfg`, `MANIFEST.in`, `requirements.txt` anywhere, `nix/node-offline-hashes.json` and `update-assets.mjs`.
 
+Two of them need something first. A `requirements.txt` that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2.
+
+A managed file that is a symlink is exit 2: sync never reads or writes through a link. A retired one is deleted as a link.
+
 ## `ironclad compat`
 
 The prek hook every app runs checks that versions, ranges and majors agree: the `package.json` major against the Frappe major (equal once a `v<major>.*` tag exists or on a release branch), the `frappe` stanza, the flake's `version-<major>` refs, the dependency ranges, `__version__` = `package.json` = the release-please manifest, `required_apps` ⊆ siblings, no hand-written frappe globals (augmentations only in `types/<app>.augment.d.ts`, each member marked `// app-owned: <reason>`), a valid `.git-blame-ignore-revs`, the Vite registration, and that every `unchecked-js` and `coverage-omit` entry still matches a tracked file. `ironclad compat --add-blame-ignore <sha>` appends a mass-reformat commit to `.git-blame-ignore-revs`.
