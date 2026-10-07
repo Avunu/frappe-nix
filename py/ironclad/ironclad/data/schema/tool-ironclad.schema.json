@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frappe-nix.avunu.net/schema/tool-ironclad.schema.json",
+  "title": "[tool.ironclad]",
+  "description": "An app's Ironclad parameters, in its pyproject.toml (docs/ironclad/spec.md §2.1). App-owned: sync creates the table once and never rewrites it. Unknown keys are errors. Each `default` is the value used when the key is absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "frappe-major"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "The [tool.ironclad] schema version. frappe-nix v1 reads schema 1."
+    },
+    "frappe-major": {
+      "type": "integer",
+      "minimum": 15,
+      "description": "The Frappe major. Drives every version-<major> string, range and branch."
+    },
+    "siblings": {
+      "type": "array",
+      "default": [],
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^([a-z][a-z0-9_]*|Avunu/[A-Za-z0-9_.-]+)$"
+      },
+      "description": "Bench apps besides frappe, in install order. Each is a key of known-apps.json or \"Avunu/<repo>\"."
+    },
+    "site": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "description": "The dev site name; default \"<App-hyphen>.localhost\"."
+    },
+    "pilot-assets": {
+      "type": "boolean",
+      "default": false,
+      "description": "Render .github/workflows/assets.yml and the release dispatch of pilot's asset build."
+    },
+    "track-overrides": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable test_utils' track_overrides hook (needs HASH:/REPO: annotations)."
+    },
+    "js-coverage-min": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "node:test line-coverage minimum; used only when test/unit/ exists."
+    },
+    "nightly-suites": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Shell commands nightly runs inside the dev shell with the site up (§4.6)."
+    },
+    "generated": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Globs of tracked generated files, excluded from formatting and linting."
+    },
+    "build": {
+      "type": "boolean",
+      "default": false,
+      "description": "The app's `build` script is a real build step even with no Vite config, nested frontend or SPA."
+    },
+    "shell-checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Commands that need the dev shell and leave the tree git-clean; run by `frappe-test --ci`."
+    },
+    "frappe-node-modules": {
+      "type": "boolean",
+      "default": false,
+      "description": "typecheck installs frappe's node_modules under FRAPPE_PATH (§4.2)."
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "setup": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string",
+            "pattern": "^(module|execute):[A-Za-z_][A-Za-z0-9_.]*$"
+          },
+          "description": "Steps before the app's tests: \"module:<dotted test module>\" or \"execute:<dotted callable>\". Empty: the default for the siblings (§2.1)."
+        }
+      }
+    },
+    "untested": {
+      "type": "array",
+      "default": [],
+      "description": "Testmap exemptions; shrink-only (S24).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target",
+          "reason"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        }
+      }
+    },
+    "coverage-omit": {
+      "type": "array",
+      "default": [],
+      "description": "Extra coverage omit globs; shrink-only.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "glob",
+          "reason"
+        ],
+        "properties": {
+          "glob": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        }
+      }
+    },
+    "unchecked-js": {
+      "type": "array",
+      "default": [],
+      "description": "Desk/web JS files excluded from strict checkJs; shrink-only. A tracked .js path, not a glob.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "reason"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "\\.js$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        }
+      }
+    },
+    "override-doctype-class": {
+      "type": "array",
+      "default": [],
+      "description": "The A.3 allow-list: one entry per override_doctype_class hook.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "doctype",
+          "reason"
+        ],
+        "properties": {
+          "doctype": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 20,
+            "description": "Why; at least 20 characters."
+          }
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "bootstrap-sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "Rendered into release-please-config.json."
+        }
+      }
+    },
+    "typescript": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "browser": {
+          "type": "boolean",
+          "default": true,
+          "description": "false: no tsconfig.browser.json even when public/**/*.ts is tracked."
+        },
+        "browser-include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Replaces the default browser include (§2.9)."
+        },
+        "web-include": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Globs of JS under the package that run on web pages, not the desk."
+        },
+        "paths": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "compilerOptions.paths, in tsconfig.base.json."
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Appended to every project's exclude. Only non-source paths."
+        },
+        "audit-consumer": {
+          "type": "boolean",
+          "default": false,
+          "description": "typecheck runs `frappe-types audit-consumer --strict`."
+        },
+        "spa": {
+          "type": "array",
+          "default": [],
+          "description": "Vue/Vite SPAs without a package.json of their own.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "root",
+              "include",
+              "tsconfig",
+              "check"
+            ],
+            "properties": {
+              "root": {
+                "type": "string",
+                "minLength": 1
+              },
+              "include": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "tsconfig": {
+                "type": "string",
+                "minLength": 1
+              },
+              "check": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "oxlint": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Appended to ignorePatterns."
+        },
+        "globals": {
+          "type": "object",
+          "default": {},
+          "description": "Merged into the desk-JS override's globals."
+        },
+        "overrides": {
+          "type": "array",
+          "default": [],
+          "description": "Appended; each {files, rules, globals}.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "files"
+            ],
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "rules": {
+                "type": "object"
+              },
+              "globals": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "oxfmt": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Appended to ignorePatterns."
+        }
+      }
+    },
+    "stylelint": {
+      "type": "object",
+      "additionalProperties": false,
+      "default": {},
+      "properties": {
+        "globs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "description": "Default: the discovered <app>/public/**/*.scss when any exist."
+        }
+      }
+    }
+  }
+}

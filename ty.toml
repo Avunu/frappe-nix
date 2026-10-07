@@ -12,6 +12,7 @@ extra-paths = [
     "lib/unixsock",
     "lib/journald",
     "lib/nodebuild",
+    "py/ironclad",
 ]
 
 [src]

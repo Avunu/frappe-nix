@@ -1,0 +1,34 @@
+# The `ironclad` package (docs/ironclad/spec.md, S10): one self-contained
+# distribution that serves both the Nix dev shell (lib/ironclad/package.nix) and
+# the no-Nix CI jobs, which install it with
+#
+#   uv tool install "ironclad @ git+https://github.com/Avunu/frappe-nix@<rev>#subdirectory=py/ironclad"
+#
+# A wheel built from this directory contains nothing outside it, so every file
+# the tool reads at run time lives under ironclad/data/ and ships as package
+# data (flit includes every file inside the package directory).
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "ironclad"
+# release-please moves this, version.txt and ironclad/__init__.py together.
+version = "0.0.0"
+description = "The Ironclad platform tools of frappe-nix: managed files, CI gates and release checks for Frappe apps"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "jinja2>=3.1,<4",
+    # No upper cap: the nixpkgs frappe-nix locks ships 0.15.0.
+    "tomlkit>=0.13",
+    "packaging>=24",
+]
+
+[project.scripts]
+ironclad = "ironclad.cli:main"
+
+[project.urls]
+Documentation = "https://frappe-nix.avunu.net/docs/ironclad/"
+Source = "https://github.com/Avunu/frappe-nix/tree/main/py/ironclad"
