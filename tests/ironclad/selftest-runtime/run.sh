@@ -46,10 +46,20 @@ prepare() {
   commit "$dir" fixture
 }
 
+# frappe at the revision frappe-nix's own dev env pins (dev/pyproject.toml,
+# moved by update-frappe), and erpnext at the matching release, not the tips of
+# version-16: a branch tip can break the resolution (frappe's `dev` extra did,
+# 2026-10-07) and that is not what these tests are about.
+FRAPPE_REV="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
+ERPNEXT_REV=7474d9e786277383de1242ab882f16856d17a9c9 # v16.50.0, beside frappe's
+
 # flake.lock against this checkout, and nix/uv.lock from `nix run .#relock`.
 lock() {
-  local dir="$1"
-  (cd "$dir" && nix flake lock --override-input frappe-nix "path:$FN")
+  local dir="$1" pins=(--override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$FRAPPE_REV")
+  if grep -q 'erpnext = {' "$dir/flake.nix"; then
+    pins+=(--override-input erpnext "github:frappe/erpnext/$ERPNEXT_REV")
+  fi
+  (cd "$dir" && nix flake lock "${pins[@]}")
   (cd "$dir" && nix run "${NIXFLAGS[@]}" .#relock)
   commit "$dir" locks
 }
