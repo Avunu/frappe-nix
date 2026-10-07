@@ -1005,6 +1005,20 @@ class TestRetireGuards(AppCase):
 		self.assertEqual(self.fn("sync", "--write")[0], 0)
 		self.assertFalse((self.root / "requirements.txt").exists())
 
+	def test_the_docs_tools_requirements_are_left_alone(self):
+		"""§2.4: docs/ and docs-site/ are the docs tool's; a ReadTheDocs docs/requirements.txt
+		names the docs build's packages, not the app's dependencies."""
+		self.synced()
+		self.write("docs/requirements.txt", "sphinx\n")
+		self.write("docs-site/requirements.txt", "mkdocs\n")
+		self.write("frontend/requirements.txt", "requests\n")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("frontend/requirements.txt", out)
+		self.assertNotIn("docs/requirements.txt", out)
+		self.assertNotIn("docs-site/requirements.txt", out)
+
 	@with_vite_register
 	def test_update_assets_steps_go_with_the_file(self):
 		self.write("vite.config.ts", "export default {};\n")

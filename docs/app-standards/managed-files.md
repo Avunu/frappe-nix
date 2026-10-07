@@ -155,7 +155,7 @@ Sync deletes, and `--check` reports as `legacy file`, the files a module replace
 
 A file name says nothing about what a workflow does, so name-only rules belong to an org profile (`[[retire]]`). `[tool.frappe-nix] retire-keep` exempts any path from every rule.
 
-Two of them need something first. A `requirements.txt` that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2. In an app with a Vite config, `update-assets.mjs` is retired only once frappe-nix renders `scripts/vite-register.mjs`, which replaces it.
+Two of them need something first. A `requirements.txt` (anywhere but `docs/` and `docs-site/`, which belong to your docs tool) that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2. In an app with a Vite config, `update-assets.mjs` is retired only once frappe-nix renders `scripts/vite-register.mjs`, which replaces it.
 
 A managed path with a symlink anywhere on it (the file or a directory above it) is exit 2: sync never reads or writes through a link. A retired link is deleted as a link. The same holds for what sync reads from an org profile: an in-repo profile directory reached through a link, a linked `profile.toml`, or a link anywhere under the profile's `templates/` is exit 2, unread.
 

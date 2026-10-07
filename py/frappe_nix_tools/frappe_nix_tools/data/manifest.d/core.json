@@ -379,6 +379,7 @@
 			"rule": "legacy packaging: dependencies live in pyproject.toml",
 			"module": "metadata",
 			"when": "cfg.metadata['build-backend'] == 'flit'",
+			"except": ["docs/**", "docs-site/**"],
 			"deps_in_project": true
 		},
 		{
