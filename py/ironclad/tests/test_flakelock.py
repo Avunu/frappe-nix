@@ -95,6 +95,36 @@ class TestFlakeLock(unittest.TestCase):
 		with self.assertRaises(ConfigError):
 			flakelock.github_pin(LOCK, "flake-parts")
 
+	def test_frappe_nix_pins_are_frappe_nixs_only(self):
+		# A root input of the same name never shadows frappe-nix's pin in an app's lock.
+		shadowed = json.loads(json.dumps(LOCK))
+		shadowed["nodes"]["root"]["inputs"]["marketplace"] = "evil"
+		shadowed["nodes"]["evil"] = github("frappe", "marketplace", "3" * 40)
+		self.assertEqual(flakelock.github_pin(shadowed, "marketplace").rev, "2" * 40)
+		del shadowed["nodes"]["frappe-nix"]["inputs"]["marketplace"]
+		with self.assertRaisesRegex(ConfigError, "no input 'marketplace'"):
+			flakelock.github_pin(shadowed, "marketplace")
+		# The app's own inputs still come from its root.
+		self.assertEqual(flakelock.github_pin(shadowed, "frappe").rev, "f" * 40)
+
+	def test_frappe_nix_pins_must_name_their_repository(self):
+		for owner, repo in (("frappe", "pilot"), ("attacker", "marketplace"), ("frappe", "semgrep-rules")):
+			retargeted = json.loads(json.dumps(LOCK))
+			retargeted["nodes"]["marketplace"] = github(owner, repo, "2" * 40)
+			with self.assertRaisesRegex(ConfigError, "frappe-nix pins it to frappe/marketplace", msg=repo):
+				flakelock.github_pin(retargeted, "marketplace")
+		# frappe-nix's own lock has the pins at its root; the check applies there too.
+		own = {
+			"root": "root",
+			"nodes": {"root": {"inputs": {"pilot": "p"}}, "p": github("frappe", "pilot", "1" * 40)},
+		}
+		self.assertEqual(flakelock.github_pin(own, "pilot").repo, "pilot")
+		own["nodes"]["p"] = github("Frappe", "Pilot", "1" * 40)
+		self.assertEqual(flakelock.github_pin(own, "pilot").repo, "Pilot")
+		own["nodes"]["p"] = github("frappe", "pilot-fork", "1" * 40)
+		with self.assertRaises(ConfigError):
+			flakelock.github_pin(own, "pilot")
+
 
 if __name__ == "__main__":
 	unittest.main()

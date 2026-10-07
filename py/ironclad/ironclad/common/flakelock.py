@@ -2,7 +2,11 @@
 
 An app reaches frappe-nix's own pinned inputs (marketplace, pilot, frappe-semgrep-rules)
 through its lock's ``frappe-nix`` node (spec S20), so a name is looked up first among the
-root's inputs and then among frappe-nix's.
+root's inputs and then among frappe-nix's. Those three are the exception: CI runs the
+registry checks and the semgrep rules from them, so they are read only through the
+``frappe-nix`` node (or the root of frappe-nix's own lock) and must name the repository
+frappe-nix pins (``FRAPPE_NIX_PINS``). A lock that retargets one, or shadows it with a root
+input of the same name, is a ``ConfigError`` rather than a different set of rules.
 """
 
 import json
@@ -14,6 +18,13 @@ from ironclad.common.report import ConfigError, EnvError
 
 _NAME = re.compile(r"[A-Za-z0-9_.-]+")
 _REV = re.compile(r"[0-9a-f]{40}")
+
+# The inputs frappe-nix pins for every app (spec S20), and the repository each must lock.
+FRAPPE_NIX_PINS: dict[str, tuple[str, str]] = {
+	"frappe-semgrep-rules": ("frappe", "semgrep-rules"),
+	"marketplace": ("frappe", "marketplace"),
+	"pilot": ("frappe", "pilot"),
+}
 
 
 @dataclass(frozen=True)
@@ -80,7 +91,13 @@ def node_at(lock: dict, path: list[str]) -> tuple[str, dict] | None:
 
 
 def input_node(lock: dict, name: str) -> tuple[str, dict] | None:
-	"""The node for input ``name``: the root's own, else frappe-nix's."""
+	"""The node for input ``name``: the root's own, else frappe-nix's.
+
+	A ``FRAPPE_NIX_PINS`` input is frappe-nix's only: in an app's lock (one with a
+	``frappe-nix`` input) the root's input of that name is never consulted.
+	"""
+	if name in FRAPPE_NIX_PINS and node_at(lock, ["frappe-nix"]) is not None:
+		return node_at(lock, ["frappe-nix", name])
 	return node_at(lock, [name]) or node_at(lock, ["frappe-nix", name])
 
 
@@ -114,4 +131,11 @@ def github_pin(lock: dict, name: str) -> Pin:
 			raise ConfigError(f"input {name!r} locks {key} {fields[key]!r}, which is not a GitHub name")
 	if not _REV.fullmatch(fields["rev"]):
 		raise ConfigError(f"input {name!r} locks rev {fields['rev']!r}, which is not a commit SHA")
+	expected = FRAPPE_NIX_PINS.get(name)
+	# GitHub names are case-insensitive, and a flake URL may spell them either way.
+	if expected and (fields["owner"].lower(), fields["repo"].lower()) != expected:
+		raise ConfigError(
+			f"input {name!r} locks {fields['owner']}/{fields['repo']}, but frappe-nix pins it to"
+			f" {'/'.join(expected)}"
+		)
 	return Pin(name, fields["owner"], fields["repo"], fields["rev"], fields["narHash"])

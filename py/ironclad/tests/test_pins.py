@@ -76,6 +76,24 @@ class TestPins(unittest.TestCase):
 		self.assertEqual(nar.nar_hash(dest), TREE_NAR_HASH)
 		self.assertFalse((dest / "empty.yml").exists())
 
+	def test_a_retargeted_pin_is_refused_before_fetching(self):
+		# A PR's flake.lock pointing frappe-semgrep-rules at another repository (with that
+		# repository's narHash) must not get its tree run as the rules.
+		lock = lock_for(TREE_NAR_HASH)
+		lock["nodes"]["frappe-nix"]["inputs"]["frappe-semgrep-rules"] = "pilot"
+		self.lock.write_text(json.dumps(lock))
+		with self.assertRaisesRegex(ConfigError, "frappe/semgrep-rules"):
+			pin_path("frappe-semgrep-rules", self.lock, store_dir=self.store)
+		# Nor can a root-level input of that name stand in for frappe-nix's.
+		del lock["nodes"]["frappe-nix"]["inputs"]["frappe-semgrep-rules"]
+		lock["nodes"]["root"]["inputs"]["frappe-semgrep-rules"] = "rules"
+		lock["nodes"]["rules"] = json.loads(json.dumps(lock["nodes"]["pilot"]))
+		lock["nodes"]["rules"]["locked"]["repo"] = "semgrep-rules"
+		self.lock.write_text(json.dumps(lock))
+		with self.assertRaisesRegex(ConfigError, "no input 'frappe-semgrep-rules'"):
+			pin_path("frappe-semgrep-rules", self.lock, store_dir=self.store)
+		self.assertFalse((self.app / ".dev-dist").exists())
+
 	def test_tampered_cache_without_network_is_exit_3(self):
 		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
 		path = pin_path("pilot", self.lock, store_dir=self.store)
