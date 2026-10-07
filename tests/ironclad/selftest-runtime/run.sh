@@ -53,6 +53,17 @@ prepare() {
 FRAPPE_REV="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
 ERPNEXT_REV=7474d9e786277383de1242ab882f16856d17a9c9 # v16.50.0, beside frappe's
 
+# PyPI as of the last change to what pins the resolution (this script pins
+# erpnext), not as of today: each relock below resolves every transitive
+# dependency afresh, and a release made since is not what these tests are
+# about either. Needs the history (the workflow checks out with fetch-depth 0);
+# UV_EXCLUDE_NEWER, if set, wins.
+if [ -z "${UV_EXCLUDE_NEWER:-}" ]; then
+  UV_EXCLUDE_NEWER="$(git -C "$FN" log -1 --format=%cI -- dev/pyproject.toml templates/bench/pyproject.toml tests/fixtures/ironclad-app "$HERE")"
+fi
+export UV_EXCLUDE_NEWER
+echo "selftest-runtime: resolving PyPI as of ${UV_EXCLUDE_NEWER:-now}"
+
 # flake.lock against this checkout, and nix/uv.lock from `nix run .#relock`.
 lock() {
   local dir="$1" pins=(--override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$FRAPPE_REV")

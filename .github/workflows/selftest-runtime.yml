@@ -13,23 +13,26 @@ name: selftest-runtime
 #   erpnext   the default test setup with erpnext as a sibling, and the A.0 #4
 #             composition failure (exit 4)
 
+# Whatever builds the bench, the dev shell or the tools frappe-test calls: any
+# change under lib/ or modules/, and the pins. Also on main and weekly, so a
+# change that slips past the paths (or a moved input) still shows up.
 on:
   pull_request:
     paths:
       - .github/workflows/selftest-runtime.yml
+      - dev/pyproject.toml
       - flake.lock
-      - lib/ci-mode.nix
-      - lib/frappe-workspace.py
-      - lib/ports.nix
-      - lib/rename/**
-      - lib/scripts.d/**
-      - lib/scripts.nix
-      - lib/sh/frappe-test.sh
-      - modules/devenv.nix
+      - flake.nix
+      - lib/**
+      - modules/**
       - py/ironclad/**
-      - templates/bench/pyproject.toml
+      - templates/bench/**
       - tests/fixtures/ironclad-app/**
       - tests/ironclad/selftest-runtime/**
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -52,6 +55,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          # run.sh dates the PyPI resolution by the last change to the pins.
+          fetch-depth: 0
 
       # A Frappe bench (and erpnext's) is more than the hosted runner's free disk.
       - name: Free disk space
