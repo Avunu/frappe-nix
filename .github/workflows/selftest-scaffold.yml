@@ -27,7 +27,9 @@ name: selftest-scaffold
 #              tree untouched, after it locks release-1.
 #   no-nix     `uv tool install` from a clone with no checkout left on disk, then
 #              `frappe-nix sync --check` and `frappe-nix compat` on the fixture:
-#              the package is self-contained (S10).
+#              the package is self-contained (S10). Then the fixture on the in-repo
+#              example-org profile: `--check` reads it from the checkout (exit 1 with
+#              its values), and an offline `--sync` settles it.
 
 on:
   pull_request:
@@ -362,6 +364,7 @@ jobs:
 
   no-nix:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -375,6 +378,7 @@ jobs:
         run: |
           set -euo pipefail
           cp -r tests/fixtures/standards-app "$RUNNER_TEMP/app"
+          cp -r tests/fixtures/profiles/example-org "$RUNNER_TEMP/example-org"
           git clone -q --no-local "$GITHUB_WORKSPACE" "$RUNNER_TEMP/clone"
           rev="$(git -C "$RUNNER_TEMP/clone" rev-parse HEAD)"
           git -C "$RUNNER_TEMP/clone" switch --quiet -c selftest "$rev"
@@ -395,3 +399,29 @@ jobs:
           frappe-nix data-path known-apps.json
           frappe-nix sync --check
           frappe-nix compat
+
+      - name: an in-repo profile is read from the checkout (example-org)
+        env:
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+          PROFILE_SRC: ${{ runner.temp }}/example-org
+        run: |
+          set -euo pipefail
+          cp -r "$RUNNER_TEMP/app" "$RUNNER_TEMP/app-org"
+          cd "$RUNNER_TEMP/app-org"
+          cp -r "$PROFILE_SRC" .standards-profile
+          sed -i 's#^profile = "recommended"$#profile = "./.standards-profile"#' pyproject.toml
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "in-repo profile"
+          # Drift that only the profile's values explain: they were read without Nix.
+          rc=0
+          frappe-nix sync --check > report.txt || rc=$?
+          cat report.txt
+          [ "$rc" = 1 ] || { echo "::error::sync --check exited $rc, not 1 (drift)"; exit 1; }
+          grep -q '^SECURITY.md (whole): missing' report.txt
+          grep -q '^+.*"author": "Example Org"' report.txt
+          rm report.txt
+          # An offline sync (no nix, uv or yarn) settles it.
+          frappe-nix sync --write --offline
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm synced
+          frappe-nix sync --check
