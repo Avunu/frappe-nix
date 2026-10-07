@@ -23,6 +23,7 @@ from ironclad.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, ConfigErr
 from ironclad.scaffold import (
 	blocks,
 	context,
+	discover,
 	floors,
 	globs,
 	hooks,
@@ -146,7 +147,10 @@ def new_config(
 		re.fullmatch(r"vite(\.[^/]+)?\.config\.[^/]+", p.rsplit("/", 1)[-1])
 		for p in tracked
 		if p.count("/") <= 1
-	) or any(p.count("/") == 1 and p.endswith("/package.json") for p in tracked)
+	) or any(
+		p.count("/") == 1 and p.endswith("/package.json") and p.split("/", 1)[0] not in discover.NOT_FRONTENDS
+		for p in tracked
+	)
 	if isinstance(scripts, dict) and "build" in scripts and not vite_or_frontend:
 		cfg["build"] = True
 	return cfg
