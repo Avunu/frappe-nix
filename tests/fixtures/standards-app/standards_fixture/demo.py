@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Example Org and contributors
+# For license information, please see license.txt
+
 """Demo data for frappe-demo (docs/app-standards/spec.md §5.4): idempotent, dated from ctx["today"]."""
 
 import frappe

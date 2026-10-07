@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Example Org and contributors
+# For license information, please see license.txt
+
 app_name = "standards_fixture"
 app_title = "Standards Fixture"
 app_publisher = "Example Org"
