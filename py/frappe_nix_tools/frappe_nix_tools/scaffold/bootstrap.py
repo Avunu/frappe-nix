@@ -310,7 +310,11 @@ def seed_node_locks(root: Path, major: int, siblings: list[str], *, dry_run: boo
 	for app in ["frappe", *siblings]:
 		for key in NODE_LOCKS.get(app, ()):
 			dest = root / "nix" / "node-locks" / key
-			if (dest / "yarn.lock").exists():
+			# Every component, the seeds included, must be a real directory or file: a committed
+			# (even dangling) link would have copyfile write outside the checkout. Exit 2.
+			for name in ("yarn.lock", "source.json"):
+				engine.inside(root, f"nix/node-locks/{key}/{name}")
+			if os.path.lexists(dest / "yarn.lock"):
 				continue
 			try:
 				src = data_path(f"node-locks/version-{major}/{key}")

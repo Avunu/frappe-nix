@@ -20,7 +20,7 @@ import frappe_nix_tools
 from frappe_nix_tools.common import known_apps, repo
 from frappe_nix_tools.common.config import ORG_PROFILE_PREFIXES, Resolved
 from frappe_nix_tools.common.report import ConfigError, EnvError
-from frappe_nix_tools.scaffold import discover, hooks
+from frappe_nix_tools.scaffold import discover, hooks, manifest
 
 # A string literal on the __version__ line, in any of the three forms sync reads (§2.13).
 VERSION_LINE = re.compile(r"^__version__\s*=\s*(['\"])(?P<v>[^'\"]*)\1", re.M)
@@ -284,6 +284,9 @@ def build(
 			"first_commit_year": first_commit_year(app.root),
 			"options": options or {},
 			"precommit_live": precommit_live,
+			# Whether this package renders scripts/vite-register.mjs (N2): C8, the build append
+			# and retiring a Vite app's update-assets.mjs wait for it.
+			"vite_register_shipped": manifest.ships(manifest.VITE_REGISTER),
 			"tools_deps": tools_deps(modules, precommit_live),
 			"package_json_live": any(
 				modules.get(m, False)

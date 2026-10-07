@@ -235,7 +235,8 @@ def _apply(root: Path, items: list[Item], runner: bootstrap.Runner) -> list[str]
 	for item in items:
 		if item.code != DRIFT or item.command or item.wanted == item.current:
 			continue
-		target = root / item.path
+		# No link on the way (a retired link itself is deleted, never followed).
+		target = engine.inside(root, item.path, link_ok=True)
 		if runner.dry_run:
 			print(item.finding().path + f" ({item.strategy}): {item.problem}")
 			print(item.diff(), end="")
@@ -269,7 +270,7 @@ def _create_table(root: Path, plan: engine.Plan, runner: bootstrap.Runner) -> No
 	"""Step 1: write the ``[tool.frappe-nix]`` table ``--standards`` created."""
 	if plan.created_config is None:
 		return
-	text = (root / "pyproject.toml").read_text()
+	text = engine.read(root, "pyproject.toml") or ""
 	new = tomlmerge.add_tool_frappe_nix(text, plan.created_config)
 	if runner.dry_run:
 		print("pyproject.toml (toml-merge): [tool.frappe-nix] is created")

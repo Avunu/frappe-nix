@@ -1,15 +1,17 @@
 """``package.json`` and ``.stylelintrc.json``: the ``json-merge`` strategy (spec §2.8, §2.11).
 
 Only the managed keys are set; every other key, and the order of all of them, is the app's.
-A key sync adds goes at the end of its object. ``devDependencies`` floors are raised, never
-lowered: the app's caret or exact range stands when its minimum is at least the floor.
+A key sync adds goes before the first later managed key its object has (``_put``), so a
+module turned off and on again leaves the file as it was. ``devDependencies`` floors are
+raised, never lowered: the app's caret or exact range stands when its minimum is at least
+the floor.
 
 Each managed key belongs to one module (a key group) and is managed only while that
-module is on. When a module turns off (it was on in ``HEAD``'s configuration,
-``ctx.previous``), sync removes each of its keys whose value still equals what the module
-would render (a toolchain ``devDependencies`` entry counts as equal when its range is
-``^<floor>`` or higher), and leaves any other value as the app's, with a warning (§3.3
-step 6).
+module is on. When a module is off but was on in a ``[tool.frappe-nix]`` table committed
+since the app opted in (``ctx.history``), sync removes each of its keys whose value still
+equals what the module would render (a toolchain ``devDependencies`` entry counts as equal
+when its range is ``^<floor>`` or higher), and leaves any other value as the app's, saying
+so on the run that turns the module off (§3.3 step 6).
 """
 
 import copy
@@ -34,6 +36,22 @@ _RETIRED_STEP = re.compile(r"^node\s+(?:\./)?(?:" + "|".join(re.escape(s) for s 
 # The parts of scripts.check, in order (§2.8): each one only when that script exists.
 CHECK_PARTS = ("format:check", "lint", "lint:css", "typecheck", "test:unit")
 RESERVED_PREFIX = "frappe-nix:"
+# Where a top-level key sync adds goes (before the first later one the file has): the order
+# of a created package.json, then of the keys the modules add.
+TOP_ORDER = [
+	"name",
+	"version",
+	"private",
+	"description",
+	"license",
+	"author",
+	"type",
+	"scripts",
+	"devDependencies",
+	"engines",
+	"packageManager",
+	"frappe",
+]
 
 
 @dataclass
@@ -92,16 +110,43 @@ def _number(value: Any) -> str:
 	return str(int(value)) if float(value).is_integer() else str(value)
 
 
+def c8_live(ctx: Any) -> bool:
+	"""C8 (S30): a Vite app's build ends with the registration step, once the package renders
+	``scripts/vite-register.mjs`` (N2's entry); until then the step would name a missing file."""
+	return (
+		bool(ctx.modules.get("vite-register"))
+		and bool(ctx.discover.vite)
+		and bool(ctx.get("vite_register_shipped"))
+	)
+
+
+def retires_update_assets(ctx: Any) -> bool:
+	"""Whether ``update-assets.mjs`` is retired (core.json's rule): with ``vite-register`` on,
+	and for a Vite app only once ``scripts/vite-register.mjs`` replaces it."""
+	return bool(ctx.modules.get("vite-register")) and (
+		bool(ctx.get("vite_register_shipped")) or not ctx.discover.vite
+	)
+
+
 def _js_oxc(ctx: Any) -> bool:
 	return bool(ctx.modules.get("js")) and ctx.cfg.get("js", {}).get("tool", "oxc") == "oxc"
 
 
+def _on_in(conf: Any, module: str) -> bool:
+	return _js_oxc(conf) if module == "js" else bool(conf.modules.get(module))
+
+
 def _was_on(ctx: Any, module: str) -> bool:
-	"""Whether ``module`` was on at ``HEAD``: only then are its keys sync's to retract."""
+	"""Whether ``module`` was on in any ``[tool.frappe-nix]`` table since the app opted in
+	(``ctx.history``): only then are its keys sync's to retract."""
+	return any(_on_in(h, module) for h in ctx.get("history") or [])
+
+
+def _turns_off(ctx: Any, module: str) -> bool:
+	"""Whether ``module`` was on at ``HEAD`` (``ctx.previous``): the run that turns it off,
+	which says once what it leaves to the app."""
 	previous = ctx.get("previous")
-	if not previous:
-		return False
-	return _js_oxc(previous) if module == "js" else bool(previous.modules.get(module))
+	return bool(previous) and _on_in(previous, module)
 
 
 def scripts(ctx: Any) -> dict[str, dict[str, str | None]]:
@@ -202,7 +247,8 @@ def _put(table: dict, key: str, value: Any, order: list[str]) -> None:
 def _dict(doc: dict, key: str) -> dict:
 	value = doc.get(key)
 	if not isinstance(value, dict):
-		value = doc[key] = {}
+		value = {}
+		_put(doc, key, value, TOP_ORDER)
 	return value
 
 
@@ -222,7 +268,7 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 			return
 		if have == wanted:
 			_drop(doc, key)
-		else:
+		elif _turns_off(ctx, module):
 			out.warnings.append(
 				f"package.json {key} is the app's now that {module} is off (it differs from what sync wrote)"
 			)
@@ -230,10 +276,14 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 	if version:
 		doc["version"] = version
 
-	# metadata: the package's base keys.
+	# metadata: the package's base keys, each put back where it was when the module turns
+	# on again (TOP_ORDER), not at the end.
 	for key, value in metadata_keys(ctx).items():
 		if modules.get("metadata"):
 			if value is not None:
+				head = key.split(".", 1)[0]
+				if head not in doc:
+					_put(doc, head, {} if "." in key else value, TOP_ORDER)
 				_set(doc, key, value)
 		elif value is not None and _was_on(ctx, "metadata"):
 			retract(key, value, "metadata")
@@ -242,6 +292,8 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 	sc = doc.get("scripts")
 	if not isinstance(sc, dict):
 		sc = None
+	# The scripts as the last sync left them: what scripts.check was rendered from.
+	before = dict(sc) if sc is not None else {}
 	script_order = [k for table in scripts(ctx).values() for k in table] + ["check"]
 	for module, table in scripts(ctx).items():
 		on = js_on if module == "js" else bool(modules.get(module))
@@ -256,14 +308,14 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 			elif sc is not None and value is not None and key in sc and _was_on(ctx, module):
 				if sc[key] == value:
 					del sc[key]
-				else:
+				elif _turns_off(ctx, module):
 					out.warnings.append(
 						f"package.json scripts.{key} is the app's now that {module} is off (it differs from what sync wrote)"
 					)
 	if sc is not None:
-		# vite-register: the build ends with the registration step (C8, S30), and the steps
-		# that ran a retired file are gone with it.
-		if modules.get("vite-register"):
+		# vite-register: the build ends with the registration step (C8, S30, once N2 renders
+		# scripts/vite-register.mjs), and the steps that ran a retired file are gone with it.
+		if retires_update_assets(ctx):
 			for key in list(sc):
 				if isinstance(sc[key], str):
 					kept = drop_retired_steps(sc[key])
@@ -271,11 +323,10 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 						del sc[key]
 					else:
 						sc[key] = kept
-			build = sc.get("build")
-			if ctx.discover.vite and isinstance(build, str) and not build.rstrip().endswith(VITE_REGISTER):
-				sc["build"] = f"{build.rstrip()} && {VITE_REGISTER}"
-		elif _was_on(ctx, "vite-register"):
-			build = sc.get("build")
+		build = sc.get("build")
+		if c8_live(ctx) and isinstance(build, str) and not build.rstrip().endswith(VITE_REGISTER):
+			sc["build"] = f"{build.rstrip()} && {VITE_REGISTER}"
+		elif not modules.get("vite-register") and _was_on(ctx, "vite-register"):
 			if isinstance(build, str) and build.rstrip().endswith(f" && {VITE_REGISTER}"):
 				sc["build"] = build.rstrip()[: -len(f" && {VITE_REGISTER}")]
 		# check belongs to js (oxc); with js off it is the app's.
@@ -285,10 +336,17 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 				sc.pop("check", None)
 			else:
 				_put(sc, "check", check, script_order)
-		elif (
-			_was_on(ctx, "js") and "check" in sc and sc["check"] == check_script({**sc, **scripts(ctx)["js"]})
-		):
-			del sc["check"]
+		elif _was_on(ctx, "js") and "check" in sc:
+			# Rendered from the scripts present before this run retracted any (typecheck may
+			# go in the same run as js), or from today's with js's own.
+			js = scripts(ctx)["js"]
+			rendered = {check_script(before), check_script({**before, **js}), check_script({**sc, **js})}
+			if sc["check"] in rendered:
+				del sc["check"]
+			elif _turns_off(ctx, "js"):
+				out.warnings.append(
+					"package.json scripts.check is the app's now that js is off (it differs from what sync wrote)"
+				)
 	if doc.get("scripts") == {} and (current is None or "scripts" not in current):
 		doc.pop("scripts")
 
@@ -307,7 +365,7 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 			elif isinstance(dev, dict) and have is not None and _was_on(ctx, module):
 				if isinstance(have, str) and floors.range_ok(have, floor):
 					del dev[pkg]
-				else:
+				elif _turns_off(ctx, module):
 					out.warnings.append(
 						f"package.json devDependencies.{pkg} is the app's now that {module} is off (below the floor sync sets)"
 					)
@@ -343,14 +401,14 @@ def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 			)
 		if ctx.cfg.get("build") and "build" not in sc:
 			out.append((INVALID, "[tool.frappe-nix] build = true, but package.json has no build script"))
-	if modules.get("vite-register") and ctx.discover.vite and "build" not in sc:
+	if c8_live(ctx) and "build" not in sc:
 		out.append(
 			(DRIFT, f"scripts.build is missing: a Vite app's build must end with `{VITE_REGISTER}` (S30)")
 		)
 	for key, value in sc.items():
 		if key.startswith(RESERVED_PREFIX):
 			out.append((INVALID, f"scripts.{key}: the {RESERVED_PREFIX} prefix is reserved"))
-		if not modules.get("vite-register"):
+		if not retires_update_assets(ctx):
 			continue
 		named = [s for s in RETIRED_SCRIPTS if isinstance(value, str) and s in value]
 		if named:

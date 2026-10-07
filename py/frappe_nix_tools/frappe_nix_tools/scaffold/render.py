@@ -12,14 +12,19 @@ the same configuration. Templates get:
   the file being rendered, and ``gen`` (``scaffold.configs.Gen``).
 """
 
+import ast
 import json
+import operator
+from collections.abc import Callable
 from functools import cache
 from pathlib import Path
 from typing import Any
 
 import jinja2
+from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 
 from frappe_nix_tools.common import data_path
+from frappe_nix_tools.common.report import ConfigError
 from frappe_nix_tools.scaffold import configs, floors, globs, jsonfmt
 
 MARKER = "frappe-nix:managed"
@@ -52,8 +57,12 @@ def _configure(env: jinja2.Environment) -> jinja2.Environment:
 
 
 def _environment(directory: str) -> jinja2.Environment:
+	# Sandboxed: an org profile's templates and [[extra-files]] paths are data a pull request
+	# can change (an in-repo profile), and --check renders them on untrusted PRs. The sandbox
+	# refuses the attribute walks (``cycler.__init__.__globals__``) that reach Python, and the
+	# immutable one also keeps a template from changing the context the next file renders with.
 	return _configure(
-		jinja2.Environment(
+		ImmutableSandboxedEnvironment(
 			loader=jinja2.FileSystemLoader(directory),
 			undefined=jinja2.StrictUndefined,
 			trim_blocks=True,
@@ -76,9 +85,16 @@ def profile_environment(directory: str) -> jinja2.Environment:
 	return _environment(directory)
 
 
+def _refused(what: str, e: SecurityError) -> ConfigError:
+	return ConfigError(f"{what}: the template reaches outside its data, which the sandbox refuses: {e}")
+
+
 def render_string(source: str, ctx: dict[str, Any]) -> str:
 	"""A one-line template, such as an entry's ``path``."""
-	return environment().from_string(source).render(**ctx)
+	try:
+		return environment().from_string(source).render(**ctx)
+	except SecurityError as e:
+		raise _refused(repr(source), e) from e
 
 
 def render(template: str, ctx: dict[str, Any], current: str | None, *, directory: Path | None = None) -> str:
@@ -92,9 +108,107 @@ def render(template: str, ctx: dict[str, Any], current: str | None, *, directory
 		"gen": configs.Gen(ctx),
 	}
 	env = profile_environment(str(directory)) if directory is not None else environment()
-	return env.get_template(template).render(**ctx, **helpers)
+	try:
+		return env.get_template(template).render(**ctx, **helpers)
+	except SecurityError as e:
+		raise _refused(f"templates/{template}", e) from e
+
+
+# What a ``when`` may call, and how each operator of one compares.
+_CALLS = {"len": len, "any": any, "all": all}
+_COMPARE: dict[type[ast.cmpop], Callable[[Any, Any], Any]] = {
+	ast.Eq: operator.eq,
+	ast.NotEq: operator.ne,
+	ast.Lt: operator.lt,
+	ast.LtE: operator.le,
+	ast.Gt: operator.gt,
+	ast.GtE: operator.ge,
+	ast.In: lambda a, b: a in b,
+	ast.NotIn: lambda a, b: a not in b,
+	ast.Is: operator.is_,
+	ast.IsNot: operator.is_not,
+}
+
+
+def _evaluate(node: ast.expr, ctx: dict[str, Any], expr: str) -> Any:
+	def ev(n: ast.expr) -> Any:
+		return _evaluate(n, ctx, expr)
+
+	def fail(why: str) -> ConfigError:
+		return ConfigError(f"when {expr!r}: {why}")
+
+	if isinstance(node, ast.Constant) and isinstance(node.value, str | int | float | bool | type(None)):
+		return node.value
+	if isinstance(node, ast.Name):
+		if node.id.startswith("_") or node.id not in ctx:
+			raise fail(f"{node.id!r} is not in the context")
+		return ctx[node.id]
+	if isinstance(node, ast.Attribute | ast.Subscript):
+		base = ev(node.value)
+		key = node.attr if isinstance(node, ast.Attribute) else ev(node.slice)
+		if isinstance(key, str) and key.startswith("_"):
+			raise fail(f"{key!r}: names starting with _ are not readable")
+		if isinstance(node, ast.Attribute) and not isinstance(base, dict):
+			raise fail(f".{key} of a value that is not a table")
+		if not isinstance(base, dict | list | tuple | str) or isinstance(key, bool):
+			raise fail(f"[{key!r}] of a value that has no items")
+		try:
+			return base[key]
+		except (KeyError, IndexError, TypeError) as e:
+			raise fail(f"no {key!r} there") from e
+	if isinstance(node, ast.BoolOp):
+		value: Any = None
+		for operand in node.values:
+			value = ev(operand)
+			if isinstance(node.op, ast.And) and not value:
+				return value
+			if isinstance(node.op, ast.Or) and value:
+				return value
+		return value
+	if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+		return not ev(node.operand)
+	if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+		value = ev(node.operand)
+		if isinstance(value, bool) or not isinstance(value, int | float):
+			raise fail("unary minus needs a number")
+		return -value
+	if isinstance(node, ast.Compare):
+		left = ev(node.left)
+		for op, comparator in zip(node.ops, node.comparators, strict=True):
+			right = ev(comparator)
+			try:
+				if not _COMPARE[type(op)](left, right):
+					return False
+			except TypeError as e:
+				raise fail(str(e)) from e
+			left = right
+		return True
+	if isinstance(node, ast.Call):
+		if not isinstance(node.func, ast.Name) or node.func.id not in _CALLS or node.keywords:
+			raise fail(f"only {', '.join(_CALLS)} may be called")
+		if any(isinstance(a, ast.Starred) for a in node.args):
+			raise fail("no * arguments")
+		try:
+			return _CALLS[node.func.id](*(ev(a) for a in node.args))
+		except TypeError as e:
+			raise fail(str(e)) from e
+	if isinstance(node, ast.List | ast.Tuple):
+		return [ev(e) for e in node.elts]
+	raise fail(f"{type(node).__name__} is not allowed (see the spec's `when`)")
 
 
 def evaluate(expr: str, ctx: dict[str, Any]) -> bool:
-	"""A manifest ``when``: a Python expression over the context, with no builtins but ``len``."""
-	return bool(eval(expr, {"__builtins__": {"len": len, "any": any, "all": all, "True": True}}, dict(ctx)))
+	"""A ``when`` (a manifest entry's, a retire rule's, an ``[[extra-files]]`` one): a Python
+	expression over the context, read by a small evaluator rather than ``eval``.
+
+	An org profile's ``when`` is data a pull request can change (an in-repo profile), and
+	``--check`` evaluates it on untrusted PRs; restricting ``__builtins__`` is no sandbox. So
+	only these are read: names of the context, ``.key`` and ``[key]`` on its values (never a
+	name starting with ``_``), constants, lists and tuples, ``and``/``or``/``not``, unary
+	minus, comparisons (``==``, ``!=``, ``<``, ``<=``, ``>``, ``>=``, ``in``, ``not in``,
+	``is``, ``is not``) and calls of ``len``, ``any`` and ``all``. Anything else is exit 2."""
+	try:
+		tree = ast.parse(expr.strip(), mode="eval")
+	except SyntaxError as e:
+		raise ConfigError(f"when {expr!r} is not an expression: {e.msg}") from e
+	return bool(_evaluate(tree.body, ctx, expr))

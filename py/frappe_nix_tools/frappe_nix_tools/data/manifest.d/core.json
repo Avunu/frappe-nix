@@ -389,7 +389,8 @@
 		{
 			"paths": ["update-assets.mjs"],
 			"rule": "legacy asset registration: Vite outputs register through scripts/vite-register.mjs",
-			"module": "vite-register"
+			"module": "vite-register",
+			"when": "vite_register_shipped or not discover.vite"
 		}
 	]
 }

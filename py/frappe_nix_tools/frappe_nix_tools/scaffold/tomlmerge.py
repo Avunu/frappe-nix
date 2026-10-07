@@ -1,9 +1,11 @@
 """``pyproject.toml``: the ``toml-merge`` strategy (spec §2.12).
 
 tomlkit edits keys in place, so comments, order and every key sync does not own stay byte
-for byte. A managed table the file lacks is written as text after the last existing
-``[tool.*]`` table (tomlkit would put it wherever its container ends, without the blank
-lines around it).
+for byte. A managed table the file lacks is written as text in its place among the managed
+tables the file has (``CANON_TABLES``), else after the last existing ``[tool.*]`` table
+(tomlkit would put it wherever its container ends, without the blank lines around it); a
+managed key a table lacks goes before the first later one it has. So turning a module off
+and on again restores the file byte for byte.
 
 Each managed key belongs to one module's group and is managed only while that module is
 on: ``[project]`` ``requires-python``/``dynamic``, ``[build-system]`` (with
@@ -12,9 +14,11 @@ on: ``[project]`` ``requires-python``/``dynamic``, ``[build-system]`` (with
 ``[tool.coverage*]`` ``tests``' (with ``tests.coverage.enable``), and ``[tool.vulture]`` and
 ``[tool.test_utils.*]`` ``test-utils``'. When a module turns off, each of its keys that
 still holds the rendered value is removed; any other value is left as the app's, with a
-warning (§3.3 step 6). "Turns off" means it was on in ``HEAD``'s configuration
-(``ctx.previous``): a module that was never on owns nothing yet, so opting in with
-``minimal`` never removes the ruff or coverage settings an app already had.
+warning on the run that turns it off (§3.3 step 6). "Was on" means on in any
+``[tool.frappe-nix]`` table the app has committed since it opted in (``ctx.history``,
+which the engine reads from git): a module that was never on owns nothing yet, so opting
+in with ``minimal`` never removes the ruff or coverage settings an app already had, while
+a module turned off in a commit made before syncing is retracted all the same.
 """
 
 import re
@@ -62,7 +66,14 @@ def _on(ctx: Any, module: str) -> bool:
 
 
 def _was_on(ctx: Any, module: str) -> bool:
-	"""Whether ``module``'s group was on at ``HEAD``: its keys are then sync's to retract."""
+	"""Whether ``module``'s group was on in any ``[tool.frappe-nix]`` table since the app opted
+	in (``ctx.history``): its keys are then sync's to retract."""
+	return any(_on(h, module) for h in ctx.get("history") or [])
+
+
+def _turns_off(ctx: Any, module: str) -> bool:
+	"""Whether ``module``'s group was on at ``HEAD``: the run that turns it off says once what
+	it leaves to the app."""
 	previous = ctx.get("previous")
 	return bool(previous) and _on(previous, module)
 
@@ -300,18 +311,72 @@ def _table_text(path: tuple[str, ...], values: dict[str, Any]) -> str:
 	return "\n".join(lines) + "\n"
 
 
-def _insert_tables(text: str, blocks: list[str]) -> str:
-	"""``text`` with ``blocks`` (TOML tables) placed after the last ``[tool.*]`` table."""
-	if not blocks:
-		return text
+# The managed tables in the order sync lays them out. A table sync adds goes where this order
+# puts it among those the file has (``_table_position``), so turning a module off and on again
+# restores ``pyproject.toml`` byte for byte.
+HEAD_TABLES = ["project", "build-system", "tool.bench.frappe-dependencies"]
+CANON_TABLES = [
+	"build-system",
+	"tool.bench.frappe-dependencies",
+	"tool.ruff",
+	"tool.ruff.lint",
+	"tool.ruff.format",
+	"tool.ty.environment",
+	"tool.ty.src",
+	"tool.ty.terminal",
+	"tool.coverage.run",
+	"tool.coverage.report",
+	"tool.vulture",
+	"tool.test_utils.static-analysis",
+]
+# Keys sync adds to a table the app owns, in their place: before the first later one there.
+KEY_ORDER = {("project",): ["requires-python", "dynamic", "dependencies"]}
+
+
+def _is_tool(name: str) -> bool:
+	return name == "tool" or name.startswith("tool.")
+
+
+def _after_tools(headers: list[tuple[int, str]], end: int) -> int:
+	"""The line after the last ``[tool.*]`` table: where a table goes that has no place."""
+	tool = [i for i, name in headers if _is_tool(name)]
+	if not tool:
+		return end
+	after = [i for i, _ in headers if i > tool[-1]]
+	return after[0] if after else end
+
+
+def _table_position(headers: list[tuple[int, str]], name: str, end: int) -> int:
+	"""The line a new managed table ``name`` goes before.
+
+	``[build-system]`` and ``[tool.bench.frappe-dependencies]`` follow ``[project]`` (and each
+	other); a managed ``[tool.*]`` table goes before the first managed table ranked after it
+	that follows the app's own ``[tool.*]`` tables (``[tool.frappe-nix]`` among them), else
+	after the last ``[tool.*]`` table."""
+	if name in HEAD_TABLES[1:]:
+		for anchor in reversed(HEAD_TABLES[: HEAD_TABLES.index(name)]):
+			found = [j for j, (_, n) in enumerate(headers) if n == anchor]
+			if found:
+				j = found[-1] + 1
+				while j < len(headers) and headers[j][1].startswith(anchor + "."):
+					j += 1
+				return headers[j][0] if j < len(headers) else end
+		return _after_tools(headers, end)
+	rank = CANON_TABLES.index(name) if name in CANON_TABLES else len(CANON_TABLES)
+	own = [j for j, (_, n) in enumerate(headers) if _is_tool(n) and n not in CANON_TABLES]
+	for i, n in headers[own[-1] + 1 if own else 0 :]:
+		if n in CANON_TABLES and CANON_TABLES.index(n) > rank:
+			return i
+	return _after_tools(headers, end)
+
+
+def _headers(lines: list[str]) -> list[tuple[int, str]]:
+	return [(i, m["name"].strip()) for i, line in enumerate(lines) if (m := _HEADER.match(line))]
+
+
+def _insert_at(text: str, at: int, blocks: list[str]) -> str:
+	"""``text`` with ``blocks`` (TOML tables) before line ``at``, a blank line around them."""
 	lines = text.splitlines(keepends=True)
-	headers = [(i, m["name"].strip()) for i, line in enumerate(lines) if (m := _HEADER.match(line))]
-	tool = [i for i, name in headers if name == "tool" or name.startswith("tool.")]
-	if tool:
-		after = [i for i, _ in headers if i > tool[-1]]
-		at = after[0] if after else len(lines)
-	else:
-		at = len(lines)
 	before, rest = lines[:at], lines[at:]
 	while before and not before[-1].strip():
 		rest.insert(0, before.pop())
@@ -321,6 +386,43 @@ def _insert_tables(text: str, blocks: list[str]) -> str:
 	middle = "\n".join(blocks)
 	tail = "".join(rest).lstrip("\n")
 	return head + ("\n" if head else "") + middle + ("\n" + tail if tail else "")
+
+
+def _place_tables(text: str, missing: dict[tuple[str, ...], dict[str, Any]]) -> str:
+	"""``text`` with each missing managed table written in its place (``_table_position``)."""
+
+	def rank(path: tuple[str, ...]) -> int:
+		name = ".".join(path)
+		return CANON_TABLES.index(name) if name in CANON_TABLES else len(CANON_TABLES)
+
+	for path in sorted(missing, key=rank):
+		lines = text.splitlines(keepends=True)
+		at = _table_position(_headers(lines), ".".join(path), len(lines))
+		text = _insert_at(text, at, [_table_text(path, missing[path])])
+	return text
+
+
+def _put_key(table: Any, key: str, value: Any, order: list[str]) -> None:
+	"""Set a key the table lacks before the first later key of ``order`` it has, else at the end."""
+	later = order[order.index(key) + 1 :] if key in order else []
+	container = getattr(table, "value", None)
+	body = getattr(container, "body", None)
+	at = next(
+		(i for i, (k, _) in enumerate(body or []) if k is not None and getattr(k, "key", None) in later),
+		None,
+	)
+	if at is None or not hasattr(container, "_insert_at"):
+		table[key] = value
+		return
+	container._insert_at(at, key, value)  # tomlkit has no public insert-before
+
+
+def _insert_tables(text: str, blocks: list[str]) -> str:
+	"""``text`` with ``blocks`` (TOML tables) placed after the last ``[tool.*]`` table."""
+	if not blocks:
+		return text
+	lines = text.splitlines(keepends=True)
+	return _insert_at(text, _after_tools(_headers(lines), len(lines)), blocks)
 
 
 def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
@@ -371,7 +473,7 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
 				if have == value:
 					del table_at(table_path)[key]
 					prune(table_path)
-				else:
+				elif _turns_off(ctx, module):
 					warnings.append(
 						f"pyproject.toml {'.'.join(path)} is the app's now that {module} is off (it differs from what sync wrote)"
 					)
@@ -391,6 +493,9 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
 			table = table_at(table_path)
 			if table is None or isinstance(table, tomlkit.items.AoT):
 				missing.setdefault(table_path, {})[key] = value
+			elif key not in table:
+				order = KEY_ORDER.get(table_path) or [p[-1] for p, _ in keys if p[:-1] == table_path]
+				_put_key(table, key, value, order)
 			elif _plain(table.get(key)) != value:
 				table[key] = value
 	if _on(ctx, "test-utils"):
@@ -409,12 +514,10 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
 	if project is not None and _on(ctx, "metadata"):
 		dynamic = project.get("dynamic")
 		if dynamic is None:
-			project["dynamic"] = ["version"]
+			_put_key(project, "dynamic", ["version"], KEY_ORDER[("project",)])
 		elif "version" not in _plain(dynamic):
 			dynamic.append("version")
-	out = tomlkit.dumps(doc)
-	blocks = [_table_text(path, values) for path, values in missing.items()]
-	return Merged(_insert_tables(out, blocks), warnings)
+	return Merged(_place_tables(tomlkit.dumps(doc), missing), warnings)
 
 
 def _value_text(value: Any) -> str:

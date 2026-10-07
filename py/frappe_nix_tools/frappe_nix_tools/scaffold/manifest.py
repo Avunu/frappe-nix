@@ -235,6 +235,19 @@ def load() -> Manifest:
 	return parse({p.name: json.loads(p.read_text()) for p in sorted(directory.glob("*.json"))})
 
 
+# N2's managed copy of the registration module (S30, §5.11), in its manifest.d/assets.json.
+VITE_REGISTER = "scripts/vite-register.mjs"
+
+
+def ships(path: str) -> bool:
+	"""Whether the packaged manifest renders ``path``.
+
+	C8 and its build append, and retiring ``update-assets.mjs`` from a Vite app, need
+	``scripts/vite-register.mjs``, which N2's fragment brings: until it is packaged, a Vite app
+	keeps its own registration (§1.3)."""
+	return any(e.path == path for e in load().entries)
+
+
 def extra_entries(cfg: dict) -> list[Entry]:
 	"""The org profile's ``[[extra-files]]`` as entries (§8.1): rendered from the profile's
 	``templates/``, live while their module is on and their ``when`` holds."""

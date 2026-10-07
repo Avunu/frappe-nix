@@ -11,7 +11,11 @@ An entry is live when one of its modules is on and its ``when`` holds (§2.4). A
 entry is not live is retracted as §3.3 step 6 says: a ``whole`` file that still opens with
 its managed header and has empty local regions is deleted (with content in a local region
 it is exit 2), a seed is left, the merged files drop the keys of the modules that turned
-off, and the version block loses its markers.
+off, and the version block loses its markers. A module "turned off" when it is off now and
+was on in a ``[tool.frappe-nix]`` table committed since the app opted in (``history``).
+
+Every path is checked once rendered (``inside``): relative, no ``..``, and no symlink on the
+way, since ``--check`` runs on untrusted pull requests.
 """
 
 import contextlib
@@ -69,6 +73,9 @@ class Item:
 	code: int = CLEAN
 	command: str | None = None
 	phase: str = "b"
+	# The module that manages the file (several, comma-separated, for the shared files);
+	# empty for a whole-repo check. ``--check --format json`` reports it per file (§3.3).
+	module: str = ""
 
 	@property
 	def changes(self) -> bool:
@@ -83,7 +90,11 @@ class Item:
 
 	def finding(self) -> Finding:
 		return Finding(
-			self.path, self.strategy, self.problem, self.diff() if self.wanted != self.current else ""
+			self.path,
+			self.strategy,
+			self.problem,
+			self.diff() if self.wanted != self.current else "",
+			self.module,
 		)
 
 
@@ -118,14 +129,41 @@ class Plan:
 		return max((i.code for i in self.items), default=CLEAN)
 
 
+def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
+	"""``root / path``, once ``path`` is known to stay inside the app with no link on the way.
+
+	``path`` is a rendered managed path (an entry's, an ``[[extra-files]]`` one, a node-lock
+	seed): it must be relative, with no ``..``, and no existing component of it may be a
+	symlink (the last one may, with ``link_ok``, for a retired link sync deletes unread).
+	``--check`` runs on untrusted pull requests: a committed link (``tools`` pointing outside
+	the checkout) would otherwise print the file it reaches in the diff, and ``--write`` would
+	write through it. Exit 2."""
+	parts = PurePosixPath(path).parts
+	if not parts or PurePosixPath(path).is_absolute() or ".." in parts:
+		raise ConfigError(
+			f"{path!r} is not a path inside the app: a managed path must be relative, without .."
+		)
+	cur = root
+	for i, part in enumerate(parts):
+		cur = cur / part
+		last = i == len(parts) - 1
+		if cur.is_symlink() and not (last and link_ok):
+			if last:
+				raise ConfigError(
+					f"{path} is a symlink: a managed file must be a regular file (remove the link)"
+				)
+			raise ConfigError(
+				f"{path}: {PurePosixPath(*parts[: i + 1])} is a symlink: sync never reads or writes through"
+				" a link (remove it)"
+			)
+	return root / path
+
+
 def read(root: Path, path: str) -> str | None:
 	"""The text of ``path`` under ``root``; ``None`` when it is missing or a directory.
 
-	A symlink is refused, never followed: ``--check`` runs on untrusted pull requests, and a
-	committed link to a file outside the repository would print that file in the diff (and
-	``--write`` would write through it)."""
-	if (root / path).is_symlink():
-		raise ConfigError(f"{path} is a symlink: a managed file must be a regular file (remove the link)")
+	A symlink anywhere on the path is refused, never followed (``inside``)."""
+	inside(root, path)
 	try:
 		return (root / path).read_text()
 	except FileNotFoundError:
@@ -418,6 +456,46 @@ def previous(root: Path, profile_dir: Path | None = None) -> context.NS | None:
 	except Exception:
 		return None
 	return context.ns({"modules": resolved.modules, "cfg": resolved.cfg})
+
+
+# How far back ``history`` reads pyproject.toml: commits that changed it, newest first.
+HISTORY_DEPTH = 100
+
+
+def history(root: Path, profile_dir: Path | None = None) -> list[context.NS]:
+	"""The modules and configuration of every ``[tool.frappe-nix]`` table ``pyproject.toml`` has
+	had since the app opted in, newest first (``HEAD``'s included, each distinct table once).
+
+	A module that is off now but on in any of them was on once, so sync may have written its
+	files and keys: they are retracted (§3.3 step 6) whichever commit turned it off. ``HEAD``
+	alone would miss a module turned off in a commit made before syncing, which is what
+	``--check`` sees on a pull request (and then the leftovers would stay for good). The walk
+	stops at the newest commit without the table: the app's settings before it opted in are
+	its own (opting in with ``minimal`` removes nothing). A shallow clone reads what it has."""
+	try:
+		shas = repo.git(root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", "pyproject.toml").split()
+	except EnvError:
+		return []
+	out: list[context.NS] = []
+	seen: set[str] = set()
+	for sha in shas:
+		try:
+			doc = tomllib.loads(repo.git(root, "show", f"{sha}:./pyproject.toml"))
+		except (EnvError, tomllib.TOMLDecodeError):
+			continue
+		table = pyproject.tool_frappe_nix(doc)
+		if table is None:
+			break
+		key = json.dumps(table, sort_keys=True, default=str)
+		if key in seen:
+			continue
+		seen.add(key)
+		try:
+			resolved = config.resolve_doc(doc, root=root, profile_dir=profile_dir)
+		except Exception:
+			continue  # a table that no longer resolves (an old profile) tells nothing
+		out.append(context.ns({"modules": resolved.modules, "cfg": resolved.cfg}))
+	return out
 
 
 def profile_templates(root: Path, cfg: dict, profile_dir: Path | None) -> Path | None:
@@ -886,7 +964,11 @@ def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list
 				# Never read through a link: deleting the link is all retiring it takes, and a
 				# rule that looks inside the file cannot apply to one.
 				if not (rule.contains or rule.only_section or rule.deps_in_project):
-					out.append(Item(path, "retire", "", None, f"legacy file ({rule.rule})", DRIFT))
+					out.append(
+						Item(
+							path, "retire", "", None, f"legacy file ({rule.rule})", DRIFT, module=rule.module
+						)
+					)
 					break
 				continue
 			text = read(plan.root, path) or ""
@@ -907,15 +989,26 @@ def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list
 						f"legacy file ({rule.rule}), but [project].dependencies lacks"
 						f" {', '.join(missing)}: add them there, then sync deletes it",
 						INVALID,
+						module=rule.module,
 					)
 				)
 			else:
-				out.append(Item(path, "retire", text, None, f"legacy file ({rule.rule})", DRIFT))
+				out.append(
+					Item(path, "retire", text, None, f"legacy file ({rule.rule})", DRIFT, module=rule.module)
+				)
 			break
 	return out
 
 
 def _was_on(plan: Plan, entry: manifest.Entry) -> bool:
+	"""Whether one of the entry's modules was on in any table since the app opted in
+	(``history``): only then is what sync would have written there sync's to retract."""
+	return any(any(h.modules.get(m) for m in entry.modules) for h in plan.ctx.get("history") or [])
+
+
+def _on_at_head(plan: Plan, entry: manifest.Entry) -> bool:
+	"""Whether one of the entry's modules was on at ``HEAD``: this run turns it off, so what
+	sync leaves behind is reported now, once."""
 	previous = plan.ctx.get("previous")
 	return bool(previous) and any(previous.modules.get(m) for m in entry.modules)
 
@@ -935,9 +1028,10 @@ def _retract(plan: Plan, entry: manifest.Entry, path: str, templates: Path | Non
 			path, entry.strategy, current, wanted, "the version block's markers go with releases", DRIFT
 		)
 	if entry.strategy == "seed":
-		if _was_on(plan, entry) or entry.command:
-			return None
-		plan.notices.append(f"{path} was seeded by a module that is off; it is the app's now")
+		# A seed is the app's from the moment it exists: left, and said so on the run that
+		# turns its module off (a file sync never seeded is the app's all along).
+		if _on_at_head(plan, entry) and not entry.command:
+			plan.notices.append(f"{path} stays: its module is off now, and the file is the app's")
 		return None
 	if entry.strategy != "whole":
 		return None
@@ -966,7 +1060,10 @@ def _retract(plan: Plan, entry: manifest.Entry, path: str, templates: Path | Non
 		would = None
 	if would is not None and (would == current or semantic.equal(path, current, would)):
 		return Item(path, entry.strategy, current, None, "file should not exist (its module is off)", DRIFT)
-	plan.notices.append(f"{path} is the app's now that its module is off (it differs from what sync wrote)")
+	if _on_at_head(plan, entry):
+		plan.notices.append(
+			f"{path} is the app's now that its module is off (it differs from what sync wrote)"
+		)
 	return None
 
 
@@ -1118,6 +1215,7 @@ def build(
 	man = manifest.load()
 	ctx = context.build(app, resolved, lock=locked_frappe_nix(root), floors=man.floors, options=options)
 	ctx["previous"] = previous(root, profile_dir)
+	ctx["history"] = history(root, profile_dir)
 	plan = Plan(root, app, resolved, ctx, created_config=created, notices=list(resolved.notices))
 	try:
 		package = load_package(root)
@@ -1131,30 +1229,30 @@ def build(
 	seed_manifest = read(root, ".release-please-manifest.json") is None
 	managed_paths: set[str] = set()
 	for entry in entries:
+		# The rendered path is what is read and written, so that is what must stay inside the
+		# app: an [[extra-files]] path of "{{ '..' }}/x" passes any check of the template.
 		path = rendering.render_string(entry.path, ctx)
+		inside(root, path, link_ok=True)
 		managed_paths.add(path)
 		if entry.phase not in phases or (only_set is not None and path not in only_set):
 			continue
 		module_on = any(ctx.modules.get(m) for m in entry.modules)
+		items: list[Item] = []
 		if entry.strategy in ("toml-merge", "json-merge") and entry.handler in ("pyproject", "package-json"):
 			# The merged files: every module's key group is set or retracted on each run.
 			if module_on:
 				check_uses(ctx, entry, path)
-			for it in _entry_item(plan, entry, path, seed_manifest, templates):
-				plan.add(it)
-			continue
-		if module_on and rendering.evaluate(entry.when, ctx):
+			items = _entry_item(plan, entry, path, seed_manifest, templates)
+		elif module_on and rendering.evaluate(entry.when, ctx):
 			check_uses(ctx, entry, path)
-			for it in _entry_item(plan, entry, path, seed_manifest, templates):
-				plan.add(it)
+			items = _entry_item(plan, entry, path, seed_manifest, templates)
 		elif module_on:
-			gone = _absent(plan, entry, path, templates)
-			if gone:
-				plan.add(gone)
+			items = [gone] if (gone := _absent(plan, entry, path, templates)) else []
 		else:
-			gone = _retract(plan, entry, path, templates)
-			if gone:
-				plan.add(gone)
+			items = [gone] if (gone := _retract(plan, entry, path, templates)) else []
+		for it in items:
+			it.module = it.module or ",".join(entry.modules)
+			plan.add(it)
 	if "b" in phases:
 		for it in _retired(plan, managed_paths, only_set):
 			plan.add(it)
@@ -1212,11 +1310,21 @@ def lock_problems(plan: Plan) -> list[Item]:
 		return []
 	lock_path = plan.root / "flake.lock"
 	if not lock_path.is_file():
-		return [Item("flake.lock", "lock", None, None, "missing: run `frappe-init --sync`", DRIFT)]
+		return [
+			Item(
+				"flake.lock",
+				"lock",
+				None,
+				None,
+				"missing: run `frappe-init --sync`",
+				DRIFT,
+				module="dev-shell",
+			)
+		]
 	try:
 		lock = flakelock.load(lock_path)
 	except EnvError as e:
-		return [Item("flake.lock", "lock", None, None, str(e), ENVIRONMENT)]
+		return [Item("flake.lock", "lock", None, None, str(e), ENVIRONMENT, module="dev-shell")]
 	# frappe-nix's self-tests lock the checkout under test in its place (FRAPPE_NIX_URL_OVERRIDE).
 	skip = ("frappe-nix",) if os.environ.get("FRAPPE_NIX_ALLOW_SKEW") == "1" else ()
 	stale = stale_inputs(lock, flake_input_specs(text), skip)
@@ -1229,6 +1337,7 @@ def lock_problems(plan: Plan) -> list[Item]:
 				None,
 				f"does not follow flake.nix: {'; '.join(stale)}: run `frappe-init --sync`",
 				DRIFT,
+				module="dev-shell",
 			)
 		]
 	return []

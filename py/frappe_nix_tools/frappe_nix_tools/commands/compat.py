@@ -13,7 +13,8 @@ C5  the version block holds, and ``__version__`` = package.json = release-please
 C6  ``hooks.required_apps`` ⊆ siblings; frappe is not in ``required_apps``
 C7  no hand-written frappe globals (augmentations only in ``types/<app>.augment.d.ts``,
     each member ``// app-owned: <reason>``); ``.git-blame-ignore-revs`` is valid
-C8  with a Vite config, ``scripts.build`` ends with ``node scripts/vite-register.mjs``
+C8  with a Vite config, ``scripts.build`` ends with ``node scripts/vite-register.mjs`` (once
+    the package renders that file: N2's ``manifest.d/assets.json``)
 C9  every unchecked-js path and coverage-omit glob matches a tracked file; reasons ≥ 10 characters
 
 Each rule runs only while its module is on (§5.9): C2, C3, C4 and C6 with ``metadata``;
@@ -37,6 +38,7 @@ from pathlib import Path
 from frappe_nix_tools.common import data_path, flakelock, repo
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError
 from frappe_nix_tools.scaffold import blocks, context, discover, engine, globs, hooks, package_json, ranges
+from frappe_nix_tools.scaffold import manifest as packaged
 
 _DECLARE = re.compile(r"\bdeclare\s+(?:var|let|const)\s+frappe\b")
 _DECLARE_NS = re.compile(r"\bdeclare\s+namespace\s+frappe\b")
@@ -222,7 +224,7 @@ def violations(root: Path) -> list[str]:
 			out += [f"C7 .git-blame-ignore-revs: {p}" for p in engine.blame_problems(root, blame)]
 
 	# C8: discover.vite, the rule sync's build-append and §2.8's forbidden-build rule use too.
-	if modules.get("vite-register"):
+	if modules.get("vite-register") and packaged.ships(packaged.VITE_REGISTER):
 		vite = discover.facts(root, app.name, cfg, app.tracked, modules)["vite"]
 		build = (pkg.get("scripts") or {}).get("build", "")
 		if vite and not str(build).rstrip().endswith(package_json.VITE_REGISTER):

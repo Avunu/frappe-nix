@@ -10,8 +10,12 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
+from frappe_nix_tools.scaffold import manifest
 from helpers import run_cli
 from scaffold_helpers import AppCase, git
+
+# N2 packages scripts/vite-register.mjs (manifest.d/assets.json); these cases run as if it did.
+with_vite_register = mock.patch.object(manifest, "ships", lambda path: path == manifest.VITE_REGISTER)
 
 
 class TestRoundTrip(AppCase):
@@ -65,6 +69,8 @@ class TestRoundTrip(AppCase):
 		doc = json.loads(out)
 		self.assertEqual(doc["status"], "drift")
 		self.assertEqual([f["path"] for f in doc["files"]], [".envrc"])
+		self.assertEqual(list(doc["files"][0]), ["path", "strategy", "module", "problem", "diff"])
+		self.assertEqual(doc["files"][0]["module"], "dev-shell")
 
 	def test_only(self):
 		self.synced()
@@ -513,7 +519,8 @@ class TestDiscovery(AppCase):
 			pkg["scripts"]["typecheck"],
 			"tsc --build tsconfig.solution.json && vue-tsc --noEmit -p tsconfig.json",
 		)
-		self.assertTrue(pkg["scripts"]["build"].endswith("&& node scripts/vite-register.mjs"))
+		# C8's append waits for N2's scripts/vite-register.mjs (TestUpdateAssetsBeforeN2).
+		self.assertEqual(pkg["scripts"]["build"], "vite build")
 		browser = json.loads(_strip(self.read("tsconfig.browser.json")))
 		self.assertIn("demo_app/public/js/app/**", browser["exclude"])
 
@@ -665,6 +672,20 @@ class TestNodeLocks(AppCase):
 		self.assertFalse((self.root / "nix/node-locks/hrms/roster/source.json").exists())
 
 
+class TestNodeLockLinks(AppCase):
+	extra_pyproject = 'siblings = ["erpnext"]\n'
+
+	def test_a_dangling_seed_link_is_refused(self):
+		victim = self.root.parent / (self.root.name + "-victim")
+		(self.root / "nix/node-locks/frappe/ui").mkdir(parents=True)
+		(self.root / "nix/node-locks/frappe/ui/yarn.lock").symlink_to(victim)
+		self.commit()
+		code, out, err = self.fn("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertIn("symlink", err)
+		self.assertFalse(victim.exists())
+
+
 class TestSkew(AppCase):
 	def test_expect_rev(self):
 		self.synced()
@@ -778,6 +799,23 @@ class TestSymlinks(AppCase):
 		self.assertEqual(code, 2, out + err)
 		self.assertEqual(outside.read_text(), "SECRET_TOKEN=hunter2\n")
 
+	def test_a_symlinked_parent_directory_is_refused(self):
+		self.synced()
+		outside = self.root.parent / (self.root.name + "-outside")
+		outside.mkdir()
+		self.addCleanup(lambda: __import__("shutil").rmtree(outside))
+		(outside / "pyproject.toml").write_text("SECRET_TOKEN=hunter2\n")
+		__import__("shutil").rmtree(self.root / "tools")
+		(self.root / "tools").symlink_to(outside)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertNotIn("hunter2", out)
+		self.assertIn("tools is a symlink", out)
+		code, out, err = self.fn("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertEqual((outside / "pyproject.toml").read_text(), "SECRET_TOKEN=hunter2\n")
+
 	def test_a_retired_symlink_is_removed_unread(self):
 		self.synced()
 		outside = self.root.parent / (self.root.name + "-old")
@@ -817,6 +855,7 @@ class TestRetireGuards(AppCase):
 		self.assertEqual(self.fn("sync", "--write")[0], 0)
 		self.assertFalse((self.root / "requirements.txt").exists())
 
+	@with_vite_register
 	def test_update_assets_steps_go_with_the_file(self):
 		self.write("vite.config.ts", "export default {};\n")
 		self.write("update-assets.mjs", "\n")
@@ -845,6 +884,43 @@ class TestRetireGuards(AppCase):
 		code, out = self.check()
 		self.assertEqual(code, 2, out)
 		self.assertIn("scripts.watch runs update-assets.mjs", out)
+
+
+class TestUpdateAssetsBeforeN2(AppCase):
+	"""Until the package renders scripts/vite-register.mjs (N2), a Vite app keeps its own
+	registration: no build step names the missing file, and C8 does not ask for one."""
+
+	def vite_app(self) -> None:
+		self.write("vite.config.ts", "export default {};\n")
+		self.write("update-assets.mjs", "\n")
+		self.write(
+			"package.json",
+			json.dumps({"name": "demo-app", "scripts": {"build": "vite build && node update-assets.mjs"}}),
+		)
+		self.commit()
+
+	def test_a_vite_app_keeps_update_assets(self):
+		self.vite_app()
+		self.synced()
+		self.assertTrue((self.root / "update-assets.mjs").exists())
+		build = json.loads(self.read("package.json"))["scripts"]["build"]
+		self.assertEqual(build, "vite build && node update-assets.mjs")
+		self.assertEqual(self.fn("compat")[0], 0)
+
+	@with_vite_register
+	def test_with_the_registration_shipped_c8_applies(self):
+		self.vite_app()
+		self.synced()
+		self.assertFalse((self.root / "update-assets.mjs").exists())
+		build = json.loads(self.read("package.json"))["scripts"]["build"]
+		self.assertEqual(build, "vite build && node scripts/vite-register.mjs")
+		pkg = json.loads(self.read("package.json"))
+		pkg["scripts"]["build"] = "vite build"
+		self.write("package.json", json.dumps(pkg))
+		self.commit()
+		code, out, _ = self.fn("compat")
+		self.assertEqual(code, 1, out)
+		self.assertIn("C8", out)
 
 
 class TestSpaGuard(AppCase):

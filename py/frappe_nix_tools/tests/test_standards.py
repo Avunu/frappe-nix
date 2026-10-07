@@ -197,6 +197,136 @@ class TestToggleOff(ToggleCase):
 		self.assertEqual(self.check()[0], 0)
 
 
+class TestToggleRoundTrip(ToggleCase):
+	"""§7 N3: turning a module off (committed, synced, committed) and back on restores every file
+	byte for byte, for each module that owns pyproject.toml or package.json keys."""
+
+	def off_and_on(self, line: str) -> None:
+		before = self.snapshot()
+		self.table(line)
+		self.commit()
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.fake_yarn_lock()
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+		self.write("pyproject.toml", self.read("pyproject.toml").replace(line, "", 1))
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		after = self.snapshot()
+		for path in sorted(set(before) | set(after)):
+			if path in ("yarn.lock", "tools/uv.lock"):
+				continue  # the locks tools make, faked here
+			self.assertEqual(after.get(path, b"").decode(), before.get(path, b"").decode(), path)
+
+	def test_each_key_group(self):
+		for line in (
+			"python-lint.enable = false\n",
+			"python-types.enable = false\n",
+			"metadata.enable = false\n",
+			"tests.enable = false\n",
+			'js.tool = "none"\n',
+			"typescript.enable = false\n",
+		):
+			with self.subTest(line=line):
+				self.off_and_on(line)
+				self.commit()
+
+
+class TestRetractionAfterACommit(ToggleCase):
+	"""A module turned off in a commit made before syncing (what --check sees on a pull request)
+	is retracted all the same: --check reports what is left, and sync removes it."""
+
+	def test_config_committed_first(self):
+		self.table('releases.enable = false\njs.tool = "none"\n')
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		for path in (".oxlintrc.json", "release-please-config.json", "package.json", "demo_app/__init__.py"):
+			self.assertIn(f"{path} (", out)
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.fake_yarn_lock()
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+		for path in (".oxlintrc.json", ".oxfmtrc.jsonc", "release-please-config.json"):
+			self.assertFalse((self.root / path).exists(), path)
+		pkg = json.loads(self.read("package.json"))
+		for key in ("format", "format:check", "lint", "check"):
+			self.assertNotIn(key, pkg["scripts"], key)
+		self.assertNotIn("oxlint", pkg["devDependencies"])
+		self.assertNotIn("x-release-please", self.read("demo_app/__init__.py"))
+
+	def test_a_settled_module_stays_settled(self):
+		"""Once retracted and committed, a later sync changes nothing and says nothing."""
+		self.table('js.tool = "none"\n')
+		self.commit()
+		self.assertEqual(self.resync()[0], 0)
+		self.fake_yarn_lock()
+		self.commit()
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.assertNotIn("notice", out)
+		self.assertNotIn("warning", out)
+
+
+class TestCheckScriptRetraction(ToggleCase):
+	def test_js_and_typescript_off_together(self):
+		self.table('js.tool = "none"\ntypescript.enable = false\n')
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		scripts = json.loads(self.read("package.json"))["scripts"]
+		for key in ("check", "format", "format:check", "lint", "typecheck"):
+			self.assertNotIn(key, scripts, key)
+		self.fake_yarn_lock()
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+
+	def test_recommended_to_minimal(self):
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace('profile = "recommended"', 'profile = "minimal"'),
+		)
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		scripts = json.loads(self.read("package.json")).get("scripts", {})
+		self.assertNotIn("check", scripts)
+		# The seeds stay, said once: on the run that turns their module off.
+		for seed in (".git-blame-ignore-revs", ".release-please-manifest.json"):
+			self.assertTrue((self.root / seed).exists(), seed)
+			self.assertIn(f"{seed} stays", out)
+		self.fake_yarn_lock()
+		self.commit()
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.assertNotIn("stays", out)
+		self.assertEqual(self.check()[0], 0)
+
+	def test_an_app_check_is_kept_with_a_warning(self):
+		pkg = json.loads(self.read("package.json"))
+		pkg["scripts"]["check"] = "yarn -s lint && vitest"
+		self.write("package.json", json.dumps(pkg, indent="\t") + "\n")
+		self.commit()
+		self.table('js.tool = "none"\n')
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.assertEqual(json.loads(self.read("package.json"))["scripts"]["check"], "yarn -s lint && vitest")
+		self.assertIn("scripts.check is the app's now", out)
+
+
+class TestSeedNoticeOnlyForATurnOff(OptOutCase):
+	def test_an_apps_own_seed_name_is_not_reported(self):
+		self.write(".git-blame-ignore-revs", "# mine\n")
+		self.commit()
+		code, _, err = self.fn("sync", "--write", "--standards", "minimal", "--frappe-version", "version-16")
+		self.assertEqual(code, 0, err)
+		self.assertNotIn(".git-blame-ignore-revs", err)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertNotIn(".git-blame-ignore-revs", err)
+
+
 class TestJsOffKeepsTheAdoptersScripts(OptOutCase):
 	def test_eslint_users(self):
 		self.write("demo_app/public/scss/a.scss", "a { color: red; }\n")
@@ -579,6 +709,31 @@ class TestOrgProfile(ProfileCase):
 		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
 		self.assertEqual(code, 2, out + err)
 
+	def test_profile_validate_ignores_the_users_git_config(self):
+		"""Commit signing and a global hooks path must not reach the throwaway repositories."""
+		hooks = self.root.parent / (self.root.name + "-hooks")
+		hooks.mkdir()
+		self.addCleanup(lambda: __import__("shutil").rmtree(hooks))
+		(hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+		(hooks / "pre-commit").chmod(0o755)
+		gitconfig = self.root.parent / (self.root.name + "-gitconfig")
+		gitconfig.write_text(f"[commit]\n\tgpgsign = true\n[core]\n\thooksPath = {hooks}\n")
+		self.addCleanup(gitconfig.unlink)
+		with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(gitconfig)}):
+			code, out, err = self.fn(
+				"profile", "validate", str(self.root / ".standards-profile/profile.toml")
+			)
+		self.assertEqual(code, 0, out + err)
+
+	def test_profile_list_describes_each(self):
+		code, out, _ = self.fn("profile", "list")
+		self.assertEqual(code, 0)
+		lines = out.splitlines()
+		self.assertTrue(lines[0].startswith("minimal "), out)
+		self.assertIn("The frappe-nix dev shell only", lines[0])
+		self.assertIn("(recommended)", out)
+		self.assertIn("Vendor-neutral app standards", out)
+
 	def test_profile_show_explains(self):
 		code, out, err = self.fn("profile", "show", "--explain")
 		self.assertEqual(code, 0, err)
@@ -587,6 +742,69 @@ class TestOrgProfile(ProfileCase):
 		self.assertIn('js.tool = "oxc"  # builtin:recommended@1.0', out)
 		code, out, _ = self.fn("profile", "show", "--format", "json")
 		self.assertTrue(json.loads(out)["modules"]["ssort"])
+
+
+class TestUntrustedProfile(ProfileCase):
+	"""An in-repo profile is data a pull request can change, and --check runs on untrusted PRs:
+	its paths stay inside the app, and its templates and `when`s run no code."""
+
+	def extra(self, path: str, when: str = "True") -> None:
+		self.write(
+			".standards-profile/profile.toml",
+			EXAMPLE_ORG + f'\n[[extra-files]]\npath = {json.dumps(path)}\ntemplate = "SECURITY.md.j2"\n'
+			f'strategy = "whole"\nmodule = "hygiene"\nheader = "none"\nwhen = {json.dumps(when)}\n',
+		)
+		self.commit()
+
+	def test_a_rendered_path_must_stay_inside(self):
+		outside = self.root.parent / (self.root.name + "-ESCAPED.txt")
+		for path in (f"{{{{ '..' }}}}/{outside.name}", f"{{{{ '/' }}}}{str(outside).lstrip('/')}"):
+			with self.subTest(path=path):
+				self.extra(path)
+				for argv in (("sync", "--check"), ("sync", "--write")):
+					code, out, err = self.fn(*argv)
+					self.assertEqual(code, 2, out + err)
+					self.assertIn("not a path inside the app", out + err)
+				self.assertFalse(outside.exists())
+
+	def test_templates_are_sandboxed(self):
+		marker = self.root / "PWNED_JINJA"
+		self.write(
+			".standards-profile/templates/SECURITY.md.j2",
+			f'{{{{ cycler.__init__.__globals__.os.system("touch {marker}") }}}}\n',
+		)
+		self.commit()
+		code, out, err = self.fn("sync", "--check")
+		self.assertEqual(code, 2, out + err)
+		self.assertIn("sandbox", out + err)
+		self.assertFalse(marker.exists())
+
+	def test_when_is_not_python(self):
+		marker = self.root / "PWNED_WHEN"
+		self.extra(
+			"OTHER.md",
+			"[c for c in ().__class__.__base__.__subclasses__() if c.__name__ == 'Popen']"
+			f"[0](['touch', '{marker}']) is not None",
+		)
+		code, out, err = self.fn("sync", "--check")
+		self.assertEqual(code, 2, out + err)
+		self.assertIn("only len, any, all may be called", out + err)
+		self.assertFalse(marker.exists())
+		for when, why in (
+			("().__class__", "names starting with _"),
+			("[c for c in siblings]", "ListComp is not allowed"),
+			("modules.__class__", "names starting with _"),
+		):
+			with self.subTest(when=when):
+				self.extra("OTHER.md", when)
+				code, out, err = self.fn("sync", "--check")
+				self.assertEqual(code, 2, out + err)
+				self.assertIn(why, out + err)
+
+	def test_when_reads_the_context(self):
+		self.extra("OTHER.md", "modules.hygiene and not discover.scss and len(siblings) == 0")
+		self.assertEqual(self.fn("sync", "--write")[0], 0)
+		self.assertTrue((self.root / "OTHER.md").is_file())
 
 
 class TestFlakeProfileInput(AppCase):
@@ -641,6 +859,67 @@ class TestFlakeProfileInput(AppCase):
 		flake = self.read("flake.nix")
 		self.assertIn('url = "gitlab:example/profile";', flake)
 		self.assertIn('url = "git+https://git.example.org/libs/shared_lib?ref=main";', flake)
+
+	def test_check_without_nix_reads_the_locked_profile(self):
+		"""§7 N3: --check in a no-Nix job reads the org profile through pin-path (a fetched
+		archive, narHash-verified); a tree that fails its narHash is exit 3."""
+		import tarfile
+
+		from frappe_nix_tools.common import nar
+
+		rev = "c" * 40
+		work = self.root.parent / (self.root.name + "-pins")
+		self.addCleanup(__import__("shutil").rmtree, work, True)
+		tree = write_profile(work / "src", rel=f"profile-{rev}")
+		archive = work / "profile.tar.gz"
+
+		def pack() -> None:
+			with tarfile.open(archive, "w:gz") as tar:
+				tar.add(tree, arcname=tree.name)
+
+		pack()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace(
+				'profile = "recommended"', 'profile = "github:example/profile"'
+			),
+		)
+		self.commit()
+		self.assertEqual(self.fn("sync", "--write", "--profile-path", str(tree))[0], 0)
+		lock = flake_lock(["frappe"])
+		lock["nodes"]["standards-profile"] = {
+			"flake": False,
+			"locked": {
+				"type": "github",
+				"owner": "example",
+				"repo": "profile",
+				"rev": rev,
+				"narHash": nar.nar_hash(tree),
+			},
+			"original": {"type": "github", "owner": "example", "repo": "profile"},
+		}
+		lock["nodes"]["root"]["inputs"]["standards-profile"] = "standards-profile"
+		self.fake_locks()
+		self.write("flake.lock", json.dumps(lock))
+		self.commit()
+		env = {"FRAPPE_NIX_PIN_URL": f"file://{work}/{{repo}}.tar.gz", "CI": "true"}
+		with mock.patch.dict(os.environ, env):
+			code, out = self.check()
+			self.assertEqual(code, 0, out)
+			self.assertTrue((self.root / f".dev-dist/pins/profile-{rev}/profile.toml").is_file())
+			# A cached tree someone edited is refetched, never trusted.
+			cached = self.root / f".dev-dist/pins/profile-{rev}/profile.toml"
+			cached.write_text(cached.read_text().replace("Example Org", "Evil Org"))
+			code, out = self.check()
+			self.assertEqual(code, 0, out)
+			self.assertIn("Example Org", cached.read_text())
+			# The archive itself tampered: its narHash no longer matches the lock.
+			(tree / "profile.toml").write_text(EXAMPLE_ORG.replace("Example Org", "Evil Org"))
+			pack()
+			__import__("shutil").rmtree(self.root / ".dev-dist/pins")
+			code, out = self.check()
+			self.assertEqual(code, 3, out)
+			self.assertIn("does not match flake.lock: narHash", out)
 
 	def test_unlocked_profile_is_a_lock_problem(self):
 		self.write(

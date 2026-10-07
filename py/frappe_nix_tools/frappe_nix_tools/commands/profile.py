@@ -12,14 +12,15 @@ in its ``templates/`` (or ``--templates``): each replaces an overridable templat
 ``[[extra-files]]`` template, and renders for a plain app and one with erpnext and hrms
 without an undefined variable.
 
-``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot, marking the one plain
-``recommended`` means (S42).
+``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot with its description,
+marking the one plain ``recommended`` means (S42).
 
 Exit codes as sync's: 0, 2 (invalid) or 3 (environment).
 """
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -94,12 +95,35 @@ def _throwaway(root: Path, profile: Path, siblings: list[str]) -> Path:
 	(app / "profile_check" / "hooks.py").write_text(
 		f'app_title = "Profile Check"\nrequired_apps = {json.dumps(siblings)}\n'
 	)
+	# A repository of its own: none of the user's git configuration (commit signing, a global
+	# core.hooksPath, init templates) applies to it, and no hook runs.
+	env = {
+		**os.environ,
+		"GIT_CONFIG_GLOBAL": os.devnull,
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_AUTHOR_NAME": "profile-validate",
+		"GIT_AUTHOR_EMAIL": "profile-validate@example.org",
+		"GIT_COMMITTER_NAME": "profile-validate",
+		"GIT_COMMITTER_EMAIL": "profile-validate@example.org",
+	}
+	for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"):
+		env.pop(key, None)
 	for argv in (
-		["init", "-q"],
+		["init", "-q", "--template="],
 		["add", "-A"],
-		["-c", "user.name=p", "-c", "user.email=p@example.org", "commit", "-qm", "app"],
+		[
+			"-c",
+			"commit.gpgsign=false",
+			"-c",
+			f"core.hooksPath={os.devnull}",
+			"commit",
+			"-q",
+			"--no-verify",
+			"-m",
+			"app",
+		],
 	):
-		subprocess.run(["git", "-C", str(app), *argv], check=True, capture_output=True)
+		subprocess.run(["git", "-C", str(app), *argv], check=True, capture_output=True, env=env)
 	return app
 
 
@@ -142,10 +166,14 @@ def validate(args: argparse.Namespace) -> int:
 
 
 def list_profiles(_args: argparse.Namespace) -> int:
+	"""Each built-in with its description (§5.13), marking the one plain ``recommended`` means."""
 	newest = config.builtin_name("recommended")
-	for name in config.builtin_names():
-		mark = "  (recommended)" if name == newest else ""
-		print(f"{name}{mark}")
+	names = config.builtin_names()
+	labels = {name: name + ("  (recommended)" if name == newest else "") for name in names}
+	width = max(len(label) for label in labels.values())
+	for name in names:
+		description = config.builtin_profile(name)[1].get("description", "")
+		print(f"{labels[name]:<{width}}  {description}".rstrip())
 	return CLEAN
 
 
