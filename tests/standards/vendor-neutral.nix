@@ -42,8 +42,8 @@ let
   python = "${pkgs.python3}/bin/python3";
 
   # Each plant: a file (created when missing) and a line appended to it, after a
-  # line holding a byte that is not UTF-8 when `latin1` is set. The scan must then
-  # fail and name that file and line.
+  # line holding a byte that is not UTF-8 when `latin1` is set, or a NUL byte
+  # when `nul` is. The scan must then fail and name that file and line.
   plants = [
     {
       file = "py/frappe_nix_tools/frappe_nix_tools/data/templates/package.json.j2";
@@ -76,9 +76,16 @@ let
       line = ''author = "Avunu LLC";'';
       latin1 = true;
     }
+    # Nor one NUL byte.
+    {
+      file = "lib/y.nix";
+      line = ''author = "Avunu LLC";'';
+      nul = true;
+    }
   ];
   # A line with an é in Latin-1 (0xE9), which is not UTF-8.
   latin1 = "printf '# caf\\351\\n' >> \"tree/$file\"";
+  nul = "printf '# \\000\\n' >> \"tree/$file\"";
   plantScript = lib.concatMapStringsSep "\n" (p: ''
     file=${lib.escapeShellArg p.file}
     rm -rf tree
@@ -87,6 +94,7 @@ let
     mkdir -p "$(dirname tree/${lib.escapeShellArg p.file})"
     touch tree/${lib.escapeShellArg p.file}
     ${lib.optionalString (p.latin1 or false) latin1}
+    ${lib.optionalString (p.nul or false) nul}
     line="$(( $(wc -l < tree/${lib.escapeShellArg p.file}) + 1 ))"
     printf '%s\n' ${lib.escapeShellArg p.line} >> tree/${lib.escapeShellArg p.file}
     if ${python} ${scanner} code tree ${denylist} > found; then

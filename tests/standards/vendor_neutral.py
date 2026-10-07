@@ -14,8 +14,8 @@ in the frappe-types dependency's source URL (spec §2.9), which is cut out of a 
 it is matched, so the rest of that line is still checked. The spec itself is the contract,
 which describes the Avunu profile as its worked example, and is not linted.
 
-A file is read as bytes and decoded leniently, so one stray non-UTF-8 byte can't hide the
-rest of it; only a file holding a NUL byte (binary) is skipped.
+Every file in scope is read as bytes and decoded leniently, so no stray byte (not UTF-8,
+or NUL) hides the rest of it. A binary that ever needs leaving out is excluded by path.
 """
 
 import re
@@ -74,10 +74,7 @@ def files(root: Path, scope: tuple[str, ...], exclude: tuple[str, ...]) -> list[
 
 
 def lines(path: Path) -> list[str]:
-	data = path.read_bytes()
-	if b"\0" in data:
-		return []
-	return data.decode("utf-8", errors="replace").splitlines()
+	return path.read_bytes().decode("utf-8", errors="replace").splitlines()
 
 
 def scan(root: Path, denylist: Path, mode: str) -> list[str]:
