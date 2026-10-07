@@ -7,12 +7,15 @@ name: selftest-scaffold
 # (IRONCLAD_FRAPPE_NIX_URL, which is why skew is allowed).
 #
 #   rendered   the synced fixture through nixfmt, oxfmt, ruff, actionlint,
-#              zizmor, uv lock --check, prek (every hook, network included) and
-#              tsc --build; its flake evaluates; and `frappe-init --check` on a
-#              clone of carbon_frappe reports drift without crashing.
+#              zizmor (this workflow too, and the fixture's rendered workflows
+#              once N4's fragment renders them), uv lock --check, prek (every
+#              hook, network included) and tsc --build; its flake evaluates; and
+#              `frappe-init --check` on a pinned carbon_frappe commit exits 2.
 #   bootstrap  one `frappe-init --sync` with neither yarn nor uv on PATH, from a
 #              fixture with no flake (postgrid, jwt_auth) and from one whose lock
-#              pins frappe-nix main (carbon, taskview, timeclock): --check is
+#              pins frappe-nix main (carbon, taskview, timeclock); and (reenter) a
+#              bare `ironclad sync --write` on the main-locked shape, which has
+#              to relock and re-enter through the app's dev shell: --check is
 #              clean right after, and the locks exist.
 #   no-nix     `uv tool install` from a clone with no checkout left on disk, then
 #              `ironclad sync --check` on the fixture: the package is
@@ -22,13 +25,22 @@ on:
   pull_request:
     paths:
       - .github/workflows/selftest-scaffold.yml
-      - lib/init.nix
+      # flake.nix builds frappe-init and ironclad; flake.lock is the nixpkgs of
+      # every tool here; modules/ is the app-mode flake the fixture evaluates and
+      # relocks; version.txt is what the re-exec compares.
+      - flake.nix
+      - flake.lock
+      - version.txt
+      - lib/*.nix
       - lib/ironclad/**
       - lib/sh/**
+      - modules/**
       - py/ironclad/**
       - templates/app/**
       - tests/fixtures/ironclad-app/**
       - tests/ironclad/**
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions: {}
@@ -84,8 +96,9 @@ jobs:
         run: |
           set -euo pipefail
           frappe-init --sync
-          # Only the lock moves (it now pins this checkout) and relock writes nix/uv.lock.
-          changed="$(git status --porcelain | grep -v -E ' (flake\.lock|nix/.*)$' || true)"
+          # Only the lock moves (it now pins this checkout) and relock writes nix/uv.lock;
+          # every other path, the committed node-lock seeds included, must be as committed.
+          changed="$(git status --porcelain | grep -v -E '^.. (flake\.lock|nix/uv\.lock)$' || true)"
           if [ -n "$changed" ]; then
             echo "::error::sync changed the committed fixture:"
             echo "$changed"
@@ -104,15 +117,24 @@ jobs:
           uv run --frozen --project tools ruff format --check .
           uv lock --check --project tools
 
-      - name: actionlint and zizmor on the rendered workflows
+      - name: actionlint and zizmor, with the fixture's pinned tools
         working-directory: ${{ runner.temp }}/app
+        env:
+          SELF: ${{ github.workspace }}/.github/workflows/selftest-scaffold.yml
         run: |
           set -euo pipefail
+          # This workflow, so the step checks something before N4 renders workflows.
+          uv run --frozen --project tools actionlint "$SELF"
+          uv run --frozen --project tools zizmor --offline "$SELF"
+          # The fixture's rendered workflows: none until N4's manifest.d/ci.json
+          # renders them; from then on they must exist and pass.
+          if jq -s -e '[.[].entries[]?.path | select(startswith(".github/"))] | length > 0' \
+            "$(ironclad data-path manifest.d)"/*.json > /dev/null; then
+            test -d .github/workflows || { echo "::error::the manifest renders .github files, but the fixture has none"; exit 1; }
+          fi
           if [ -d .github/workflows ]; then
             uv run --frozen --project tools actionlint
             uv run --frozen --project tools zizmor --config .github/zizmor.yml .github/workflows .github/dependabot.yml
-          else
-            echo "::notice::the fixture has no rendered workflows yet (they arrive with N4's manifest.d/ci.json)"
           fi
 
       - name: prek run --all-files
@@ -139,33 +161,41 @@ jobs:
           nix flake lock --override-input frappe-nix "$FRAPPE_NIX"
           nix eval --no-pure-eval --raw --override-input frappe-nix "$FRAPPE_NIX" .#packages.x86_64-linux.default.drvPath
 
-      - name: frappe-init --check on a read-only clone of carbon_frappe
+      - name: frappe-init --check on a read-only, pinned carbon_frappe
+        env:
+          # carbon_frappe's develop before PR A (2026-10-07): a fixed input, so this
+          # step changes meaning only when frappe-nix does.
+          CARBON_SHA: e275a300648910846c8d71ac785ce4758734c5ce
         run: |
           set -euo pipefail
-          git clone -q --depth 1 https://github.com/Avunu/carbon_frappe "$RUNNER_TEMP/carbon"
-          chmod -R a-w "$RUNNER_TEMP/carbon"
+          git init -q "$RUNNER_TEMP/carbon"
           cd "$RUNNER_TEMP/carbon"
+          git fetch -q --depth 1 https://github.com/Avunu/carbon_frappe "$CARBON_SHA"
+          git checkout -q FETCH_HEAD
+          chmod -R a-w "$RUNNER_TEMP/carbon"
           set +e
           frappe-init --check > "$RUNNER_TEMP/carbon-report.txt"
           code=$?
           set -e
           tail -n 40 "$RUNNER_TEMP/carbon-report.txt"
-          # Drift (1), or an app-owned key sync refuses to touch (2): carbon's develop
-          # sets [tool.ty.rules] to "warn", which §2.12 forbids. Never 3, a crash.
-          if [ "$code" != 1 ] && [ "$code" != 2 ]; then
-            echo "::error::frappe-init --check on carbon_frappe exited $code, not 1 or 2"
+          # 2, an app-owned key sync refuses to touch: this commit sets
+          # [tool.ty.rules] to "warn", which §2.12 forbids. Never 3, a crash.
+          if [ "$code" != 2 ]; then
+            echo "::error::frappe-init --check on carbon_frappe $CARBON_SHA exited $code, not 2"
             exit 1
           fi
+          grep -q 'only "error" is allowed' "$RUNNER_TEMP/carbon-report.txt"
           grep -q 'drifted' "$RUNNER_TEMP/carbon-report.txt"
 
   bootstrap:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        shape: [no-flake, main-locked]
+        shape: [no-flake, main-locked, reenter]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -180,8 +210,11 @@ jobs:
           diagnostic-endpoint: ""
           use-flakehub: false
 
-      - name: Build frappe-init from this checkout
-        run: nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+      - name: Build frappe-init and ironclad from this checkout
+        run: |
+          set -euo pipefail
+          nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+          nix build .#ironclad --out-link "$RUNNER_TEMP/ironclad"
 
       - name: Prepare the ${{ matrix.shape }} shape
         env:
@@ -203,11 +236,12 @@ jobs:
           git add -A
           git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
 
-      - name: One frappe-init --sync, with neither yarn nor uv on PATH
+      - name: One sync, with neither yarn nor uv on PATH
         working-directory: ${{ runner.temp }}/app
         env:
           IRONCLAD_FRAPPE_NIX_URL: path:${{ github.workspace }}
           IRONCLAD_ALLOW_SKEW: "1"
+          SHAPE: ${{ matrix.shape }}
         run: |
           set -euo pipefail
           path="/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
@@ -215,8 +249,18 @@ jobs:
             echo "::error::yarn or uv is on the bare PATH"
             exit 1
           fi
-          PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --frappe-version version-16
-          PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
+          if [ "$SHAPE" = reenter ]; then
+            # frappe-init carries uv and yarn; a bare ironclad does not, so phase B
+            # relocks (no nix/uv.lock) and re-enters through `nix develop`.
+            PATH="$path:$RUNNER_TEMP/ironclad/bin" ironclad sync --write --frappe-version version-16 2>&1 |
+              tee "$RUNNER_TEMP/sync.log"
+            grep -q -- '\$ nix run --no-pure-eval --override-input frappe-nix .* \.#relock' "$RUNNER_TEMP/sync.log"
+            grep -q -- '\$ nix develop --no-pure-eval --override-input frappe-nix .* -c ironclad sync --write --phase b' "$RUNNER_TEMP/sync.log"
+            PATH="$path:$RUNNER_TEMP/ironclad/bin" ironclad sync --check
+          else
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --frappe-version version-16
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
+          fi
           for f in flake.nix flake.lock yarn.lock tools/uv.lock nix/uv.lock nix/node-locks/frappe/ui/yarn.lock; do
             test -f "$f" || { echo "::error::$f is missing after the bootstrap"; exit 1; }
           done
