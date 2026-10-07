@@ -194,7 +194,14 @@ class TestToggleOff(ToggleCase):
 		self.assertEqual(code, 0, out)
 		doc = tomllib.loads(self.read("pyproject.toml"))
 		self.assertEqual(doc["tool"]["ruff"]["line-length"], 120)
-		self.assertNotIn("lint", doc["tool"]["ruff"], "the unedited keys go")
+		self.assertNotIn("select", doc["tool"]["ruff"]["lint"], "the unedited keys go")
+		self.assertNotIn("ignore", doc["tool"]["ruff"]["lint"], "the unedited keys go")
+		# ...except what bench new-app writes, which is the app's baseline.
+		self.assertEqual(doc["tool"]["ruff"]["lint"]["typing-modules"], ["frappe.types.DF"])
+		self.assertEqual(
+			doc["tool"]["ruff"]["format"],
+			{"quote-style": "double", "indent-style": "tab", "docstring-code-format": True},
+		)
 		self.assertIn("tool.ruff.line-length is the app's now", out)
 		self.assertEqual(self.check()[0], 0)
 

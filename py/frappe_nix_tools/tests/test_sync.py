@@ -762,10 +762,7 @@ class TestShallowHistory(AppCase):
 			bool(shallow == full)
 
 
-class TestShallowRetraction(AppCase):
-	"""Retraction asks the history whether a module that is off now was ever on: a shallow
-	clone that can't tell fails (exit 3) instead of disagreeing with a full clone."""
-
+class ShallowCase(AppCase):
 	def _clone(self) -> Path:
 		clone = self.root.parent / (self.root.name + "-shallow")
 		__import__("shutil").rmtree(clone, ignore_errors=True)
@@ -776,6 +773,11 @@ class TestShallowRetraction(AppCase):
 	def _check(self, root: Path) -> tuple[int, str]:
 		code, out, err = run_cli("sync", "--check", cwd=root)
 		return code, out + err
+
+
+class TestShallowRetraction(ShallowCase):
+	"""Retraction asks the history whether a module that is off now was ever on: a shallow
+	clone that can't tell fails (exit 3) instead of disagreeing with a full clone."""
 
 	def test_a_module_turned_off_needs_the_history(self):
 		self.synced()
@@ -806,6 +808,73 @@ class TestShallowRetraction(AppCase):
 		git(self.root, "commit", "-q", "--allow-empty", "-m", "later")
 		code, out = self._check(self._clone())
 		self.assertEqual(code, 0, out)
+
+
+# What bench new-app (version-16) writes into pyproject.toml, past [project].
+BENCH_NEW_APP_16 = """
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
+
+[tool.ruff]
+line-length = 110
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "RUF"]
+ignore = ["B017", "B018", "B023", "B904", "E101", "E402", "E501", "E741", "F401", "F403", "F405", "F722", "W191", "UP030", "UP031", "UP032", "UP037", "UP040"]
+typing-modules = ["frappe.types.DF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "tab"
+docstring-code-format = true
+"""
+
+
+class TestShallowBenchApp(ShallowCase):
+	"""A bench new-app pyproject on ``minimal`` (every module off): its flit [build-system],
+	requires-python, ruff settings and frappe-dependencies equal what the off modules render,
+	yet they are the app's baseline, so no history is asked and a depth-1 clone checks
+	like a full one."""
+
+	profile = "minimal"
+	extra_pyproject = BENCH_NEW_APP_16
+
+	def test_a_depth_one_clone_checks_clean(self):
+		self.write("demo_app/__init__.py", '__version__ = "0.0.1"\n')  # bench's, no release-please block
+		self.commit()
+		self.synced()
+		git(self.root, "commit", "-q", "--allow-empty", "-m", "later")
+		before = self.read("pyproject.toml")
+		self.assertEqual(self.check()[0], 0)
+		code, out = self._check(self._clone())
+		self.assertEqual(code, 0, out)
+		self.assertNotIn("fetch-depth", out)
+
+		# Turning metadata and python-lint on and off again leaves the baseline in place.
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml")
+			+ "\n[tool.frappe-nix.metadata]\nenable = true\n\n[tool.frappe-nix.python-lint]\nenable = true\n",
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.commit()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace("enable = true", "enable = false"),
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		doc = __import__("tomllib").loads(self.read("pyproject.toml"))
+		self.assertEqual(doc["build-system"]["build-backend"], "flit_core.buildapi")
+		self.assertEqual(doc["project"]["requires-python"], ">=3.14")
+		self.assertEqual(doc["tool"]["ruff"]["line-length"], 110)
+		self.assertEqual(doc["tool"]["bench"]["frappe-dependencies"], {"frappe": ">=16.0.0,<17.0.0"})
+		self.assertNotIn("select", doc["tool"]["ruff"]["lint"], "what only sync wrote goes")
+		self.assertIn("frappe-dependencies", before)
 
 
 class TestVersionSeed(AppCase):

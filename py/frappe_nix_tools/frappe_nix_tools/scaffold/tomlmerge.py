@@ -19,6 +19,13 @@ warning on the run that turns it off (§3.3 step 6). "Was on" means on in any
 which the engine reads from git): a module that was never on owns nothing yet, so opting
 in with ``minimal`` never removes the ruff or coverage settings an app already had, while
 a module turned off in a commit made before syncing is retracted all the same.
+
+A key that holds what ``bench new-app`` writes for the app's Frappe major (``BENCH_NEW_APP``:
+the flit ``[build-system]``, ruff's ``line-length = 110``, ``requires-python`` and so on), and
+a ``[tool.bench.frappe-dependencies]`` equal to the rendered one, is the app's baseline, not a
+leftover: it is never retracted, so the history is never asked
+about it. Most apps keep those keys, and a module that never was on must not make a shallow
+clone (CI's default ``fetch-depth: 1``, ``repo audit``) fail ``--check``.
 """
 
 import re
@@ -41,6 +48,52 @@ VULTURE_EXCLUDE = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
 # one (prek at the repo root, CI's lint job) it has no frappe or sibling sources, so their
 # namespaces are whitelisted; the app may list more ([tool.test_utils.static-analysis]).
 STATIC_ANALYSIS = ("tool", "test_utils", "static-analysis")
+
+
+# What ``bench new-app`` writes into pyproject.toml (frappe/utils/boilerplate.py), by Frappe
+# major: an app's baseline. A managed key holding one of these values is never retracted.
+_BENCH_RUFF = {
+	("build-system", "requires"): ["flit_core >=3.4,<4"],
+	("build-system", "build-backend"): "flit_core.buildapi",
+	("tool", "ruff", "line-length"): 110,
+	("tool", "ruff", "lint", "select"): ["F", "E", "W", "I", "UP", "B", "RUF"],
+	("tool", "ruff", "lint", "typing-modules"): ["frappe.types.DF"],
+	("tool", "ruff", "format", "quote-style"): "double",
+	("tool", "ruff", "format", "indent-style"): "tab",
+	("tool", "ruff", "format", "docstring-code-format"): True,
+}
+_BENCH_IGNORE_15 = [
+	*("B017", "B018", "B023", "B904", "E101", "E402", "E501", "E741"),
+	*("F401", "F403", "F405", "F722", "W191"),
+]
+BENCH_NEW_APP: dict[int, dict[tuple[str, ...], Any]] = {
+	15: {
+		**_BENCH_RUFF,
+		("project", "requires-python"): ">=3.10",
+		("tool", "ruff", "target-version"): "py310",
+		("tool", "ruff", "lint", "ignore"): _BENCH_IGNORE_15,
+	},
+	16: {
+		**_BENCH_RUFF,
+		("project", "requires-python"): ">=3.14",
+		("tool", "ruff", "target-version"): "py314",
+		("tool", "ruff", "lint", "ignore"): [*_BENCH_IGNORE_15, "UP030", "UP031", "UP032", "UP037", "UP040"],
+	},
+}
+
+
+BENCH_DEPENDENCIES = ("tool", "bench", "frappe-dependencies")
+
+
+def bench_baseline(ctx: Any, path: tuple[str, ...], have: Any, rendered: Any) -> bool:
+	"""Whether ``have`` at ``path`` is the app's baseline: what ``bench new-app`` writes for the
+	app's Frappe major (a later major reads as the newest one known), or a
+	``[tool.bench.frappe-dependencies]`` that names exactly the app's bench apps and their
+	ranges, which bench reads to install the app."""
+	if path == BENCH_DEPENDENCIES:
+		return have == rendered
+	table = BENCH_NEW_APP[15 if ctx.frappe.major <= 15 else 16]
+	return path in table and have == table[path]
 
 
 @dataclass
@@ -465,14 +518,15 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
 		for path, value in wanted:
 			table_path, key = path[:-1], path[-1]
 			if not on:
-				# The history is asked only about a key that is there (a shallow clone may
-				# not know the answer: context.ever).
+				# The history is asked only about a key that holds the rendered value and is
+				# not bench new-app's (a shallow clone may not know the answer: context.ever).
 				have = _plain(_get(doc, path))
-				if have is None or not _was_on(ctx, module):
+				if have is None or bench_baseline(ctx, path, have, value):
 					continue
 				if have == value:
-					del table_at(table_path)[key]
-					prune(table_path)
+					if _was_on(ctx, module):
+						del table_at(table_path)[key]
+						prune(table_path)
 				elif _turns_off(ctx, module):
 					warnings.append(
 						f"pyproject.toml {'.'.join(path)} is the app's now that {module} is off (it differs from what sync wrote)"
@@ -546,7 +600,11 @@ def managed_view(doc: dict, ctx: Any) -> dict:
 	for module, keys in groups(ctx).items():
 		if _on(ctx, module):
 			continue
-		left = {f"{'.'.join(path)} (off)": _get(doc, path) == value for path, value in keys}
+		left = {
+			f"{'.'.join(path)} (off)": _get(doc, path) == value
+			for path, value in keys
+			if not bench_baseline(ctx, path, _plain(_get(doc, path)), value)
+		}
 		# None left reads the same either way, so the history is asked only when one is.
 		if any(left.values()) and _was_on(ctx, module):
 			view.update(left)
