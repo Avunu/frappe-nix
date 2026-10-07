@@ -15,6 +15,13 @@
 #               -- --sync --standards <profile>` or adding the table by hand
 #               opts an app in; its flake outputs stay exactly main's.)
 #   enterShell  per-clone git settings the managed files rely on.
+#   devenvModule
+#               the devenv module modules/devenv.nix imports into an
+#               app-mode shell: `packages` and, only when opted in,
+#               `enterShell` (a definition of its own, so an app that has
+#               not opted in gets main's enterShell byte for byte). Its `key`
+#               lets tests/standards/hookpoints.nix find it among the
+#               shell's imports.
 #
 # The opt-in test is a line match on the file's text, never a TOML parse: Nix's
 # fromTOML rejects valid TOML (datetimes), and its error escapes
@@ -46,13 +53,8 @@ let
       meta.description = "Scaffold or sync this app (frappe-init --sync / --check / --standards)";
     };
   };
-in
-{
-  inherit optedIn optedInText;
 
   packages = lib.optionals optedIn (builtins.attrValues outputs.tools ++ [ frappeInit ]);
-
-  apps = lib.optionalAttrs optedIn (outputs.apps // frappeInitApp);
 
   # Runs from the repository root. `git blame` skips the mass reformats
   # .git-blame-ignore-revs lists (spec §2.20); set only when it differs, so a
@@ -63,4 +65,20 @@ in
       git -C "''${DEVENV_ROOT:-.}" config blame.ignoreRevsFile .git-blame-ignore-revs || true
     fi
   '';
+in
+{
+  inherit
+    optedIn
+    optedInText
+    packages
+    enterShell
+    ;
+
+  apps = lib.optionalAttrs optedIn (outputs.apps // frappeInitApp);
+
+  devenvModule = {
+    key = "frappe-nix:lib/standards/shell.nix";
+    inherit packages;
+    enterShell = lib.mkIf optedIn enterShell;
+  };
 }
