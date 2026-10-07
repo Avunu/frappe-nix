@@ -4,7 +4,8 @@
 #   standards-cli       the package builds against the locked nixpkgs with its
 #                       unittest suites and pythonRuntimeDepsCheck; `--version`,
 #                       the unknown-command exit, `data-path` and `config`
-#                       behave.
+#                       behave, and `config` reads the opt-in fixtures as
+#                       standards-optin does or refuses them (exit 2).
 #   standards-loaders   a lib/scripts.d file and a lib/standards/tools file are
 #                       picked up (fixtures under ./fixtures) and a drop-in gets
 #                       every argument and snippet; a drop-in that redefines a
@@ -31,7 +32,11 @@
 #                       enterShell; one with it gets them; a pyproject.toml that
 #                       Nix's fromTOML rejects evaluates as not opted in (and as
 #                       opted in with the table); a commented-out table line
-#                       does not opt in.
+#                       does not opt in. The spellings TOML and the line
+#                       match disagree on (a quoted key, spaces in the
+#                       brackets, dotted keys, a header line in a string) get
+#                       the line match's verdict here; frappe-nix-tools
+#                       refuses each with exit 2.
 #
 # The loader and flake facts are evaluated, so a regression fails
 # `nix flake check --no-build` already; the derivations record what was seen.
@@ -371,6 +376,22 @@ in
           echo "ok   data-path $rel"
         done
 
+        # The opt-in fixtures, read by the tools: they agree with the line match
+        # (standards-optin), or refuse a spelling the two would disagree on.
+        optin=${./fixtures/optin}
+        for case in with-table datetime-opted-in; do
+          [ "$(frappe-nix config frappe-major --pyproject "$optin/$case/pyproject.toml")" = 16 ] \
+            || fail "config does not read the table of optin/$case"
+        done
+        for case in without-table datetime commented quoted-key spaced-brackets dotted-keys in-string; do
+          set +e
+          frappe-nix config frappe-major --pyproject "$optin/$case/pyproject.toml" 2> err
+          code=$?
+          set -e
+          [ "$code" = 2 ] || fail "config on optin/$case exited $code, not 2: $(cat err)"
+        done
+        echo "ok   frappe-nix config agrees with the shell's opt-in test or refuses the spelling"
+
         # The fixture app resolves: recommended, so ssort is off and ci on.
         cp -r ${fixtureDir} app
         chmod -R u+w app
@@ -437,6 +458,12 @@ in
         datetime-opted-in = true;
         commented = false;
         subtable = true;
+        # Spellings TOML and the line match disagree on; frappe-nix-tools refuses
+        # each of them (exit 2; py/frappe_nix_tools/tests/test_config.py).
+        quoted-key = false;
+        spaced-brackets = false;
+        dotted-keys = false;
+        in-string = true;
       };
       seen = lib.mapAttrs (name: _: (shellFor name).optedIn) expected;
       wrong = lib.filterAttrs (name: want: seen.${name} != want) expected;

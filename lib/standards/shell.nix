@@ -27,7 +27,11 @@
 # fromTOML rejects valid TOML (datetimes), and its error escapes
 # builtins.tryEval, so a parse would break evaluation for apps that never opted
 # in. A line opts in when it opens [tool.frappe-nix], a subtable of it, or an
-# array of tables under it; a commented-out line does not.
+# array of tables under it; a commented-out line does not. frappe-nix-tools
+# applies the same match (common/pyproject.py) and refuses, exit 2, a
+# pyproject.toml whose TOML table and header line disagree (a quoted key,
+# spaces in the brackets, dotted keys under [tool], a header in a string), so
+# the shell and the tools never differ silently on whether an app opted in.
 {
   pkgs,
   # The app's pyproject.toml (a path), or null: not opted in.

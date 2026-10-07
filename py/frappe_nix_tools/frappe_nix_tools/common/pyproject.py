@@ -4,6 +4,7 @@ Resolving the table into the configuration the tools act on (profiles, defaults,
 switches) is ``frappe_nix_tools.common.config``; this module only reads.
 """
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -16,16 +17,41 @@ OPT_IN_HINT = (
 )
 
 
-def load(path: Path) -> dict:
-	"""The parsed ``pyproject.toml``; missing is an ``EnvError``, malformed a ``ConfigError``."""
+# The dev shell's opt-in test (lib/standards/shell.nix, S35), the same pattern on the same
+# lines: one that opens [tool.frappe-nix], a subtable of it or an array of tables under it.
+# Nix's [[:space:]] is these six characters.
+_OPT_IN_LINE = re.compile(r"[ \t\n\v\f\r]*\[{1,2}tool\.frappe-nix[].].*", re.DOTALL)
+
+
+def read(path: Path) -> str:
+	"""The text of ``pyproject.toml``; missing or unreadable is an ``EnvError``."""
 	try:
-		return tomllib.loads(path.read_text())
+		return path.read_text()
 	except FileNotFoundError as e:
 		raise EnvError(f"{path} does not exist") from e
 	except (OSError, UnicodeDecodeError) as e:
 		raise EnvError(f"{path} is unreadable: {e}") from e
+
+
+def parse(text: str, path: Path) -> dict:
+	"""``text`` parsed as TOML; malformed is a ``ConfigError``."""
+	try:
+		return tomllib.loads(text)
 	except tomllib.TOMLDecodeError as e:
 		raise ConfigError(f"{path}: {e}") from e
+
+
+def load(path: Path) -> dict:
+	"""The parsed ``pyproject.toml``; missing is an ``EnvError``, malformed a ``ConfigError``."""
+	return parse(read(path), path)
+
+
+def opt_in_line(text: str) -> bool:
+	"""Whether the dev shell sees ``text`` as opted in: it has a ``[tool.frappe-nix…]`` header line.
+
+	The shell can't parse TOML (S35), so this is what decides its tools and apps.
+	"""
+	return any(_OPT_IN_LINE.fullmatch(line) for line in text.split("\n"))
 
 
 def tool_frappe_nix(doc: dict) -> dict | None:
@@ -35,6 +61,31 @@ def tool_frappe_nix(doc: dict) -> dict | None:
 	if table is not None and not isinstance(table, dict):
 		raise ConfigError("[tool.frappe-nix] must be a table")
 	return table
+
+
+def check_opt_in_spelling(text: str, doc: dict) -> None:
+	"""Refuse (exit 2) a ``pyproject.toml`` the dev shell and the tools disagree about.
+
+	The tools find the table by parsing TOML, the shell by a line match, and TOML has
+	spellings only one of them sees: ``[tool."frappe-nix"]``, ``[ tool.frappe-nix ]`` and
+	``[tool]`` with ``frappe-nix.<key> = …`` create the table without the line, and a
+	``[tool.frappe-nix]`` line inside a multi-line string is the line without the table.
+	"""
+	table = tool_frappe_nix(doc) is not None
+	line = opt_in_line(text)
+	if table and not line:
+		raise ConfigError(
+			"write the table as a [tool.frappe-nix] header (or [tool.frappe-nix.<name>] / "
+			"[[tool.frappe-nix.<name>]]): the dev shell finds it by that line, not by parsing "
+			"TOML, so a quoted key, spaces inside the brackets or dotted keys under [tool] "
+			"leave it without frappe-nix's tools"
+		)
+	if line and not table:
+		raise ConfigError(
+			"a line opens [tool.frappe-nix] but TOML sees no such table (is it inside a "
+			"multi-line string?): the dev shell takes that line as the opt-in, so reword it "
+			"or add the table"
+		)
 
 
 def opted_in(doc: dict) -> bool:
