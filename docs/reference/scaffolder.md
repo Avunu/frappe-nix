@@ -53,12 +53,12 @@ These apply in app mode, to an app that has opted in to the [app standards](../a
 | ------------------------ | --------------------------------------------------------------------------------------------------------- |
 | `--standards <PROFILE>`  | Opt in with `--app` or `--sync`: `minimal`, `recommended`, `recommended@<minor>`, an org profile's flake URL or `./<dir>`. |
 | `--profile-path <DIR>`   | Read the org profile from a local checkout instead of its locked input (profile authors).                 |
-| `--only <PATH,…>`        | Limit `--sync` or `--check` to these managed files.                                                       |
+| `--only <PATH,…>`        | Limit `--sync`, `--check` or an opted-in `--app` to these managed files.                                  |
 | `--init-listing`         | `--sync`: also seed `marketplace/listing.toml`.                                                           |
 | `--format <F>`           | `--check`: `text`, `json` or `github`.                                                                    |
 | `--expect-rev <SHA>`     | `--check`: the frappe-nix revision frappe-nix-tools was installed from.                                   |
 
-With `--sync`, `--force` also replaces an unmanaged `flake.nix` or `.envrc` on first opt-in, after you have reviewed the diff sync prints. The exit codes of `--sync` and `--check` are `frappe-nix sync`'s: 0 clean, 1 drift, 2 invalid configuration (including an app that has not opted in), 3 environment. A usage error under them is 2, never 1. See [Managed files](../app-standards/managed-files.md).
+With `--sync`, `--force` also replaces an unmanaged `flake.nix` or `.envrc` on first opt-in, after you have reviewed the diff sync prints. The exit codes of `--sync` and `--check` are `frappe-nix sync`'s: 0 clean, 1 drift, 2 invalid configuration (including an app that has not opted in), 3 environment. A usage error under them is 2, never 1. Without `--sync` or `--check`, `--format` and `--expect-rev` are unknown flags, and the others are refused (exit 1, nothing written) outside app mode or, except `--standards`, on an app that has not opted in. See [Managed files](../app-standards/managed-files.md).
 
 ## Scaffold only
 

@@ -113,6 +113,8 @@ Dependabot never moves `standards-profile`, because a profile change can rewrite
 
 **Template overrides.** A file in the profile's `templates/` replaces a built-in template that is marked overridable (the README blocks, the listing seed and the repo-policy JSON), with the same context. Anything else there that isn't an `[[extra-files]]` template is exit 2: tool configs, merged keys and caller workflows change through parameters, never through an override.
 
+**Profiles are data.** `--check` runs on pull requests, and an in-repo profile is part of the pull request, so nothing in a profile runs code. Templates render in Jinja's sandbox. An `[[extra-files]]` `when` is an expression over the template context, limited to names, `.key` and `[key]` lookups, constants, lists, `and`/`or`/`not`, comparisons (`==`, `in`, `is` and the rest) and `len`, `any` and `all`, for example `modules.typescript and not discover.vite`. A `path` must render to a path inside the app, with no `..`.
+
 **Authoring.** Work against a local checkout with `frappe-init --sync --profile-path ../my-profile` on a test app, and check the file with:
 
 ```sh

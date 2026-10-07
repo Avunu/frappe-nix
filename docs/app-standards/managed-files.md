@@ -95,9 +95,11 @@ Every file and key above belongs to a module, so turning a module off in `[tool.
 - a whole file that still opens with its managed header is deleted; if one of its local regions holds content, sync stops with exit 2 naming the region instead, so nothing you wrote is lost silently;
 - a seed (a lock, the release-please manifest) is left: it is the app's once written;
 - the version block in `<app>/__init__.py` loses its markers and keeps `__version__`;
-- in `pyproject.toml` and `package.json`, each key of a module that was on at `HEAD` and is off now is removed when it still holds what sync wrote, and left with a warning when you changed it (a toolchain `devDependencies` entry counts as unchanged at `^<floor>` or higher). A module that was never on owns nothing yet, so opting in with `minimal` never removes the ruff or coverage settings an app already has.
+- in `pyproject.toml` and `package.json`, each key of a module that is off now is removed when it still holds what sync wrote, and left when you changed it (a toolchain `devDependencies` entry counts as unchanged at `^<floor>` or higher). A module that was never on owns nothing yet, so opting in with `minimal` never removes the ruff or coverage settings an app already has.
 
-Turning the module back on restores the files.
+"Was on" means on in any `[tool.frappe-nix]` table the app has committed since it opted in, so it makes no difference whether you sync before committing the change or after: `--check` on the pull request reports what is left, and the next `--sync` removes it. What sync leaves to you (a key or file you changed, a seed) is reported once, on the run that turns the module off.
+
+Turning the module back on restores the files, byte for byte where sync laid them out.
 
 ### The app's own Nix
 
@@ -149,9 +151,9 @@ Sync deletes, and `--check` reports as `legacy file`, the files a module replace
 
 A file name says nothing about what a workflow does, so name-only rules belong to an org profile (`[[retire]]`). `[tool.frappe-nix] retire-keep` exempts any path from every rule.
 
-Two of them need something first. A `requirements.txt` that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2.
+Two of them need something first. A `requirements.txt` that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2. In an app with a Vite config, `update-assets.mjs` is retired only once frappe-nix renders `scripts/vite-register.mjs`, which replaces it.
 
-A managed file that is a symlink is exit 2: sync never reads or writes through a link. A retired one is deleted as a link.
+A managed path with a symlink anywhere on it (the file or a directory above it) is exit 2: sync never reads or writes through a link. A retired link is deleted as a link.
 
 ## `frappe-nix compat`
 
