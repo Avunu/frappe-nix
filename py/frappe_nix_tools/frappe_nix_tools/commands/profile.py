@@ -51,13 +51,55 @@ def _plain(value: Any) -> Any:
 	return value
 
 
-def _flat(value: Any, prefix: str = "") -> dict[str, Any]:
+def _flat(value: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
 	if isinstance(value, dict) and value:
-		out: dict[str, Any] = {}
+		out: dict[tuple[str, ...], Any] = {}
 		for key, item in value.items():
-			out.update(_flat(item, f"{prefix}.{key}" if prefix else key))
+			out.update(_flat(item, (*prefix, str(key))))
 		return out
 	return {prefix: value}
+
+
+def _toml_key(path: tuple[str, ...]) -> str:
+	return ".".join(tomlkit.key(part).as_string() for part in path)
+
+
+def _toml_inline(value: Any) -> str:
+	"""``value`` on one line: tables inline, as TOML spells them."""
+	if isinstance(value, dict):
+		inner = ", ".join(f"{tomlkit.key(k).as_string()} = {_toml_inline(v)}" for k, v in value.items())
+		return "{ " + inner + " }" if inner else "{}"
+	if isinstance(value, list):
+		return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
+	return tomlkit.item(value).as_string()
+
+
+def _explained(resolved: config.Resolved, fmt: str) -> str:
+	"""``show --explain``: what ``show`` prints, with the layer that set each value, in
+	``fmt``. TOML gives each ``[config]`` value as a dotted key with the layer as its comment
+	(no ``None``: TOML has no null); JSON adds a ``sources`` table, keyed by the dotted name."""
+	flat = _flat(resolved.cfg)
+	if fmt == "json":
+		doc = {
+			"profile": resolved.profile,
+			"modules": resolved.modules,
+			"config": resolved.cfg,
+			"sources": {".".join(k): resolved.source(".".join(k)) for k in flat},
+		}
+		return json.dumps(doc, indent=2) + "\n"
+	lines = ["[profile]"]
+	for key, value in _flat(dict(resolved.profile)).items():
+		if value is not None:
+			lines.append(f"{_toml_key(key)} = {_toml_inline(_plain(value))}")
+	lines += ["", "[modules]"]
+	for module, on in resolved.modules.items():
+		lines.append(f"{tomlkit.key(module).as_string()} = {'true' if on else 'false'}")
+	lines += ["", "[config]"]
+	for key, value in flat.items():
+		if value is not None:
+			line = f"{_toml_key(key)} = {_toml_inline(_plain(value))}"
+			lines.append(f"{line}  # {resolved.source('.'.join(key))}")
+	return "\n".join(lines) + "\n"
 
 
 def show(args: argparse.Namespace) -> int:
@@ -71,10 +113,7 @@ def show(args: argparse.Namespace) -> int:
 		print(f"notice: {notice}", file=sys.stderr)
 	doc = {"profile": resolved.profile, "modules": resolved.modules, "config": resolved.cfg}
 	if args.explain:
-		for key, value in _flat(resolved.cfg).items():
-			print(f"{key} = {json.dumps(value, sort_keys=True)}  # {resolved.source(key)}")
-		for module, on in resolved.modules.items():
-			print(f"modules.{module} = {'true' if on else 'false'}")
+		sys.stdout.write(_explained(resolved, args.format))
 		return CLEAN
 	if args.format == "json":
 		print(json.dumps(doc, indent=2, sort_keys=False))

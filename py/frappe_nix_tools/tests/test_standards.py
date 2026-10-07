@@ -1132,8 +1132,18 @@ class TestOrgProfile(ProfileCase):
 		self.assertIn('org.publisher = "Example Org"  # org:./.standards-profile', out)
 		self.assertIn("ssort.enable = true  # org:./.standards-profile", out)
 		self.assertIn('js.tool = "oxc"  # builtin:recommended@1.0', out)
+		# Valid TOML, tables and all (an [[untested]] entry is an inline table).
+		doc = tomllib.loads(out)
+		self.assertEqual(doc["config"]["org"]["publisher"], "Example Org")
+		self.assertTrue(doc["modules"]["ssort"])
+		self.assertTrue(doc["profile"])
 		code, out, _ = self.fn("profile", "show", "--format", "json")
 		self.assertTrue(json.loads(out)["modules"]["ssort"])
+		code, out, _ = self.fn("profile", "show", "--explain", "--format", "json")
+		doc = json.loads(out)
+		self.assertEqual(doc["sources"]["org.publisher"], "org:./.standards-profile")
+		self.assertEqual(doc["config"]["org"]["publisher"], "Example Org")
+		self.assertTrue(doc["modules"]["ssort"])
 
 
 class TestUntrustedProfile(ProfileCase):
