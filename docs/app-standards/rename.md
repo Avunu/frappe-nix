@@ -21,7 +21,7 @@ An app that has not opted in to the app standards (no `[tool.frappe-nix]` in its
 
 It:
 
-1. moves the package (`git mv esign esign_webforms`), keeping every module folder and every `modules.txt` line, and renames each file under it whose name starts with `esign.` (the bundles `esign.desk.bundle.js`, `esign.control.bundle.css`, …), so the names `hooks.py` gives and the files agree;
+1. moves the package (`git mv esign esign_webforms`), keeping every module folder and every `modules.txt` line, and renames each file under it whose name starts with `esign.` (the bundles `esign.desk.bundle.js`, `esign.control.bundle.css`, …), so the names `hooks.py` gives and the files agree. A DocType, Page, Report, Web Form or Print Format whose name scrubs to `esign` keeps its folder and files (`doctype/esign/esign.json`, `esign.py`, `esign.js`), since frappe finds the document by that name;
 2. rewrites the tracked text: dotted paths (`esign.esign.custom.web_form.accept`), Python imports, `/assets/esign/` and `/api/method/esign.` URLs, template paths (`esign/templates/…`), `patches.txt` line by line (only paths into the package: `"esign.check()"` in an `execute:` line is a JavaScript namespace and stays), `[project].name` and flit's module name in `pyproject.toml`, `package.json`'s `name`, `app_name`, the CI's `--app` and release-please's `package-name`;
 3. bumps `modified` in every standard JSON whose content changed, or existing sites would never re-import it;
 4. appends an `override_whitelisted_methods` shim to `hooks.py`, between `# frappe-nix:rename-shim-begin esign` and `# frappe-nix:rename-shim-end`, mapping each whitelisted function's old dotted path to its new one, for the callers you cannot update in the same release: cached bundles, webhooks, bookmarks. Keep it for at least one minor release.
@@ -80,6 +80,6 @@ Before the production deploy that ships a rename, pause the scheduler and let th
 Some apps are replaced by a new app rather than renamed: `old_app` becomes `new_app`, which has its own module and settings DocType, so both can be installed at once. `frappe-rename-app code` refuses such a pair when a profile or fleet file lists it ([Replace pairs](#replace-pairs)). Ship both apps, then:
 
 - **Production.** `services.frappe.sites.<site>.replacedApps = { old_app = "new_app"; };`: where the old app is installed, the migrate unit installs the new one (if needed) and uninstalls the old one, without a backup of its own (the pre-migrate snapshot is the backup), inside the snapshot and before migrating. Where the old app is not installed it does nothing.
-- **The dev shell.** `frappe-nix.replacedApps` does the same in `reconcile-apps`.
+- **The dev shell.** `frappe-nix.replacedApps` does the same in `reconcile-apps`, which also stops installing the old app from `sites/apps.txt` on its later runs.
 
 The new app's `after_install` copies the old settings across. The old app leaves the bench only after every site has run the replacement, because uninstalling it needs its hooks.

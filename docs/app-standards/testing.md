@@ -9,7 +9,8 @@ updated: 2026-10-07
 `frappe-test` runs an app's tests the way CI's `ci / test` job does, from the app's dev shell. It brings the bench up, prepares a site, runs the tests with coverage measured on the app alone, and then checks what the coverage cannot: that every whitelisted function and hook target ran, and that the app's controller extensions compose with other apps'. The same command, with `--ci`, is the whole test job.
 
 ```bash
-frappe-test                 # the tests, the coverage gate, the testmap, the composition check
+frappe-test --reuse-site    # the tests, the coverage gate, the testmap, the composition check, on the dev site as it is
+frappe-test --recreate-site # the same on a fresh site: drops the site's database first
 frappe-test --ci            # the stages the app's configuration turns on: what CI runs
 frappe-test --reuse-site --keep-up   # keep the site and the bench between runs
 frappe-test --module my_app.api.test_api   # one module (skips the coverage gate and the testmap)
@@ -18,6 +19,9 @@ frappe-test --down          # stop a bench --keep-up left running
 
 It is a dev-shell command for every app in app mode, whether or not it has opted in to the app standards. The reports land in `.dev-dist/test/` (`--out` moves them).
 
+> [!WARNING]
+> The site is the dev shell's own (`$FRAPPE_SITE`) unless you pass `--site`. Recreating it runs `bench new-site --force`, which **drops the site's database** and sets Administrator's password to `$FRAPPE_TEST_ADMIN_PASSWORD` (`admin` by default). So when the site exists, `frappe-test` without `--ci` does nothing until you choose: `--reuse-site` tests on it as it is, `--recreate-site` drops and recreates it, and on a terminal it asks. `--ci` recreates it, as CI's fresh runner needs.
+
 ## What it runs
 
 Every stage after the tests runs even when an earlier one failed, so one run reports everything. The exit status is the verdict of the first stage that failed, in this order.
@@ -25,7 +29,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 | Stage | What | Fails with |
 |---|---|---|
 | up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and the web port; a failed `devenv up` (a taken port, say) fails at once. | 10 |
-| site | `provision-site` for the `--site` (unless `--reuse-site` and the site exists), `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps. | 10 |
+| site | `provision-site` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps. | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |
 | testmap | Every whitelisted function and hook target ran, or is exempt. | 3 |
@@ -34,7 +38,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 | nix-lint | `nixfmt --check`, `statix`, `deadnix` over `flake.nix` and `nix/*.nix` (`--nix-lint`). | 6 |
 | shell checks | Each `[tool.frappe-nix] shell-checks` command, which must leave the tree as it found it (`--shell-checks`). | 7 |
 
-A usage error (an unknown flag, no app, no site) exits 64, and running it outside the app dev shell exits 10, so neither reads as a verdict.
+A usage error (an unknown flag, no app, no site, an existing site with neither `--reuse-site` nor `--recreate-site` outside `--ci`) exits 64, and running it outside the app dev shell exits 10, so neither reads as a verdict.
 
 `--ci` writes a JUnit report to `.dev-dist/test/junit.xml`, appends the summary to `$GITHUB_STEP_SUMMARY`, and runs exactly the stages the app's resolved configuration (its profile and `[tool.frappe-nix]`, see [Profiles](profiles.md)) turns on:
 
@@ -65,13 +69,15 @@ setup = ["execute:frappe.utils.install.complete_setup_wizard", "execute:my_app.t
 
 Coverage is measured by `frappe-test` itself, never by frappe's `run-tests --coverage`. In app mode the bench lives inside the repository (`.frappe-nix/bench`), and frappe's own option measures everything under the app's directory, frappe and erpnext included. `frappe-test` runs the tests under `coverage run --source=<repo>/<app>`, which is the package's real directory, so nothing of frappe's or a sibling's is ever counted. `coverage.json`, `coverage.xml` and the per-module table use repository-relative paths.
 
-The gate reads `[tool.coverage.report] fail_under` from the app's `pyproject.toml`. It also only moves up: while `fail_under` is below `tests.coverage.target` (80 in the built-in profiles), a total `tests.coverage.raise-margin` points (2) or more above it fails with the value to raise it to, never more than the target (`coverage is 91.4; raise [tool.coverage.report] fail_under to 80`). After the raise the total is within the margin, so the rule settles; `raise-margin = 0` turns it off. The PR that adds the tests carries the raise.
+The gate reads `[tool.coverage.report] fail_under` from the app's `pyproject.toml`. It also only moves up: while `fail_under` is below `tests.coverage.target` (80 in the built-in profiles), a total `tests.coverage.raise-margin` points (2) or more above it fails with the value to raise it to, never more than the target (`coverage is 91.4; raise [tool.coverage.report] fail_under to 80`). After the raise the total is within the margin, so the rule settles; `raise-margin = 0` turns it off. The PR that adds the tests carries the raise. Without a `fail_under` (an app that has not opted in, whose `pyproject.toml` sync never seeded) there is nothing to raise, so the ratchet only says so and the stage passes.
 
 ```toml
 [tool.frappe-nix.tests.coverage]
 target = 90          # ask for fail_under up to 90
 raise-margin = 5     # once coverage is 5 points past it
-``` `[tool.coverage.run] omit` and `[[tool.frappe-nix.coverage-omit]]` exclude files; `source` and `relative_files` belong to `frappe-test` and are refused by sync.
+```
+
+`[tool.coverage.run] omit` and `[[tool.frappe-nix.coverage-omit]]` exclude files; `source` and `relative_files` belong to `frappe-test` and are refused by sync.
 
 ## The testmap
 
@@ -83,6 +89,8 @@ Coverage counts lines; the testmap asks a sharper question. Every one of these t
 - **T4** every method an `extend_doctype_class` or `override_doctype_class` class defines itself (not the inherited ones, `__init__` included, other `_` names skipped);
 - **T5** `override_whitelisted_methods`, `permission_query_conditions` and `has_permission` targets;
 - **T6** the callable-valued hooks: `auth_hooks`, `before_request`, `after_request`, `on_session_creation`, `on_login`, `on_logout`, `boot_session`, `jinja` methods and filters, `additional_timeline_content`, `website_context` callables and `/api/method/` URLs, and the install and migrate hooks.
+
+A function whose body shares its `def` line (`def ping(): return "pong"`) has no body line of its own: coverage marks that line run when the module is imported, so it would always count as tested. The testmap reports it untested instead, saying why; give the body a line of its own, or an exemption.
 
 The hooks are read evaluated (`frappe.get_hooks(app_name=…)` on the connected site), so a hook defined under `if frappe_version >= 16:` counts. A module that fails to import is reported, with the error, rather than stopping the check. The install and migrate hooks (`after_install`, `after_migrate`, …) run before coverage starts, so a test calls them directly, or they get an exemption.
 
@@ -110,7 +118,7 @@ FRAPPE_NIX_CI=1 nix develop --no-pure-eval -c frappe-test --ci
 
 ## Several checkouts at once
 
-Each checkout of an app gets its own database, Redis and sockets. Its TCP ports, nginx's and Mailpit's, come from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets): a hash of the bench name in the primary checkout, and, in an app that opted in to the app standards, of the name and the path in a linked worktree (`git worktree add`), so two worktrees of one app run side by side. An app that has not opted in keeps one offset for every checkout unless it sets `ports.worktreeSalt = true`. `FRAPPE_NIX_PORT_OFFSET=<0-899>` picks an offset by hand, and `devenv up` stops with the port's name when one is already taken. See [The development shell](../development/README.md#ports-and-sockets).
+Each checkout of an app gets its own database, Redis and sockets. Its TCP ports, nginx's and Mailpit's, come from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets): a hash of the bench name in the primary checkout, and, in an app that opted in to the app standards, of the name and the path in a linked worktree (`git worktree add`), so two worktrees of one app run side by side. An app that has not opted in keeps one offset for every checkout unless it sets `ports.worktreeSalt = true`. `FRAPPE_NIX_PORT_OFFSET=<0-899>` picks an offset by hand. With the salt on, `devenv up` also stops with the port's name when one is already taken. See [The development shell](../development/README.md#ports-and-sockets).
 
 ## frappe-test-report.json
 
