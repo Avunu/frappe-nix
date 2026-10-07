@@ -38,9 +38,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to a PR replaces its run; main's pushes and the weekly run
+# always finish, each in a group of its own.
 concurrency:
-  group: selftest-runtime-${{ github.ref }}
-  cancel-in-progress: true
+  group: selftest-runtime-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   runtime:
