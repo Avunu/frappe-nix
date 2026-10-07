@@ -139,6 +139,9 @@ class Plan:
 UNMANAGED_DIRS = frozenset({".git", ".direnv", ".frappe-nix", ".venv", "node_modules"})
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
 def unmanaged_dir(path: str) -> str | None:
 	"""The component of ``path`` that names a directory sync never writes into, if any."""
 	for part in PurePosixPath(path).parts:
@@ -162,6 +165,10 @@ def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
 		raise ConfigError(
 			f"{path!r} is not a path inside the app: a managed path must be relative, without .."
 		)
+	if _CONTROL.search(path):
+		# A newline in a path would start a line of its own in every message that names it
+		# (a workflow command in a CI log, a forged finding).
+		raise ConfigError(f"{path!r} is not a path sync may manage: it holds a control character")
 	if (part := unmanaged_dir(path)) is not None:
 		raise ConfigError(
 			f"{path!r} is not a path sync may manage: it is inside {part}/, which sync never reads or writes"
@@ -1345,6 +1352,8 @@ def entries_for(cfg: dict) -> list[manifest.Entry]:
 	extra = manifest.extra_entries(cfg)
 	taken = {e.path for e in man.entries}
 	for e in extra:
+		if _CONTROL.search(e.path):
+			raise ConfigError(f"[[extra-files]] {e.path!r} holds a control character")
 		if e.path in taken or e.path in {"pyproject.toml", "package.json"}:
 			raise ConfigError(f"[[extra-files]] {e.path} is a path frappe-nix manages")
 		if PurePosixPath(e.path).is_absolute() or ".." in PurePosixPath(e.path).parts:

@@ -25,6 +25,7 @@ import importlib.util
 import io
 import os
 import re
+import secrets
 import shutil
 import sys
 import traceback
@@ -123,9 +124,22 @@ def _build(root: Path, args: argparse.Namespace, phases: tuple[str, ...] = ("a",
 	)
 
 
-def _notices(plan: engine.Plan) -> None:
-	for notice in plan.notices:
-		print(f"frappe-nix sync: notice: {notice}", file=sys.stderr)
+def _stderr(lines: list[str], fmt: str = "text") -> None:
+	"""Diagnostics on stderr. Under ``--format github`` they are PR data the runner would parse
+	for workflow commands as well, so they go inside a ``::stop-commands::`` block of their own,
+	closed before the report reaches stdout (§3.3)."""
+	if not lines:
+		return
+	if fmt == "github":
+		token = secrets.token_hex(16)
+		lines = [f"::stop-commands::{token}", *lines, f"::{token}::"]
+	for line in lines:
+		print(line, file=sys.stderr)
+	sys.stderr.flush()
+
+
+def _notices(plan: engine.Plan, fmt: str = "text") -> None:
+	_stderr([f"frappe-nix sync: notice: {notice}" for notice in plan.notices], fmt)
 
 
 def _report(findings: list[Finding], fmt: str, code: int, plan: engine.Plan | None) -> str:
@@ -148,7 +162,7 @@ def check(root: Path, args: argparse.Namespace) -> int:
 	if args.profile_dir is not None and os.environ.get("CI"):
 		raise EnvError("--profile-path is for profile authors: --check in CI reads the locked profile")
 	plan = _build(root, args)
-	_notices(plan)
+	_notices(plan, args.format)
 	items = list(plan.problems)
 	if plan.created_config is not None:
 		items.insert(
@@ -217,7 +231,7 @@ def check_reported(root: Path, args: argparse.Namespace) -> int:
 		if os.environ.get("FRAPPE_NIX_DEBUG"):
 			traceback.print_exc()
 		code, problem, path = ENVIRONMENT, f"internal error: {type(e).__name__}: {e}", "."
-	print(f"frappe-nix sync: {problem}", file=sys.stderr)
+	_stderr([f"frappe-nix sync: {problem}"], args.format)
 	rev = ""
 	with contextlib.suppress(Exception):
 		rev = engine.locked_rev(root) or ""

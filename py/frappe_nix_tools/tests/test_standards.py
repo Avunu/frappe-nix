@@ -914,6 +914,41 @@ class TestOrgProfile(ProfileCase):
 				self.assertEqual(code, 2, out + err)
 				self.assertIn(needle, out + err)
 
+	def test_no_workflow_command_from_pr_data_under_format_github(self):
+		"""--check --format github runs on pull requests: a path holding a newline is exit 2,
+		and nothing the PR controls reaches stdout or stderr as a line the runner would obey."""
+		profile = self.read(".standards-profile/profile.toml")
+		for path in (
+			"SEC\\n::warning title=injected::spoofed",
+			"{{ 'SEC\\n::warning title=injected::spoofed' }}",
+		):
+			with self.subTest(path=path):
+				self.write(
+					".standards-profile/profile.toml",
+					profile
+					+ f'\n[[extra-files]]\npath = "{path}"\ntemplate = "SECURITY.md.j2"\n'
+					+ 'strategy = "whole"\nmodule = "hygiene"\nheader = "none"\n',
+				)
+				self.commit()
+				code, out, err = self.fn("sync", "--check", "--format", "github")
+				self.assertEqual(code, 2, out + err)
+				self.assertIn("control character", out + err)
+				self.assertNotIn("\n::warning", "\n" + out + "\n" + err)
+
+	def test_stderr_is_inert_under_format_github(self):
+		self.write("x.txt", "x\n")
+		self.write(
+			".standards-profile/profile.toml",
+			self.read(".standards-profile/profile.toml")
+			+ '\n[[retire]]\npaths = ["x.txt"]\nmodule = "hygiene"\ncontains = ["("]\n',
+		)
+		self.commit()
+		code, out, err = self.fn("sync", "--check", "--format", "github")
+		self.assertEqual(code, 2, out + err)
+		lines = err.splitlines()
+		self.assertTrue(lines[0].startswith("::stop-commands::"), err)
+		self.assertEqual(lines[-1], "::" + lines[0].removeprefix("::stop-commands::") + "::", err)
+
 	def test_profile_validate_renders_every_fixture_context(self):
 		"""§5.13: a template that breaks only for one §7 N3 context (here an app with SCSS) fails
 		validate, not the first sync of such an app."""
@@ -976,6 +1011,8 @@ class TestOrgProfile(ProfileCase):
 			engine.inside(self.root, ".git/config")
 		with self.assertRaisesRegex(engine.ConfigError, "inside .Git/"):
 			engine.inside(self.root, "a/.Git/hooks/post-checkout")
+		with self.assertRaisesRegex(engine.ConfigError, "control character"):
+			engine.inside(self.root, "SEC\n::warning::x")
 		self.assertEqual(
 			engine.inside(self.root, ".git-blame-ignore-revs"), self.root / ".git-blame-ignore-revs"
 		)
