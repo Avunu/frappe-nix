@@ -119,6 +119,9 @@ let
     replacedApps = { };
   };
   devenvSource = builtins.readFile ../../modules/devenv.nix;
+  # Not lib.hasInfix: its `.*infix.*` regex over a 150 KB file overflows the
+  # regex engine's stack on some Nix builds (2.35 on CI's runners).
+  contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
 in
 {
   ironclad-rename-code =
@@ -260,8 +263,8 @@ in
       plain == "echo plain"
     ) "reconcile-apps changes with no renamed or replaced apps";
     assert lib.assertMsg (
-      lib.hasInfix "reconcile-apps = scripts.reconcile-apps // {\n                  exec = reconcileAppsExec;" devenvSource
-      && lib.hasInfix "\${reconcileAppsExec}" devenvSource
+      contains "reconcile-apps = scripts.reconcile-apps // {\n                  exec = reconcileAppsExec;" devenvSource
+      && contains "\${reconcileAppsExec}" devenvSource
     ) "devenv.nix: reconcile-apps or the frappe:apps-reconcile task does not use the wrapper";
     pkgs.runCommand "ironclad-rename-devenv-check" { } ''
       set -euo pipefail

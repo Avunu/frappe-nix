@@ -4,9 +4,8 @@
 #   ironclad-ports           the port offset: the primary checkout's is today's
 #                            (a hash of benchName), a linked worktree's differs,
 #                            FRAPPE_NIX_PORT_OFFSET parses and wins, and one
-#                            offset sets web, db and the three Mailpit ports;
-#                            modules/devenv.nix is held to that wiring by its
-#                            source (selftest-runtime runs the real thing).
+#                            offset sets web, db and the three Mailpit ports,
+#                            through the real module (evaluated, not the shell).
 #   ironclad-ci-mode         FRAPPE_NIX_CI's enterShell snippets, rendered and
 #                            run: in CI mode no node verify, no node_modules, a
 #                            one-line banner and the two exports; outside it the
@@ -21,6 +20,7 @@
 {
   pkgs,
   lib,
+  self,
   inputs,
   ...
 }:
@@ -31,25 +31,33 @@ let
 
   # --- ports, through the module ----------------------------------------------
 
-  # One offset through the module's own wiring: devenv.nix takes web and db from
-  # ports.basesFor and the Mailpit defaults from portOffsetOf (asserted on its
-  # source below), so these are the ports a bench with that offset gets.
-  # Evaluating the module itself is left to selftest-runtime, which runs it.
+  benchFlake = import ./fixtures/bench-flake.nix { inherit self pkgs; };
+
   portsOf =
-    offset:
+    extra:
     let
-      b = ports.basesFor offset;
+      config = benchFlake (_: {
+        frappe-nix = {
+          enable = true;
+          benchName = "carbon-frappe";
+          workspaceRoot = ../fixtures/lock-audit;
+        }
+        // extra;
+      });
+      shell = config.devenv.shells.default;
+      mail = config.frappe-nix.devguard.mail;
     in
     {
-      inherit offset;
-      inherit (b) web db;
-      smtp = b.mailSmtp;
-      http = b.mailHttp;
-      pop3 = b.mailPop3;
+      inherit (config.frappe-nix.ports) offset;
+      web = shell.processes.nginx.ports.main.allocate;
+      db = shell.processes.mysql.ports.main.allocate;
+      smtp = mail.smtpPort;
+      http = mail.httpPort;
+      pop3 = mail.pop3.port;
     };
 
-  today = portsOf (ports.offsetFor "carbon-frappe");
-  set123 = portsOf (ports.effectiveOffset (ports.parseEnvOffset "123") 691);
+  today = portsOf { };
+  set123 = portsOf { ports.offset = 123; };
 
   seed =
     args:
@@ -73,16 +81,16 @@ let
 
   portFacts =
     assert lib.assertMsg (
-      lib.hasInfix "webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;" devenvSource
-      && lib.hasInfix "dbBase = portBases.db;" devenvSource
-      && lib.hasInfix "portBases = ports.basesFor portOffset;" devenvSource
+      contains "webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;" devenvSource
+      && contains "dbBase = portBases.db;" devenvSource
+      && contains "portBases = ports.basesFor portOffset;" devenvSource
     ) "devenv.nix: the web or db base no longer comes from ports.basesFor";
     assert lib.assertMsg (
-      lib.hasInfix "default = 19000 + portOffsetOf config.frappe-nix;" devenvSource
-      && lib.hasInfix "default = 20000 + portOffsetOf config.frappe-nix;" devenvSource
-      && lib.hasInfix "default = 21000 + portOffsetOf config.frappe-nix;" devenvSource
-      && lib.hasInfix "portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;" devenvSource
-      && lib.hasInfix "portOffset = portOffsetOf cfg;" devenvSource
+      contains "default = 19000 + portOffsetOf config.frappe-nix;" devenvSource
+      && contains "default = 20000 + portOffsetOf config.frappe-nix;" devenvSource
+      && contains "default = 21000 + portOffsetOf config.frappe-nix;" devenvSource
+      && contains "portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;" devenvSource
+      && contains "portOffset = portOffsetOf cfg;" devenvSource
     ) "devenv.nix: the Mailpit defaults or the bases no longer derive from the one offset";
     # The values every bench had before this change: carbon-frappe served on 8691.
     assert lib.assertMsg (
@@ -107,7 +115,7 @@ let
         http = 20123;
         pop3 = 21123;
       }
-    ) "FRAPPE_NIX_PORT_OFFSET=123 does not set every port: ${builtins.toJSON set123}";
+    ) "ports.offset = 123 does not set every port: ${builtins.toJSON set123}";
     # The primary checkout (.git is a directory) keeps the bench-name hash.
     assert lib.assertMsg (seed { } == "ironclad-fixture") "the primary checkout's seed is salted";
     assert lib.assertMsg (
@@ -160,6 +168,9 @@ let
   # --- CI mode ----------------------------------------------------------------
 
   devenvSource = builtins.readFile ../../modules/devenv.nix;
+  # Not lib.hasInfix: its `.*infix.*` regex over a 150 KB file overflows the
+  # regex engine's stack on some Nix builds (2.35 on CI's runners).
+  contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
   ciShell = pkgs.writeText "ci-mode-enter-shell" ''
     ${ciMode.exports}
     ${ciMode.unlessCi ''
@@ -204,13 +215,13 @@ in
   ironclad-ports = pkgs.writeText "ironclad-ports.json" (builtins.toJSON portFacts);
 
   ironclad-ci-mode =
-    assert lib.assertMsg (lib.hasInfix "\${ciMode.exports}" devenvSource)
+    assert lib.assertMsg (contains "\${ciMode.exports}" devenvSource)
       "devenv.nix: enterShell lost ciMode.exports";
     assert lib.assertMsg (
-      lib.hasInfix "ciMode.unlessCi ''\n" devenvSource
-      && lib.hasInfix "frappe-nix-node-verify \"$FRAPPE_BENCH_ROOT\"" devenvSource
+      contains "ciMode.unlessCi ''\n" devenvSource
+      && contains "frappe-nix-node-verify \"$FRAPPE_BENCH_ROOT\"" devenvSource
     ) "devenv.nix: the node steps are not wrapped in ciMode.unlessCi";
-    assert lib.assertMsg (lib.hasInfix "\${ciMode.banner {" devenvSource)
+    assert lib.assertMsg (contains "\${ciMode.banner {" devenvSource)
       "devenv.nix: the banner is not ciMode.banner";
     pkgs.runCommand "ironclad-ci-mode-check" { } ''
       set -euo pipefail

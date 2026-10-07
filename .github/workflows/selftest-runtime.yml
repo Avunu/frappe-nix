@@ -40,26 +40,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  eval-debug:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
-        with:
-          determinate: false
-      - name: Evaluate each Ironclad check
-        run: |
-          nix --version
-          ulimit -a
-          nix eval --raw .#devShells.x86_64-linux.default.drvPath > /dev/null
-          for c in $(nix eval --json .#checks.x86_64-linux --apply 'c: builtins.filter (n: builtins.substring 0 9 n == "ironclad-") (builtins.attrNames c)' | jq -r '.[]'); do
-            echo "== $c"
-            nix eval --no-eval-cache --raw ".#checks.x86_64-linux.$c.drvPath" --show-trace 2>&1 | tail -n 30 || true
-            echo
-          done
-
   runtime:
     name: ${{ matrix.suite }}
     runs-on: ubuntu-latest
