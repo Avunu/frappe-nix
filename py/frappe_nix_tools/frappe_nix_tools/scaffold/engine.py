@@ -130,12 +130,30 @@ class Plan:
 		return max((i.code for i in self.items), default=CLEAN)
 
 
+# Directories sync never manages, refused as any component of a managed path. A rendered path
+# is data a pull request can set (an in-repo profile's [[extra-files]]): one into .git/ would
+# print .git/config (a persisted checkout token) under --check, and under --write replace it
+# with config the following ``git add`` obeys (core.fsmonitor, core.hooksPath). Compared
+# case-folded and without trailing dots and spaces, as case-insensitive (macOS) and Windows
+# file systems resolve them.
+UNMANAGED_DIRS = frozenset({".git", ".direnv", ".frappe-nix", ".venv", "node_modules"})
+
+
+def unmanaged_dir(path: str) -> str | None:
+	"""The component of ``path`` that names a directory sync never writes into, if any."""
+	for part in PurePosixPath(path).parts:
+		if part.rstrip(". ").casefold() in UNMANAGED_DIRS:
+			return part
+	return None
+
+
 def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
 	"""``root / path``, once ``path`` is known to stay inside the app with no link on the way.
 
 	``path`` is a rendered managed path (an entry's, an ``[[extra-files]]`` one, a node-lock
 	seed): it must be relative, with no ``..``, and no existing component of it may be a
-	symlink (the last one may, with ``link_ok``, for a retired link sync deletes unread).
+	symlink (the last one may, with ``link_ok``, for a retired link sync deletes unread), and
+	none may be one of ``UNMANAGED_DIRS`` (``.git`` above all).
 	``--check`` runs on untrusted pull requests: a committed link (``tools`` pointing outside
 	the checkout) would otherwise print the file it reaches in the diff, and ``--write`` would
 	write through it. Exit 2."""
@@ -143,6 +161,10 @@ def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
 	if not parts or PurePosixPath(path).is_absolute() or ".." in parts:
 		raise ConfigError(
 			f"{path!r} is not a path inside the app: a managed path must be relative, without .."
+		)
+	if (part := unmanaged_dir(path)) is not None:
+		raise ConfigError(
+			f"{path!r} is not a path sync may manage: it is inside {part}/, which sync never reads or writes"
 		)
 	cur = root
 	for i, part in enumerate(parts):
@@ -1323,6 +1345,8 @@ def entries_for(cfg: dict) -> list[manifest.Entry]:
 			raise ConfigError(f"[[extra-files]] {e.path} is a path frappe-nix manages")
 		if PurePosixPath(e.path).is_absolute() or ".." in PurePosixPath(e.path).parts:
 			raise ConfigError(f"[[extra-files]] {e.path} must stay inside the app")
+		if (part := unmanaged_dir(e.path)) is not None:
+			raise ConfigError(f"[[extra-files]] {e.path} is inside {part}/, which sync never writes")
 	return [*man.entries, *extra]
 
 

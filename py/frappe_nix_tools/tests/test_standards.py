@@ -864,6 +864,64 @@ class TestOrgProfile(ProfileCase):
 		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
 		self.assertEqual(code, 2, out + err)
 
+	def _refused_unread(self, needle: str) -> None:
+		"""--check and --write are exit 2, never print the link's target and write nothing."""
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn(needle, out)
+		self.assertNotIn("hunter2", out)
+		for fmt in ("json", "github"):
+			code, out, err = self.fn("sync", "--check", "--format", fmt)
+			self.assertEqual(code, 2, out + err)
+			self.assertNotIn("hunter2", out + err)
+		before = self.snapshot()
+		code, out, err = self.fn("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertNotIn("hunter2", out + err)
+		self.assertEqual(self.snapshot(), before)
+
+	def test_an_extra_file_into_git_or_an_unmanaged_directory_is_refused(self):
+		"""An in-repo profile is pull-request data: an [[extra-files]] path into .git/ would print
+		.git/config (a persisted checkout token) under --check and replace it under --write."""
+		git(self.root, "config", "http.https://github.com/.extraheader", "AUTHORIZATION: basic hunter2")
+		config_before = (self.root / ".git/config").read_bytes()
+		profile = self.read(".standards-profile/profile.toml")
+		for path, part in (
+			(".git/config", ".git"),
+			(".GIT/config", ".GIT"),
+			("sub/.git./hooks/pre-commit", ".git."),
+			("node_modules/x.js", "node_modules"),
+			(".frappe-nix/x", ".frappe-nix"),
+		):
+			with self.subTest(path=path):
+				self.write(
+					".standards-profile/profile.toml",
+					profile
+					+ f'\n[[extra-files]]\npath = "{path}"\ntemplate = "SECURITY.md.j2"\n'
+					+ 'strategy = "whole"\nmodule = "hygiene"\nheader = "none"\n',
+				)
+				self.commit()
+				self._refused_unread(f"is inside {part}/")
+				self.assertEqual((self.root / ".git/config").read_bytes(), config_before)
+				code, out, err = self.fn(
+					"profile", "validate", str(self.root / ".standards-profile/profile.toml")
+				)
+				self.assertEqual(code, 2, out + err)
+				self.assertIn(f"is inside {part}/", out + err)
+
+	def test_a_rendered_path_into_git_is_refused(self):
+		"""The rendered path is what is checked: a template expression cannot reach .git/ either."""
+		with self.assertRaisesRegex(engine.ConfigError, "inside .git/"):
+			engine.inside(self.root, ".git/config")
+		with self.assertRaisesRegex(engine.ConfigError, "inside .Git/"):
+			engine.inside(self.root, "a/.Git/hooks/post-checkout")
+		self.assertEqual(
+			engine.inside(self.root, ".git-blame-ignore-revs"), self.root / ".git-blame-ignore-revs"
+		)
+		self.assertEqual(
+			engine.inside(self.root, ".github/workflows/ci.yml"), self.root / ".github/workflows/ci.yml"
+		)
+
 	def test_profile_validate_ignores_the_users_git_config(self):
 		"""Commit signing and a global hooks path must not reach the throwaway repositories."""
 		hooks = self.root.parent / (self.root.name + "-hooks")
@@ -885,22 +943,6 @@ class TestOrgProfile(ProfileCase):
 		outside.write_text(text)
 		self.addCleanup(outside.unlink)
 		return outside
-
-	def _refused_unread(self, needle: str) -> None:
-		"""--check and --write are exit 2, never print the link's target and write nothing."""
-		code, out = self.check()
-		self.assertEqual(code, 2, out)
-		self.assertIn(needle, out)
-		self.assertNotIn("hunter2", out)
-		for fmt in ("json", "github"):
-			code, out, err = self.fn("sync", "--check", "--format", fmt)
-			self.assertEqual(code, 2, out + err)
-			self.assertNotIn("hunter2", out + err)
-		before = self.snapshot()
-		code, out, err = self.fn("sync", "--write")
-		self.assertEqual(code, 2, out + err)
-		self.assertNotIn("hunter2", out + err)
-		self.assertEqual(self.snapshot(), before)
 
 	def test_a_symlinked_template_is_refused_unread(self):
 		template = self.root / ".standards-profile/templates/SECURITY.md.j2"

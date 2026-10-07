@@ -87,7 +87,13 @@ cmd_app_init() {
   TEMPLATE="$APP_TEMPLATE"
   render_template
   install_template keep
-  install_gitignore_block
+  if $standards && [ -f .gitignore ] && grep -qxF "$GITIGNORE_BEGIN" .gitignore; then
+    # frappe-nix sync owns the block from here (§2.6): writing templates/app's body first
+    # would put main's back, and leave it staged when sync fails or --only skips .gitignore.
+    info ". .gitignore's frappe-nix block is left to frappe-nix sync"
+  else
+    install_gitignore_block
+  fi
 
   # Staged, not just written: a flake's source tree is only its tracked files, so
   # an untracked flake.nix is one `nix run` away from "does not provide attribute".
