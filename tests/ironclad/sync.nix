@@ -15,7 +15,9 @@
 #   ironclad-app-template  templates/app holds exactly .envrc and .gitignore,
 #                          both identical to what sync renders, and
 #                          `frappe-init --app` on a bare app writes those two plus
-#                          what `ironclad sync --write` renders, nothing else.
+#                          what `ironclad sync --write` renders, nothing else; and
+#                          a usage error under `frappe-init --check` is exit 2 or 3,
+#                          never 1 (drift).
 {
   pkgs,
   ironclad,
@@ -140,6 +142,21 @@ in
         done
         echo "ok   frappe-init --app writes .envrc, .gitignore and what ironclad sync renders:"
         comm -13 <(echo "$before") <(echo "$have") | sed 's/^/       /'
+
+        code_of() {
+          set +e
+          "$@" > /dev/null 2>&1
+          echo "$?"
+          set -e
+        }
+        for argv in "--check --format" "--check --only" "--check --expect-rev" "--check --bogus" "--bogus --check"; do
+          # shellcheck disable=SC2086 # word-split on purpose
+          code="$(code_of frappe-init $argv)"
+          [ "$code" = 2 ] || fail "frappe-init $argv exited $code, not 2"
+        done
+        code="$(code_of frappe-init --check /nonexistent)"
+        [ "$code" = 3 ] || fail "frappe-init --check /nonexistent exited $code, not 3"
+        echo "ok   frappe-init --check usage errors are 2, a bad target 3"
         touch "$out"
       '';
 }

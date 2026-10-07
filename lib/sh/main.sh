@@ -56,7 +56,14 @@ EOF
 }
 
 parse_args() {
+  local unknown=""
   while [ "$#" -gt 0 ]; do
+    # A value-taking flag at the end of the line is a usage error (2), not an
+    # unbound $2 under set -u, which exits 1 and reads as drift to --check.
+    case "$1" in
+      --frappe-version | --apps | --name | --site | --vendor | --legacy-apps | --only | --format | --expect-rev)
+        [ "$#" -ge 2 ] || die "$1 needs a value" 2 ;;
+    esac
     case "$1" in
       --frappe-version) frappe_version="$2"; shift 2 ;;
       --frappe-version=*) frappe_version="${1#*=}"; shift ;;
@@ -90,10 +97,17 @@ parse_args() {
       --absorb-gitdirs) ABSORB_GITDIRS=true; shift ;;
       --keep-db-root-password) KEEP_DB_ROOT_PW=true; shift ;;
       -h | --help) usage; exit 0 ;;
-      -*) usage >&2; die "unknown flag: $1" ;;
+      -*) unknown="${unknown:-$1}"; shift ;;
       *) target="$1"; shift ;;
     esac
   done
+  # Reported once every flag is read: under --sync/--check (wherever it comes) a
+  # usage error is 2, since 1 is drift there.
+  if [ -n "$unknown" ]; then
+    usage >&2
+    if [ -n "$APP_ACTION" ]; then die "unknown flag: $unknown" 2; fi
+    die "unknown flag: $unknown"
+  fi
 }
 
 # Runs with the working directory already inside the target. Sets RESOLVED_MODE
@@ -150,7 +164,7 @@ main() {
   # handed to `ironclad sync`, which checks that it is one.
   if [ -n "$APP_ACTION" ]; then
     if [ -n "$target" ]; then
-      cd "$target" || die "cannot enter $target"
+      cd "$target" || die "cannot enter $target" 3
     fi
     cmd_app_sync
   fi
