@@ -326,6 +326,20 @@ class TestPlan(unittest.TestCase):
 		)
 		self.assertEqual(plan["coverage"], {"target": 60.0, "raise-margin": 0.0})
 
+	def test_opt_in_spelling_disagreement_is_exit_2(self):
+		# The dev shell's line match and TOML disagree: refused whether TOML sees the table
+		# (a quoted key) or only the shell does (the header inside a string).
+		for text in (
+			'[project]\nname = "demo"\n\n[tool."frappe-nix"]\nschema = 1\nfrappe-major = 16\n',
+			'[project]\nname = "demo"\ndescription = """\n[tool.frappe-nix]\n"""\n',
+		):
+			with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+				py = Path(tmp) / "pyproject.toml"
+				py.write_text(text)
+				code, _, err = run_cli("test-plan", "--pyproject", str(py))
+				self.assertEqual(code, 2, err)
+				self.assertIn("dev shell", err)
+
 	def test_invalid_configuration_is_exit_2(self):
 		with tempfile.TemporaryDirectory() as tmp:
 			py = Path(tmp) / "pyproject.toml"

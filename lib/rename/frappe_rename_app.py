@@ -116,12 +116,19 @@ def _replace_apps(cfg: dict) -> dict[str, str]:
 
 
 def opted_in(repo: Path) -> bool:
-	"""Whether the app has ``[tool.frappe-nix]`` (spec S35), by the same line match the dev shell uses."""
+	"""Whether the app has ``[tool.frappe-nix]`` (spec S35), by the same line match the dev shell uses.
+
+	As lib/standards/shell.nix and frappe_nix_tools' ``pyproject.opt_in_line`` match it: the
+	file's bytes split on ``\\n`` alone (a lone ``\\r`` ends no line), and only ASCII
+	whitespace (``[[:space:]]``) before the header. Kept here because the code half runs
+	without frappe-nix-tools; ``app_pairs`` then refuses, through ``config.resolve``, a file
+	whose TOML table and header line disagree.
+	"""
 	try:
-		text = (repo / "pyproject.toml").read_text(encoding="utf-8")
+		text = (repo / "pyproject.toml").read_bytes().decode("utf-8")
 	except (OSError, UnicodeDecodeError):
 		return False
-	return any(re.match(r"\s*\[{1,2}tool\.frappe-nix[].]", line) for line in text.splitlines())
+	return any(re.match(r"[ \t\n\v\f\r]*\[{1,2}tool\.frappe-nix[].]", line) for line in text.split("\n"))
 
 
 def app_pairs(repo: Path) -> dict[str, str]:

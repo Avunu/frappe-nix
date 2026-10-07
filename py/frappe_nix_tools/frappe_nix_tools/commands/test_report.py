@@ -131,7 +131,12 @@ def test_plan(pyproject_path: Path) -> dict:
 	no bench is started), ``coverage`` stage 4, ``testmap`` 5, ``composition`` 6, ``ty`` 7,
 	``nix-lint`` 8 and ``shell-checks`` 8b.
 	"""
-	doc = pyproject.load(pyproject_path)
+	text = pyproject.read(pyproject_path)
+	doc = pyproject.parse(text, pyproject_path)
+	# The dev shell decides the opt-in by a line match, this by TOML: a spelling only one
+	# of them sees is exit 2 here too, as ``config.resolve`` refuses it, so frappe-test
+	# never runs an app as not opted in that the shell gives the standards tools.
+	pyproject.check_opt_in_spelling(text, doc)
 	opted_in = pyproject.opted_in(doc)
 	if opted_in:
 		resolved = config.resolve(pyproject_path)
