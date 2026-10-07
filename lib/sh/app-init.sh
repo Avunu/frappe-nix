@@ -44,6 +44,7 @@ cmd_app_init() {
   # prefix. Derived rather than asked for: an app repo has exactly one bench and
   # naming it separately is a question with no interesting answer.
   name="$(normalize_dist "$app_name")"
+  SITE_ARG="$site"
   site="${site:-$name.localhost}"
 
   step "Plan for $(pwd -P)"

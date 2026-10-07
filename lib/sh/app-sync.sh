@@ -15,6 +15,7 @@ APP_ACTION=""             # sync | check
 STANDARDS=""              # --standards <profile>: opt in (create [tool.frappe-nix])
 declare -a SYNC_ARGS=()   # --format, --only, --expect-rev, --init-listing, --profile-path, passed through
 APP_FLAG=""               # the first app standards flag on the line, for refusing it outside app mode
+SITE_ARG=""               # --site as given (empty: none), before app mode defaults $site
 
 # Whether the app in the current directory opted in to the app standards: its
 # pyproject.toml has a [tool.frappe-nix] table (a header line, as
@@ -29,7 +30,9 @@ sync_write_args() {
   SYNC_WRITE=(--write)
   if [ -n "$STANDARDS" ]; then SYNC_WRITE+=(--standards "$STANDARDS"); fi
   if [ -n "$frappe_version" ]; then SYNC_WRITE+=(--frappe-version "$frappe_version"); fi
-  if [ -n "$site" ]; then SYNC_WRITE+=(--site "$site"); fi
+  # Only a --site the user gave: sync otherwise keeps the siteName an existing flake
+  # names, and a defaulted one would orphan every developer's dev site.
+  if [ -n "$SITE_ARG" ]; then SYNC_WRITE+=(--site "$SITE_ARG"); fi
   if $FORCE; then SYNC_WRITE+=(--force); fi
   if $DRY_RUN; then SYNC_WRITE+=(--dry-run); fi
   if $SKIP_LOCK; then SYNC_WRITE+=(--skip-lock); fi
@@ -39,6 +42,7 @@ declare -a SYNC_WRITE=()
 
 cmd_app_sync() {
   local -a args=()
+  SITE_ARG="$site"
   case "$APP_ACTION" in
     sync)
       sync_write_args
