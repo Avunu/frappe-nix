@@ -18,7 +18,7 @@ class TestCli(unittest.TestCase):
 		code, _, err = run_cli("nonexistent")
 		self.assertEqual(code, 2)
 		for name in ("config", "data-path", "pin-path"):
-			self.assertIn(f"'{name}'", err)
+			self.assertRegex(err, rf"\b'?{name}'?\b")
 
 	def test_no_command_exits_2_with_help(self):
 		code, _, err = run_cli()

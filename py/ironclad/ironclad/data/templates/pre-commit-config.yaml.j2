@@ -1,0 +1,142 @@
+#
+# Run by prek (`prek install` once per clone; the dev shell does it) and by CI's `lint` job:
+#   uv run --frozen --project tools prek run --all-files --show-diff-on-failure
+# A hook that rewrites a file fails CI. ruff, ty, committed, zizmor, actionlint and shellcheck are pinned
+# by tools/uv.lock; oxfmt, oxlint and stylelint by package.json; ssort, pre-commit-hooks and test_utils by the
+# `rev:`s below. dependabot moves all three.
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+default_language_version:
+  python: python3.14
+fail_fast: false
+exclude: ^(nix/|\.frappe-nix/|docs-site/|CHANGELOG\.md$|types/doctypes\.d\.ts${% for g in cfg.generated %}|{{ g | glob_to_regex }}{% endfor %})
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: {{ rev("https://github.com/pre-commit/pre-commit-hooks", "v6.0.0") }}
+    hooks:
+      - id: check-merge-conflict
+      - id: check-ast
+      - id: check-toml
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+        exclude: ^(tsconfig(\.[a-z]+)?\.json|\.vscode/.*)$
+      - id: debug-statements
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+        exclude: ^docs/screenshots/
+
+  # Definitions before their first use; nothing else reordered. ssort can't resolve names
+  # imported inside the class-body `if TYPE_CHECKING:` block frappe generates, so only
+  # <doctype>/<doctype>.py controllers are excluded. Tests and helpers in doctype folders are sorted.
+  - repo: https://github.com/bwhmather/ssort
+    rev: {{ rev("https://github.com/bwhmather/ssort", "0.17.0") }}
+    hooks:
+      - id: ssort
+        exclude: '/doctype/([^/]+)/\1\.py$'
+
+  - repo: local
+    hooks:
+      - id: ruff-isort
+        name: ruff import sorter
+        language: system
+        entry: uv run --frozen --project tools ruff check --select I --fix
+        types: [python]
+      - id: ruff-check
+        name: ruff check
+        language: system
+        entry: uv run --frozen --project tools ruff check --fix
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        language: system
+        entry: uv run --frozen --project tools ruff format
+        types: [python]
+      - id: oxfmt
+        name: oxfmt
+        language: system
+        entry: yarn -s oxfmt
+        pass_filenames: false
+        always_run: true
+      - id: oxlint
+        name: oxlint
+        language: system
+        entry: yarn -s oxlint
+        pass_filenames: false
+        types_or: [javascript, jsx, ts, tsx, vue]
+{% if discover.scss %}
+      - id: stylelint
+        name: stylelint
+        language: system
+        entry: yarn -s stylelint {% for g in discover.scss %}{{ g | json_string }}{{ " " if not loop.last else "" }}{% endfor %}
+
+        pass_filenames: false
+        types: [scss]
+{% endif %}
+      - id: zizmor
+        name: zizmor
+        language: system
+        entry: uv run --frozen --project tools zizmor --config .github/zizmor.yml .github/workflows .github/dependabot.yml
+        pass_filenames: false
+        files: ^\.github/
+      - id: actionlint
+        name: actionlint
+        language: system
+        entry: uv run --frozen --project tools actionlint
+        pass_filenames: false
+        files: ^\.github/workflows/
+      - id: shellcheck
+        name: shellcheck
+        language: system
+        entry: uv run --frozen --project tools shellcheck --severity=warning
+        types: [shell]
+        exclude: ^\.envrc$
+      - id: ironclad-compat
+        name: ironclad compat (versions, ranges, majors)
+        language: system
+        entry: ironclad compat
+        pass_filenames: false
+        always_run: true
+      - id: committed
+        name: committed (conventional commit)
+        language: system
+        entry: uv run --frozen --project tools committed --commit-file
+        stages: [commit-msg]
+      - id: ironclad-commit-msg
+        name: no major bump through a commit message
+        language: system
+        entry: ironclad policy --commit-msg-file
+        stages: [commit-msg]
+
+  # agritheory/test_utils: selected hooks only (S19). sql_registry/sql_rewriter abort the run,
+  # mypy is replaced by ty, and validate_*_dependencies crash outside a bench, so none of those are here.
+  - repo: https://github.com/agritheory/test_utils
+    rev: {{ rev("https://github.com/agritheory/test_utils", "v1.30.1") }}
+    hooks:
+      - id: validate_frappe_project
+      - id: validate_patches
+        args: [--app, {{ app }}]
+      - id: static_analysis
+        args: ["."]
+      - id: validate_doctype_python_types
+      - id: validate_copyright
+        args: [--app, {{ app }}]
+        # Never stamp a managed file (its header is line 1) or a generated one (its freshness diff would fail).
+        exclude: ^(docs/|docs-site/|marketplace/shots\.d\.ts$|types/doctypes\.d\.ts$|scripts/ironclad-vite-register\.mjs$|tsconfig[^/]*\.json${% for g in cfg.generated %}|{{ g | glob_to_regex }}{% endfor %})
+      # Bench-aware: silent no-ops outside a bench. CI runs them in a mini-bench (`ironclad minibench`).
+      - id: validate_customizations
+        stages: [manual]
+      - id: clean_customized_doctypes
+        stages: [manual]
+      # Nightly only (jscpd through npx, needs the network).
+      - id: check_code_duplication
+        stages: [manual]
+{% if cfg["track-overrides"] %}
+      - id: track_overrides
+        args: [--app, {{ app }}, --base-branch, {{ frappe.branch }}]
+{% endif %}
+
+  # ironclad:local-begin repos
+  # ironclad:local-end repos

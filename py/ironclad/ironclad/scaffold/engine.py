@@ -1,0 +1,561 @@
+"""The plan: every managed file's current and wanted state, computed in memory.
+
+``--check`` reports the plan; ``--write`` applies it. Both run the same code, so
+``--check`` exits 0 right after a ``--sync`` that exited 0 (spec §3.4).
+
+An ``Item`` is one file: what is on disk, what sync wants there (``None`` to delete it),
+and the problem when the two differ or a rule is broken. A problem sync can fix is drift;
+one it can't (a rule on an app-owned key) carries its own exit code and no new content.
+"""
+
+import difflib
+import json
+import os
+import re
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import ironclad
+from ironclad.common import data_path, flakelock, pyproject, repo
+from ironclad.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, ConfigError, EnvError, Finding
+from ironclad.scaffold import (
+	blocks,
+	context,
+	floors,
+	globs,
+	hooks,
+	jsonfmt,
+	manifest,
+	package_json,
+	regions,
+	tomlmerge,
+)
+from ironclad.scaffold import render as rendering
+from ironclad.scaffold import schema as schema_check
+
+BLAME_LINE = re.compile(r"^[0-9a-f]{40}  # \S.*$")
+_FLAKE_INPUT = re.compile(
+	r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)(?:\.url\s*=|\.follows\s*=|\s*=\s*\{)", re.M
+)
+_SKEW = re.compile(
+	r"Avunu/frappe-nix/\.github/workflows/app-[A-Za-z0-9_-]+\.ya?ml@(?P<sha>[0-9a-f]{40})(?:[ \t]+#[ \t]*v?(?P<ver>\S+))?"
+)
+
+
+@dataclass
+class Item:
+	path: str
+	strategy: str
+	current: str | None
+	wanted: str | None
+	problem: str = ""
+	code: int = CLEAN
+	command: str | None = None
+	phase: str = "b"
+
+	@property
+	def changes(self) -> bool:
+		return self.code == DRIFT and (self.wanted != self.current or self.command is not None)
+
+	def diff(self) -> str:
+		if self.wanted is None and self.current is None:
+			return ""
+		a = (self.current or "").splitlines(keepends=True)
+		b = (self.wanted or "").splitlines(keepends=True) if self.wanted is not None else []
+		return "".join(difflib.unified_diff(a, b, "current", "rendered"))
+
+	def finding(self) -> Finding:
+		return Finding(
+			self.path, self.strategy, self.problem, self.diff() if self.wanted != self.current else ""
+		)
+
+
+@dataclass
+class Plan:
+	root: Path
+	app: context.App
+	cfg: dict
+	ctx: context.NS
+	items: list[Item] = field(default_factory=list)
+	created_config: dict | None = None
+
+	def add(self, item: Item) -> None:
+		self.items.append(item)
+
+	@property
+	def problems(self) -> list[Item]:
+		return [i for i in self.items if i.code != CLEAN]
+
+	@property
+	def code(self) -> int:
+		return max((i.code for i in self.items), default=CLEAN)
+
+
+def read(root: Path, path: str) -> str | None:
+	try:
+		return (root / path).read_text()
+	except FileNotFoundError:
+		return None
+	except IsADirectoryError:
+		return None
+
+
+# --- configuration -------------------------------------------------------------
+
+
+def flake_facts(text: str | None) -> tuple[int | None, list[str]]:
+	"""``frappeVersion``'s major and the sibling names an existing ``flake.nix`` declares."""
+	if not text:
+		return None, []
+	m = re.search(r'frappeVersion\s*=\s*"version-(\d+)"', text)
+	block = re.search(r"siblings\s*=\s*\[(?P<body>.*?)\];", text, re.S)
+	names = re.findall(r'name\s*=\s*"([^"]+)"', block["body"]) if block else []
+	return (int(m[1]) if m else None), names
+
+
+def new_config(
+	root: Path, app_hooks: dict, frappe_version: str | None, package: dict | None, tracked: list[str]
+) -> dict:
+	"""``[tool.ironclad]`` as sync creates it (§3.3 step 1)."""
+	major = None
+	if frappe_version:
+		m = re.fullmatch(r"version-(\d+)", frappe_version)
+		if not m:
+			raise ConfigError(f"--frappe-version must be version-<major>, not {frappe_version!r}")
+		major = int(m[1])
+	flake_major, flake_siblings = flake_facts(read(root, "flake.nix"))
+	major = major or flake_major
+	if major is None:
+		raise ConfigError(
+			"there is no [tool.ironclad] yet and nothing names the Frappe major: pass --frappe-version version-<N>"
+		)
+	siblings: list[str] = []
+	for spelling in [*hooks.required_apps(app_hooks), *flake_siblings]:
+		if hooks.bare(spelling) == "frappe":
+			continue
+		name = spelling if spelling.startswith("Avunu/") else hooks.bare(spelling)
+		if name not in siblings and not any(hooks.bare(s) == hooks.bare(name) for s in siblings):
+			siblings.append(name)
+	cfg: dict[str, Any] = {"schema": 1, "frappe-major": major, "siblings": siblings}
+	# An app whose build script is a real step with nothing sync can see building:
+	# say so, rather than create a configuration that fails its own first check.
+	scripts = (package or {}).get("scripts") or {}
+	vite_or_frontend = any(
+		re.fullmatch(r"vite(\.[^/]+)?\.config\.[^/]+", p.rsplit("/", 1)[-1])
+		for p in tracked
+		if p.count("/") <= 1
+	) or any(p.count("/") == 1 and p.endswith("/package.json") for p in tracked)
+	if isinstance(scripts, dict) and "build" in scripts and not vite_or_frontend:
+		cfg["build"] = True
+	return cfg
+
+
+def validate_config(raw: dict) -> dict:
+	errs = schema_check.errors(raw, pyproject.schema())
+	if errs:
+		raise ConfigError("; ".join(errs))
+	return pyproject.config({"tool": {"ironclad": raw}})
+
+
+def load_app(root: Path) -> context.App:
+	name = repo.app_name(root)
+	doc = pyproject.load(root / "pyproject.toml")
+	tracked = repo.ls_files(root)
+	return context.App(root, name, doc, hooks.read(root / name / "hooks.py"), tracked)
+
+
+def load_package(root: Path) -> dict | None:
+	text = read(root, "package.json")
+	if text is None:
+		return None
+	try:
+		doc = json.loads(text)
+	except json.JSONDecodeError as e:
+		raise ConfigError(f"package.json: {e}") from e
+	if not isinstance(doc, dict):
+		raise ConfigError("package.json is not an object")
+	return doc
+
+
+def config_for(app: context.App, frappe_version: str | None) -> tuple[dict, dict | None]:
+	"""The validated configuration, and the raw table when sync has to create it."""
+	raw = pyproject.tool_ironclad(app.pyproject)
+	created = None
+	if raw is None:
+		raw = created = new_config(app.root, app.hooks, frappe_version, load_package(app.root), app.tracked)
+	return validate_config(raw), created
+
+
+def _check_regions(path: str, text: str, entry: manifest.Entry) -> None:
+	"""A local region may add, never redefine (§3.2)."""
+	inside: list[str] = []
+	outside: list[str] = []
+	current_region = None
+	for line in text.splitlines():
+		m = re.match(r"^\s*# ironclad:local-(begin|end) ", line)
+		if m:
+			current_region = line if m[1] == "begin" else None
+			continue
+		(inside if current_region else outside).append(line)
+
+	def keys(lines: list[str]) -> set[str]:
+		found: set[str] = set()
+		eco = None
+		for line in lines:
+			if m := re.match(r"^\s*-\s+id:\s*(\S+)", line):
+				found.add(f"hook id {m[1]}")
+			if m := re.match(r"^\s*-\s+package-ecosystem:\s*(\S+)", line):
+				eco = m[1]
+			if eco and (m := re.match(r"^\s+directory:\s*(\S+)", line)):
+				found.add(f"updates entry {eco} {m[1]}")
+				eco = None
+			if entry.header == "ini" and (m := re.match(r"^\s*(\[[^\]]+\])\s*$", line)):
+				found.add(f"section {m[1]}")
+		return found
+
+	clash = sorted(keys(inside) & keys(outside))
+	if clash:
+		raise ConfigError(f"{path}: the local region redefines what sync manages: {', '.join(clash)}")
+
+
+# --- the plan --------------------------------------------------------------------
+
+
+def _whole(plan: Plan, entry: manifest.Entry, path: str, current: str | None) -> str:
+	text = rendering.render(entry.template or "", plan.ctx, current)
+	if entry.local_regions:
+		text = regions.splice(text, current, path, entry.local_regions)
+		_check_regions(path, text, entry)
+	return rendering.header(entry.header, bool(entry.local_regions), entry.header_note) + text
+
+
+def _json(text: str | None, path: str) -> Any:
+	if text is None:
+		return None
+	try:
+		return json.loads(text)
+	except json.JSONDecodeError as e:
+		raise ConfigError(f"{path}: {e}") from e
+
+
+def _seed_text(plan: Plan, entry: manifest.Entry) -> str:
+	if entry.handler == "release-please-manifest":
+		return jsonfmt.dumps({".": plan.ctx.version or "0.1.0"})
+	return rendering.render(entry.template or "", plan.ctx, None)
+
+
+def blame_problems(root: Path, text: str) -> list[str]:
+	"""``.git-blame-ignore-revs`` rules (§2.20); reachability only when the history is all there."""
+	out = []
+	shas = []
+	for number, line in enumerate(text.splitlines(), 1):
+		if not line.strip() or line.startswith("#"):
+			continue
+		if not BLAME_LINE.match(line):
+			out.append(f"line {number} is not `<40-hex sha>  # <subject>`: {line}")
+		else:
+			shas.append(line[:40])
+	try:
+		shallow = repo.git(root, "rev-parse", "--is-shallow-repository").strip() == "true"
+	except EnvError:
+		shallow = True
+	if not shallow:
+		for sha in shas:
+			try:
+				repo.git(root, "merge-base", "--is-ancestor", sha, "HEAD")
+			except EnvError:
+				out.append(f"{sha} is not reachable from HEAD")
+	return out
+
+
+def _validate_seed(plan: Plan, entry: manifest.Entry, path: str, current: str) -> list[Item]:
+	out = []
+	if entry.handler == "blame-ignore-revs":
+		for problem in blame_problems(plan.root, current):
+			out.append(Item(path, "seed", current, current, problem, DRIFT))
+	elif entry.handler == "release-please-manifest":
+		doc = _json(current, path)
+		if not isinstance(doc, dict) or not isinstance(doc.get("."), str):
+			out.append(Item(path, "seed", current, current, 'must be {".": "<version>"}', INVALID))
+	return out
+
+
+def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: bool) -> list[Item]:
+	"""The item(s) for one entry whose ``when`` holds."""
+	root, ctx = plan.root, plan.ctx
+	current = read(root, path)
+	strategy = entry.strategy
+	out: list[Item] = []
+
+	def item(
+		wanted: str | None, problem: str = "", code: int | None = None, command: str | None = None
+	) -> Item:
+		if code is None:
+			code = DRIFT if (wanted != current or command) else CLEAN
+		if code == DRIFT and not problem:
+			problem = "missing" if current is None else "differs from the rendered file"
+		return Item(path, strategy, current, wanted, problem, code, command, entry.phase)
+
+	if strategy == "whole":
+		out.append(item(_whole(plan, entry, path, current)))
+	elif strategy == "blocks" and entry.handler == "gitignore":
+		body = data_path("templates/gitignore.block").read_text()
+		out.append(item(blocks.gitignore(current, body, path)))
+	elif strategy == "blocks" and entry.handler == "init-py":
+		wanted, offending = blocks.init_py(current)
+		out.append(item(wanted))
+		if offending:
+			out.append(
+				Item(
+					path,
+					strategy,
+					current,
+					current,
+					"only comments may sit outside the version block (marketplace rule); move this code to"
+					f" {ctx.app}/api.py: {offending[0].strip()}",
+					DRIFT,
+				)
+			)
+	elif strategy == "toml-merge" and entry.handler == "pyproject":
+		text = current or ""
+		doc = tomllib.loads(text)
+		if plan.created_config is not None:
+			text = tomlmerge.add_tool_ironclad(text, plan.created_config)
+		wanted = tomlmerge.merge(text, ctx)
+		same = tomlmerge.managed_view(doc, ctx) == tomlmerge.managed_view(tomllib.loads(wanted), ctx)
+		if plan.created_config is not None:
+			same = False
+		out.append(item(wanted if not same else current, "managed keys differ" if not same else ""))
+		for code, problem in tomlmerge.problems(doc, ctx):
+			out.append(Item(path, strategy, current, current, problem, code))
+	elif strategy == "json-merge" and entry.handler == "package-json":
+		doc = _json(current, path)
+		if doc is not None and not isinstance(doc, dict):
+			raise ConfigError(f"{path} is not a JSON object")
+		merged = package_json.merge(doc, ctx, seed_version=seed_manifest)
+		if merged == doc:
+			out.append(item(current))
+		else:
+			out.append(item(jsonfmt.stringify(merged), "managed keys differ" if doc is not None else ""))
+		for code, problem in package_json.problems(merged, ctx):
+			out.append(Item(path, strategy, current, current, problem, code))
+	elif strategy == "json-merge" and entry.handler == "stylelint":
+		doc = _json(current, path)
+		merged = package_json.stylelint_merge(doc, ctx)
+		out.append(item(current if merged == doc else jsonfmt.dumps(merged)))
+	elif strategy == "seed":
+		if entry.command:
+			missing = current is None
+			problem = ""
+			if not missing and entry.handler == "uv-lock":
+				short = floors.lock_shortfalls(root / path, ctx.floors.get("uv", {}))
+				if short:
+					problem = f"below its floor or missing from the lock: {', '.join(short)}"
+			if missing or problem:
+				out.append(item(current, problem or "missing", DRIFT, entry.command))
+			else:
+				out.append(item(current))
+		elif current is None:
+			wanted = _seed_text(plan, entry)
+			out.append(item(wanted))
+		else:
+			out.append(item(current))
+			out += _validate_seed(plan, entry, path, current)
+	else:
+		raise manifest.ManifestError(f"{entry.fragment}: {path}: no handler for {strategy}/{entry.handler}")
+	return out
+
+
+def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list[Item]:
+	out = []
+	for path in plan.app.tracked:
+		if only is not None and path not in only:
+			continue
+		if not (plan.root / path).is_file():
+			continue
+		for rule in manifest.load().retire:
+			if not globs.match(rule.glob, path) or globs.match_any(list(rule.unless), path):
+				continue
+			if rule.unmanaged and path in managed_paths:
+				continue
+			text = read(plan.root, path) or ""
+			if rule.contains and not any(marker in text for marker in rule.contains):
+				continue
+			if rule.only_section:
+				sections = set(re.findall(r"^\s*\[([^\]]+)\]\s*$", text, re.M))
+				if sections != {rule.only_section}:
+					continue
+			out.append(Item(path, "retire", text, None, f"legacy file ({rule.rule})", DRIFT))
+			break
+	return out
+
+
+def _absent(plan: Plan, entry: manifest.Entry, path: str) -> Item | None:
+	"""An entry whose ``when`` is false: delete the file only when sync wrote it as it is."""
+	current = read(plan.root, path)
+	if current is None:
+		return None
+	would = None
+	if entry.strategy == "whole":
+		try:
+			would = _whole(plan, entry, path, current)
+		except Exception:
+			would = None
+		# What a render under the previous context produced is not knowable here, but a file
+		# that still opens with the managed header and holds nothing in its local regions is
+		# one nobody edited (the header says not to): it is sync's to delete.
+		head = rendering.header(entry.header, bool(entry.local_regions), entry.header_note)
+		if head and current.startswith(head):
+			try:
+				untouched = not regions.bodies(current, path, entry.local_regions).strip()
+			except ConfigError:
+				untouched = False
+			if untouched:
+				would = current
+	elif entry.handler == "stylelint":
+		would = jsonfmt.dumps(package_json.stylelint_created(plan.ctx))
+		if _json(current, path) == package_json.stylelint_created(plan.ctx):
+			would = current
+	if would is not None and would == current:
+		return Item(
+			path,
+			entry.strategy,
+			current,
+			None,
+			"should not exist (sync wrote it; its condition no longer holds)",
+			DRIFT,
+		)
+	return Item(
+		path, entry.strategy, current, current, "file should not exist, and it is not what sync wrote", DRIFT
+	)
+
+
+# --- whole-repo checks -------------------------------------------------------------
+
+
+def locked_rev(root: Path) -> str | None:
+	lock = root / "flake.lock"
+	if not lock.is_file():
+		return None
+	try:
+		return flakelock.frappe_nix_rev(flakelock.load(lock))
+	except EnvError:
+		return None
+
+
+def check_excludes(app: context.App, cfg: dict) -> None:
+	"""``typescript.exclude`` is for non-source paths only (§2.1): sources go in unchecked-js."""
+	for glob in cfg.get("typescript", {}).get("exclude", []):
+		hit = [
+			p
+			for p in app.tracked
+			if p.startswith(f"{app.name}/") and re.search(r"\.(js|ts|vue)$", p) and globs.match(glob, p)
+		]
+		if hit:
+			raise ConfigError(
+				f"[tool.ironclad.typescript].exclude {glob!r} matches source file {hit[0]}: list it in"
+				" [[tool.ironclad.unchecked-js]] or declare an SPA instead"
+			)
+
+
+def build(
+	root: Path,
+	*,
+	rev: str | None = None,
+	frappe_version: str | None = None,
+	only: list[str] | None = None,
+	options: dict | None = None,
+	phases: tuple[str, ...] = ("a", "b"),
+) -> Plan:
+	"""The plan for the app at ``root``."""
+	app = load_app(root)
+	cfg, created = config_for(app, frappe_version)
+	check_excludes(app, cfg)
+	if rev is None:
+		rev = locked_rev(root)
+	man = manifest.load()
+	ctx = context.build(app, cfg, rev=rev, floors=man.floors, options=options)
+	plan = Plan(root, app, cfg, ctx, created_config=created)
+	only_set = set(only) if only else None
+	seed_manifest = read(root, ".release-please-manifest.json") is None
+	managed_paths: set[str] = set()
+	for entry in man.entries:
+		path = rendering.render_string(entry.path, ctx)
+		managed_paths.add(path)
+		if entry.phase not in phases or (only_set is not None and path not in only_set):
+			continue
+		if rendering.evaluate(entry.when, ctx):
+			for it in _entry_item(plan, entry, path, seed_manifest):
+				plan.add(it)
+		else:
+			gone = _absent(plan, entry, path)
+			if gone:
+				plan.add(gone)
+	if "b" in phases:
+		for it in _retired(plan, managed_paths, only_set):
+			plan.add(it)
+	return plan
+
+
+def flake_inputs(text: str) -> list[str]:
+	"""The input names a rendered ``flake.nix`` declares (top level of ``inputs = { … };``)."""
+	m = re.search(r"\n  inputs = \{\n(?P<body>.*?)\n  \};\n", text, re.S)
+	return sorted({x["name"] for x in _FLAKE_INPUT.finditer(m["body"])}) if m else []
+
+
+def lock_problems(plan: Plan) -> list[Item]:
+	"""``flake.lock`` must hold a node for every input ``flake.nix`` declares (§3.3)."""
+	text = read(plan.root, "flake.nix")
+	if text is None:
+		return []
+	lock_path = plan.root / "flake.lock"
+	if not lock_path.is_file():
+		return [Item("flake.lock", "lock", None, None, "missing: run `frappe-init --sync`", DRIFT)]
+	try:
+		lock = flakelock.load(lock_path)
+	except EnvError as e:
+		return [Item("flake.lock", "lock", None, None, str(e), ENVIRONMENT)]
+	root_inputs = lock["nodes"].get(lock["root"], {}).get("inputs", {})
+	missing = [name for name in flake_inputs(text) if name not in root_inputs]
+	if missing:
+		return [Item("flake.lock", "lock", None, None, f"no node for input(s) {', '.join(missing)}", DRIFT)]
+	return []
+
+
+def skew_problems(plan: Plan, expect_rev: str | None) -> list[Item]:
+	"""§3.7: the caller workflows, the lock and the running ironclad name one frappe-nix."""
+	if os.environ.get("IRONCLAD_ALLOW_SKEW") == "1":
+		return []
+	rev = plan.ctx.frappe_nix.rev
+	out = []
+	if expect_rev and rev and expect_rev != rev:
+		out.append(
+			Item(
+				"flake.lock",
+				"skew",
+				None,
+				None,
+				f"version skew: this ironclad was installed from {expect_rev}, flake.lock pins frappe-nix {rev}",
+				ENVIRONMENT,
+			)
+		)
+	for path in plan.app.tracked:
+		if not globs.match(".github/workflows/*.y*ml", path):
+			continue
+		for m in _SKEW.finditer(read(plan.root, path) or ""):
+			if m["sha"] != rev or (m["ver"] or "") != ironclad.__version__:
+				out.append(
+					Item(
+						path,
+						"skew",
+						None,
+						None,
+						f"version skew: calls frappe-nix @{m['sha'][:12]} # v{m['ver']}, but flake.lock pins"
+						f" {rev[:12] or '(nothing)'} and this ironclad is v{ironclad.__version__}",
+						ENVIRONMENT,
+					)
+				)
+				break
+	return out

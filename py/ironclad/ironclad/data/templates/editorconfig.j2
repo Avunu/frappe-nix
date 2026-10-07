@@ -1,0 +1,28 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{py,js,mjs,cjs,ts,mts,vue,css,scss,html,jinja,toml,json,jsonc,sh}]
+indent_style = tab
+indent_size = 4
+max_line_length = 110
+
+[*.{yml,yaml,nix}]
+indent_style = space
+indent_size = 2
+
+# frappe's exporter: 1-space JSON, no final newline, for everything under the package
+[{{ app }}/**.json]
+indent_style = space
+indent_size = 1
+insert_final_newline = false
+
+[*.md]
+trim_trailing_whitespace = false
+
+# ironclad:local-begin editorconfig
+# ironclad:local-end editorconfig

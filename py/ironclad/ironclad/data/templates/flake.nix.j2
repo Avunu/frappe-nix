@@ -1,0 +1,72 @@
+# App-specific Nix goes in nix/local.nix, a flake-parts module imported below when it exists.
+{
+  description = {{ (app ~ ": " ~ title) | nix_string }};
+
+  inputs = {
+    frappe-nix.url = "github:Avunu/frappe-nix/release-{{ frappe_nix.major }}";
+    nixpkgs.follows = "frappe-nix/nixpkgs";
+    frappe = {
+      url = "github:frappe/frappe/{{ frappe.branch }}";
+      flake = false;
+    };
+{% for s in siblings %}
+    {{ s.input }} = {
+      url = "{{ s.flake_url }}";
+      flake = false;
+    };
+{% endfor %}
+  };
+
+  nixConfig = {
+    extra-substituters = [ "https://devenv.cachix.org" ];
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+    ];
+  };
+
+  outputs =
+    { frappe-nix, ... }@inputs:
+    frappe-nix.lib.mkFlake { inherit inputs; } (
+      { lib, ... }:
+      {
+        imports = [
+          frappe-nix.flakeModules.default
+        ]
+        ++ lib.optional (builtins.pathExists ./nix/local.nix) ./nix/local.nix;
+
+        systems = [
+          "aarch64-darwin"
+          "aarch64-linux"
+          "x86_64-darwin"
+          "x86_64-linux"
+        ];
+
+        perSystem =
+          { pkgs, ... }:
+          {
+            formatter = pkgs.nixfmt;
+            frappe-nix = {
+              enable = true;
+              siteName = "{{ site }}";
+              app = {
+                enable = true;
+                frappeVersion = "{{ frappe.preset }}";
+                inherit (inputs) frappe;
+{% if siblings %}
+                siblings = [
+{% for s in siblings %}
+                  {
+                    name = "{{ s.name }}";
+                    src = inputs.{{ s.input }};
+                  }
+{% endfor %}
+                ];
+{% else %}
+                siblings = [ ];
+{% endif %}
+              };
+            };
+          };
+      }
+    );
+}

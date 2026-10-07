@@ -1,0 +1,148 @@
+{
+	"$comment": "N3's managed files (docs/ironclad/spec.md §2.4, §3.1): the format is in ironclad/scaffold/manifest.py.",
+	"floors": {
+		"npm": { "oxlint": "1.87.0", "oxfmt": "0.72.0" },
+		"npm-ts": { "typescript": "7.0.2", "frappe-types": "16.5.0", "@types/node": "26.6.4" },
+		"npm-scss": { "stylelint": "17.16.0", "stylelint-config-standard-scss": "17.0.0" },
+		"uv": {
+			"ruff": "0.16.10",
+			"ty": "0.0.84",
+			"zizmor": "1.30.1",
+			"committed": "1.1.11",
+			"actionlint-py": "1.7.12.25",
+			"semgrep": "1.179.0",
+			"prek": "0.5.5",
+			"shellcheck-py": "0.11.0.1"
+		}
+	},
+	"entries": [
+		{ "path": "flake.nix", "template": "flake.nix.j2", "strategy": "whole", "header": "nix", "phase": "a" },
+		{ "path": ".envrc", "template": "envrc.j2", "strategy": "whole", "header": "shell", "phase": "a" },
+		{ "path": ".gitignore", "strategy": "blocks", "handler": "gitignore" },
+		{
+			"path": ".editorconfig",
+			"template": "editorconfig.j2",
+			"strategy": "whole",
+			"header": "ini",
+			"local_regions": ["editorconfig"]
+		},
+		{
+			"path": ".pre-commit-config.yaml",
+			"template": "pre-commit-config.yaml.j2",
+			"strategy": "whole",
+			"header": "yaml",
+			"local_regions": ["repos"]
+		},
+		{ "path": "committed.toml", "template": "committed.toml.j2", "strategy": "whole", "header": "toml" },
+		{ "path": "tools/pyproject.toml", "template": "tools/pyproject.toml.j2", "strategy": "whole", "header": "toml" },
+		{
+			"path": "tools/uv.lock",
+			"strategy": "seed",
+			"handler": "uv-lock",
+			"command": "uv lock --project tools"
+		},
+		{ "path": "pyproject.toml", "strategy": "toml-merge", "handler": "pyproject" },
+		{ "path": "{{ app }}/__init__.py", "strategy": "blocks", "handler": "init-py" },
+		{ "path": "package.json", "strategy": "json-merge", "handler": "package-json" },
+		{
+			"path": "yarn.lock",
+			"strategy": "seed",
+			"handler": "yarn-lock",
+			"command": "yarn install --non-interactive"
+		},
+		{ "path": ".oxlintrc.json", "template": "oxlintrc.json.j2", "strategy": "whole", "header": "none" },
+		{ "path": ".oxfmtrc.jsonc", "template": "oxfmtrc.jsonc.j2", "strategy": "whole", "header": "jsonc", "header_note": "Customise via [tool.ironclad.oxfmt]." },
+		{ "path": ".stylelintrc.json", "strategy": "json-merge", "handler": "stylelint", "when": "discover.scss" },
+		{
+			"path": "{{ discover.solution }}",
+			"template": "tsconfig.solution.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.ts_projects"
+		},
+		{
+			"path": "tsconfig.base.json",
+			"template": "tsconfig.base.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.browser_ts or discover.scripts_ts or discover.test_ts"
+		},
+		{
+			"path": "tsconfig.browser.json",
+			"template": "tsconfig.browser.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.browser_ts"
+		},
+		{
+			"path": "tsconfig.scripts.json",
+			"template": "tsconfig.scripts.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.scripts_ts"
+		},
+		{
+			"path": "tsconfig.test.json",
+			"template": "tsconfig.test.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.test_ts"
+		},
+		{
+			"path": "tsconfig.desk.json",
+			"template": "tsconfig.desk.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.desk_project"
+		},
+		{
+			"path": "tsconfig.web.json",
+			"template": "tsconfig.web.json.j2",
+			"strategy": "whole",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.ironclad.typescript].",
+			"when": "discover.web_project"
+		},
+		{
+			"path": "release-please-config.json",
+			"template": "release-please-config.json.j2",
+			"strategy": "whole",
+			"header": "none"
+		},
+		{ "path": ".release-please-manifest.json", "strategy": "seed", "handler": "release-please-manifest" },
+		{
+			"path": ".git-blame-ignore-revs",
+			"template": "git-blame-ignore-revs.j2",
+			"strategy": "seed",
+			"handler": "blame-ignore-revs"
+		}
+	],
+	"retire": [
+		{ "glob": ".github/workflows/check.yml", "rule": "superseded workflow: its jobs moved to ci.yml" },
+		{ "glob": ".github/workflows/version-branch-guard.yml", "rule": "superseded workflow: its jobs moved to ci.yml" },
+		{
+			"glob": ".github/workflows/*.y*ml",
+			"rule": "legacy workflow: a second release, auto-merge or dependabot flow beside the managed callers",
+			"contains": ["release-please-action", "gh pr merge --auto", "dependabot/fetch-metadata"],
+			"except": [".github/workflows/docs*.yml", ".github/workflows/docs*.yaml"],
+			"unmanaged": true
+		},
+		{ "glob": ".oxfmtrc.json", "rule": "legacy config: the managed file is .oxfmtrc.jsonc" },
+		{ "glob": ".eslintrc*", "rule": "legacy config: oxlint replaces eslint" },
+		{ "glob": "eslint.config.*", "rule": "legacy config: oxlint replaces eslint" },
+		{ "glob": ".prettierrc*", "rule": "legacy config: oxfmt replaces prettier" },
+		{ "glob": "prettier.config.*", "rule": "legacy config: oxfmt replaces prettier" },
+		{ "glob": ".flake8", "rule": "legacy config: ruff replaces flake8" },
+		{ "glob": "setup.cfg", "rule": "legacy config: ruff replaces flake8", "only_section": "flake8" },
+		{ "glob": "MANIFEST.in", "rule": "legacy config: apps build with flit" },
+		{ "glob": "**/requirements.txt", "rule": "legacy config: dependencies live in pyproject.toml" },
+		{ "glob": "nix/node-offline-hashes.json", "rule": "legacy config: frappe-nix refuses its option" },
+		{ "glob": "update-assets.mjs", "rule": "legacy config: Vite outputs register through scripts/ironclad-vite-register.mjs" }
+	]
+}
