@@ -270,6 +270,61 @@ class TestDefaultSiteMiddleware(unittest.TestCase):
 		self.assertEqual(auth_mod.get_url("http://x.local", "/p", cfg), "http://[::1]:8000/p")
 
 
+class TestSiteFilesMiddleware(unittest.TestCase):
+	"""/files under --dev comes from the site that default_site_middleware picks,
+	and a miss falls through to the app instead of raising."""
+
+	def setUp(self):
+		import tempfile
+
+		self._tmp = tempfile.TemporaryDirectory()
+		self.sites = self._tmp.name
+		for site in ("default.local", "other.local"):
+			os.makedirs(os.path.join(self.sites, site, "public", "files"))
+			with open(os.path.join(self.sites, site, "site_config.json"), "w") as f:
+				f.write("{}")
+			with open(os.path.join(self.sites, site, "public", "files", "theme.css"), "w") as f:
+				f.write(f"/* {site} */")
+
+	def tearDown(self):
+		self._tmp.cleanup()
+
+	def _get(self, path, **headers):
+		from frappe_runtime.statics import application_with_statics
+		from frappe_runtime.util import default_site_middleware
+		from werkzeug.test import Client
+
+		def app(environ, start_response):
+			start_response("404 NOT FOUND", [("Content-Type", "text/plain")])
+			return [b"from the app"]
+
+		cfg = make_config(default_site="default.local", sites_path=self.sites)
+		stack = default_site_middleware(application_with_statics(app, self.sites), cfg)
+		response = Client(stack).get(path, headers=headers)
+		try:
+			return response.status_code, response.get_data(as_text=True)
+		finally:
+			response.close()
+
+	def test_a_host_that_names_no_site_gets_the_default_sites_files(self):
+		self.assertEqual(self._get("/files/theme.css", Host="127.0.0.1:8000"), (200, "/* default.local */"))
+
+	def test_a_host_that_names_a_site_gets_its_own_files(self):
+		self.assertEqual(self._get("/files/theme.css", Host="other.local:8000"), (200, "/* other.local */"))
+
+	def test_a_missing_file_falls_through_to_the_app(self):
+		self.assertEqual(self._get("/files/nope.ico", Host="127.0.0.1:8000"), (404, "from the app"))
+
+	def test_nothing_outside_the_sites_files_is_served(self):
+		for path, headers in (
+			("/files/../site_config.json", {"Host": "default.local"}),
+			("/files/theme.css", {"Host": "default.local", "X-Frappe-Site-Name": "../default.local"}),
+			("/files/theme.css", {"Host": "default.local", "X-Frappe-Site-Name": "nosuch.local"}),
+		):
+			with self.subTest(path=path, headers=headers):
+				self.assertEqual(self._get(path, **headers), (404, "from the app"))
+
+
 class TestAuthenticate(unittest.IsolatedAsyncioTestCase):
 	def setUp(self):
 		patcher = patch.object(auth_mod, "get_socketio_secret", new=AsyncMock(return_value="secret"))
