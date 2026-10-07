@@ -3,7 +3,7 @@ title: Develop a single app
 description: Use frappe-nix from one Frappe app's own repository, where a small flake.nix is all you commit and the bench around the app is generated from flake inputs.
 order: 3
 tags: [scaffolding, app-mode, flake-inputs]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 A bench repository is the uv workspace: a committed `pyproject.toml`, a committed `uv.lock` and `apps/*` as git submodules. An app repository has none of that. It is one app, and the bench around it is an implementation detail of developing it.
@@ -35,6 +35,17 @@ It never touches the app's own `pyproject.toml`. That file is the app's packagin
 
 > [!IMPORTANT]
 > Commit `flake.nix`, `.envrc` and the `nix/` directory. A flake's source tree is only its tracked files, so an uncommitted `nix/uv.lock` is invisible to the build and reads as missing.
+
+### Opting in to the app standards
+
+Everything above is what app mode does by default, and an app that does nothing more keeps it unchanged. An app can also opt in to the [app standards](../app-standards/README.md): a profile of managed tool configs, git hooks, release and CI files that `frappe-init --sync` keeps in step. Pass `--standards <profile>` to opt in while setting up, or later:
+
+```bash
+nix run github:Avunu/frappe-nix -- --app --standards recommended --frappe-version version-16
+nix run .#frappe-init -- --sync --standards minimal     # an app already in app mode
+```
+
+`--standards` adds a `[tool.frappe-nix]` table to the app's `pyproject.toml`, and from then on `flake.nix` and `.envrc` are [managed files](../app-standards/managed-files.md) rendered from it, with local regions for the app's own inputs and direnv lines and `nix/local.nix` for its own outputs. `minimal` manages only those dev-shell files; `recommended` adds the vendor-neutral standards ([Profiles](../app-standards/profiles.md)).
 
 ## The flake it writes
 
