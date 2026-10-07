@@ -1,0 +1,7 @@
+{
+  "frappe": { "repo": "frappe/frappe", "branch": "version-{n}", "range": ">={n}.0.0,<{n1}.0.0", "desk_global": null },
+  "erpnext": { "repo": "frappe/erpnext", "branch": "version-{n}", "range": ">={n}.0.0,<{n1}.0.0", "desk_global": "erpnext" },
+  "hrms": { "repo": "frappe/hrms", "branch": "version-{n}", "range": ">={n}.0.0,<{n1}.0.0", "desk_global": "hrms" },
+  "payments": { "repo": "frappe/payments", "branch": "version-{n}", "range": ">=0.0.1,<1.0.0", "desk_global": null },
+  "*/*": { "repo": "{owner}/{name}", "branch": "version-{n}", "range": ">={n}.0.0,<{n1}.0.0", "desk_global": null }
+}

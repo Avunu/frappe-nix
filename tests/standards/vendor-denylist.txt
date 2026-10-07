@@ -1,0 +1,16 @@
+# Organisation values frappe-nix's built-ins must not carry (docs/app-standards/spec.md
+# S37), as Python regular expressions matched case-insensitively against each line.
+# A built-in profile, template, manifest, schema, known-apps.json, repo-policy default,
+# the frappe-nix-tools code, lib/** and the reusable app-*.yml and fleet-audit.yml
+# workflows get org values only from a profile. Checked by tests/standards/vendor-neutral.nix.
+#
+# The owner itself, except frappe-nix's own repositories:
+avunu(?!/frappe-nix\b|/frappe-runtime\b)
+avu\.nu
+mail@avu
+# The brand colour, publisher and an app site:
+\#834AFF
+Avunu LLC
+carbon-theme
+# The docs tool is reached only through profile values (docs-site.*):
+docusystem

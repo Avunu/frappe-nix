@@ -1,0 +1,7 @@
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[[tool.frappe-nix.untested]]
+target = "plain_app.api.legacy"
+reason = "Only an array of tables: TOML still creates [tool.frappe-nix]"

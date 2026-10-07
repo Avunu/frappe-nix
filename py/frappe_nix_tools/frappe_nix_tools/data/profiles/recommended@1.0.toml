@@ -1,0 +1,218 @@
+# frappe-nix built-in profile `recommended@1.0`, the first `recommended` snapshot
+# (docs/app-standards/spec.md §8.5, S42). Frozen once v1.0.0 is tagged: a later
+# minor that changes `recommended` adds recommended@1.<minor>.toml instead of
+# editing this file. The body below is byte-identical to the spec; the
+# `standards-profiles` flake check compares them.
+
+schema = 1
+name = "recommended"
+description = "Vendor-neutral app standards: lint, format, types, tests, conventional commits, releases, dependabot and CI. Nothing that needs an organisation's values or repo admin."
+
+[org]
+publisher = ""
+email = ""
+copyright-holder = ""
+license = ""
+github-owner = ""
+website-url = ""
+docs-url = ""
+dev-docs-url = "https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards"
+support-url = ""
+repo-url = "https://github.com/{repo}"
+
+[org.brand]
+tile-color = ""
+glyph-color = "#FFFFFF"
+palette = {}
+
+[dev-shell]
+enable = true
+
+[editorconfig]
+enable = true
+indent = "tab"
+line-length = 110
+
+[metadata]
+enable = true
+build-backend = "flit"
+package-type = "module"
+package-manager = "yarn@1.22.22"
+node-engine = ">=24"
+
+[python-lint]
+enable = true
+tool = "ruff"
+select = ["F", "E", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE", "PERF", "T20"]
+ignore = ["E501", "W191"]
+line-length = 110
+indent-style = "tab"
+quote-style = "double"
+typing-modules = ["frappe.types.DF"]
+
+[ssort]
+enable = false
+
+[python-types]
+enable = true
+tool = "ty"
+error-on-warning = false
+
+[js]
+enable = true
+tool = "oxc"
+locked-rules = true
+format-width = 110
+format-tabs = true
+
+[js.oxlint.categories]
+correctness = "error"
+suspicious = "error"
+perf = "warn"
+pedantic = "off"
+
+[typescript]
+enable = true
+preset = "frappe-types"
+strict-extras = true
+check-js = false
+audit-consumer = false
+
+[stylelint]
+enable = true
+
+[tests]
+enable = true
+testmap = true
+composition = true
+js-unit = true
+js-coverage-min = 50
+
+[tests.coverage]
+enable = true
+target = 80
+raise-margin = 2.0
+initial-floor = 0
+
+[semgrep]
+enable = true
+frappe-rules = true
+test-correctness = true
+
+[workflow-lint]
+enable = true
+
+[shell-lint]
+enable = true
+
+[nix-lint]
+enable = true
+
+[hygiene]
+enable = true
+max-file-kb = 1024
+
+[commits]
+enable = true
+tool = "committed"
+allowed-types = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test", "deprecate"]
+subject-length = 100
+allow-stacked = true
+pr-allowed-bases = []
+
+[releases]
+enable = true
+tool = "release-please"
+branching = "develop+version"
+version-scheme = "semver"
+tag-prefix = "v"
+
+[dependabot]
+enable = true
+cadence = "weekly"
+cadence-overrides = {}
+cooldown-days = 3
+auto-merge = true
+
+[dependabot.ecosystems]
+github-actions = true
+npm = true
+uv = true
+pre-commit = true
+nix = true
+gitsubmodule = true
+
+[ci]
+enable = true
+provider = "github"
+nightly = true
+test-timeout-minutes = 75
+
+[ci.schedules]
+ci = "0 6 * * *"
+release = "30 5 * * *"
+deps-sweep = "0 9 * * *"
+deps-relock = "0 8 * * 1"
+nightly = "0 7 * * *"
+
+[repo-policy]
+enable = false
+required-approvals = 1
+require-code-owner-review = false
+required-checks = "gates"
+release-bypass = "github-actions"
+secret-scanning = true
+merge-methods = ["squash"]
+require-thread-resolution = true
+delete-branch-on-merge = true
+manage-default-branch = true
+manage-features = true
+
+[vite-register]
+enable = true
+
+[pilot-assets]
+enable = false
+
+[listing]
+enable = false
+publish = false
+registry-upstream = "frappe/marketplace"
+registry-fork = ""
+getapp-check = true
+
+[readme]
+enable = false
+install-ref = ""
+
+[icons]
+enable = false
+
+[screenshots]
+enable = false
+timezone = "America/New_York"
+locale = "en-US"
+
+[demo]
+enable = false
+company-name = "Demo Company"
+company-abbr = "DC"
+country = "United States"
+currency = "USD"
+timezone = "America/New_York"
+language = "English"
+date = "2026-01-15"
+seed = 1
+erpnext-demo = false
+
+[test-utils]
+enable = false
+hooks = ["validate_frappe_project", "validate_patches", "static_analysis", "validate_doctype_python_types",
+         "validate_copyright", "validate_customizations", "clean_customized_doctypes", "check_code_duplication"]
+track-overrides = false
+
+[docs-site]
+enable = false
+action-patterns = []
+cooldown-exclude-actions = []
+package-names = []

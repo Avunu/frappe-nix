@@ -1,0 +1,37 @@
+# frappe-nix-tools (docs/app-standards/spec.md, S10): one self-contained distribution,
+# import name frappe_nix_tools, console script `frappe-nix`. It serves both the Nix dev
+# shell (lib/standards/package.nix) and the no-Nix CI jobs, which install it with
+#
+#   uv tool install "frappe-nix-tools @ git+https://github.com/Avunu/frappe-nix@<rev>#subdirectory=py/frappe_nix_tools"
+#
+# A wheel built from this directory contains nothing outside it, so every file the tool
+# reads at run time lives under frappe_nix_tools/data/ and ships as package data (flit
+# includes every file inside the package directory).
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "frappe-nix-tools"
+# release-please moves this, version.txt and frappe_nix_tools/__init__.py together.
+version = "0.0.0"
+description = "frappe-nix's app standards tools: managed files, profiles, CI gates and release checks for Frappe apps"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "jinja2>=3.1,<4",
+    # No upper cap: the nixpkgs frappe-nix locks ships 0.15.0.
+    "tomlkit>=0.13",
+    "packaging>=24",
+]
+
+[project.scripts]
+frappe-nix = "frappe_nix_tools.cli:main"
+
+[project.urls]
+Documentation = "https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards"
+Source = "https://github.com/Avunu/frappe-nix/tree/main/py/frappe_nix_tools"
+
+[tool.flit.module]
+name = "frappe_nix_tools"

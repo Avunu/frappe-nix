@@ -1917,6 +1917,16 @@ in
           schema = import ../lib/secrets-schema.nix { inherit lib; };
         };
 
+        # The app standards in app mode (`frappe-nix`, `frappe-init`, and every
+        # lib/standards/tools/*.nix), their `nix run .#<tool>` apps and their
+        # enterShell snippet, all only for an app that opted in (a
+        # [tool.frappe-nix] table in its pyproject.toml, S35): `optedIn` is false
+        # and the rest empty otherwise. See lib/standards/shell.nix.
+        standardsShell = import ../lib/standards/shell.nix {
+          inherit pkgs;
+          pyproject = cfg.app.src + "/pyproject.toml";
+        };
+
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
@@ -2161,10 +2171,18 @@ in
 
         # Deliberately outside every other output's dependency graph: it has to
         # evaluate when nothing that touches the Python workspace can.
-        apps.relock = {
-          type = "app";
-          program = "${relockTool}/bin/frappe-nix-relock";
-        };
+        apps = lib.mkMerge [
+          {
+            relock = {
+              type = "app";
+              program = "${relockTool}/bin/frappe-nix-relock";
+            };
+          }
+          # `nix run .#frappe-init -- --sync` with the frappe-nix flake.lock
+          # pins, and `.#<tool>` for each app standards tool, in an opted-in
+          # app (docs/app-standards/spec.md §3.3, §5).
+          (lib.mkIf appMode standardsShell.apps)
+        ];
 
         devenv.shells.default =
           {
@@ -2360,6 +2378,7 @@ in
               ]
               # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
               ++ lib.optional cfg.mariadb.noCow dbNocowTool
+              ++ lib.optionals appMode standardsShell.packages
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -2526,7 +2545,9 @@ in
                 ${rootSyncTool}/bin/frappe-nix-root-sync "$FRAPPE_BENCH_ROOT" || true
               ''}
 
-              ${lib.optionalString appMode appBenchMaterialize}
+              ${lib.optionalString appMode (
+                appBenchMaterialize + lib.optionalString standardsShell.optedIn "\n${standardsShell.enterShell}"
+              )}
 
               # Create required directories. Frappe writes pids and lock files
               # into config/ and logs/, so both must be real and writable.

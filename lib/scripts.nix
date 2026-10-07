@@ -50,7 +50,11 @@
   # App mode: where the generated-but-committed lock files live, relative to
   # the repo root. Only used in messages.
   lockDir ? "nix",
-}:
+  # Scripts kept in files of their own, merged over the ones below; see
+  # lib/scripts.d/README.md. A parameter so tests can point it at a fixture;
+  # null merges none.
+  scriptsDir ? ./scripts.d,
+}@args:
 
 let
   # Every bench command runs from the bench root. Not a convenience: the bench
@@ -314,6 +318,59 @@ let
       description = "Not available in app mode — remove the sibling declaration instead.";
     };
   };
+  # lib/scripts.d/*.nix, in name order: each a function of this file's
+  # arguments and snippets, returning scripts (lib/scripts.d/README.md). A file
+  # that redefines a script, this file's own or another file's, fails
+  # evaluation; this file's own names come from evaluating it with none.
+  dropInArgs = {
+    inherit
+      lib
+      pkgs
+      appsWithNode
+      benchBin
+      secrets
+      nodeModulesBin
+      nodeVerifyBin
+      pythonBin
+      nodeLocksBin
+      nodeNestedFrontendExcludes
+      restore
+      offlineMigrate
+      appMode
+      lockDir
+      atBench
+      atRepo
+      siteFlag
+      offlineMigrateEnv
+      workspaceBin
+      registerWorkspaceMember
+      refreshNodeModules
+      refreshNodeModulesSoft
+      regenNodeLocks
+      regenNodeLocksSoft
+      syncRegistry
+      ;
+  };
+  dropInFiles = lib.optionals (scriptsDir != null) (
+    builtins.attrNames (
+      lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".nix" name) (
+        builtins.readDir scriptsDir
+      )
+    )
+  );
+  ownScripts = lib.genAttrs (builtins.attrNames (
+    import ./scripts.nix (args // { scriptsDir = null; })
+  )) (_: null);
+  dropInScripts = lib.foldl' (
+    acc: file:
+    let
+      added = import (scriptsDir + "/${file}") dropInArgs;
+      clash = builtins.attrNames (builtins.intersectAttrs added (ownScripts // acc));
+    in
+    lib.throwIf (clash != [ ]) "lib/scripts.d/${file} redefines ${lib.concatStringsSep ", " clash}" (
+      acc // added
+    )
+  ) { } dropInFiles;
 in
 secretScripts
 // {
@@ -1731,3 +1788,4 @@ secretScripts
   };
 }
 // lib.optionalAttrs appMode appModeOverrides
+// dropInScripts

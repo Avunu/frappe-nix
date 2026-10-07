@@ -57,5 +57,6 @@ in
     "lib/unixsock"
     "lib/journald"
     "lib/nodebuild"
+    "py/frappe_nix_tools"
   ];
 }

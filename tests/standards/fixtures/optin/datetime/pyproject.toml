@@ -1,0 +1,8 @@
+# A valid TOML file that Nix's fromTOML rejects ("Dates and times are not
+# supported"), with no [tool.frappe-nix]: it must evaluate as not opted in.
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[tool.release-notes]
+released = 1979-05-27T07:32:00Z

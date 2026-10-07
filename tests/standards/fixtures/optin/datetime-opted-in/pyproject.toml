@@ -1,0 +1,11 @@
+# The same datetime, with the table: opted in, still without a TOML parse.
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[tool.release-notes]
+released = 1979-05-27T07:32:00Z
+
+[tool.frappe-nix]
+schema = 1
+frappe-major = 16
