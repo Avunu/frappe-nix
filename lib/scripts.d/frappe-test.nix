@@ -19,7 +19,6 @@ let
       gnugrep
       gnused
       jq
-      util-linux
     ];
     # Not errexit: every stage after the tests runs even when one failed, and
     # each records its own verdict.

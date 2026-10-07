@@ -234,18 +234,27 @@ site_ok=1
 if [ "$REUSE" = 1 ] && [ -d "$BENCH/sites/$SITE" ]; then
   echo "frappe-test: reusing $SITE"
 else
-  # Under reconcile-apps' own lock: `devenv up` re-runs that task whenever the
-  # runtime restarts, and once new-site has made the site's directory it would
-  # install the same apps alongside provision-site (a duplicate Module Def).
-  # Holding it, the task waits and then finds every app installed.
-  mkdir -p "$BENCH/sites/$SITE/locks"
-  exec 9> "$BENCH/sites/$SITE/locks/reconcile-apps.lock"
-  flock 9
+  # With the app processes stopped: each start of the runtime (or of `web`,
+  # without it) re-runs the frappe:apps-reconcile task, and once new-site has
+  # made the site's directory that task installs the same apps alongside
+  # provision-site, which then fails on a duplicate Module Def or Role. Started
+  # again afterwards, the task finds every app installed.
+  stopped=()
+  if [ -n "${PC_SOCKET_PATH:-}" ]; then
+    for proc in runtime web worker scheduler socketio; do
+      # Present at all (it may be between restarts, which `stop` refuses).
+      if process-compose -U -u "$PC_SOCKET_PATH" process get "$proc" > /dev/null 2>&1; then
+        process-compose -U -u "$PC_SOCKET_PATH" process stop "$proc" > /dev/null 2>&1 || true
+        stopped+=("$proc")
+      fi
+    done
+  fi
   # bench new-site asks for the MariaDB root password through getpass, which
   # reads a line from stdin without a tty; the dev bench's root has none.
   printf '\n' | provision-site "${FRAPPE_TEST_ADMIN_PASSWORD:-admin}" || site_ok=0
-  flock -u 9
-  exec 9>&-
+  for proc in "${stopped[@]}"; do
+    process-compose -U -u "$PC_SOCKET_PATH" process start "$proc" > /dev/null 2>&1 || true
+  done
 fi
 [ "$site_ok" = 0 ] || bench --site "$SITE" set-config allow_tests true || site_ok=0
 
