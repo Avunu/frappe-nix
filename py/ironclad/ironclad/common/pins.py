@@ -6,9 +6,11 @@ locked tree:
 
 1. In a dev shell the tree is usually in the Nix store already: when the store path its
    ``narHash`` implies exists, that is the answer.
-2. Otherwise ``.dev-dist/pins/<repo>-<rev>/`` under the app, fetched once from GitHub's
+2. Otherwise ``.dev-dist/pins/<repo>-<rev>/`` under the app, fetched from GitHub's
    tarball endpoint and verified against the ``narHash`` with ``ironclad.common.nar``.
-   A mismatch is an ``EnvError`` (exit 3) and leaves nothing behind.
+   A mismatch is an ``EnvError`` (exit 3) and leaves nothing behind. A tree already there
+   is hashed again before it is reused, and refetched unless it matches: it lives in the
+   app checkout, so a commit or a stray edit can change it.
 
 ``IRONCLAD_PIN_URL`` replaces the download URL (``{owner}``, ``{repo}`` and ``{rev}`` are
 filled in), for mirrors and for the tests, which serve a tarball from ``file://``.
@@ -61,6 +63,20 @@ def _unpack(tarball: Path, into: Path) -> Path:
 	return entries[0]
 
 
+def _holds(dest: Path, nar_hash: str) -> bool:
+	"""Whether ``dest`` is a real directory whose NAR hash is ``nar_hash``.
+
+	Never trusts a marker: the pins directory sits in the app checkout, where a commit
+	can put any tree (and any stamp) under the expected name.
+	"""
+	if dest.is_symlink() or not dest.is_dir():
+		return False
+	try:
+		return nar.nar_hash(dest) == nar_hash
+	except (OSError, ValueError):
+		return False
+
+
 def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
 	"""The directory holding input ``name`` as ``lock_path`` locks it."""
 	pin = flakelock.github_pin(flakelock.load(lock_path), name)
@@ -71,12 +87,11 @@ def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
 
 	pins = lock_path.parent / PINS_DIR
 	dest = pins / f"{pin.repo}-{pin.rev}"
-	stamp = pins / f"{pin.repo}-{pin.rev}.narHash"
 	# flakelock.github_pin already refuses names that leave the pins directory; this
 	# keeps it true whatever a future Pin is built from.
-	if dest.parent != pins or stamp.parent != pins or pin.repo.startswith("."):
+	if dest.parent != pins or pin.repo.startswith("."):
 		raise ConfigError(f"{pin.repo}-{pin.rev} is not a directory name under {PINS_DIR}")
-	if dest.is_dir() and stamp.is_file() and stamp.read_text().strip() == pin.nar_hash:
+	if _holds(dest, pin.nar_hash):
 		return dest
 
 	pins.mkdir(parents=True, exist_ok=True)
@@ -95,5 +110,4 @@ def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
 		elif dest.exists():
 			shutil.rmtree(dest)
 		tree.rename(dest)
-	stamp.write_text(pin.nar_hash + "\n")
 	return dest

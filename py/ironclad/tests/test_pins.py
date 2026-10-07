@@ -63,6 +63,39 @@ class TestPins(unittest.TestCase):
 		self.tarball.unlink()
 		self.assertEqual(pin_path("pilot", self.lock, store_dir=self.store), path)
 
+	def test_tampered_cache_is_refetched(self):
+		# A tree committed under the expected name (with the old stamp beside it) must be
+		# hashed, not trusted: a PR could otherwise swap in its own semgrep rules.
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		pins = self.app / ".dev-dist" / "pins"
+		dest = pins / f"pilot-{REV}"
+		dest.mkdir(parents=True)
+		(dest / "empty.yml").write_text("rules: []\n")
+		(pins / f"pilot-{REV}.narHash").write_text(TREE_NAR_HASH + "\n")
+		self.assertEqual(pin_path("pilot", self.lock, store_dir=self.store), dest)
+		self.assertEqual(nar.nar_hash(dest), TREE_NAR_HASH)
+		self.assertFalse((dest / "empty.yml").exists())
+
+	def test_tampered_cache_without_network_is_exit_3(self):
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		path = pin_path("pilot", self.lock, store_dir=self.store)
+		self.tarball.unlink()
+		(path / "planted").write_text("x\n")
+		with self.assertRaisesRegex(EnvError, "cannot fetch"):
+			pin_path("pilot", self.lock, store_dir=self.store)
+
+	def test_symlinked_cache_is_replaced(self):
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		elsewhere = make_tree(self.root / "elsewhere")
+		pins = self.app / ".dev-dist" / "pins"
+		pins.mkdir(parents=True)
+		dest = pins / f"pilot-{REV}"
+		dest.symlink_to(elsewhere)
+		self.assertEqual(pin_path("pilot", self.lock, store_dir=self.store), dest)
+		self.assertFalse(dest.is_symlink())
+		self.assertEqual(nar.nar_hash(dest), TREE_NAR_HASH)
+		self.assertEqual(nar.nar_hash(elsewhere), TREE_NAR_HASH)
+
 	def test_mismatch_is_exit_3_and_leaves_nothing(self):
 		self.lock.write_text(json.dumps(lock_for("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=")))
 		with self.assertRaises(EnvError) as ctx:
