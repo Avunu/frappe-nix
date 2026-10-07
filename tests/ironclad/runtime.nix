@@ -3,9 +3,10 @@
 #
 #   ironclad-ports           the port offset: the primary checkout's is today's
 #                            (a hash of benchName), a linked worktree's differs,
-#                            FRAPPE_NIX_PORT_OFFSET parses, and one offset sets
-#                            web, db and the three Mailpit ports, through the
-#                            real module (evaluated, not the shell).
+#                            FRAPPE_NIX_PORT_OFFSET parses and wins, and one
+#                            offset sets web, db and the three Mailpit ports;
+#                            modules/devenv.nix is held to that wiring by its
+#                            source (selftest-runtime runs the real thing).
 #   ironclad-ci-mode         FRAPPE_NIX_CI's enterShell snippets, rendered and
 #                            run: in CI mode no node verify, no node_modules, a
 #                            one-line banner and the two exports; outside it the
@@ -20,7 +21,6 @@
 {
   pkgs,
   lib,
-  self,
   inputs,
   ...
 }:
@@ -31,33 +31,25 @@ let
 
   # --- ports, through the module ----------------------------------------------
 
-  benchFlake = import ./fixtures/bench-flake.nix { inherit self pkgs; };
-
+  # One offset through the module's own wiring: devenv.nix takes web and db from
+  # ports.basesFor and the Mailpit defaults from portOffsetOf (asserted on its
+  # source below), so these are the ports a bench with that offset gets.
+  # Evaluating the module itself is left to selftest-runtime, which runs it.
   portsOf =
-    extra:
+    offset:
     let
-      config = benchFlake (_: {
-        frappe-nix = {
-          enable = true;
-          benchName = "carbon-frappe";
-          workspaceRoot = ../fixtures/lock-audit;
-        }
-        // extra;
-      });
-      mail = config.frappe-nix.devguard.mail;
-      inherit (config.frappe-nix.ports) offset;
+      b = ports.basesFor offset;
     in
     {
       inherit offset;
-      # modules/devenv.nix takes both from basesFor (asserted on its source below).
-      inherit (ports.basesFor offset) web db;
-      smtp = mail.smtpPort;
-      http = mail.httpPort;
-      pop3 = mail.pop3.port;
+      inherit (b) web db;
+      smtp = b.mailSmtp;
+      http = b.mailHttp;
+      pop3 = b.mailPop3;
     };
 
-  today = portsOf { };
-  set123 = portsOf { ports.offset = 123; };
+  today = portsOf (ports.offsetFor "carbon-frappe");
+  set123 = portsOf (ports.effectiveOffset (ports.parseEnvOffset "123") 691);
 
   seed =
     args:
@@ -85,6 +77,13 @@ let
       && lib.hasInfix "dbBase = portBases.db;" devenvSource
       && lib.hasInfix "portBases = ports.basesFor portOffset;" devenvSource
     ) "devenv.nix: the web or db base no longer comes from ports.basesFor";
+    assert lib.assertMsg (
+      lib.hasInfix "default = 19000 + portOffsetOf config.frappe-nix;" devenvSource
+      && lib.hasInfix "default = 20000 + portOffsetOf config.frappe-nix;" devenvSource
+      && lib.hasInfix "default = 21000 + portOffsetOf config.frappe-nix;" devenvSource
+      && lib.hasInfix "portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;" devenvSource
+      && lib.hasInfix "portOffset = portOffsetOf cfg;" devenvSource
+    ) "devenv.nix: the Mailpit defaults or the bases no longer derive from the one offset";
     # The values every bench had before this change: carbon-frappe served on 8691.
     assert lib.assertMsg (
       ports.offsetFor "carbon-frappe" == 691
@@ -108,7 +107,7 @@ let
         http = 20123;
         pop3 = 21123;
       }
-    ) "ports.offset = 123 does not set every port: ${builtins.toJSON set123}";
+    ) "FRAPPE_NIX_PORT_OFFSET=123 does not set every port: ${builtins.toJSON set123}";
     # The primary checkout (.git is a directory) keeps the bench-name hash.
     assert lib.assertMsg (seed { } == "ironclad-fixture") "the primary checkout's seed is salted";
     assert lib.assertMsg (
