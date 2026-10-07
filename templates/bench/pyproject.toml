@@ -23,14 +23,17 @@ dependencies = [
 ]
 
 # Dev-only tools — in the devenv shell, excluded from production containers.
+# coverage and unittest-xml-reporting are what `frappe-test` runs the tests
+# under (coverage scoped to the app, a JUnit report). No ruff, pre-commit or
+# semgrep: an app pins those itself (its tools/uv.lock and .pre-commit-config),
+# so a second copy here would only be one more version to disagree with.
 [dependency-groups]
 dev = [
-    "pre-commit>=4.5.1",
+    "coverage>=7.10",
     "pydantic>=2.12.5",
     "pytest>=9.0.2",
     "responses",
-    "ruff>=0.15.0",
-    "semgrep",
+    "unittest-xml-reporting>=3.2",
 ]
 
 [tool.uv]

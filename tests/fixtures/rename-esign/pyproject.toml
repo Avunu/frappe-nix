@@ -1,0 +1,13 @@
+[project]
+name = "esign"
+authors = [{ name = "Avunu LLC", email = "mail@avu.nu" }]
+description = "Collect Electronic Signatures on Frappe Documents via Webforms"
+requires-python = ">=3.14"
+dynamic = ["version"]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.sdist]
+include = ["esign/public/dist/*"]

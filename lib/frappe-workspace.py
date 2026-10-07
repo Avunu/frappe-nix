@@ -76,6 +76,51 @@ def cmd_dist_name(args):
 	return 0
 
 
+# The bench root's dev group, as templates/bench/pyproject.toml ships it. Kept
+# in step with the template by tests/root-sync.sh.
+DEV_GROUP = [
+	"coverage>=7.10",
+	"pydantic>=2.12.5",
+	"pytest>=9.0.2",
+	"responses",
+	"unittest-xml-reporting>=3.2",
+]
+
+# What the root's dev group must carry: frappe-test runs the tests under
+# coverage and writes JUnit through xmlrunner (docs/ironclad/spec.md S17).
+DEV_REQUIRED = ("coverage>=7.10", "unittest-xml-reporting>=3.2")
+
+# What it must not: an app pins its own ruff, pre-commit and semgrep (its
+# tools/uv.lock and .pre-commit-config.yaml), and a second, older copy in the
+# bench env is one more version for an editor or a hook to pick up by accident
+# (spec S1).
+DEV_FORBIDDEN = ("ruff", "pre-commit", "semgrep")
+
+
+def requirement_name(requirement):
+	"""The normalized distribution name of a PEP 508 requirement string."""
+	return normalize(re.split(r"[<>=!~\[ ;@]", str(requirement).strip(), maxsplit=1)[0])
+
+
+def reconcile_dev_group(dev):
+	"""Bring an existing dev group in line with DEV_REQUIRED and DEV_FORBIDDEN, in place.
+
+	Only those names are touched: anything else a bench added stays, in its order.
+	Returns the change lines ensure-root prints.
+	"""
+	forbidden = {normalize(n) for n in DEV_FORBIDDEN}
+	drop = [i for i, item in enumerate(dev) if isinstance(item, str) and requirement_name(item) in forbidden]
+	changed = [f"[dependency-groups].dev -= {dev[i]}" for i in drop]
+	for i in reversed(drop):
+		del dev[i]
+	have = {requirement_name(item) for item in dev if isinstance(item, str)}
+	for required in DEV_REQUIRED:
+		if requirement_name(required) not in have:
+			dev.append(required)
+			changed.append(f"[dependency-groups].dev += {required}")
+	return changed
+
+
 def cmd_ensure_root(args):
 	"""Fill in the root-level keys the Nix side reads directly.
 
@@ -88,7 +133,9 @@ def cmd_ensure_root(args):
 	user's own with none of them. The dev shell's root sync (lib/root-sync.nix)
 	passes none: a frappe-nix bench already has them, and what it is after is
 	the part below that keeps up with frappe-nix itself — the required
-	dependencies and what the template ships for them. Hence --name and
+	dependencies and what the template ships for them, and the dev group's
+	required and forbidden tools (DEV_REQUIRED, DEV_FORBIDDEN), the one place
+	this removes something a bench has. Hence --name and
 	--requires-python are only required when the key they would fill is
 	absent, and the file is written only when something changed, so a run that
 	changes nothing leaves the mtime (and git) alone.
@@ -136,11 +183,10 @@ def cmd_ensure_root(args):
 
 	groups = table_at(doc, "dependency-groups")
 	if "dev" not in groups:
-		groups["dev"] = tomlkit.array(
-			'["pre-commit>=4.5.1", "pydantic>=2.12.5", "pytest>=9.0.2", '
-			'"responses", "ruff>=0.15.0", "semgrep"]'
-		)
+		groups["dev"] = tomlkit.array(json.dumps(DEV_GROUP))
 		changed.append("[dependency-groups].dev")
+	else:
+		changed += reconcile_dev_group(groups["dev"])
 
 	uv = table_at(doc, "tool", "uv")
 	# Not optional: the workspace root is a virtual package. lib/python.nix
