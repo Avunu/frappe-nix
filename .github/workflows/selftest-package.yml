@@ -1,0 +1,66 @@
+name: selftest-package
+
+# frappe-nix-tools is self-contained (docs/app-standards/spec.md S10, §7 N3a): a
+# no-Nix CI job installs it from the git subdirectory alone, and every data file
+# it reads ships inside the package. This proves it the way an app's CI installs
+# it, from a clean clone and without Nix, then reads packaged data and resolves
+# the fixture app's configuration with the installed tool.
+
+on:
+  pull_request:
+    paths:
+      - py/frappe_nix_tools/**
+      - tests/fixtures/standards-app/pyproject.toml
+      - .github/workflows/selftest-package.yml
+  push:
+    branches: [main]
+    paths:
+      - py/frappe_nix_tools/**
+      - tests/fixtures/standards-app/pyproject.toml
+      - .github/workflows/selftest-package.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # A clean clone of the commit under test, outside the checkout: the install
+      # sees only what git tracks under py/frappe_nix_tools. The checkout is a
+      # detached merge commit, so the clone gets a branch for uv to find, and the
+      # URL pins the commit the way an app's CI pins the rev from its flake.lock.
+      - name: Install frappe-nix-tools from the git subdirectory
+        run: |
+          rev="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+          git clone --quiet --no-local "$GITHUB_WORKSPACE" "$RUNNER_TEMP/clone"
+          git -C "$RUNNER_TEMP/clone" switch --quiet -c selftest "$rev"
+          uv tool install "frappe-nix-tools @ git+file://$RUNNER_TEMP/clone@$rev#subdirectory=py/frappe_nix_tools"
+
+      - name: Read packaged data and resolve the fixture app, away from the checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          frappe-nix --version
+          for rel in known-apps.json schema/tool-frappe-nix.schema.json schema/profile.schema.json \
+            profiles/minimal.toml profiles/recommended@1.0.toml; do
+            path="$(frappe-nix data-path "$rel")"
+            test -f "$path"
+            case "$path" in
+              "$GITHUB_WORKSPACE"/* | "$RUNNER_TEMP/clone"/*) echo "::error::$rel resolved inside a checkout: $path"; exit 1 ;;
+            esac
+            echo "ok   data-path $rel -> $path"
+          done
+          cp "$GITHUB_WORKSPACE/tests/fixtures/standards-app/pyproject.toml" pyproject.toml
+          test "$(frappe-nix config modules.ci --pyproject pyproject.toml)" = true
+          test "$(frappe-nix config modules.ssort --pyproject pyproject.toml)" = false
+          test "$(frappe-nix config profile.name --pyproject pyproject.toml)" = recommended@1.0
+          echo "ok   frappe-nix config resolves the fixture app"

@@ -1,0 +1,7 @@
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[tool.frappe-nix]
+schema = 1
+frappe-major = 16

@@ -276,6 +276,22 @@
         "type": "github"
       }
     },
+    "frappe-semgrep-rules": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790780789,
+        "narHash": "sha256-WH1p6GcC7vIrsSdoZMfkzl+D1UNFnsJDUEI4yjmkOIc=",
+        "owner": "frappe",
+        "repo": "semgrep-rules",
+        "rev": "81a6e3d47a328249e8ddf04c586e493dd5553002",
+        "type": "github"
+      },
+      "original": {
+        "owner": "frappe",
+        "repo": "semgrep-rules",
+        "type": "github"
+      }
+    },
     "get-flake": {
       "inputs": {
         "flake-compat": "flake-compat_3"
@@ -408,6 +424,22 @@
       "original": {
         "owner": "vic",
         "repo": "import-tree",
+        "type": "github"
+      }
+    },
+    "marketplace": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791259786,
+        "narHash": "sha256-fV91xkCIaq1tVLMGjZqbaObqGYPUjk+6CsPfbEyH8A0=",
+        "owner": "frappe",
+        "repo": "marketplace",
+        "rev": "2dd4be42eec1bbedc16a91c95a2c7e7e8728df7e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "frappe",
+        "repo": "marketplace",
         "type": "github"
       }
     },
@@ -782,6 +814,23 @@
         "type": "github"
       }
     },
+    "pilot": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791314384,
+        "narHash": "sha256-3sLIZx/XCYtt134MYbPBqFXryMetue6GHzQHwX+VClU=",
+        "owner": "frappe",
+        "repo": "pilot",
+        "rev": "e2364936eb0a4f89a5309d22fb198056f14ff86a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "frappe",
+        "ref": "develop",
+        "repo": "pilot",
+        "type": "github"
+      }
+    },
     "pyproject-build-systems": {
       "inputs": {
         "nixpkgs": [
@@ -833,9 +882,12 @@
         "agenix-shell": "agenix-shell",
         "devenv": "devenv",
         "flake-parts": "flake-parts_2",
+        "frappe-semgrep-rules": "frappe-semgrep-rules",
+        "marketplace": "marketplace",
         "nix-oci": "nix-oci",
         "nix2container": "nix2container_2",
         "nixpkgs": "nixpkgs_4",
+        "pilot": "pilot",
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",
         "uv2nix": "uv2nix"

@@ -68,11 +68,13 @@ jobs:
       # Offline checks (no network, no VM): the devguard unit tests, the
       # `frappe-init --migrate` end-to-end runs over a synthetic classic bench,
       # the online-ALTER step in front of `bench migrate`, nixfmt, statix and
-      # deadnix, ty over the tree, and the check that the ruff config and pins
-      # still match the pinned upstream Frappe's.
+      # deadnix, ty over the tree, the check that the ruff config and pins
+      # still match the pinned upstream Frappe's, and every app standards
+      # check (tests/standards/, through the one `standards-all` linkFarm).
       - name: Run the offline checks
         run: |
           nix build -L --show-trace \
+            .#checks.x86_64-linux.standards-all \
             .#checks.x86_64-linux.devguard \
             .#checks.x86_64-linux.migrate-classic \
             .#checks.x86_64-linux.migrate-versions \

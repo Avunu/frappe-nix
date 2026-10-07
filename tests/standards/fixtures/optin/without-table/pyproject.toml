@@ -1,0 +1,6 @@
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[tool.ruff]
+line-length = 110
