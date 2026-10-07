@@ -12,13 +12,16 @@ name: selftest-scaffold
 #              (this workflow too, and the fixture's rendered workflows once
 #              N4's fragment renders them), uv lock --check, prek (every hook,
 #              network included) and tsc --build against the published
-#              frappe-types; its flake evaluates; and `frappe-init --check` on a
+#              frappe-types, and on an added browser project under both
+#              typescript presets; its flake evaluates; and `frappe-init --check` on a
 #              pinned carbon_frappe commit, which has not opted in, exits 2 with
 #              the opt-in hint, and with a table added reports drift (no crash).
-#   bootstrap  one `frappe-init --sync` with neither yarn nor uv on PATH, from a
-#              fixture with no flake.nix (postgrid, jwt_auth; its lock holds only
-#              the fixture's frappe node, so frappe is fixed) and from one whose
-#              lock pins frappe-nix main (carbon, taskview, timeclock); and
+#   bootstrap  one `frappe-init --sync --standards recommended` with neither yarn
+#              nor uv on PATH, opting in a copy of the fixture without its table:
+#              one with no flake.nix (postgrid, jwt_auth; its lock holds only the
+#              fixture's frappe node, so frappe is fixed) and one with
+#              templates/app's flake locked to frappe-nix main (carbon, taskview,
+#              timeclock); and
 #              (reenter) a bare `frappe-nix sync --write` on the main-locked
 #              shape, which has to relock and re-enter through the app's dev
 #              shell: --check is clean right after, and the locks exist.
@@ -41,9 +44,8 @@ on:
       - flake.nix
       - flake.lock
       - version.txt
-      - lib/*.nix
-      - lib/standards/**
-      - lib/sh/**
+      # lib/ is frappe-init (its shell, presets, the workspace tool) and the tools' build.
+      - lib/**
       - modules/**
       - py/frappe_nix_tools/**
       - templates/app/**
@@ -180,6 +182,35 @@ jobs:
           fi
           yarn -s typecheck
 
+      - name: tsc --build on a browser project, with each typescript preset
+        if: matrix.profile == 'recommended'
+        env:
+          FRAPPE_NIX_URL_OVERRIDE: path:${{ github.workspace }}
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+        run: |
+          set -euo pipefail
+          # The fixture has no browser project: add one, so tsconfig.browser.json is compiled
+          # with frappe-types' globals and, under "inline", without them (§7 N3 [1.2]).
+          for preset in frappe-types inline; do
+            work="$RUNNER_TEMP/ts-$preset"
+            cp -r "$RUNNER_TEMP/app" "$work"
+            cd "$work"
+            printf 'export const answer: number = 42;\n' > standards_fixture/public/js/answer.ts
+            if [ "$preset" = inline ]; then
+              sed -i 's/^\[tool\.frappe-nix\]$/&\ntypescript.preset = "inline"/' pyproject.toml
+            fi
+            git add -A
+            git -c user.name=ci -c user.email=ci@example.com commit -qm "browser project, $preset"
+            frappe-init --sync --skip-lock
+            test -f tsconfig.browser.json || { echo "::error::no tsconfig.browser.json under $preset"; exit 1; }
+            if [ "$preset" = inline ] && grep -q frappe-types tsconfig.browser.json package.json; then
+              echo "::error::the inline preset still names frappe-types"
+              exit 1
+            fi
+            yarn install --frozen-lockfile --non-interactive
+            yarn -s typecheck
+          done
+
       - name: The flake evaluates
         working-directory: ${{ runner.temp }}/app
         env:
@@ -268,6 +299,13 @@ jobs:
           cp -r tests/fixtures/standards-app "$RUNNER_TEMP/app"
           cd "$RUNNER_TEMP/app"
           rm -rf tools/uv.lock yarn.lock nix
+          if [ "$SHAPE" != reenter ]; then
+            # An app that has not opted in (§7 N3 bootstrap): no [tool.frappe-nix] table, so
+            # the sync below creates it with --standards recommended.
+            awk '/^\[\[?tool\.frappe-nix[].]/ { skip = 1; next } /^\[/ { skip = 0 } !skip' pyproject.toml > "$RUNNER_TEMP/pyproject.toml"
+            mv "$RUNNER_TEMP/pyproject.toml" pyproject.toml
+            ! grep -q 'tool\.frappe-nix' pyproject.toml || { echo "::error::the table is still there"; exit 1; }
+          fi
           if [ "$SHAPE" = no-flake ]; then
             # No flake.nix, and a lock that holds only the fixture's frappe node: phase A
             # locks frappe-nix and the rest around it, so relock resolves a fixed frappe
@@ -276,6 +314,17 @@ jobs:
               flake.lock > "$RUNNER_TEMP/frappe-only.lock"
             rm -f flake.nix flake.lock .envrc
             mv "$RUNNER_TEMP/frappe-only.lock" flake.lock
+          elif [ "$SHAPE" = main-locked ]; then
+            # What `frappe-init --app` on main left: templates/app's flake and .envrc, locked
+            # to frappe-nix's main.
+            sed -e 's|@APP_NAME@|standards_fixture|g' -e 's|@FRAPPE_BRANCH@|version-16|g' \
+              -e 's|@SITE_NAME@|standards-fixture.localhost|g' -e 's|@FRAPPE_VERSION@|version-16|g' \
+              "$GITHUB_WORKSPACE/templates/app/flake.nix" > flake.nix
+            cp "$GITHUB_WORKSPACE/templates/app/.envrc" .envrc
+            rm -f flake.lock
+            git init -q && git add -A
+            nix flake lock --refresh
+            rm -rf .git
           else
             sed -i 's|github:Avunu/frappe-nix/release-1|github:Avunu/frappe-nix|' flake.nix
             git init -q && git add -A
@@ -308,7 +357,8 @@ jobs:
             grep -q -- '\$ nix develop --no-pure-eval --override-input frappe-nix .* -c frappe-nix sync --write --phase b' "$RUNNER_TEMP/sync.log"
             PATH="$path:$RUNNER_TEMP/frappe-nix/bin" frappe-nix sync --check
           else
-            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --frappe-version version-16
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --standards recommended --frappe-version version-16
+            grep -qx 'profile = "recommended"' pyproject.toml || { echo "::error::--standards did not create the table"; exit 1; }
             PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
           fi
           for f in flake.nix flake.lock yarn.lock tools/uv.lock nix/uv.lock; do
