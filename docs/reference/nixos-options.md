@@ -3,7 +3,7 @@ title: services.frappe options
 description: Every option of the frappe-nix NixOS module, at the top level and per site, with types and defaults.
 order: 3
 tags: [options, reference, nixos]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 These are the options of `nixosModules.default`, the NixOS module that deploys a built bench. The types and defaults were checked against the module by evaluating it. For how the pieces work together, see [Run Frappe as a NixOS service](../production/nixos-service.md) and [Operate a deployed site](../production/operations.md).
@@ -71,5 +71,7 @@ These sit under `services.frappe.sites.<NAME>`, where `<NAME>` is the site name.
 | `encryptionKeyFile`      | path or null    | `null`                      | A file containing the Frappe encryption key. Merged into `site_config.json` at activation.                                                                                                                                     |
 | `extraConfig`            | attrs           | `{ }`                       | Extra keys merged into the base `site_config.json`. Nix values, no secrets.                                                                                                                                                    |
 | `extraConfigFiles`       | list of path    | `[ ]`                       | JSON files deep-merged into `site_config.json` at activation. This is the place for secrets such as object-storage credentials.                                                                                                |
+| `renamedApps`            | attrs of str    | `{ }`                       | Apps renamed in place, `OLD = NEW`. The migrate unit runs `frappe-rename-app --site` after maintenance mode goes on and before migrating, inside the snapshot. See [Renaming an app](../ironclad/rename.md).                    |
+| `replacedApps`           | attrs of str    | `{ }`                       | Apps replaced by a new app, `OLD = NEW`. Where OLD is installed, the migrate unit installs NEW and uninstalls OLD before migrating, inside the snapshot. See [Renaming an app](../ironclad/rename.md#replacing-an-app-instead). |
 | `nginx.enable`           | bool            | `false`                     | Create an nginx virtual host for this site.                                                                                                                                                                                    |
 | `nginx.socketPath`       | str             | `""`                        | Also serve the virtual host on a unix socket, for a co-located reverse proxy or tunnel connector that terminates TLS elsewhere. The client address then comes from `CF-Connecting-IP`. Requires `nginx.enable`.                |
