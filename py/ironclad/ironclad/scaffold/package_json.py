@@ -19,13 +19,27 @@ DEP_MAPS = ("dependencies", "devDependencies", "peerDependencies", "optionalDepe
 # no minimum to hold to a floor, so it is the app's explicit choice: sync leaves it (the
 # fixture app installs an unpublished frappe-types this way).
 NON_REGISTRY = re.compile(r"^(https?://|git(\+[a-z]+)?:|github:|file:|link:)")
+# Scripts sync retires (core.json's retire list): a script step that runs one is dropped
+# when sync deletes it, so `yarn build` (which bench build runs) never calls a missing file.
+RETIRED_SCRIPTS = ("update-assets.mjs",)
+_RETIRED_STEP = re.compile(r"^node\s+(?:\./)?(?:" + "|".join(re.escape(s) for s in RETIRED_SCRIPTS) + r")$")
 
 
-def created(ctx: Any) -> dict:
+def drop_retired_steps(script: str) -> str | None:
+	"""``script`` without its ``node update-assets.mjs`` steps (``&&``-joined); ``None`` when
+	nothing else is left."""
+	parts = [p.strip() for p in script.split("&&")]
+	kept = [p for p in parts if not _RETIRED_STEP.match(p)]
+	if len(kept) == len(parts):
+		return script
+	return " && ".join(kept) if kept else None
+
+
+def created(ctx: Any, version: str | None = None) -> dict:
 	"""The ``package.json`` sync writes when there is none."""
 	return {
 		"name": ctx.app_hyphen,
-		"version": ctx.version or "0.1.0",
+		"version": version or ctx.version or "0.1.0",
 		"private": True,
 		"description": ctx.tagline,
 		"license": "MIT",
@@ -87,9 +101,12 @@ def _scripts(ctx: Any, current: dict) -> dict[str, str | None]:
 	return out
 
 
-def merge(current: dict | None, ctx: Any, *, seed_version: bool) -> dict:
-	"""``current`` (or the created file) with every managed key set."""
-	doc = copy.deepcopy(current) if current is not None else created(ctx)
+def merge(current: dict | None, ctx: Any, *, version: str | None) -> dict:
+	"""``current`` (or the created file) with every managed key set.
+
+	``version`` is given only while sync seeds ``.release-please-manifest.json``: the one time
+	sync sets ``version`` (§2.8), to the version it seeds the manifest and block with."""
+	doc = copy.deepcopy(current) if current is not None else created(ctx, version)
 	exact: dict[str, Any] = {
 		"private": True,
 		"type": "module",
@@ -98,8 +115,8 @@ def merge(current: dict | None, ctx: Any, *, seed_version: bool) -> dict:
 		"packageManager": "yarn@1.22.22",
 		"frappe": {"major": str(ctx.frappe.major), "branch": ctx.frappe.branch},
 	}
-	if seed_version and ctx.version:
-		doc["version"] = ctx.version
+	if version:
+		doc["version"] = version
 	for key, value in exact.items():
 		if key == "engines":
 			engines = doc.get("engines")
@@ -111,6 +128,13 @@ def merge(current: dict | None, ctx: Any, *, seed_version: bool) -> dict:
 	scripts = doc.get("scripts")
 	if not isinstance(scripts, dict):
 		scripts = doc["scripts"] = {}
+	for key in list(scripts):
+		if isinstance(scripts[key], str):
+			kept = drop_retired_steps(scripts[key])
+			if kept is None:
+				del scripts[key]
+			else:
+				scripts[key] = kept
 	for key, value in _scripts(ctx, scripts).items():
 		if value is None:
 			scripts.pop(key, None)
@@ -151,9 +175,17 @@ def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 		out.append(
 			(DRIFT, f"scripts.build is missing: a Vite app's build must end with `{VITE_REGISTER}` (S30)")
 		)
-	for key in scripts:
+	for key, value in scripts.items():
 		if key.startswith("ironclad:"):
 			out.append((INVALID, f"scripts.{key}: the ironclad: prefix is reserved"))
+		named = [s for s in RETIRED_SCRIPTS if isinstance(value, str) and s in value]
+		if named:
+			out.append(
+				(
+					INVALID,
+					f"scripts.{key} runs {named[0]}, which sync deletes as a legacy file: remove that step",
+				)
+			)
 	for field in DEP_MAPS:
 		deps = doc.get(field)
 		if isinstance(deps, dict):

@@ -16,7 +16,7 @@ from typing import Any
 
 import ironclad
 from ironclad.common import known_apps, repo
-from ironclad.common.report import ConfigError
+from ironclad.common.report import ConfigError, EnvError
 from ironclad.scaffold import discover, hooks
 
 # A string literal on the __version__ line, in any of the three forms sync reads (§2.13).
@@ -67,9 +67,33 @@ def app_version(root: Path, app: str) -> str | None:
 	return m["v"] if m else None
 
 
-def first_commit_year(root: Path) -> int | None:
+class ShallowHistory:
+	"""``first_commit_year`` in a shallow clone, whose oldest commit is the shallow boundary
+	rather than the first one: any use fails (exit 3) instead of rendering a wrong year that
+	a full clone would then report as drift. Nothing reads it until a template does."""
+
+	MESSAGE = (
+		"first_commit_year needs the full git history, and this clone is shallow:"
+		" fetch it with `git fetch --unshallow` (actions/checkout: fetch-depth: 0)"
+	)
+
+	def _fail(self, *_args: object) -> Any:
+		raise EnvError(self.MESSAGE)
+
+	__eq__ = __ne__ = __lt__ = __le__ = __gt__ = __ge__ = _fail
+	__hash__ = object.__hash__
+
+	__str__ = __int__ = __index__ = __bool__ = __format__ = _fail
+
+	def __repr__(self) -> str:
+		return "ShallowHistory()"
+
+
+def first_commit_year(root: Path) -> int | ShallowHistory | None:
 	"""The year of the first commit, which never changes (§2.19); ``None`` before one exists."""
 	try:
+		if repo.git(root, "rev-parse", "--is-shallow-repository").strip() == "true":
+			return ShallowHistory()
 		out = repo.git(root, "log", "--reverse", "--format=%cs")
 	except Exception:
 		return None

@@ -88,6 +88,8 @@ CONTEXTS = {
 			"ctx_app/public/js/x.bundle.ts": "export {};\n",
 			"ctx_app/ctx_app/doctype/a/a.js": "frappe.ui.form.on('A', {});\n",
 			"ctx_app/www/p.js": "frappe.ready(() => {});\n",
+			# test_ts and unit_tests: tsconfig.test.json and the test:unit script.
+			"test/unit/a.test.ts": "export {};\n",
 			"package.json": '{"name": "ctx-app", "scripts": {"build": "vite build"}}\n',
 		},
 	),

@@ -42,6 +42,13 @@ _TYPES = {
 }
 
 
+def _ecma(pattern: str) -> str:
+	"""A JSON Schema (ECMA-262) ``pattern`` for Python's ``re.search``: ``$`` is the end of the
+	value, where Python's would also match before a final newline (which would then land in
+	a rendered ``flake.nix``)."""
+	return re.sub(r"(?<!\\)\$", r"\\Z", pattern)
+
+
 def _where(path: str) -> str:
 	return f"[tool.ironclad]{path}" if path else "[tool.ironclad]"
 
@@ -67,7 +74,7 @@ def errors(value: Any, schema: dict, path: str = "") -> list[str]:
 	if isinstance(value, str):
 		if "minLength" in schema and len(value) < schema["minLength"]:
 			out.append(f"{where}: must be at least {schema['minLength']} characters")
-		if "pattern" in schema and not re.search(schema["pattern"], value):
+		if "pattern" in schema and not re.search(_ecma(schema["pattern"]), value):
 			out.append(f"{where}: {json.dumps(value)} does not match {schema['pattern']}")
 	if isinstance(value, list):
 		if "minItems" in schema and len(value) < schema["minItems"]:

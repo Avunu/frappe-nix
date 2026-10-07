@@ -141,7 +141,7 @@
 		{ "glob": ".flake8", "rule": "legacy config: ruff replaces flake8" },
 		{ "glob": "setup.cfg", "rule": "legacy config: ruff replaces flake8", "only_section": "flake8" },
 		{ "glob": "MANIFEST.in", "rule": "legacy config: apps build with flit" },
-		{ "glob": "**/requirements.txt", "rule": "legacy config: dependencies live in pyproject.toml" },
+		{ "glob": "**/requirements.txt", "rule": "legacy config: dependencies live in pyproject.toml", "deps_in_project": true },
 		{ "glob": "nix/node-offline-hashes.json", "rule": "legacy config: frappe-nix refuses its option" },
 		{ "glob": "update-assets.mjs", "rule": "legacy config: Vite outputs register through scripts/ironclad-vite-register.mjs" }
 	]

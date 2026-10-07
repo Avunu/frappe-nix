@@ -21,6 +21,20 @@ import ironclad
 from ironclad.common import data_path, flakelock
 from ironclad.common.report import ConfigError, EnvError
 
+# Set on a re-exec or a dev-shell re-entry when phase A changed flake.lock, so the phase B
+# that runs there still relocks the bench (step 11): it sees an unchanged lock itself.
+LOCK_CHANGED = "IRONCLAD_SYNC_LOCK_CHANGED"
+
+
+def lock_changed_env(changed: bool) -> dict[str, str]:
+	return {LOCK_CHANGED: "1"} if changed else {}
+
+
+def inherited_lock_change() -> bool:
+	"""Whether the sync that handed over to this one changed ``flake.lock``."""
+	return os.environ.get(LOCK_CHANGED) == "1"
+
+
 # Node locks frappe-nix seeds per sibling: nix/node-locks/<key> (§2.4, §3.3 step 10).
 NODE_LOCKS = {
 	"frappe": ("frappe/ui",),
@@ -100,11 +114,14 @@ def locked_frappe_nix_version(runner: Runner) -> str | None:
 	locked = found[1].get("locked") if found else None
 	if not isinstance(locked, dict) or locked.get("type") != "github":
 		return None
-	expr = f'builtins.readFile ((builtins.fetchTree (builtins.fromJSON {json.dumps(json.dumps(locked))})) + "/version.txt")'
+	# The lock's attributes reach Nix as data (an environment variable the expression reads),
+	# never spliced into the expression: a `${…}` in a crafted lock would be evaluated.
+	expr = 'builtins.readFile ((builtins.fetchTree (builtins.fromJSON (builtins.getEnv "IRONCLAD_LOCKED_FRAPPE_NIX"))) + "/version.txt")'
 	try:
 		out = subprocess.run(
 			["nix", "eval", "--raw", "--impure", "--expr", expr],
 			cwd=runner.root,
+			env={**os.environ, "IRONCLAD_LOCKED_FRAPPE_NIX": json.dumps(locked)},
 			capture_output=True,
 			text=True,
 			check=True,
@@ -131,7 +148,7 @@ def phase_a_lock(runner: Runner, inputs: list[str], major: int) -> bool:
 	return before != after
 
 
-def maybe_reexec(runner: Runner, argv: list[str]) -> None:
+def maybe_reexec(runner: Runner, argv: list[str], lock_changed: bool = False) -> None:
 	"""Step 4: phase B renders with the ironclad the lock pins, so a bootstrap from another
 	release hands over to it (once)."""
 	if override_url() or os.environ.get("IRONCLAD_SYNC_REEXEC") == "1":
@@ -144,13 +161,13 @@ def maybe_reexec(runner: Runner, argv: list[str]) -> None:
 	)
 	code = runner.run(
 		["nix", "run", "--no-pure-eval", ".#frappe-init", "--", "--sync", *argv],
-		env={"IRONCLAD_SYNC_REEXEC": "1"},
+		env={"IRONCLAD_SYNC_REEXEC": "1", **lock_changed_env(lock_changed)},
 		check=False,
 	)
 	raise SystemExit(code)
 
 
-def ensure_tools(runner: Runner, argv: list[str]) -> None:
+def ensure_tools(runner: Runner, argv: list[str], lock_changed: bool = False) -> None:
 	"""Phase B needs ``uv`` and ``yarn``; without them, re-enter through the app's dev shell (once)."""
 	if runner.offline or runner.dry_run or (shutil.which("uv") and shutil.which("yarn")):
 		return
@@ -173,7 +190,7 @@ def ensure_tools(runner: Runner, argv: list[str]) -> None:
 			"b",
 			*argv,
 		],
-		env={"FRAPPE_NIX_CI": "1", "IRONCLAD_SYNC_REENTERED": "1"},
+		env={"FRAPPE_NIX_CI": "1", "IRONCLAD_SYNC_REENTERED": "1", **lock_changed_env(lock_changed)},
 		check=False,
 	)
 	raise SystemExit(code)

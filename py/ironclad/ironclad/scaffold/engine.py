@@ -36,6 +36,8 @@ from ironclad.scaffold import (
 from ironclad.scaffold import render as rendering
 from ironclad.scaffold import schema as schema_check
 
+# The version of an app that names none anywhere (§2.8: "<__version__ or 0.1.0>").
+DEFAULT_VERSION = "0.1.0"
 BLAME_LINE = re.compile(r"^[0-9a-f]{40}  # \S.*$")
 _FLAKE_INPUT = re.compile(
 	r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)(?:\.url\s*=|\.follows\s*=|\s*=\s*\{)", re.M
@@ -81,6 +83,9 @@ class Plan:
 	ctx: context.NS
 	items: list[Item] = field(default_factory=list)
 	created_config: dict | None = None
+	# The one version the version block, the release-please manifest seed and package.json
+	# are given when sync writes them (C5 holds from the first sync): see ``effective_version``.
+	version: str = DEFAULT_VERSION
 
 	def add(self, item: Item) -> None:
 		self.items.append(item)
@@ -95,6 +100,13 @@ class Plan:
 
 
 def read(root: Path, path: str) -> str | None:
+	"""The text of ``path`` under ``root``; ``None`` when it is missing or a directory.
+
+	A symlink is refused, never followed: ``--check`` runs on untrusted pull requests, and a
+	committed link to a file outside the repository would print that file in the diff (and
+	``--write`` would write through it)."""
+	if (root / path).is_symlink():
+		raise ConfigError(f"{path} is a symlink: a managed file must be a regular file (remove the link)")
 	try:
 		return (root / path).read_text()
 	except FileNotFoundError:
@@ -106,18 +118,24 @@ def read(root: Path, path: str) -> str | None:
 # --- configuration -------------------------------------------------------------
 
 
-def flake_facts(text: str | None) -> tuple[int | None, list[str]]:
-	"""``frappeVersion``'s major and the sibling names an existing ``flake.nix`` declares."""
+def flake_facts(text: str | None) -> tuple[int | None, list[str], str | None]:
+	"""``frappeVersion``'s major, the sibling names and the ``siteName`` an existing ``flake.nix`` declares."""
 	if not text:
-		return None, []
+		return None, [], None
 	m = re.search(r'frappeVersion\s*=\s*"version-(\d+)"', text)
 	block = re.search(r"siblings\s*=\s*\[(?P<body>.*?)\];", text, re.S)
 	names = re.findall(r'name\s*=\s*"([^"]+)"', block["body"]) if block else []
-	return (int(m[1]) if m else None), names
+	site = re.search(r'siteName\s*=\s*"([^"$\\]+)"', text)
+	return (int(m[1]) if m else None), names, (site[1] if site else None)
 
 
 def new_config(
-	root: Path, app_hooks: dict, frappe_version: str | None, package: dict | None, tracked: list[str]
+	root: Path,
+	app: str,
+	app_hooks: dict,
+	frappe_version: str | None,
+	package: dict | None,
+	tracked: list[str],
 ) -> dict:
 	"""``[tool.ironclad]`` as sync creates it (§3.3 step 1)."""
 	major = None
@@ -126,7 +144,7 @@ def new_config(
 		if not m:
 			raise ConfigError(f"--frappe-version must be version-<major>, not {frappe_version!r}")
 		major = int(m[1])
-	flake_major, flake_siblings = flake_facts(read(root, "flake.nix"))
+	flake_major, flake_siblings, flake_site = flake_facts(read(root, "flake.nix"))
 	major = major or flake_major
 	if major is None:
 		raise ConfigError(
@@ -140,18 +158,20 @@ def new_config(
 		if name not in siblings and not any(hooks.bare(s) == hooks.bare(name) for s in siblings):
 			siblings.append(name)
 	cfg: dict[str, Any] = {"schema": 1, "frappe-major": major, "siblings": siblings}
+	# The dev site an existing frappe-nix flake already uses: a new name would orphan every
+	# developer's site state (carbon_frappe's is carbon.localhost, not carbon-frappe.localhost).
+	if (
+		flake_site
+		and re.fullmatch(r"[a-z0-9][a-z0-9.-]*", flake_site)
+		and flake_site != f"{app.replace('_', '-')}.localhost"
+	):
+		cfg["site"] = flake_site
 	# An app whose build script is a real step with nothing sync can see building:
-	# say so, rather than create a configuration that fails its own first check.
+	# say so, rather than create a configuration that fails its own first check. The
+	# same discovery as the rendered package.json and compat's C8 (no SPA is declared yet).
 	scripts = (package or {}).get("scripts") or {}
-	vite_or_frontend = any(
-		re.fullmatch(r"vite(\.[^/]+)?\.config\.[^/]+", p.rsplit("/", 1)[-1])
-		for p in tracked
-		if p.count("/") <= 1
-	) or any(
-		p.count("/") == 1 and p.endswith("/package.json") and p.split("/", 1)[0] not in discover.NOT_FRONTENDS
-		for p in tracked
-	)
-	if isinstance(scripts, dict) and "build" in scripts and not vite_or_frontend:
+	facts = discover.facts(root, app, {}, tracked)
+	if isinstance(scripts, dict) and "build" in scripts and not (facts["vite"] or facts["nested_frontends"]):
 		cfg["build"] = True
 	return cfg
 
@@ -188,7 +208,9 @@ def config_for(app: context.App, frappe_version: str | None) -> tuple[dict, dict
 	raw = pyproject.tool_ironclad(app.pyproject)
 	created = None
 	if raw is None:
-		raw = created = new_config(app.root, app.hooks, frappe_version, load_package(app.root), app.tracked)
+		raw = created = new_config(
+			app.root, app.name, app.hooks, frappe_version, load_package(app.root), app.tracked
+		)
 	return validate_config(raw), created
 
 
@@ -244,9 +266,28 @@ def _json(text: str | None, path: str) -> Any:
 		raise ConfigError(f"{path}: {e}") from e
 
 
+def effective_version(root: Path, app: str, package: dict | None) -> str:
+	"""The version sync writes wherever it writes one: ``__version__``, else the release-please
+	manifest's, else package.json's, else 0.1.0. Each later source only fills a gap, so a
+	first sync leaves the three agreeing (C5) whichever of them the app already had."""
+	have = context.app_version(root, app)
+	if have:
+		return have
+	try:
+		manifest_doc = json.loads(read(root, ".release-please-manifest.json") or "null")
+	except json.JSONDecodeError:
+		manifest_doc = None
+	if isinstance(manifest_doc, dict) and isinstance(manifest_doc.get("."), str) and manifest_doc["."]:
+		return manifest_doc["."]
+	version = (package or {}).get("version")
+	if isinstance(version, str) and version:
+		return version
+	return DEFAULT_VERSION
+
+
 def _seed_text(plan: Plan, entry: manifest.Entry) -> str:
 	if entry.handler == "release-please-manifest":
-		return jsonfmt.dumps({".": plan.ctx.version or "0.1.0"})
+		return jsonfmt.dumps({".": plan.version})
 	return rendering.render(entry.template or "", plan.ctx, None)
 
 
@@ -286,6 +327,15 @@ def _validate_seed(plan: Plan, entry: manifest.Entry, path: str, current: str) -
 	return out
 
 
+def _spa_config(ctx: context.NS, path: str, current: str | None) -> bool:
+	"""``path`` is a tsconfig sync manages, but what is there is a Vite app's own config."""
+	if current is None or not ctx.discover.vite:
+		return False
+	if not re.fullmatch(r"tsconfig[^/]*\.json", path):
+		return False
+	return rendering.BASE not in current.split("\n", 1)[0]
+
+
 def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: bool) -> list[Item]:
 	"""The item(s) for one entry whose ``when`` holds."""
 	root, ctx = plan.root, plan.ctx
@@ -302,13 +352,25 @@ def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: boo
 			problem = "missing" if current is None else "differs from the rendered file"
 		return Item(path, strategy, current, wanted, problem, code, command, entry.phase)
 
-	if strategy == "whole":
+	if strategy == "whole" and _spa_config(ctx, path, current):
+		# §2.9: sync never writes over an SPA's config. A Vite app's own tsconfig that no
+		# [[tool.ironclad.typescript.spa]] names yet is one sync would otherwise replace.
+		out.append(
+			item(
+				current,
+				f"{path} is the app's own TypeScript config (it has no ironclad:managed header) and"
+				" the app has a Vite config: declare it in [[tool.ironclad.typescript.spa]]"
+				f' (tsconfig = "{path}"), or delete it to let sync manage {path}',
+				INVALID,
+			)
+		)
+	elif strategy == "whole":
 		out.append(item(_whole(plan, entry, path, current)))
 	elif strategy == "blocks" and entry.handler == "gitignore":
 		body = data_path("templates/gitignore.block").read_text()
 		out.append(item(blocks.gitignore(current, body, path)))
 	elif strategy == "blocks" and entry.handler == "init-py":
-		wanted, offending = blocks.init_py(current)
+		wanted, offending = blocks.init_py(current, plan.version)
 		out.append(item(wanted))
 		if offending:
 			out.append(
@@ -338,7 +400,7 @@ def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: boo
 		doc = _json(current, path)
 		if doc is not None and not isinstance(doc, dict):
 			raise ConfigError(f"{path} is not a JSON object")
-		merged = package_json.merge(doc, ctx, seed_version=seed_manifest)
+		merged = package_json.merge(doc, ctx, version=plan.version if seed_manifest else None)
 		if merged == doc:
 			out.append(item(current))
 		else:
@@ -372,17 +434,45 @@ def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: boo
 	return out
 
 
+def _requirement_names(text: str) -> list[str]:
+	"""The package names a requirements file lists (PEP 503-normalised), options skipped."""
+	names = []
+	for line in text.splitlines():
+		line = line.split("#", 1)[0].strip()
+		if not line or line.startswith("-"):
+			continue
+		m = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
+		if m:
+			names.append(re.sub(r"[-_.]+", "-", m[0]).lower())
+	return names
+
+
+def _missing_deps(plan: Plan, text: str) -> list[str]:
+	"""The packages ``text`` lists that ``[project].dependencies`` does not."""
+	deps = plan.app.pyproject.get("project", {}).get("dependencies", [])
+	have = set(_requirement_names("\n".join(d for d in deps if isinstance(d, str))))
+	return sorted({n for n in _requirement_names(text) if n not in have})
+
+
 def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list[Item]:
 	out = []
 	for path in plan.app.tracked:
 		if only is not None and path not in only:
 			continue
-		if not (plan.root / path).is_file():
+		link = (plan.root / path).is_symlink()
+		if not link and not (plan.root / path).is_file():
 			continue
 		for rule in manifest.load().retire:
 			if not globs.match(rule.glob, path) or globs.match_any(list(rule.unless), path):
 				continue
 			if rule.unmanaged and path in managed_paths:
+				continue
+			if link:
+				# Never read through a link: deleting the link is all retiring it takes, and a
+				# rule that looks inside the file cannot apply to one.
+				if not (rule.contains or rule.only_section or rule.deps_in_project):
+					out.append(Item(path, "retire", "", None, f"legacy file ({rule.rule})", DRIFT))
+					break
 				continue
 			text = read(plan.root, path) or ""
 			if rule.contains and not any(marker in text for marker in rule.contains):
@@ -391,7 +481,21 @@ def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list
 				sections = set(re.findall(r"^\s*\[([^\]]+)\]\s*$", text, re.M))
 				if sections != {rule.only_section}:
 					continue
-			out.append(Item(path, "retire", text, None, f"legacy file ({rule.rule})", DRIFT))
+			missing = _missing_deps(plan, text) if rule.deps_in_project else []
+			if missing:
+				out.append(
+					Item(
+						path,
+						"retire",
+						text,
+						text,
+						f"legacy file ({rule.rule}), but [project].dependencies lacks"
+						f" {', '.join(missing)}: add them there, then sync deletes it",
+						INVALID,
+					)
+				)
+			else:
+				out.append(Item(path, "retire", text, None, f"legacy file ({rule.rule})", DRIFT))
 			break
 	return out
 
@@ -482,6 +586,11 @@ def build(
 	man = manifest.load()
 	ctx = context.build(app, cfg, rev=rev, floors=man.floors, options=options)
 	plan = Plan(root, app, cfg, ctx, created_config=created)
+	try:
+		package = load_package(root)
+	except ConfigError:
+		package = None  # reported by the package.json entry
+	plan.version = effective_version(root, app.name, package)
 	only_set = set(only) if only else None
 	seed_manifest = read(root, ".release-please-manifest.json") is None
 	managed_paths: set[str] = set()

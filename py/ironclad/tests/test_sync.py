@@ -540,5 +540,187 @@ class TestDeterminism(AppCase):
 		)
 
 
+class TestShallowHistory(AppCase):
+	def test_shallow_clone_never_renders_a_wrong_year(self):
+		from ironclad.common.report import EnvError
+		from ironclad.scaffold import context
+
+		git(self.root, "commit", "-q", "--allow-empty", "-m", "second", "--date", "2030-01-01T00:00:00")
+		full = context.first_commit_year(self.root)
+		self.assertIsInstance(full, int)
+		clone = self.root.parent / (self.root.name + "-shallow")
+		self.addCleanup(__import__("shutil").rmtree, clone, True)
+		git(self.root, "clone", "-q", "--depth", "1", f"file://{self.root}", str(clone))
+		shallow = context.first_commit_year(clone)
+		with self.assertRaises(EnvError):
+			str(shallow)
+		with self.assertRaises(EnvError):
+			bool(shallow == full)
+
+
+class TestVersionSeed(AppCase):
+	def test_no_version_anywhere_agrees_from_the_first_sync(self):
+		self.write("demo_app/__init__.py", "# only a comment\n")
+		self.commit()
+		self.synced()
+		self.assertIn('__version__ = "0.1.0"', self.read("demo_app/__init__.py"))
+		self.assertEqual(json.loads(self.read("package.json"))["version"], "0.1.0")
+		self.assertEqual(json.loads(self.read(".release-please-manifest.json")), {".": "0.1.0"})
+		self.assertEqual(self.ironclad("compat")[0], 0)
+
+	def test_package_version_fills_the_gap(self):
+		self.write("demo_app/__init__.py", "# only a comment\n")
+		self.write("package.json", '{"name": "demo-app", "version": "16.0.0"}\n')
+		self.commit()
+		self.synced()
+		self.assertIn('__version__ = "16.0.0"', self.read("demo_app/__init__.py"))
+		self.assertEqual(json.loads(self.read(".release-please-manifest.json")), {".": "16.0.0"})
+		self.assertEqual(self.ironclad("compat")[0], 0)
+
+
+class TestSymlinks(AppCase):
+	def test_a_managed_symlink_is_refused_unread(self):
+		self.synced()
+		outside = self.root.parent / (self.root.name + "-secret")
+		outside.write_text("SECRET_TOKEN=hunter2\n")
+		self.addCleanup(outside.unlink)
+		(self.root / ".editorconfig").unlink()
+		(self.root / ".editorconfig").symlink_to(outside)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertNotIn("hunter2", out)
+		self.assertIn("symlink", out)
+		code, out, err = self.ironclad("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertEqual(outside.read_text(), "SECRET_TOKEN=hunter2\n")
+
+	def test_a_retired_symlink_is_removed_unread(self):
+		self.synced()
+		outside = self.root.parent / (self.root.name + "-old")
+		outside.write_text("{}\n")
+		self.addCleanup(outside.unlink)
+		(self.root / ".oxfmtrc.json").symlink_to(outside)
+		self.commit()
+		self.assertEqual(self.check()[0], 1)
+		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
+		self.assertFalse((self.root / ".oxfmtrc.json").is_symlink())
+		self.assertEqual(outside.read_text(), "{}\n")
+
+
+class TestSchemaPattern(AppCase):
+	def test_trailing_newline_is_refused(self):
+		self.write("pyproject.toml", self.read("pyproject.toml") + 'site = "demo.localhost\\n"\n')
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("does not match", out)
+
+
+class TestRetireGuards(AppCase):
+	def test_requirements_naming_a_missing_dependency_is_exit_2(self):
+		self.synced()
+		self.write("requirements.txt", "# pinned\nPyJWT>=2  # tokens\n-r other.txt\n")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("pyjwt", out)
+		self.assertEqual(self.ironclad("sync", "--write")[0], 2)
+		self.assertTrue((self.root / "requirements.txt").exists())
+		text = self.read("pyproject.toml").replace("dependencies = []", 'dependencies = ["pyjwt>=2"]')
+		self.write("pyproject.toml", text)
+		self.commit()
+		self.assertEqual(self.check()[0], 1)
+		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
+		self.assertFalse((self.root / "requirements.txt").exists())
+
+	def test_update_assets_steps_go_with_the_file(self):
+		self.write("vite.config.ts", "export default {};\n")
+		self.write("update-assets.mjs", "\n")
+		self.write(
+			"package.json",
+			json.dumps(
+				{
+					"name": "demo-app",
+					"scripts": {
+						"build": "vite build && node update-assets.mjs",
+						"dev": "node update-assets.mjs",
+					},
+				}
+			),
+		)
+		self.commit()
+		self.synced()
+		scripts = json.loads(self.read("package.json"))["scripts"]
+		self.assertEqual(scripts["build"], "vite build && node scripts/ironclad-vite-register.mjs")
+		self.assertNotIn("dev", scripts)
+		self.assertFalse((self.root / "update-assets.mjs").exists())
+		pkg = json.loads(self.read("package.json"))
+		pkg["scripts"]["watch"] = "x update-assets.mjs"
+		self.write("package.json", json.dumps(pkg))
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("scripts.watch runs update-assets.mjs", out)
+
+
+class TestSpaGuard(AppCase):
+	def test_an_unmanaged_tsconfig_beside_vite_is_never_overwritten(self):
+		own = '{"compilerOptions": {"strict": true, "jsx": "preserve"}}\n'
+		self.write("tsconfig.json", own)
+		self.write("vite.config.ts", "export default {};\n")
+		self.write("demo_app/public/js/a.ts", "export {};\n")
+		self.write("package.json", '{"name": "demo-app", "scripts": {"build": "vite build"}}\n')
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("[[tool.ironclad.typescript.spa]]", out)
+		code, _, err = self.ironclad("sync", "--write")
+		self.assertEqual(code, 2, err)
+		self.assertEqual(self.read("tsconfig.json"), own)
+
+
+class TestPatchesHook(AppCase):
+	def test_validate_patches_needs_a_patches_dir(self):
+		self.synced()
+		self.assertNotIn("validate_patches", self.read(".pre-commit-config.yaml"))
+		self.write("demo_app/patches/__init__.py", "")
+		self.commit()
+		self.assertEqual(self.check()[0], 1)
+		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
+		self.assertIn("id: validate_patches", self.read(".pre-commit-config.yaml"))
+
+
+class TestViteAgreement(AppCase):
+	def test_docs_site_vite_is_no_vite_for_sync_or_compat(self):
+		self.synced()
+		self.write("docs-site/package.json", '{"name": "docs"}\n')
+		self.write("docs-site/vite.config.ts", "export default {};\n")
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+		code, out, _ = self.ironclad("compat")
+		self.assertEqual(code, 0, out)
+
+
+class TestOnlyLimitsPhaseA(AppCase):
+	def test_only_writes_only_what_it_names(self):
+		self.ironclad("sync", "--write", "--only", ".editorconfig")
+		status = git(self.root, "status", "--porcelain")
+		self.assertIn(".editorconfig", status)
+		self.assertNotIn("flake.nix", status)
+		self.assertNotIn(".envrc", status)
+
+
+class TestSiteCarried(AppCase):
+	def test_existing_site_name_is_kept(self):
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.ironclad]")[0])
+		self.write("flake.nix", '{ frappeVersion = "version-16"; siteName = "demo.localhost"; }\n')
+		self.commit()
+		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
+		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"]
+		self.assertEqual(cfg["site"], "demo.localhost")
+		self.assertIn('siteName = "demo.localhost"', self.read("flake.nix"))
+
+
 if __name__ == "__main__":
 	unittest.main()

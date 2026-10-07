@@ -7,7 +7,9 @@ A fragment is a JSON object:
     handler, command, phase, header_note}`` (below);
 ``retire``
     files sync deletes and ``--check`` reports as ``legacy file`` (§2.4.1), each
-    ``{glob, rule, contains?, except?, unmanaged?, only_section?}``;
+    ``{glob, rule, contains?, except?, unmanaged?, only_section?, deps_in_project?}``
+    (``deps_in_project``: a requirements file, retired only once ``[project].dependencies``
+    names every package it lists; until then it is exit 2, naming the missing ones);
 ``floors``
     version floors by kind (``npm``, ``npm-ts``, ``npm-scss``, ``uv``), merged into the
     template context as ``floors``.
@@ -45,7 +47,7 @@ ENTRY_KEYS = {
 	"command",
 	"phase",
 }
-RETIRE_KEYS = {"glob", "rule", "contains", "except", "unmanaged", "only_section"}
+RETIRE_KEYS = {"glob", "rule", "contains", "except", "unmanaged", "only_section", "deps_in_project"}
 
 
 class ManifestError(RuntimeError):
@@ -77,6 +79,7 @@ class Retire:
 	unless: tuple[str, ...] = ()
 	unmanaged: bool = False
 	only_section: str | None = None
+	deps_in_project: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +134,7 @@ def _retire(raw: Any, fragment: str) -> Retire:
 		unless=tuple(raw.get("except", [])),
 		unmanaged=bool(raw.get("unmanaged", False)),
 		only_section=raw.get("only_section"),
+		deps_in_project=bool(raw.get("deps_in_project", False)),
 	)
 
 

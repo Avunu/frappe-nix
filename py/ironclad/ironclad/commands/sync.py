@@ -129,6 +129,8 @@ def _apply(root: Path, items: list[Item], runner: bootstrap.Runner) -> list[str]
 			print(f"ironclad sync: - {item.path} ({item.problem})", file=sys.stderr)
 		else:
 			target.parent.mkdir(parents=True, exist_ok=True)
+			if target.is_symlink():
+				target.unlink()  # write a regular file, never through a link
 			target.write_text(item.wanted)
 			print(f"ironclad sync: + {item.path}", file=sys.stderr)
 		touched.append(item.path)
@@ -149,7 +151,13 @@ def _invalid(items: list[Item]) -> int:
 
 
 def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> bool:
-	"""Steps 1 to 4. Returns whether ``flake.lock`` changed."""
+	"""Steps 1 to 4. Returns whether ``flake.lock`` changed.
+
+	``--only`` limits it too: the flake is written, locked and handed over only when ``--only``
+	is not given or names ``flake.nix`` or ``.envrc``. ``[tool.ironclad]`` is created either
+	way, since every other file renders from it."""
+	only = _only(args)
+	flake_step = only is None or bool({"flake.nix", ".envrc"} & set(only))
 	app = engine.load_app(root)
 	_cfg, created = engine.config_for(app, args.frappe_version)
 	if created is not None:
@@ -161,7 +169,9 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 			(root / "pyproject.toml").write_text(new)
 			print("ironclad sync: + pyproject.toml [tool.ironclad]", file=sys.stderr)
 			_stage(root, ["pyproject.toml"], runner)
-	plan = engine.build(root, phases=("a",), frappe_version=args.frappe_version, options=_options(args))
+	plan = engine.build(
+		root, phases=("a",), frappe_version=args.frappe_version, only=only, options=_options(args)
+	)
 	code = _invalid(plan.items)
 	if code:
 		raise SystemExit(code)
@@ -170,19 +180,20 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 	_stage(root, touched, runner)
 	inputs = engine.flake_inputs((root / "flake.nix").read_text()) if (root / "flake.nix").is_file() else []
 	changed = False
-	if not args.offline and not runner.dry_run:
+	if flake_step and not args.offline and not runner.dry_run:
 		changed = bootstrap.phase_a_lock(runner, inputs, plan.ctx.frappe_nix.major)
 		if (root / "flake.lock").is_file():
 			_stage(root, ["flake.lock"], runner)
-		bootstrap.maybe_reexec(runner, _passthrough(args))
-	elif runner.dry_run:
+		bootstrap.maybe_reexec(runner, _passthrough(args), changed or bootstrap.inherited_lock_change())
+	elif flake_step and runner.dry_run:
 		print("would run: nix flake lock (when flake.lock is missing, stale or not on release-<N>)")
 	return changed
 
 
 def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock_changed: bool) -> int:
 	"""Steps 5 to 13."""
-	bootstrap.ensure_tools(runner, _passthrough(args))
+	lock_changed = lock_changed or bootstrap.inherited_lock_change()
+	bootstrap.ensure_tools(runner, _passthrough(args), lock_changed)
 	only = _only(args)
 	plan = engine.build(
 		root, phases=("b",), frappe_version=args.frappe_version, only=only, options=_options(args)
@@ -191,6 +202,9 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	if code:
 		return code
 	touched = _apply(root, plan.items, runner)
+	# Staged now as well as at step 13, so a lock or formatter step that fails below leaves
+	# what sync wrote staged rather than half-applied in the work tree.
+	_stage(root, touched, runner)
 
 	# Steps 8 and 9: the locks the plan cannot write itself.
 	by_path = {i.path: i for i in plan.items}
@@ -212,7 +226,8 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	oxfmt = root / "node_modules" / ".bin" / "oxfmt"
 	written = [p for p in touched if (root / p).is_file() and not p.endswith(".lock")]
 	if written and oxfmt.exists():
-		runner.run(["yarn", "-s", "oxfmt", "--no-error-on-unmatched-pattern", *written], network=False)
+		# The installed binary itself, not through yarn: --offline runs no yarn (and may have none).
+		runner.run([str(oxfmt), "--no-error-on-unmatched-pattern", *written], network=False)
 	init_py = f"{plan.app.name}/__init__.py"
 	if init_py in touched and (root / "tools/uv.lock").is_file() and shutil.which("uv"):
 		runner.run(["uv", "run", "--frozen", "--project", "tools", "ruff", "format", init_py])
@@ -229,7 +244,8 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	# Step 11: the bench lock follows the flake inputs.
 	if not only and not args.skip_lock and (lock_changed or not (root / "nix/uv.lock").is_file()):
 		runner.run(["nix", "run", "--no-pure-eval", *bootstrap.nix_args(), ".#relock"])
-		touched += ["nix"]
+		# Relock stages what it writes (nix/uv.lock, nix/node-locks/); never the rest of nix/.
+		touched.append("nix/uv.lock")
 
 	# Step 12: the README blocks.
 	if not only and plan.ctx.discover.has_listing and not runner.dry_run:
@@ -240,9 +256,8 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 				return readme[0]
 			touched.append("README.md")
 
-	# Step 13.
-	deleted = {i.path for i in plan.items if i.code == DRIFT and i.wanted is None and not i.command}
-	_stage(root, [p for p in touched if (root / p).exists() or p in deleted], runner)
+	# Step 13 (the deletions are staged already, right after they were made).
+	_stage(root, [p for p in touched if (root / p).exists()], runner)
 
 	if runner.dry_run:
 		return CLEAN

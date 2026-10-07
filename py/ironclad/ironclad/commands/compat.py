@@ -29,7 +29,7 @@ from pathlib import Path
 
 from ironclad.common import data_path, flakelock, repo
 from ironclad.common.report import CLEAN, DRIFT, ConfigError, EnvError
-from ironclad.scaffold import blocks, context, engine, globs, hooks, package_json, ranges
+from ironclad.scaffold import blocks, context, discover, engine, globs, hooks, package_json, ranges
 
 _DECLARE = re.compile(r"\bdeclare\s+(?:var|let|const)\s+frappe\b")
 _DECLARE_NS = re.compile(r"\bdeclare\s+namespace\s+frappe\b")
@@ -173,7 +173,12 @@ def violations(root: Path) -> list[str]:
 				f"C5 {app.name}/__init__.py: only comments may sit outside the version block: {line.strip()}"
 			)
 	manifest_text = engine.read(root, ".release-please-manifest.json")
-	manifest = json.loads(manifest_text).get(".") if manifest_text else None
+	manifest = None
+	if manifest_text:
+		doc = json.loads(manifest_text)
+		if not isinstance(doc, dict) or not isinstance(doc.get("."), str):
+			raise ConfigError('.release-please-manifest.json: must be {".": "<version>"}')
+		manifest = doc["."]
 	if not (have == version == manifest):
 		out.append(
 			f"C5 versions disagree: __version__ {have!r}, package.json {version!r}, .release-please-manifest.json {manifest!r}"
@@ -194,11 +199,8 @@ def violations(root: Path) -> list[str]:
 		out += [f"C7 .git-blame-ignore-revs: {p}" for p in engine.blame_problems(root, blame)]
 
 	# C8
-	vite = any(
-		re.fullmatch(r"vite(\.[^/]+)?\.config\.[^/]+", p.rsplit("/", 1)[-1])
-		for p in app.tracked
-		if p.count("/") <= 1
-	)
+	# discover.vite, the rule sync's build-append and §2.8's forbidden-build rule use too.
+	vite = discover.facts(root, app.name, cfg, app.tracked)["vite"]
 	build = (pkg.get("scripts") or {}).get("build", "")
 	if vite and not str(build).rstrip().endswith(package_json.VITE_REGISTER):
 		out.append(f"C8 package.json: scripts.build must end with `{package_json.VITE_REGISTER}` (S30)")

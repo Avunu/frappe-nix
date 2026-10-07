@@ -117,6 +117,13 @@ class TestCompat(AppCase):
 			self.assertIn(rule, out)
 		self.assertNotIn("`const ok", out)
 
+	def test_unparsable_manifest_is_exit_2(self):
+		self.synced()
+		self.write(".release-please-manifest.json", '["16.0.0"]\n')
+		self.commit()
+		code, out, err = self.ironclad("compat")
+		self.assertEqual(code, 2, out + err)
+
 	def test_add_blame_ignore(self):
 		self.synced()
 		sha = self.ironclad("compat", "--add-blame-ignore", "HEAD")

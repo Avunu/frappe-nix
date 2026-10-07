@@ -37,7 +37,7 @@ def gitignore(current: str | None, body: str, path: str = ".gitignore") -> str:
 	return f"{head}{GITIGNORE_BEGIN}\n{body}\n{GITIGNORE_END}\n"
 
 
-def init_py(current: str | None, default_version: str = "0.0.1") -> tuple[str, list[str]]:
+def init_py(current: str | None, default_version: str = "0.1.0") -> tuple[str, list[str]]:
 	"""``<app>/__init__.py`` in block form, and the lines that break the side-effect rule.
 
 	Every form of the version line becomes the block, keeping the value: carbon_frappe's

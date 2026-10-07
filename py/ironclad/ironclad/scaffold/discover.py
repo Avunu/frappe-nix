@@ -146,6 +146,8 @@ def facts(root: Path, app: str, cfg: dict, tracked: list[str]) -> dict[str, Any]
 		"nested_frontends": nested,
 		"docs_site": "docs-site/package.json" in tracked_set,
 		"gitmodules": ".gitmodules" in tracked_set,
+		# test_utils' validate_patches needs <app>/patches/ to exist (it finds the app by it).
+		"patches_dir": any(p.startswith(f"{app}/patches/") for p in tracked),
 		"has_listing": bool(listing) or "marketplace/listing.toml" in tracked_set,
 		"has_shots": "marketplace/screenshots.ts" in tracked_set,
 		"app_type": listing.get("type", "extension") if listing else "extension",
