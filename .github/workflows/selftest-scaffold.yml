@@ -237,8 +237,8 @@ jobs:
           set -euo pipefail
           cp -r tests/fixtures/ironclad-app "$RUNNER_TEMP/app"
           git clone -q --no-local "$GITHUB_WORKSPACE" "$RUNNER_TEMP/clone"
-          git -C "$RUNNER_TEMP/clone" checkout -q -b selftest
-          uv tool install --python 3.14 "ironclad @ git+file://$RUNNER_TEMP/clone@selftest#subdirectory=py/ironclad"
+          rev="$(git -C "$RUNNER_TEMP/clone" rev-parse HEAD)"
+          uv tool install --python 3.14 "ironclad @ git+file://$RUNNER_TEMP/clone@$rev#subdirectory=py/ironclad"
           uv tool dir --bin >> "$GITHUB_PATH"
           rm -rf "$RUNNER_TEMP/clone"
           find "$GITHUB_WORKSPACE" -mindepth 1 -delete
