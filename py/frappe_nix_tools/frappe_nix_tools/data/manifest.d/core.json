@@ -1,0 +1,395 @@
+{
+	"$comment": "N3's managed files (docs/app-standards/spec.md §2.4, §2.4.1, §3.1); the format is in frappe_nix_tools/scaffold/manifest.py.",
+	"floors": {
+		"npm-js": { "oxlint": "1.87.0", "oxfmt": "0.72.0" },
+		"npm-ts": { "typescript": "7.0.2", "@types/node": "26.6.4" },
+		"npm-frappe-types": { "frappe-types": "16.5.0" },
+		"npm-scss": { "stylelint": "17.16.0", "stylelint-config-standard-scss": "17.0.0" },
+		"uv": {
+			"ruff": "0.16.10",
+			"ty": "0.0.84",
+			"zizmor": "1.30.1",
+			"committed": "1.1.11",
+			"actionlint-py": "1.7.12.25",
+			"semgrep": "1.179.0",
+			"prek": "0.5.5",
+			"shellcheck-py": "0.11.0.1"
+		}
+	},
+	"entries": [
+		{
+			"path": "flake.nix",
+			"template": "flake.nix.j2",
+			"strategy": "whole",
+			"module": "dev-shell",
+			"uses": [
+				"dev-shell.systems",
+				"dev-shell.extra-substituters",
+				"dev-shell.extra-trusted-public-keys",
+				"dev-shell.frappe-nix-url"
+			],
+			"header": "nix",
+			"local_regions": ["inputs"],
+			"phase": "a"
+		},
+		{
+			"path": ".envrc",
+			"template": "envrc.j2",
+			"strategy": "whole",
+			"module": "dev-shell",
+			"header": "shell",
+			"local_regions": ["envrc"],
+			"phase": "a"
+		},
+		{ "path": ".gitignore", "strategy": "blocks", "module": "dev-shell", "handler": "gitignore" },
+		{
+			"path": ".editorconfig",
+			"template": "editorconfig.j2",
+			"strategy": "whole",
+			"module": "editorconfig",
+			"uses": ["editorconfig.indent", "editorconfig.line-length"],
+			"header": "ini",
+			"local_regions": ["editorconfig"]
+		},
+		{
+			"path": ".pre-commit-config.yaml",
+			"template": "pre-commit-config.yaml.j2",
+			"strategy": "whole",
+			"module": [
+				"python-lint",
+				"ssort",
+				"js",
+				"stylelint",
+				"workflow-lint",
+				"shell-lint",
+				"hygiene",
+				"metadata",
+				"releases",
+				"vite-register",
+				"typescript",
+				"tests",
+				"commits",
+				"test-utils"
+			],
+			"when": "precommit_live",
+			"uses": [
+				"hygiene.max-file-kb",
+				"test-utils.hooks",
+				"test-utils.track-overrides",
+				"releases.version-scheme"
+			],
+			"header": "yaml",
+			"local_regions": ["repos"]
+		},
+		{
+			"path": "committed.toml",
+			"template": "committed.toml.j2",
+			"strategy": "whole",
+			"module": "commits",
+			"uses": ["commits.allowed-types", "commits.subject-length", "releases.version-scheme"],
+			"header": "toml"
+		},
+		{
+			"path": "tools/pyproject.toml",
+			"template": "tools/pyproject.toml.j2",
+			"strategy": "whole",
+			"module": [
+				"python-lint",
+				"python-types",
+				"semgrep",
+				"workflow-lint",
+				"shell-lint",
+				"commits",
+				"ssort",
+				"js",
+				"stylelint",
+				"hygiene",
+				"metadata",
+				"releases",
+				"vite-register",
+				"typescript",
+				"tests",
+				"test-utils"
+			],
+			"when": "tools_deps",
+			"header": "toml"
+		},
+		{
+			"path": "tools/uv.lock",
+			"strategy": "seed",
+			"module": [
+				"python-lint",
+				"python-types",
+				"semgrep",
+				"workflow-lint",
+				"shell-lint",
+				"commits",
+				"ssort",
+				"js",
+				"stylelint",
+				"hygiene",
+				"metadata",
+				"releases",
+				"vite-register",
+				"typescript",
+				"tests",
+				"test-utils"
+			],
+			"when": "tools_deps",
+			"handler": "uv-lock",
+			"command": "uv lock --project tools"
+		},
+		{
+			"path": "pyproject.toml",
+			"strategy": "toml-merge",
+			"module": ["metadata", "python-lint", "python-types", "tests", "test-utils"],
+			"uses": [
+				"metadata.build-backend",
+				"python-lint.select",
+				"python-lint.ignore",
+				"python-lint.line-length",
+				"python-lint.indent-style",
+				"python-lint.quote-style",
+				"python-lint.typing-modules",
+				"python-types.error-on-warning",
+				"tests.coverage.enable",
+				"tests.coverage.initial-floor"
+			],
+			"handler": "pyproject"
+		},
+		{ "path": "{{ app }}/__init__.py", "strategy": "blocks", "module": "releases", "handler": "init-py" },
+		{
+			"path": "package.json",
+			"strategy": "json-merge",
+			"module": [
+				"metadata",
+				"js",
+				"stylelint",
+				"typescript",
+				"tests",
+				"python-lint",
+				"python-types",
+				"vite-register"
+			],
+			"uses": [
+				"org.license?",
+				"org.publisher?",
+				"metadata.package-type",
+				"metadata.package-manager",
+				"metadata.node-engine",
+				"typescript.preset",
+				"typescript.spa",
+				"tests.js-unit",
+				"tests.js-coverage-min"
+			],
+			"handler": "package-json"
+		},
+		{
+			"path": "yarn.lock",
+			"strategy": "seed",
+			"module": [
+				"metadata",
+				"js",
+				"stylelint",
+				"typescript",
+				"tests",
+				"python-lint",
+				"python-types",
+				"vite-register"
+			],
+			"when": "package_json_live",
+			"handler": "yarn-lock",
+			"command": "yarn install --non-interactive"
+		},
+		{
+			"path": ".oxlintrc.json",
+			"template": "oxlintrc.json.j2",
+			"strategy": "whole",
+			"module": "js",
+			"uses": [
+				"js.locked-rules",
+				"js.oxlint.categories",
+				"js.oxlint.ignore",
+				"js.oxlint.globals",
+				"js.oxlint.overrides"
+			],
+			"header": "none"
+		},
+		{
+			"path": ".oxfmtrc.jsonc",
+			"template": "oxfmtrc.jsonc.j2",
+			"strategy": "whole",
+			"module": "js",
+			"uses": ["js.format-width", "js.format-tabs", "js.oxfmt.ignore"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.js.oxfmt]."
+		},
+		{
+			"path": ".stylelintrc.json",
+			"strategy": "json-merge",
+			"module": "stylelint",
+			"when": "discover.scss",
+			"handler": "stylelint"
+		},
+		{
+			"path": "{{ discover.solution }}",
+			"template": "tsconfig.solution.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "discover.ts_projects"
+		},
+		{
+			"path": "tsconfig.base.json",
+			"template": "tsconfig.base.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": ["typescript.strict-extras", "typescript.preset", "typescript.paths"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "discover.browser_ts or discover.scripts_ts or discover.test_ts"
+		},
+		{
+			"path": "tsconfig.browser.json",
+			"template": "tsconfig.browser.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": [
+				"typescript.preset",
+				"typescript.browser",
+				"typescript.browser-include",
+				"typescript.exclude"
+			],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "discover.browser_ts"
+		},
+		{
+			"path": "tsconfig.scripts.json",
+			"template": "tsconfig.scripts.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": ["typescript.exclude"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "discover.scripts_ts"
+		},
+		{
+			"path": "tsconfig.test.json",
+			"template": "tsconfig.test.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": ["typescript.preset", "typescript.exclude"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "discover.test_ts"
+		},
+		{
+			"path": "tsconfig.desk.json",
+			"template": "tsconfig.desk.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": ["typescript.check-js", "typescript.web-include", "typescript.exclude"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "cfg.typescript['check-js'] and discover.desk_project"
+		},
+		{
+			"path": "tsconfig.web.json",
+			"template": "tsconfig.web.json.j2",
+			"strategy": "whole",
+			"module": "typescript",
+			"uses": ["typescript.check-js", "typescript.web-include", "typescript.exclude"],
+			"header": "jsonc",
+			"header_note": "Customise via [tool.frappe-nix.typescript].",
+			"when": "cfg.typescript['check-js'] and discover.web_project"
+		},
+		{
+			"path": "release-please-config.json",
+			"template": "release-please-config.json.j2",
+			"strategy": "whole",
+			"module": "releases",
+			"uses": ["releases.tool", "releases.tag-prefix", "releases.bootstrap-sha", "releases.branching"],
+			"header": "none"
+		},
+		{
+			"path": ".release-please-manifest.json",
+			"strategy": "seed",
+			"module": "releases",
+			"handler": "release-please-manifest"
+		},
+		{
+			"path": ".git-blame-ignore-revs",
+			"template": "git-blame-ignore-revs.j2",
+			"strategy": "seed",
+			"module": "hygiene",
+			"handler": "blame-ignore-revs"
+		}
+	],
+	"retire": [
+		{
+			"paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+			"rule": "legacy release workflow: release-please now runs from the managed release.yml",
+			"module": "releases",
+			"with": ["ci"],
+			"contains": ["release-please-action"],
+			"except": [".github/workflows/docs*.yml", ".github/workflows/docs*.yaml"],
+			"unmanaged": true
+		},
+		{
+			"paths": [".github/workflows/*.yml", ".github/workflows/*.yaml"],
+			"rule": "legacy auto-merge workflow: the managed deps.yml decides what merges automatically",
+			"module": "dependabot",
+			"with": ["ci"],
+			"contains": ["gh pr merge --auto", "dependabot/fetch-metadata"],
+			"except": [".github/workflows/docs*.yml", ".github/workflows/docs*.yaml"],
+			"unmanaged": true
+		},
+		{
+			"paths": [".oxfmtrc.json"],
+			"rule": "legacy JS config: the managed file is .oxfmtrc.jsonc",
+			"module": "js"
+		},
+		{
+			"paths": [".eslintrc*", "eslint.config.*"],
+			"rule": "legacy JS config: oxlint replaces eslint",
+			"module": "js"
+		},
+		{
+			"paths": [".prettierrc*", "prettier.config.*"],
+			"rule": "legacy JS config: oxfmt replaces prettier",
+			"module": "js"
+		},
+		{ "paths": [".flake8"], "rule": "legacy Python config: ruff replaces flake8", "module": "python-lint" },
+		{
+			"paths": ["setup.cfg"],
+			"rule": "legacy Python config: ruff replaces flake8",
+			"module": "python-lint",
+			"only_section": "flake8"
+		},
+		{
+			"paths": ["MANIFEST.in"],
+			"rule": "legacy packaging: the app builds with flit",
+			"module": "metadata",
+			"when": "cfg.metadata['build-backend'] == 'flit'"
+		},
+		{
+			"paths": ["**/requirements.txt"],
+			"rule": "legacy packaging: dependencies live in pyproject.toml",
+			"module": "metadata",
+			"when": "cfg.metadata['build-backend'] == 'flit'",
+			"deps_in_project": true
+		},
+		{
+			"paths": ["nix/node-offline-hashes.json"],
+			"rule": "legacy Nix: frappe-nix refuses its option",
+			"module": "dev-shell"
+		},
+		{
+			"paths": ["update-assets.mjs"],
+			"rule": "legacy asset registration: Vite outputs register through scripts/vite-register.mjs",
+			"module": "vite-register"
+		}
+	]
+}

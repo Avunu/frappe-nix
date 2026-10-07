@@ -1,0 +1,20 @@
+{% if cfg.releases["version-scheme"] == "frappe-major" %}
+# Conventional commits. `fix:` → patch, `feat:` → minor. There is no way to bump the major: it is the
+# Frappe major, and `frappe-nix policy` refuses `!` and BREAKING CHANGE (S12).
+{% else %}
+# Conventional commits. `fix:` → patch, `feat:` → minor, `!` or BREAKING CHANGE → major.
+{% endif %}
+style = "conventional"
+allowed_types = [
+{% for t in cfg.commits["allowed-types"] %}
+	{{ t | json_string }},
+{% endfor %}
+]
+subject_length = {{ cfg.commits["subject-length"] }}
+line_length = 0
+subject_capitalized = false
+subject_not_punctuated = true
+imperative_subject = false
+no_wip = true
+no_fixup = true
+merge_commit = false

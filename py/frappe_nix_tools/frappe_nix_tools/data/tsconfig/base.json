@@ -1,0 +1,21 @@
+{
+	"$comment": "The compiler options of frappe-types 16.5.0's tsconfig/base.json (MIT), which typescript.preset = \"inline\" renders into tsconfig.base.json instead of extending it (docs/app-standards/spec.md §2.9).",
+	"compilerOptions": {
+		"target": "ES2022",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"moduleDetection": "force",
+		"noEmit": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"erasableSyntaxOnly": true,
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noFallthroughCasesInSwitch": true,
+		"skipLibCheck": false,
+		"forceConsistentCasingInFileNames": true
+	}
+}

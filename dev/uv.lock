@@ -6,6 +6,7 @@ requires-python = "==3.14.*"
 overrides = [
     { name = "click", specifier = "~=8.3.1" },
     { name = "google-api-python-client", specifier = "~=2.188.0" },
+    { name = "pypika-stubs", marker = "python_full_version < '3.14'" },
     { name = "requests", specifier = ">=2.34.2" },
 ]
 
@@ -709,6 +710,7 @@ dependencies = [
 dev = [
     { name = "rich" },
     { name = "ruff" },
+    { name = "tomlkit" },
     { name = "ty" },
 ]
 
@@ -722,6 +724,7 @@ requires-dist = [
 dev = [
     { name = "rich" },
     { name = "ruff", specifier = "==0.14.10" },
+    { name = "tomlkit", specifier = ">=0.13" },
     { name = "ty" },
 ]
 
@@ -2025,6 +2028,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b1/1f/cfe2f6b30557c92b3f31d41707e09cef5c1efbd87392bc6c0430c46b0e4d/tinyhtml5-2.1.0.tar.gz", hash = "sha256:60a50ec3d938a37e491efa01af895853060943dcebb5627de5b10d188b338a67", size = 179242, upload-time = "2026-03-05T17:06:30.704Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/52/48/01695a036b695f83fea7aef6955d735db0f517b1c8e25ddb399ac0bdbcbf/tinyhtml5-2.1.0-py3-none-any.whl", hash = "sha256:6e11cfff38515834268daf89d5f85bbde0b6dd02e8d9e212d1385c2289b89f0a", size = 39686, upload-time = "2026-03-05T17:06:28.498Z" },
+]
+
+[[package]]
+name = "tomlkit"
+version = "0.15.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97", size = 180129, upload-time = "2026-07-17T01:48:04.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304", size = 49449, upload-time = "2026-07-17T01:48:05.728Z" },
 ]
 
 [[package]]
