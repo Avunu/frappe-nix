@@ -695,6 +695,24 @@ class TestTheAppsFlake(AppCase):
 		self.assertIn('"cache.example.org-1:abc="', flake)
 		self.assertIn('frappe-nix.url = "github:Avunu/frappe-nix/v1.0.0";', flake)
 
+	def test_a_frappe_nix_url_off_github_needs_ci_off(self):
+		"""§2.5: a mirror off GitHub works for the dev shell and sync, but not with ci on."""
+		mirror = 'dev-shell.frappe-nix-url = "git+https://git.example.org/mirror/frappe-nix?ref=v1.0.0"\n'
+		self.table(mirror)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("is not on GitHub, and ci is on", out)
+		self.assertEqual(self.fn("sync", "--write")[0], 2)
+		self.table("ci.enable = false\n")
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn(
+			'frappe-nix.url = "git+https://git.example.org/mirror/frappe-nix?ref=v1.0.0";',
+			self.read("flake.nix"),
+		)
+
 
 class TestFirstOptIn(OptOutCase):
 	OWN = '{\n  inputs.frappe-nix.url = "github:Avunu/frappe-nix";\n  outputs = _: { };\n  # mine\n}\n'

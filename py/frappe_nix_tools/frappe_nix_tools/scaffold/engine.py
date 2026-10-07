@@ -737,6 +737,20 @@ def check_uses(ctx: context.NS, entry: manifest.Entry, path: str) -> None:
 			)
 
 
+_GITHUB_FLAKE_URL = re.compile(r"^(github:|(git\+)?https://github\.com/)", re.I)
+
+
+def check_frappe_nix_url(cfg: dict, modules: dict) -> None:
+	"""§2.5: a ``dev-shell.frappe-nix-url`` off GitHub (``git+https://git.example.org/…``) works
+	for the dev shell and sync, but a GitHub ``uses:`` can't name it: exit 2 while ``ci`` is on."""
+	url = (cfg.get("dev-shell") or {}).get("frappe-nix-url")
+	if url and modules.get("ci") and not _GITHUB_FLAKE_URL.match(url):
+		raise ConfigError(
+			f"dev-shell.frappe-nix-url = {url!r} is not on GitHub, and ci is on: the caller workflows'"
+			" `uses:` can name only a GitHub repository (use a github: URL, or turn ci off)"
+		)
+
+
 def check_preset(app: context.App, cfg: dict, modules: dict) -> None:
 	"""``typescript.preset = "inline"`` has no Frappe declarations, which check-js,
 	audit-consumer and the gen-doctypes freshness step need (§2.9)."""
@@ -1415,6 +1429,7 @@ def build(
 	cfg = resolved.cfg
 	check_excludes(app, cfg)
 	check_preset(app, cfg, resolved.modules)
+	check_frappe_nix_url(cfg, resolved.modules)
 	man = manifest.load()
 	ctx = context.build(app, resolved, lock=locked_frappe_nix(root), floors=man.floors, options=options)
 	ctx["previous"] = previous(root, profile_dir)
