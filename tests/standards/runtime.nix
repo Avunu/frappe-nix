@@ -241,31 +241,11 @@ let
 
   # The app-mode root lib/app-workspace.nix generates, for the fixture app,
   # without opting in (appTools = null) and with a tools/pyproject.toml that
-  # pins all three tools or only ruff.
-  toolsFile =
-    deps:
-    pkgs.writeText "tools-pyproject.toml" ''
-      [project]
-      name = "standards-fixture-tools"
-      version = "0"
-      requires-python = ">=3.14"
-      dependencies = ${builtins.toJSON deps}
-
-      [tool.uv]
-      package = false
-    '';
-  toolsAll = toolsFile [
-    "actionlint-py"
-    "committed"
-    "prek"
-    "ruff"
-    "semgrep"
-    "ty"
-  ];
-  toolsRuff = toolsFile [
-    "ruff"
-    "ty"
-  ];
+  # pins all three tools or only ruff. Source files, not derivations:
+  # lib/app-workspace.nix tests pathExists on them at evaluation, which
+  # `nix flake check --no-build` cannot build for.
+  toolsAll = ./fixtures/app-tools/all/pyproject.toml;
+  toolsRuff = ./fixtures/app-tools/ruff/pyproject.toml;
   appRoot =
     appTools:
     (import ../../lib/app-workspace.nix {

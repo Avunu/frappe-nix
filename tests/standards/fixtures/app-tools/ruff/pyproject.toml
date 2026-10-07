@@ -1,0 +1,10 @@
+# An opted-in app's tools/pyproject.toml (spec §2.15), for the
+# standards-bench-dev-group check (tests/standards/runtime.nix).
+[project]
+name = "standards-fixture-tools"
+version = "0"
+requires-python = ">=3.14"
+dependencies = ["ruff", "ty"]
+
+[tool.uv]
+package = false
