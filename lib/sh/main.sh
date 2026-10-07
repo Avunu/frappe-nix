@@ -61,13 +61,28 @@ EOF
 }
 
 parse_args() {
-  local unknown=""
+  local unknown="" has_action=false usage_code=1 arg
+  # --sync or --check anywhere on the line: a usage error is 2 there (1 is drift),
+  # reported once every flag is read, and the --check flags are known. Without
+  # them every flag behaves as it does for an app that has not opted in (S35):
+  # the first unknown flag stops frappe-init, exit 1.
+  for arg in "$@"; do
+    case "$arg" in --sync | --check) has_action=true; usage_code=2 ;; esac
+  done
   while [ "$#" -gt 0 ]; do
-    # A value-taking flag at the end of the line is a usage error (2), not an
-    # unbound $2 under set -u, which exits 1 and reads as drift to --check.
+    # A value-taking flag at the end of the line is a usage error, not an unbound
+    # $2 under set -u.
     case "$1" in
       --frappe-version | --apps | --name | --site | --vendor | --legacy-apps | --only | --format | --expect-rev | --standards | --profile-path)
-        [ "$#" -ge 2 ] || die "$1 needs a value" 2 ;;
+        [ "$#" -ge 2 ] || die "$1 needs a value" "$usage_code" ;;
+    esac
+    case "$1" in
+      --format | --format=* | --expect-rev | --expect-rev=*)
+        # --check's own flags.
+        $has_action || { usage >&2; die "unknown flag: $1"; } ;;
+      --standards | --standards=* | --only | --only=* | --profile-path | --profile-path=* | --init-listing)
+        # App standards flags: app mode only, checked once the mode is known.
+        APP_FLAG="${APP_FLAG:-${1%%=*}}" ;;
     esac
     case "$1" in
       --frappe-version) frappe_version="$2"; shift 2 ;;
@@ -104,16 +119,25 @@ parse_args() {
       --absorb-gitdirs) ABSORB_GITDIRS=true; shift ;;
       --keep-db-root-password) KEEP_DB_ROOT_PW=true; shift ;;
       -h | --help) usage; exit 0 ;;
-      -*) unknown="${unknown:-$1}"; shift ;;
+      -*)
+        $has_action || { usage >&2; die "unknown flag: $1"; }
+        unknown="${unknown:-$1}"; shift ;;
       *) target="$1"; shift ;;
     esac
   done
-  # Reported once every flag is read: under --sync/--check (wherever it comes) a
-  # usage error is 2, since 1 is drift there.
   if [ -n "$unknown" ]; then
     usage >&2
-    if [ -n "$APP_ACTION" ]; then die "unknown flag: $unknown" 2; fi
-    die "unknown flag: $unknown"
+    die "unknown flag: $unknown" 2
+  fi
+}
+
+# The app standards flags (--standards, --only, --profile-path, --init-listing)
+# outside app mode: nothing would read them, so they are refused like any flag
+# frappe-init does not know there.
+refuse_app_flags() {
+  if [ -n "$APP_FLAG" ] && [ "$RESOLVED_MODE" != app ]; then
+    usage >&2
+    die "unknown flag: $APP_FLAG (an app standards flag: app mode only, with --app, --sync or --check)"
   fi
 }
 
@@ -200,6 +224,8 @@ main() {
       die "'${target:-.}' is empty or does not exist — app mode sets up an existing Frappe app's repository." 1
     RESOLVED_MODE=init
   fi
+
+  refuse_app_flags
 
   case "$RESOLVED_MODE" in
     init) cmd_init ;;

@@ -14,6 +14,7 @@
 APP_ACTION=""             # sync | check
 STANDARDS=""              # --standards <profile>: opt in (create [tool.frappe-nix])
 declare -a SYNC_ARGS=()   # --format, --only, --expect-rev, --init-listing, --profile-path, passed through
+APP_FLAG=""               # the first app standards flag on the line, for refusing it outside app mode
 
 # Whether the app in the current directory opted in to the app standards: its
 # pyproject.toml has a [tool.frappe-nix] table (a header line, as
@@ -22,7 +23,8 @@ app_opted_in() {
   [ -f pyproject.toml ] && grep -qE '^[[:space:]]*\[{1,2}tool\.frappe-nix[].]' pyproject.toml
 }
 
-# The arguments every `frappe-nix sync --write` from frappe-init gets.
+# The arguments every `frappe-nix sync --write` from frappe-init gets (--sync, and
+# --app on an app that opted in), the pass-through flags included.
 sync_write_args() {
   SYNC_WRITE=(--write)
   if [ -n "$STANDARDS" ]; then SYNC_WRITE+=(--standards "$STANDARDS"); fi
@@ -31,6 +33,7 @@ sync_write_args() {
   if $FORCE; then SYNC_WRITE+=(--force); fi
   if $DRY_RUN; then SYNC_WRITE+=(--dry-run); fi
   if $SKIP_LOCK; then SYNC_WRITE+=(--skip-lock); fi
+  SYNC_WRITE+=("${SYNC_ARGS[@]}")
 }
 declare -a SYNC_WRITE=()
 
@@ -42,10 +45,10 @@ cmd_app_sync() {
       args=("${SYNC_WRITE[@]}")
       ;;
     check)
-      args=(--check)
+      args=(--check "${SYNC_ARGS[@]}")
       [ -z "$STANDARDS" ] || die "--standards opts an app in, which --check never does: run frappe-init --sync --standards $STANDARDS" 2
       ;;
     *) die "internal: unknown app action '$APP_ACTION'" ;;
   esac
-  exec frappe-nix sync "${args[@]}" "${SYNC_ARGS[@]}"
+  exec frappe-nix sync "${args[@]}"
 }

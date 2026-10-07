@@ -27,8 +27,11 @@
 #                       with the opt-in hint and write nothing. `frappe-init
 #                       --app --standards recommended` writes templates/app's
 #                       files and then what `frappe-nix sync --write` renders,
-#                       nothing else; --site reaches the table; and a usage
-#                       error under `frappe-init --check` is exit 2 or 3, never 1.
+#                       nothing else; --site reaches the table, and so does
+#                       --profile-path; a usage error under `frappe-init --check`
+#                       is exit 2 or 3, never 1; without --sync/--check the new
+#                       flags are refused where nothing reads them, as main
+#                       refuses an unknown flag (exit 1, nothing written).
 {
   pkgs,
   frappeNixTools,
@@ -169,6 +172,8 @@ in
         git -c user.name=t -c user.email=t@t commit -qm app
         cp -r . ../again
         cp -r . ../sited
+        cp -r . ../flags
+        cp -r . ../orgflags
 
         frappe-init --app --frappe-version version-16 --skip-lock
         have="$(git status --porcelain | sort)"
@@ -228,6 +233,34 @@ in
         code="$(code_of frappe-init --check /nonexistent)"
         [ "$code" = 3 ] || fail "frappe-init --check /nonexistent exited $code, not 3"
         echo "ok   frappe-init --check usage errors are 2, a bad target 3"
+
+        # Without --sync/--check, flags behave as on main for an app that has not opted in:
+        # the --check flags and a stray flag are unknown (exit 1, before --help), and the app
+        # standards flags are refused where nothing would read them; nothing is written.
+        cd ../flags
+        for argv in "--app --frappe-version version-16 --skip-lock --only flake.nix" \
+          "--app --format json --dry-run" "--app --expect-rev x --skip-lock" "--app --bogus --help" \
+          "--app --frappe-version version-16 --skip-lock --profile-path ." \
+          "--app --frappe-version version-16 --skip-lock --init-listing"; do
+          # shellcheck disable=SC2086 # word-split on purpose
+          code="$(code_of frappe-init $argv)"
+          [ "$code" = 1 ] || fail "frappe-init $argv exited $code, not 1"
+          [ -z "$(git status --porcelain)" ] || fail "frappe-init $argv wrote $(git status --porcelain)"
+        done
+        mkdir ../empty && cd ../empty
+        code="$(code_of frappe-init --init --standards recommended)"
+        [ "$code" = 1 ] || fail "frappe-init --init --standards exited $code, not 1"
+        [ -z "$(ls -A)" ] || fail "frappe-init --init --standards wrote $(ls -A)"
+        echo "ok   frappe-init without --sync/--check refuses the new flags where nothing reads them"
+
+        # --app --standards passes the sync flags on: --profile-path is the profile read.
+        cd ../orgflags
+        cp -r ${exampleOrg} ../org-profile
+        chmod -R u+w ../org-profile
+        frappe-init --app --standards github:example/profile --profile-path ../org-profile \
+          --frappe-version version-16 --skip-lock > /dev/null 2>&1 || fail "frappe-init --app --profile-path failed"
+        grep -q '"author": "Example Org"' package.json || fail "--profile-path did not reach frappe-nix sync"
+        echo "ok   frappe-init --app --standards passes --profile-path to frappe-nix sync"
         touch "$out"
       '';
 }

@@ -61,6 +61,10 @@ cmd_app_init() {
     standards=true
     info "app standards  : ${STANDARDS:-the [tool.frappe-nix] table} (frappe-nix sync --write follows)"
     printf '\n'
+  elif [ -n "$APP_FLAG" ]; then
+    # Nothing would read it: this app has not opted in (S35).
+    usage >&2
+    die "unknown flag: $APP_FLAG (it applies to an app that opted in to the app standards: add --standards <profile>)"
   fi
 
   if $DRY_RUN; then
