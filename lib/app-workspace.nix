@@ -61,6 +61,12 @@
   # .#relock` has to be reachable in a repo that does not have a lock yet, and
   # it only needs the apps and the generated pyproject.toml.
   lockFile ? null,
+  # An app that opted in to the app standards: its tracked tools/pyproject.toml
+  # (a path, which need not exist), else null. The root's dev group then drops
+  # each of ruff, pre-commit and semgrep the app pins a replacement for there
+  # (docs/app-standards/spec.md S1). Null leaves the template's dev group as it
+  # is, so an app that has not opted in gets exactly the root it always had.
+  appTools ? null,
 }:
 
 let
@@ -123,6 +129,9 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
       --replace-fail '@PYVER@'           ${lib.escapeShellArg pyver}
 
     cd "$out"
+    ${lib.optionalString (appTools != null && builtins.pathExists appTools) ''
+      frappe-nix-workspace ensure-root --pyproject pyproject.toml --app-tools ${lib.escapeShellArg "${appTools}"}
+    ''}
     # The same call reconcile_workspace makes (lib/sh/apps.sh): sync-apps keys
     # [tool.uv.sources] on each app's own distribution name. No sites/ here —
     # the registry (sites/apps.txt, sites/apps.json) is generated from these

@@ -79,7 +79,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["ruff>=0.15.0"]
+dev = ["ruff>=0.15.0", "mypy", "pre-commit>=4.5.1", "semgrep"]
 
 [tool.uv]
 package = false
@@ -139,7 +139,8 @@ check_eq "[project].name kept" old-bench "$(toml_get "$BENCH/pyproject.toml" "d[
 check_eq "requires-python kept" ">=3.12" "$(toml_get "$BENCH/pyproject.toml" "d['project']['requires-python']")"
 check_eq "the bench's own override-dependencies kept" "['click>=8.2,<8.3']" \
   "$(toml_get "$BENCH/pyproject.toml" "d['tool']['uv']['override-dependencies']")"
-check_eq "the bench's own dev group kept" "['ruff>=0.15.0']" \
+check_eq "the bench's own dev group kept, ruff, pre-commit and semgrep included" \
+  "['ruff>=0.15.0', 'mypy', 'pre-commit>=4.5.1', 'semgrep']" \
   "$(toml_get "$BENCH/pyproject.toml" "d['dependency-groups']['dev']")"
 check_eq "the app source kept" True \
   "$(toml_get "$BENCH/pyproject.toml" "d['tool']['uv']['sources']['frappe']['workspace']")"
@@ -157,6 +158,17 @@ check_eq "says nothing" "" "$out"
 check "pyproject.toml byte-identical" cmp -s "$BENCH/pyproject.toml" "$ROOT/pyproject.synced"
 check_eq "…and not even rewritten (mtime kept)" "$EPOCH" "$(mtime "$BENCH/pyproject.toml")"
 check_eq "uv not called again" 1 "$(uv_calls)"
+
+echo "── a root with no dev group gets the template's ──"
+NODEV="$ROOT/nodev"
+mkdir -p "$NODEV"
+grep -v '^dev = ' "$ROOT/pyproject.before" > "$NODEV/pyproject.toml"
+check "runs" "$TOOL" "$NODEV"
+check_eq "…and its dev group is the template's" \
+  "$(toml_get "$TEMPLATE" "d['dependency-groups']['dev']")" \
+  "$(toml_get "$NODEV/pyproject.toml" "d['dependency-groups']['dev']")"
+check_eq "the template's dev group has coverage, unittest-xml-reporting, ruff, pre-commit and semgrep" "True" \
+  "$(toml_get "$TEMPLATE" "{x.split('>')[0] for x in d['dependency-groups']['dev']} >= {'coverage', 'unittest-xml-reporting', 'ruff', 'pre-commit', 'semgrep'}")"
 
 echo "── a bench that points frappe-runtime somewhere else keeps its entry ──"
 FORK="$ROOT/fork"

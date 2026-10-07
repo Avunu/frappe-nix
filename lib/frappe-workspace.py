@@ -76,6 +76,64 @@ def cmd_dist_name(args):
 	return 0
 
 
+# The bench root's dev group, as templates/bench/pyproject.toml ships it, for a
+# root that has none. tests/root-sync.sh keeps the two in step.
+DEV_GROUP = [
+	"coverage>=7.10",
+	"pre-commit>=4.5.1",
+	"pydantic>=2.12.5",
+	"pytest>=9.0.2",
+	"responses",
+	"ruff>=0.15.0",
+	"semgrep",
+	"unittest-xml-reporting>=3.2",
+]
+
+# Dev tools an app that opted in to the app standards pins itself, in its
+# tracked tools/pyproject.toml, by the name it pins each by (docs/app-standards/
+# spec.md S1): a second, older copy in the bench env is one more version for an
+# editor or a hook to pick up. Dropped from that app's generated root only, one
+# by one, and only when tools/pyproject.toml lists the replacement; every other
+# root (an app that has not opted in, every bench-mode root) keeps all three.
+APP_PINNED = {"ruff": "ruff", "pre-commit": "prek", "semgrep": "semgrep"}
+
+
+def requirement_name(requirement):
+	"""The normalized distribution name of a PEP 508 requirement string."""
+	return normalize(re.split(r"[<>=!~\[ ;@]", str(requirement).strip(), maxsplit=1)[0])
+
+
+def app_tools(path):
+	"""The normalized names an app's tools/pyproject.toml lists, or an empty set when there is none.
+
+	Its [project].dependencies (spec §2.15), plus any dependency group, so a
+	tool pinned either way counts.
+	"""
+	try:
+		doc = tomlkit.parse(Path(path).read_text())
+	except FileNotFoundError:
+		return set()
+	reqs = list(doc.get("project", {}).get("dependencies", []))
+	for group in doc.get("dependency-groups", {}).values():
+		reqs += [r for r in group if isinstance(r, str)]
+	return {requirement_name(r) for r in reqs if isinstance(r, str)}
+
+
+def drop_app_pinned(dev, tools):
+	"""Remove from ``dev``, in place, each APP_PINNED tool whose replacement ``tools`` lists.
+
+	Returns the change lines ensure-root prints. Nothing else in the group moves.
+	"""
+	drop = {normalize(name) for name, pinned in APP_PINNED.items() if normalize(pinned) in tools}
+	gone = [i for i, item in enumerate(dev) if isinstance(item, str) and requirement_name(item) in drop]
+	changed = [
+		f"[dependency-groups].dev -= {dev[i]} (pinned by the app's tools/pyproject.toml)" for i in gone
+	]
+	for i in reversed(gone):
+		del dev[i]
+	return changed
+
+
 def cmd_ensure_root(args):
 	"""Fill in the root-level keys the Nix side reads directly.
 
@@ -84,14 +142,16 @@ def cmd_ensure_root(args):
 	pyproject.toml that predates frappe-nix (a user's own project file) is
 	reconciled rather than overwritten, so only absent keys are filled.
 
-	Two callers. `frappe-init` passes every value, since the file may be a
+	Three callers. `frappe-init` passes every value, since the file may be a
 	user's own with none of them. The dev shell's root sync (lib/root-sync.nix)
 	passes none: a frappe-nix bench already has them, and what it is after is
 	the part below that keeps up with frappe-nix itself — the required
 	dependencies and what the template ships for them. Hence --name and
 	--requires-python are only required when the key they would fill is
 	absent, and the file is written only when something changed, so a run that
-	changes nothing leaves the mtime (and git) alone.
+	changes nothing leaves the mtime (and git) alone. lib/app-workspace.nix
+	passes only --app-tools, for the generated root of an app that opted in to
+	the app standards (drop_app_pinned).
 	"""
 	original = Path(args.pyproject).read_text()
 	doc = tomlkit.parse(original)
@@ -136,11 +196,13 @@ def cmd_ensure_root(args):
 
 	groups = table_at(doc, "dependency-groups")
 	if "dev" not in groups:
-		groups["dev"] = tomlkit.array(
-			'["pre-commit>=4.5.1", "pydantic>=2.12.5", "pytest>=9.0.2", '
-			'"responses", "ruff>=0.15.0", "semgrep"]'
-		)
+		groups["dev"] = tomlkit.array(json.dumps(DEV_GROUP))
 		changed.append("[dependency-groups].dev")
+	# Only for the generated root of an app that opted in (lib/app-workspace.nix
+	# passes --app-tools then, and only then): the one place this removes
+	# something a root has.
+	if args.app_tools:
+		changed += drop_app_pinned(groups["dev"], app_tools(args.app_tools))
 
 	uv = table_at(doc, "tool", "uv")
 	# Not optional: the workspace root is a virtual package. lib/python.nix
@@ -701,6 +763,9 @@ def main():
 	# The rendered bench template: the source of the extra-build-dependencies
 	# and non-app [tool.uv.sources] entries an existing bench is reconciled to.
 	p.add_argument("--template", default="")
+	# An opted-in app's tracked tools/pyproject.toml: drop from the dev group
+	# each of ruff, pre-commit and semgrep it pins a replacement for (APP_PINNED).
+	p.add_argument("--app-tools", default="")
 	p.set_defaults(func=cmd_ensure_root)
 
 	p = sub.add_parser("add-app")
