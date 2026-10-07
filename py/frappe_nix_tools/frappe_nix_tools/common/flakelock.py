@@ -42,8 +42,9 @@ class Pin:
 	"""A locked ``github``, ``gitlab`` or ``git`` input.
 
 	``owner``/``repo`` name it on GitHub or GitLab (``owner`` may be a GitLab group path);
-	``host`` is GitLab's host (``gitlab.com`` by default); ``url`` is a ``git`` input's
-	clone URL. ``name`` is the directory stem under ``.dev-dist/pins/``.
+	``host`` is the GitHub or GitLab host (``github.com`` or ``gitlab.com`` by default; a
+	GitHub Enterprise or self-hosted GitLab otherwise); ``url`` is a ``git`` input's clone
+	URL. ``name`` is the directory stem under ``.dev-dist/pins/``.
 	"""
 
 	input: str
@@ -70,9 +71,15 @@ class Pin:
 
 	@property
 	def tarball_url(self) -> str:
-		"""Where a ``github`` or ``gitlab`` pin's tarball is (§5.2)."""
-		if self.type == "github":
+		"""Where a ``github`` or ``gitlab`` pin's tarball is (§5.2), on the pin's own host.
+
+		A GitHub Enterprise host serves it from its REST API (``/api/v3``), as Nix's own
+		``github`` fetcher does, so the token goes to the host it was issued for.
+		"""
+		if self.type == "github" and self.host.lower() in ("", "github.com"):
 			return f"https://codeload.github.com/{self.owner}/{self.repo}/tar.gz/{self.rev}"
+		if self.type == "github":
+			return f"https://{self.host}/api/v3/repos/{self.owner}/{self.repo}/tarball/{self.rev}"
 		if self.type == "gitlab":
 			project = urllib.parse.quote(f"{self.owner.replace('%2F', '/')}/{self.repo}", safe="")
 			return f"https://{self.host}/api/v4/projects/{project}/repository/archive.tar.gz?sha={self.rev}"
@@ -192,9 +199,16 @@ def locked_pin(lock: dict, name: str) -> Pin:
 		raise ConfigError(f"input {name!r} locks host {host!r}, which is not a host name")
 	expected = FRAPPE_NIX_PINS.get(name)
 	# GitHub names are case-insensitive, and a flake URL may spell them either way.
-	if expected and (kind != "github" or (owner.lower(), repo.lower()) != expected):
+	if expected and (
+		kind != "github" or host.lower() != "github.com" or (owner.lower(), repo.lower()) != expected
+	):
+		where = (
+			f"{kind}:{owner}/{repo}"
+			if host.lower() in ("github.com", "gitlab.com")
+			else f"{kind}:{owner}/{repo} on {host}"
+		)
 		raise ConfigError(
-			f"input {name!r} locks {kind}:{owner}/{repo}, but frappe-nix pins it to github:{'/'.join(expected)}"
+			f"input {name!r} locks {where}, but frappe-nix pins it to github:{'/'.join(expected)}"
 		)
 	return Pin(name, kind, rev, nar_hash, owner=owner, repo=repo, host=host)
 

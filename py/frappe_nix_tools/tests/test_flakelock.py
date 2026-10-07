@@ -95,6 +95,21 @@ class TestFlakeLock(unittest.TestCase):
 		with self.assertRaises(ConfigError):
 			flakelock.locked_pin(LOCK, "flake-parts")
 
+	def test_github_enterprise_pin_is_fetched_from_its_host(self):
+		# Never codeload.github.com: the token is the GHE host's, and a same-named public
+		# repository on github.com is someone else's.
+		lock = json.loads(json.dumps(LOCK))
+		lock["nodes"]["root"]["inputs"]["ghe"] = "ghe"
+		lock["nodes"]["ghe"] = github("o", "r", "7" * 40)
+		lock["nodes"]["ghe"]["locked"]["host"] = "ghe.example.com"
+		pin = flakelock.locked_pin(lock, "ghe")
+		self.assertEqual(pin.host, "ghe.example.com")
+		self.assertEqual(pin.tarball_url, f"https://ghe.example.com/api/v3/repos/o/r/tarball/{'7' * 40}")
+		# frappe-nix's own pins are github.com's: a lock moving one to another host is refused.
+		lock["nodes"]["marketplace"]["locked"]["host"] = "ghe.example.com"
+		with self.assertRaisesRegex(ConfigError, "on ghe.example.com, but frappe-nix pins it"):
+			flakelock.locked_pin(lock, "marketplace")
+
 	def test_frappe_nix_pins_are_frappe_nixs_only(self):
 		# A root input of the same name never shadows frappe-nix's pin in an app's lock.
 		shadowed = json.loads(json.dumps(LOCK))

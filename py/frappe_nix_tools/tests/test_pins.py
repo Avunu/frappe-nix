@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from frappe_nix_tools.common import nar
+from frappe_nix_tools.common import flakelock, nar, pins
 from frappe_nix_tools.common.pins import TOKEN, pin_path
 from frappe_nix_tools.common.report import ConfigError, EnvError
 from helpers import TREE_NAR_HASH, make_tree
@@ -170,14 +170,24 @@ def git(cwd, *args):
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
-	"""Serves one tarball, only to ``Authorization: Bearer secret`` when ``token`` is set."""
+	"""Serves one tarball, only to ``Authorization: Bearer secret`` when ``token`` is set.
+
+	With ``redirect`` set, answers every path but ``/final`` with a 302 to it.
+	"""
 
 	tarball: Path
 	token = ""
+	redirect = ""
 	seen: list
 
 	def do_GET(self):
 		self.seen.append((self.path, self.headers.get("Authorization")))
+		if self.redirect and self.path != "/final":
+			self.send_response(302)
+			self.send_header("Location", self.redirect)
+			self.send_header("Content-Length", "0")
+			self.end_headers()
+			return
 		if self.token and self.headers.get("Authorization") != f"Bearer {self.token}":
 			self.send_response(404)
 			self.end_headers()
@@ -220,12 +230,16 @@ class TestOtherHostsAndTokens(unittest.TestCase):
 			)
 		)
 
-	def serve(self, token=""):
-		src = make_tree(self.root / "src" / f"profile-{REV}-{REV}")
+	def serve(self, token="", redirect=""):
+		src = self.root / "src" / f"profile-{REV}-{REV}"
+		if not src.exists():
+			make_tree(src)
 		tarball = self.root / "archive.tar.gz"
 		with tarfile.open(tarball, "w:gz") as tar:
 			tar.add(src, arcname=src.name)
-		handler = type("H", (_Handler,), {"tarball": tarball, "token": token, "seen": []})
+		handler = type(
+			"H", (_Handler,), {"tarball": tarball, "token": token, "redirect": redirect, "seen": []}
+		)
 		server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
 		threading.Thread(target=server.serve_forever, daemon=True).start()
 		self.addCleanup(server.server_close)
@@ -261,6 +275,90 @@ class TestOtherHostsAndTokens(unittest.TestCase):
 			handler.seen[-1],
 			(f"/api/v4/projects/group%2Fprofile/repository/archive.tar.gz?sha={REV}", "Bearer secret"),
 		)
+
+	def profile_lock(self, port, path="/archive"):
+		self.write_lock(
+			"standards-profile",
+			{"type": "gitlab", "owner": "group", "repo": "profile", "rev": REV, "narHash": TREE_NAR_HASH},
+		)
+		os.environ["FRAPPE_NIX_PIN_URL"] = f"http://127.0.0.1:{port}{path}"
+
+	def test_token_is_not_forwarded_to_another_host(self):
+		# A GitLab that redirects archive downloads to object storage, or a mirror, must
+		# not be able to hand the token on.
+		other, other_seen = self.serve()
+		first, first_seen = self.serve(redirect=f"http://127.0.0.1:{other.server_address[1]}/final")
+		self.profile_lock(first.server_address[1])
+		os.environ[TOKEN] = "secret"
+		pin_path("standards-profile", self.lock, store_dir=self.store)
+		self.assertEqual(first_seen.seen, [("/archive", "Bearer secret")])
+		self.assertEqual(other_seen.seen, [("/final", None)])
+
+	def test_token_follows_a_redirect_on_the_same_origin(self):
+		server, handler = self.serve(token="secret")
+		handler.redirect = f"http://127.0.0.1:{server.server_address[1]}/final"
+		self.profile_lock(server.server_address[1])
+		os.environ[TOKEN] = "secret"
+		pin_path("standards-profile", self.lock, store_dir=self.store)
+		self.assertEqual(handler.seen, [("/archive", "Bearer secret"), ("/final", "Bearer secret")])
+
+	def test_https_to_http_redirect_is_refused(self):
+		request = pins.urllib.request.Request("https://git.example.org/archive")
+		request.add_header("Authorization", "Bearer secret")
+		with self.assertRaisesRegex(EnvError, "not https"):
+			pins._Redirects().redirect_request(
+				request, None, 302, "Found", {}, "http://git.example.org/archive"
+			)
+		same = pins._Redirects().redirect_request(
+			request, None, 302, "Found", {}, "https://git.example.org/final"
+		)
+		self.assertEqual(same.get_header("Authorization"), "Bearer secret")
+		other = pins._Redirects().redirect_request(
+			request, None, 302, "Found", {}, "https://storage.example.net/blob"
+		)
+		self.assertIsNone(other.get_header("Authorization"))
+
+	def test_token_only_over_https_or_loopback(self):
+		for url, carries in (
+			("https://git.example.org/x", True),
+			("http://127.0.0.1:8080/x", True),
+			("http://[::1]/x", True),
+			("http://localhost/x", True),
+			("http://git.example.org/x", False),
+			("http://10.0.0.1/x", False),
+			("file:///tmp/x", False),
+			("ssh://git@git.example.org/x", False),
+		):
+			self.assertEqual(pins._may_carry_token(url), carries, url)
+
+	def test_git_token_is_in_the_environment_not_the_command_line(self):
+		os.environ[TOKEN] = "secret"
+		os.environ["GIT_CONFIG_COUNT"] = "1"
+		calls = []
+
+		def run(cmd, **kwargs):
+			calls.append((cmd, kwargs["env"]))
+			raise subprocess.CalledProcessError(128, cmd, stderr="fatal: nope")
+
+		for url, sent in (
+			("https://git.example.org/libs/shared_lib.git", True),
+			("http://git.example.org/libs/shared_lib.git", False),
+		):
+			calls.clear()
+			pin = flakelock.Pin("shared_lib", "git", REV, TREE_NAR_HASH, url=url)
+			with mock.patch.object(pins.subprocess, "run", side_effect=run):
+				with self.assertRaises(EnvError) as ctx:
+					pins._clone(pin, self.root)
+			cmd, env = calls[0]
+			self.assertNotIn("secret", " ".join(cmd))
+			if sent:
+				self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+				self.assertEqual(env["GIT_CONFIG_KEY_1"], "http.extraHeader")
+				self.assertEqual(env["GIT_CONFIG_VALUE_1"], "Authorization: Bearer secret")
+			else:
+				self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+				self.assertNotIn("GIT_CONFIG_VALUE_1", env)
+				self.assertIn("sent only over https", str(ctx.exception))
 
 	def test_git_clone_and_checkout(self):
 		# git keeps no empty directories, so the locked tree has none.

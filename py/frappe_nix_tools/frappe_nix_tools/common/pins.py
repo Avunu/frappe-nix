@@ -12,11 +12,15 @@ produce a directory holding exactly the locked tree:
    before it is reused, and refetched unless it matches: it lives in the app checkout, so
    a commit or a stray edit can change it.
 
-The fetch follows the lock node's type: ``github`` from codeload's tarball, ``gitlab``
-from the GitLab API's archive, ``git`` with ``git clone --filter=blob:none`` and a
-checkout of the locked rev. ``FRAPPE_NIX_FETCH_TOKEN``, when set, authenticates each one
-(``Authorization: Bearer``; for git through ``http.extraHeader``), so private profiles,
-forks and siblings work (S43). Without it, a 401, 403 or 404 says to set it.
+The fetch follows the lock node's type: ``github`` from codeload's tarball (a GitHub
+Enterprise host's API tarball), ``gitlab`` from the GitLab API's archive, ``git`` with
+``git clone --filter=blob:none`` and a checkout of the locked rev.
+``FRAPPE_NIX_FETCH_TOKEN``, when set, authenticates each one (``Authorization: Bearer``;
+for git through ``http.extraHeader``, passed in git's environment so it never shows in a
+process listing), so private profiles, forks and siblings work (S43). Without it, a 401,
+403 or 404 says to set it. The token goes only over https (or plain http to a loopback
+address), never with a redirect to another scheme, host or port, and a redirect from
+https to http is refused.
 
 ``FRAPPE_NIX_PIN_URL`` replaces a tarball URL (``{host}``, ``{owner}``, ``{repo}`` and
 ``{rev}`` are filled in), for mirrors and for the tests, which serve a tarball from
@@ -24,12 +28,14 @@ forks and siblings work (S43). Without it, a 401, 403 or 404 says to set it.
 """
 
 import http.client
+import ipaddress
 import os
 import shutil
 import subprocess
 import tarfile
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -60,19 +66,62 @@ def _url(pin: flakelock.Pin) -> str:
 		) from e
 
 
+def _may_carry_token(url: str) -> bool:
+	"""Whether ``url`` may be sent the token: https, or plain http to a loopback address."""
+	parts = urllib.parse.urlsplit(url)
+	if parts.scheme == "https":
+		return True
+	if parts.scheme != "http" or not parts.hostname:
+		return False
+	if parts.hostname == "localhost":
+		return True
+	try:
+		return ipaddress.ip_address(parts.hostname).is_loopback
+	except ValueError:
+		return False
+
+
+def _origin(url: str) -> tuple[str, str]:
+	parts = urllib.parse.urlsplit(url)
+	return parts.scheme.lower(), parts.netloc.lower()
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+	"""Follows a redirect without the token unless it stays on the same scheme, host and port.
+
+	urllib's own handler copies every ordinary header, ``Authorization`` included, to
+	wherever a redirect points, and follows https to http. A GitLab that redirects archive
+	downloads to object storage, or a mirror, would otherwise be handed the token.
+	"""
+
+	def redirect_request(self, req, fp, code, msg, headers, newurl):
+		old, new = _origin(req.full_url), _origin(newurl)
+		if old[0] == "https" and new[0] != "https":
+			raise EnvError(f"cannot fetch {req.full_url}: it redirects to {newurl}, which is not https")
+		out = super().redirect_request(req, fp, code, msg, headers, newurl)
+		if out is not None and (old != new or not _may_carry_token(newurl)):
+			out.remove_header("Authorization")
+		return out
+
+
+_OPENER = urllib.request.build_opener(_Redirects)
+
+
 def _fetch(pin: flakelock.Pin, url: str, dest: Path) -> None:
 	token = _token()
 	try:
 		request = urllib.request.Request(url)
-		if token and not url.startswith("file:"):
+		if token and _may_carry_token(url):
 			request.add_header("Authorization", f"Bearer {token}")
-		with urllib.request.urlopen(request, timeout=120) as response, dest.open("wb") as out:
+		with _OPENER.open(request, timeout=120) as response, dest.open("wb") as out:
 			shutil.copyfileobj(response, out)
 	except urllib.error.HTTPError as e:
 		if e.code in (401, 403, 404) and not token:
 			raise EnvError(
 				f"cannot fetch {url}: HTTP {e.code}; if the repository is private, {_hint(pin)}"
 			) from e
+		if e.code in (401, 403, 404) and not _may_carry_token(url):
+			raise EnvError(f"cannot fetch {url}: HTTP {e.code}; {TOKEN} is sent only over https") from e
 		raise EnvError(f"cannot fetch {url}: HTTP {e.code}") from e
 	except (OSError, ValueError, http.client.HTTPException) as e:
 		raise EnvError(f"cannot fetch {url}: {e}") from e
@@ -91,21 +140,38 @@ def _unpack(tarball: Path, into: Path) -> Path:
 	return entries[0]
 
 
-def _git(pin: flakelock.Pin, *args: str, cwd: Path | None = None) -> None:
-	cmd = ["git"]
-	token = _token()
-	if token:
-		cmd += ["-c", f"http.extraHeader=Authorization: Bearer {token}"]
+def _git_env(pin: flakelock.Pin) -> dict[str, str]:
+	"""git's environment: no prompts, and the token as ``http.extraHeader`` when it may go.
+
+	Through ``GIT_CONFIG_COUNT``/``_KEY_<n>``/``_VALUE_<n>`` rather than ``git -c``, which
+	would put the token in the command line, readable by every user of the machine.
+	"""
 	env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+	token = _token()
+	if token and _may_carry_token(pin.url):
+		try:
+			n = int(env.get("GIT_CONFIG_COUNT") or 0)
+		except ValueError:
+			n = 0
+		env[f"GIT_CONFIG_KEY_{n}"] = "http.extraHeader"
+		env[f"GIT_CONFIG_VALUE_{n}"] = f"Authorization: Bearer {token}"
+		env["GIT_CONFIG_COUNT"] = str(n + 1)
+	return env
+
+
+def _git(pin: flakelock.Pin, *args: str, cwd: Path | None = None) -> None:
+	token = _token()
 	try:
-		subprocess.run([*cmd, *args], cwd=cwd, env=env, check=True, capture_output=True, text=True)
+		subprocess.run(["git", *args], cwd=cwd, env=_git_env(pin), check=True, capture_output=True, text=True)
 	except FileNotFoundError as e:
 		raise EnvError("git is not on PATH") from e
 	except subprocess.CalledProcessError as e:
 		detail = (e.stderr or "").strip().splitlines()
 		message = f"cannot fetch {pin.url}: git {args[0]}: {detail[-1] if detail else e.returncode}"
-		if not token and args[0] == "clone":
+		if args[0] == "clone" and not token:
 			message += f"; if the repository is private, {_hint(pin)}"
+		elif args[0] == "clone" and not _may_carry_token(pin.url):
+			message += f"; {TOKEN} is sent only over https"
 		raise EnvError(message) from e
 
 
