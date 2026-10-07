@@ -1,0 +1,9 @@
+schema = 1
+title = "Ironclad Fixture"
+tagline = "The app frappe-nix's Ironclad self-tests sync, test and check"
+type = "extension"
+category = "Developer Tools"
+categories = ["Testing"]
+website = "https://avunu.net/open-source/ironclad_fixture/"
+documentation = "https://ironclad-fixture.avunu.net/"
+apps_screen = false
