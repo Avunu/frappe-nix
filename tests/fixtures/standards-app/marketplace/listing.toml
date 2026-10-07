@@ -1,0 +1,9 @@
+schema = 1
+title = "Standards Fixture"
+tagline = "The app frappe-nix's app standards self-tests sync, test and check"
+type = "extension"
+category = "Developer Tools"
+categories = ["Testing"]
+website = "https://example.org/apps/standards_fixture/"
+documentation = "https://docs.example.org/standards-fixture/"
+apps_screen = false
