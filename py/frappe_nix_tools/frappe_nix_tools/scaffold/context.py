@@ -112,11 +112,15 @@ class ShallowHistory:
 
 
 class History(list):
-	"""The ``[tool.frappe-nix]`` tables ``pyproject.toml`` has had since the app opted in,
-	newest first (``engine.history``). ``truncated`` when the walk ended at a shallow clone's
-	boundary rather than at the commit before the opt-in: older tables are unknown there."""
+	"""The configurations the app has committed since it opted in, newest first
+	(``engine.history``): each ``[tool.frappe-nix]`` table resolved against the org profile
+	committed beside it. ``truncated`` when the walk ended at a shallow clone's boundary
+	rather than at the commit before the opt-in: older tables are unknown there. ``unknown``
+	says why a committed state could not be read (its locked profile could not be fetched):
+	what it held is unknown too."""
 
 	truncated = False
+	unknown = ""
 
 	MESSAGE = (
 		"retracting what a module that is off now left behind needs the history of pyproject.toml"
@@ -130,11 +134,14 @@ def ever(history: Any, on: Any) -> bool:
 
 	Found in the commits a shallow clone has, it holds in a full clone too. Not found there,
 	the answer is in commits the clone lacks, so it fails (exit 3) rather than give a verdict
-	a full clone of the same commit contradicts."""
+	a full clone of the same commit contradicts; the same for a state whose locked profile
+	could not be fetched."""
 	if any(on(h) for h in history or []):
 		return True
 	if getattr(history, "truncated", False):
 		raise EnvError(History.MESSAGE)
+	if getattr(history, "unknown", ""):
+		raise EnvError(history.unknown)
 	return False
 
 

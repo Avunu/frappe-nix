@@ -273,6 +273,159 @@ class TestRetractionAfterACommit(ToggleCase):
 		self.assertNotIn("warning", out)
 
 
+PLAIN_PROFILE = """schema = 1
+name = "plain"
+description = "recommended@1.0 as it is (a test fixture)"
+extends = "recommended@1.0"
+"""
+
+# What the profile adds to turn js and releases off: nothing in pyproject.toml changes.
+PROFILE_OFF = '\n[js]\ntool = "none"\n\n[releases]\nenable = false\n'
+
+
+class ProfileSideCase(ToggleCase):
+	"""A module turned off by the org profile, not the app's table, is retracted the same way:
+	the history reads each committed table against the profile committed beside it."""
+
+	def assert_retracted(self, env: dict[str, str] | None = None) -> None:
+		with mock.patch.dict(os.environ, env or {}):
+			code, out = self.check()
+			self.assertEqual(code, 1, out)
+			for path in (
+				".oxlintrc.json",
+				"release-please-config.json",
+				"package.json",
+				"demo_app/__init__.py",
+			):
+				self.assertIn(f"{path} (", out)
+			code, out = self.resync()
+			self.assertEqual(code, 0, out)
+			self.fake_yarn_lock()
+			self.commit()
+			code, out = self.check()
+			self.assertEqual(code, 0, out)
+		for path in (".oxlintrc.json", ".oxfmtrc.jsonc", "release-please-config.json"):
+			self.assertFalse((self.root / path).exists(), path)
+		pkg = json.loads(self.read("package.json"))
+		for key in ("format", "format:check", "lint", "check"):
+			self.assertNotIn(key, pkg["scripts"], key)
+		for key in ("oxlint", "oxfmt"):
+			self.assertNotIn(key, pkg["devDependencies"], key)
+		self.assertNotIn("x-release-please", self.read("demo_app/__init__.py"))
+
+
+class TestOriginMove(ProfileSideCase):
+	def test_origin_moving_off_github(self):
+		"""Where the repository is hosted is not committed: a commit with .github/ is read as
+		on GitHub too, so what releases left behind goes when origin moves elsewhere."""
+		self.write(".github/workflows/custom.yml", "name: custom\non: [push]\n")
+		self.commit()
+		git(self.root, "remote", "add", "origin", "https://github.com/example/demo_app.git")
+		self.assertEqual(self.check()[0], 0)
+		git(self.root, "remote", "set-url", "origin", "https://gitlab.com/example/demo_app.git")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		for path in ("release-please-config.json", "demo_app/__init__.py"):
+			self.assertIn(f"{path} (", out)
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+		self.assertFalse((self.root / "release-please-config.json").exists())
+		self.assertNotIn("x-release-please", self.read("demo_app/__init__.py"))
+		self.assertTrue((self.root / ".github/workflows/custom.yml").exists())
+
+
+class TestInRepoProfileToggle(ProfileSideCase):
+	"""The app opts in with an in-repo profile, which a later commit edits to turn js and
+	releases off: the profile committed before the edit had them on."""
+
+	profile = "./.standards-profile"
+
+	def setUp(self) -> None:
+		AppCase.setUp(self)
+		write_profile(self.root, text=PLAIN_PROFILE)
+		(self.root / ".standards-profile/templates/SECURITY.md.j2").unlink()
+		self.write("scripts/x.ts", "export const x = 1;\n")
+		self.commit()
+		self.synced()
+		self.assertTrue((self.root / ".oxlintrc.json").exists())
+
+	def test_profile_edit_retracts(self):
+		self.write(".standards-profile/profile.toml", PLAIN_PROFILE + PROFILE_OFF)
+		self.commit()
+		self.assert_retracted()
+
+
+class TestLockedProfileBump(ProfileSideCase):
+	"""``nix flake update standards-profile`` to a profile that turns js and releases off, read
+	without Nix (pin-path): the old tree, as the old lock locks it, had them on. The app opts
+	in with the org profile, so that tree is the only state with them on."""
+
+	profile = "github:example/profile"
+
+	def setUp(self) -> None:
+		AppCase.setUp(self)
+		import tarfile
+
+		from frappe_nix_tools.common import nar
+
+		self.work = self.root.parent / (self.root.name + "-pins")
+		self.addCleanup(shutil.rmtree, self.work, True)
+		self.old, new = "c" * 40, "d" * 40
+
+		def publish(rev: str, text: str) -> dict:
+			tree = write_profile(self.work / "src", rel=f"profile-{rev}", text=text)
+			(tree / "templates/SECURITY.md.j2").unlink()
+			with tarfile.open(self.work / f"{rev}.tar.gz", "w:gz") as tar:
+				tar.add(tree, arcname=tree.name)
+			lock = flake_lock(["frappe"])
+			lock["nodes"]["standards-profile"] = {
+				"flake": False,
+				"locked": {
+					"type": "github",
+					"owner": "example",
+					"repo": "profile",
+					"rev": rev,
+					"narHash": nar.nar_hash(tree),
+				},
+				"original": {"type": "github", "owner": "example", "repo": "profile"},
+			}
+			lock["nodes"]["root"]["inputs"]["standards-profile"] = "standards-profile"
+			return lock
+
+		before = publish(self.old, PLAIN_PROFILE)
+		self.after = publish(new, PLAIN_PROFILE + PROFILE_OFF)
+		self.env = {"FRAPPE_NIX_PIN_URL": f"file://{self.work}/{{rev}}.tar.gz"}
+		self.write("scripts/x.ts", "export const x = 1;\n")
+		self.write("flake.lock", json.dumps(before))
+		self.commit()
+		with mock.patch.dict(os.environ, self.env):
+			code, out = self.resync()
+			self.assertEqual(code, 0, out)
+			self.fake_locks()
+			self.write("flake.lock", json.dumps(before))
+			self.commit()
+			code, out = self.check()
+			self.assertEqual(code, 0, out)
+		self.assertTrue((self.root / ".oxlintrc.json").exists())
+		self.write("flake.lock", json.dumps(self.after))
+		self.commit()
+
+	def test_bump_retracts(self):
+		self.assert_retracted(self.env)
+
+	def test_an_old_tree_that_cant_be_read_is_exit_3(self):
+		"""What the old tree turned on is unknown, so --check can't give a verdict."""
+		(self.work / f"{self.old}.tar.gz").unlink()
+		shutil.rmtree(self.root / ".dev-dist/pins", ignore_errors=True)
+		with mock.patch.dict(os.environ, self.env):
+			code, out = self.check()
+		self.assertEqual(code, 3, out)
+		self.assertIn(f"commit {git(self.root, 'rev-parse', 'HEAD~1')[:12]} locked", out)
+		self.assertIn("could not be read", out)
+
+
 class TestCheckScriptRetraction(ToggleCase):
 	def test_js_and_typescript_off_together(self):
 		self.table('js.tool = "none"\ntypescript.enable = false\n')

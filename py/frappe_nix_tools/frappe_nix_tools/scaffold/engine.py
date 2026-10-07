@@ -12,7 +12,8 @@ entry is not live is retracted as §3.3 step 6 says: a ``whole`` file that still
 its managed header and has empty local regions is deleted (with content in a local region
 it is exit 2), a seed is left, the merged files drop the keys of the modules that turned
 off, and the version block loses its markers. A module "turned off" when it is off now and
-was on in a ``[tool.frappe-nix]`` table committed since the app opted in (``history``).
+was on in a configuration committed since the app opted in: a ``[tool.frappe-nix]`` table
+with the profile committed beside it (``history``).
 
 Every path is checked once rendered (``inside``): relative, no ``..``, and no symlink on the
 way, since ``--check`` runs on untrusted pull requests.
@@ -30,7 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import frappe_nix_tools
-from frappe_nix_tools.common import config, data_path, flakelock, known_apps, pyproject, repo
+from frappe_nix_tools.common import config, data_path, flakelock, known_apps, pins, pyproject, repo
 from frappe_nix_tools.common.config import NotOptedIn, Resolved
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, ConfigError, EnvError, Finding
 from frappe_nix_tools.scaffold import (
@@ -443,64 +444,207 @@ def resolve(
 	return config.resolve_doc(doc, root=app.root, profile_dir=profile_dir)
 
 
-def previous(root: Path, profile_dir: Path | None = None) -> context.NS | None:
-	"""The modules and configuration of ``HEAD``'s ``pyproject.toml``: what a module that is off
-	now was before. ``None`` when there is no ``HEAD``, no table there, or it doesn't resolve:
-	then nothing counts as turned off, and only files with a managed header are retracted."""
+def _in_repo_dir(name: str) -> str | None:
+	"""The directory an in-repo profile ``./<dir>`` names, relative to the app; ``None`` for
+	any other profile (or one that would leave the app, which resolving refuses)."""
+	if not name.startswith("./"):
+		return None
+	rel = PurePosixPath(name)
+	return None if not rel.parts or ".." in rel.parts or rel.is_absolute() else rel.as_posix()
+
+
+def _committed_profile(
+	root: Path, sha: str, name: str, cache: dict[str, dict] | None = None
+) -> tuple[dict | None, str]:
+	"""``(profile.toml, key)`` of the org profile ``name`` as commit ``sha`` had it: an in-repo
+	profile's committed file, a flake URL's tree as that commit's ``flake.lock`` locks it;
+	``(None, "")`` for a built-in. ``key`` tells two of them apart, and ``cache`` holds what
+	each key read, so a tree is fetched and hashed once however many commits lock it.
+
+	A profile the commit doesn't hold (no such file, a link, no locked input) is a
+	``ConfigError``: that state tells nothing. A locked tree that can't be fetched is an
+	``EnvError``: what it held is unknown."""
+	if config.is_builtin(name):
+		return None, ""
+	directory = _in_repo_dir(name)
+	if directory is not None:
+		path = f"{directory}/profile.toml"
+		try:
+			listing = repo.git(root, "ls-tree", sha, "--", path)
+			fields = listing.split("\t", 1)[0].split()
+			# A committed link is never followed, as resolving the working tree refuses one.
+			if len(fields) != 3 or fields[1] != "blob" or fields[0] == "120000":
+				raise ConfigError(f"{sha}: {path} is not a committed regular file")
+			return tomllib.loads(repo.git(root, "cat-file", "blob", fields[2])), "blob:" + fields[2]
+		except (EnvError, tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+			raise ConfigError(f"{sha}: {path}: {e}") from e
+	if not name.startswith(config.ORG_PROFILE_PREFIXES):
+		raise ConfigError(f"profile {name!r} is not a built-in, a flake URL or ./<dir>")
 	try:
-		text = repo.git(root, "show", "HEAD:./pyproject.toml")
-		doc = tomllib.loads(text)
-		if pyproject.tool_frappe_nix(doc) is None:
-			return None
-		resolved = config.resolve_doc(doc, root=root, profile_dir=profile_dir)
+		lock = flakelock.parse(repo.git(root, "show", f"{sha}:./flake.lock"), f"{sha}:flake.lock")
+		pin = flakelock.locked_pin(lock, flakelock.PROFILE_INPUT)
+	except EnvError as e:
+		raise ConfigError(f"{sha}: {e}") from e
+	key = "nar:" + pin.nar_hash
+	if cache is not None and key in cache:
+		return cache[key], key
+	tree = pins.pin_path(flakelock.PROFILE_INPUT, root / "flake.lock", lock=lock)
+	try:
+		doc = config.read_profile_dir(tree, name)
+	except ConfigError as e:
+		raise ConfigError(f"{sha}: {e}") from e
+	if cache is not None:
+		cache[key] = doc
+	return doc, key
+
+
+def _profile_at(
+	root: Path, sha: str, doc: dict, profile_dir: Path | None, cache: dict[str, dict] | None = None
+) -> tuple[dict | None, str]:
+	"""The org profile commit ``sha``'s table (in ``doc``) names, as that commit had it
+	(``_committed_profile``), not today's: a profile edit or bump that turns a module off
+	changes nothing in ``pyproject.toml``, and the module was on all the same.
+
+	With ``--profile-path``, a state whose committed profile can't be read is read from that
+	checkout instead, as before a profile author's first lock."""
+	name = (pyproject.tool_frappe_nix(doc) or {}).get("profile", "minimal")
+	name = name if isinstance(name, str) else "minimal"
+	try:
+		return _committed_profile(root, sha, name, cache)
+	except (ConfigError, EnvError):
+		if profile_dir is None:
+			raise
+		return config.read_profile_dir(profile_dir, name), f"path:{profile_dir}"
+
+
+def _has_github_dir(root: Path, sha: str) -> bool:
+	"""Whether commit ``sha`` has a ``.github/`` directory: a repository set up for GitHub."""
+	try:
+		return bool(repo.git(root, "ls-tree", "-d", sha, "--", ".github").strip())
+	except EnvError:
+		return False
+
+
+def _committed_doc(root: Path, sha: str) -> dict | None:
+	"""Commit ``sha``'s ``pyproject.toml``, parsed; ``None`` when it has none it can parse."""
+	try:
+		return tomllib.loads(repo.git(root, "show", f"{sha}:./pyproject.toml"))
+	except (EnvError, tomllib.TOMLDecodeError):
+		return None
+
+
+def previous(root: Path, profile_dir: Path | None = None) -> context.NS | None:
+	"""The modules and configuration ``HEAD`` committed (its table and its profile): what a
+	module that is off now was before. ``None`` when there is no ``HEAD``, no table there, or
+	it doesn't resolve: then nothing counts as turned off, and only files with a managed
+	header are retracted."""
+	doc = _committed_doc(root, "HEAD")
+	if doc is None or pyproject.tool_frappe_nix(doc) is None:
+		return None
+	try:
+		profile_doc, _ = _profile_at(root, "HEAD", doc, profile_dir)
+		resolved = config.resolve_doc(doc, root=root, profile_doc=profile_doc)
 	except Exception:
 		return None
 	return context.ns({"modules": resolved.modules, "cfg": resolved.cfg})
 
 
-# How far back ``history`` reads pyproject.toml: commits that changed it, newest first.
-HISTORY_DEPTH = 100
+# How far back ``history`` reads: commits that changed pyproject.toml, flake.lock or an
+# in-repo profile, newest first.
+HISTORY_DEPTH = 300
 
 
 def history(root: Path, profile_dir: Path | None = None) -> context.History:
-	"""The modules and configuration of every ``[tool.frappe-nix]`` table ``pyproject.toml`` has
-	had since the app opted in, newest first (``HEAD``'s included, each distinct table once).
+	"""The modules and configuration of every state the app has committed since it opted in,
+	newest first (``HEAD``'s included, each distinct state once). A state is a
+	``[tool.frappe-nix]`` table with the org profile committed beside it: an in-repo
+	profile's ``profile.toml`` at that commit, a flake URL's tree as that commit's
+	``flake.lock`` locks it. So the walk visits the commits that changed ``pyproject.toml``,
+	``flake.lock`` or an in-repo profile one of those tables names.
 
 	A module that is off now but on in any of them was on once, so sync may have written its
-	files and keys: they are retracted (§3.3 step 6) whichever commit turned it off. ``HEAD``
-	alone would miss a module turned off in a commit made before syncing, which is what
-	``--check`` sees on a pull request (and then the leftovers would stay for good). The walk
-	stops at the newest commit without the table: the app's settings before it opted in are
-	its own (opting in with ``minimal`` removes nothing).
+	files and keys: they are retracted (§3.3 step 6) whichever commit turned it off, in the
+	app's table or in its profile. ``HEAD`` alone would miss a module turned off in a commit
+	made before syncing, which is what ``--check`` sees on a pull request (and then the
+	leftovers would stay for good). The walk stops at the newest commit without the table:
+	the app's settings before it opted in are its own (opting in with ``minimal`` removes
+	nothing).
+
+	Where the repository is hosted is not committed: ``origin`` is today's. When it is off
+	GitHub and no ``repo`` names the host, each state is also read as hosted on GitHub when
+	``HEAD`` or its commit has a ``.github/`` directory (a repository set up for GitHub), so
+	what a GitHub-only module left before a move is retracted.
 
 	A shallow clone whose walk reaches its boundary with the table still there is
-	``truncated``: a module found on in what it has was on, and a question it can't answer
-	fails (``context.ever``, exit 3), so the verdict never depends on the clone's depth."""
+	``truncated``, and a state whose locked profile can't be fetched makes the history
+	``unknown``: a module found on in what it has was on, and a question it can't answer
+	fails (``context.ever``, exit 3), so the verdict never depends on the clone's depth or
+	on what happens to be cached."""
 	out = context.History()
 	try:
-		shas = repo.git(root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", "pyproject.toml").split()
+		edits = repo.git(root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", "pyproject.toml").split()
 	except EnvError:
 		return out
-	seen: set[str] = set()
+	docs: dict[str, dict | None] = {}
+	paths = ["pyproject.toml", "flake.lock"]
+	for sha in edits:
+		docs[sha] = doc = _committed_doc(root, sha)
+		table = pyproject.tool_frappe_nix(doc) if doc is not None else None
+		if doc is not None and table is None:
+			break
+		directory = _in_repo_dir(str((table or {}).get("profile", "")))
+		if directory is not None and directory not in paths:
+			paths.append(directory)
+	try:
+		shas = repo.git(root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", *paths).split()
+	except EnvError:
+		return out
+	# Each distinct state once: whether origin puts it off GitHub, and those also read as on it.
+	elsewhere: dict[tuple[str, str], bool] = {}
+	hosted: set[tuple[str, str]] = set()
+	profiles: dict[str, dict] = {}
+	github_dir: bool | None = None
 	stopped = len(shas) >= HISTORY_DEPTH
 	for sha in shas:
-		try:
-			doc = tomllib.loads(repo.git(root, "show", f"{sha}:./pyproject.toml"))
-		except (EnvError, tomllib.TOMLDecodeError):
+		doc = docs[sha] if sha in docs else _committed_doc(root, sha)
+		if doc is None:
 			continue
 		table = pyproject.tool_frappe_nix(doc)
 		if table is None:
 			stopped = True
 			break
-		key = json.dumps(table, sort_keys=True, default=str)
-		if key in seen:
-			continue
-		seen.add(key)
 		try:
-			resolved = config.resolve_doc(doc, root=root, profile_dir=profile_dir)
+			profile_doc, key = _profile_at(root, sha, doc, profile_dir, profiles)
+		except ConfigError:
+			continue  # no profile there to read (an in-repo one not added yet, no lock yet)
+		except EnvError as e:
+			out.unknown = out.unknown or (
+				"retracting what a module that is off now left behind needs the org profile"
+				f" commit {sha[:12]} locked, and it could not be read: {e}"
+			)
+			continue
+		state = (json.dumps(table, sort_keys=True, default=str), key)
+		if state not in elsewhere:
+			try:
+				resolved = config.resolve_doc(doc, root=root, profile_doc=profile_doc)
+			except Exception:
+				continue  # a state that no longer resolves (an old schema) tells nothing
+			out.append(context.ns({"modules": resolved.modules, "cfg": resolved.cfg}))
+			elsewhere[state] = (
+				resolved.repo_host not in (None, "github.com") and "repo" not in resolved.sources
+			)
+		if not elsewhere[state] or state in hosted:
+			continue
+		if github_dir is None:
+			github_dir = _has_github_dir(root, "HEAD")
+		if not (github_dir or _has_github_dir(root, sha)):
+			continue
+		hosted.add(state)
+		try:
+			on_github = config.resolve_doc(doc, root=root, profile_doc=profile_doc, on_github=True)
 		except Exception:
-			continue  # a table that no longer resolves (an old profile) tells nothing
-		out.append(context.ns({"modules": resolved.modules, "cfg": resolved.cfg}))
+			continue
+		out.append(context.ns({"modules": on_github.modules, "cfg": on_github.cfg}))
 	if shas and not stopped:
 		try:
 			out.truncated = repo.git(root, "rev-parse", "--is-shallow-repository").strip() == "true"

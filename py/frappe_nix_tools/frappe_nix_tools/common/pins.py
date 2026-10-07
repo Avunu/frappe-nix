@@ -132,9 +132,12 @@ def _holds(dest: Path, nar_hash: str) -> bool:
 		return False
 
 
-def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
-	"""The directory holding input ``name`` as ``lock_path`` locks it."""
-	pin = flakelock.locked_pin(flakelock.load(lock_path), name)
+def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store", *, lock: dict | None = None) -> Path:
+	"""The directory holding input ``name`` as ``lock_path`` locks it.
+
+	``lock`` is a parsed lock read elsewhere (a committed one: ``git show <sha>:flake.lock``)
+	to use instead of ``lock_path``'s, which then only places the pins directory."""
+	pin = flakelock.locked_pin(lock if lock is not None else flakelock.load(lock_path), name)
 
 	in_store = Path(nar.store_path(pin.nar_hash, store_dir=store_dir))
 	if in_store.is_dir():
