@@ -2,11 +2,14 @@
 
 import json
 import os
+import tempfile
 import tomllib
 import unittest
+from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
+from helpers import run_cli
 from scaffold_helpers import AppCase, git
 
 
@@ -77,6 +80,74 @@ class TestRoundTrip(AppCase):
 		self.assertEqual(code, 3)
 
 
+class TestCheckReportsRaisedErrors(AppCase):
+	"""json and github stay a report when the plan itself can't be built (§3.3)."""
+
+	def json_check(self, cwd=None) -> tuple[int, dict]:
+		code, out, _ = run_cli("sync", "--check", "--format", "json", cwd=cwd or self.root)
+		return code, json.loads(out)
+
+	def test_unknown_sibling(self):
+		self.synced()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace(
+				"frappe-major = 16\n", 'frappe-major = 16\nsiblings = ["nonexistent_app"]\n'
+			),
+		)
+		code, doc = self.json_check()
+		self.assertEqual(code, 2)
+		self.assertEqual(doc["status"], "invalid")
+		self.assertEqual(doc["files"][0]["path"], "pyproject.toml")
+		self.assertIn("nonexistent_app", doc["files"][0]["problem"])
+		self.assertIn("version", doc["frappe_nix"])
+		code, out, _ = self.ironclad("sync", "--check", "--format", "github")
+		self.assertEqual(code, 2)
+		self.assertIn("::error file=pyproject.toml::", out)
+
+	def test_malformed_region_names_its_file(self):
+		self.synced()
+		self.write(
+			".editorconfig",
+			self.read(".editorconfig") + "# ironclad:local-begin bogus\n# ironclad:local-end bogus\n",
+		)
+		code, doc = self.json_check()
+		self.assertEqual(code, 2)
+		self.assertEqual(doc["status"], "invalid")
+		self.assertEqual(doc["files"][0]["path"], ".editorconfig")
+
+	def test_not_a_repository(self):
+		with tempfile.TemporaryDirectory() as bare:
+			code, doc = self.json_check(Path(bare))
+		self.assertEqual(code, 3)
+		self.assertEqual(doc["status"], "error")
+		self.assertEqual(len(doc["files"]), 1)
+
+	def test_text_keeps_the_one_line_error(self):
+		with tempfile.TemporaryDirectory() as bare:
+			code, out, err = run_cli("sync", "--check", cwd=Path(bare))
+		self.assertEqual(code, 3)
+		self.assertEqual(out, "")
+		self.assertIn("ironclad sync:", err)
+
+
+class TestUntrackedLocks(AppCase):
+	"""A lock or seed left untracked by a failed run is drift, and the next sync stages it."""
+
+	def test_untracked_lock_is_drift_and_sync_stages_it(self):
+		self.synced()
+		git(self.root, "rm", "-q", "--cached", "tools/uv.lock", "nix/node-locks/frappe/ui/yarn.lock")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("tools/uv.lock (lock): exists but is not tracked", out)
+		self.assertIn("nix/node-locks/frappe/ui/yarn.lock (lock)", out)
+		code, _, err = self.ironclad("sync", "--write")
+		self.assertEqual(code, 0, err)
+		staged = git(self.root, "ls-files", "--", "tools/uv.lock", "nix/node-locks/frappe/ui/yarn.lock")
+		self.assertEqual(staged.split(), ["nix/node-locks/frappe/ui/yarn.lock", "tools/uv.lock"])
+		self.assertEqual(self.check()[0], 0)
+
+
 class TestLocalRegions(AppCase):
 	def test_region_content_survives(self):
 		self.synced()
@@ -138,15 +209,31 @@ class TestAppOwnedKeys(AppCase):
 		self.assertEqual(pkg["scripts"]["codegen"], "node scripts/codegen.ts")
 		self.assertEqual(pkg["dependencies"], {"left-pad": "1.3.0"})
 
-	def test_extra_ruff_ignore_is_exit_2(self):
+	def test_extra_lint_ignore_is_drift_sync_fixes(self):
+		"""[tool.ruff.lint].ignore is managed: bench new-app's 13-code list is rewritten."""
 		self.synced()
 		self.write(
 			"pyproject.toml",
-			self.read("pyproject.toml").replace('ignore = ["E501", "W191"]', 'ignore = ["F401"]'),
+			self.read("pyproject.toml").replace(
+				'ignore = ["E501", "W191"]', 'ignore = ["B017", "E402", "F401", "E501", "W191"]'
+			),
+		)
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		code, _, err = self.ironclad("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn('ignore = ["E501", "W191"]', self.read("pyproject.toml"))
+		self.assertEqual(self.check()[0], 0)
+
+	def test_top_level_ruff_ignore_is_exit_2(self):
+		self.synced()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace("[tool.ruff]\n", '[tool.ruff]\nignore = ["F401"]\n'),
 		)
 		code, out = self.check()
 		self.assertEqual(code, 2, out)
-		self.assertIn("F401", out)
+		self.assertIn("[tool.ruff].ignore", out)
 		code, _, err = self.ironclad("sync", "--write")
 		self.assertEqual(code, 2, err)
 

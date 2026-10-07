@@ -19,13 +19,25 @@ import contextlib
 import importlib.util
 import io
 import os
+import re
 import shutil
 import sys
+import traceback
 from pathlib import Path
 
 import ironclad
 from ironclad.common import repo
-from ironclad.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, IroncladError, render, worst
+from ironclad.common.report import (
+	CLEAN,
+	DRIFT,
+	ENVIRONMENT,
+	INVALID,
+	ConfigError,
+	Finding,
+	IroncladError,
+	render,
+	worst,
+)
 from ironclad.scaffold import bootstrap, context, engine, tomlmerge
 from ironclad.scaffold.engine import Item
 
@@ -93,6 +105,7 @@ def check(root: Path, args: argparse.Namespace) -> int:
 		)
 	if not _only(args):
 		items += engine.lock_problems(plan)
+		items += engine.untracked_lock_problems(plan)
 		if plan.ctx.discover.has_listing:
 			readme = _listing_readme("check")
 			if readme and readme[0] != CLEAN:
@@ -112,6 +125,46 @@ def check(root: Path, args: argparse.Namespace) -> int:
 	sys.stdout.write(
 		render(findings, args.format, code, {"rev": plan.ctx.frappe_nix.rev, "version": ironclad.__version__})
 	)
+	return code
+
+
+# An error message that starts with the file it is about: "package.json: …", ".editorconfig:12: …".
+_ERROR_PATH = re.compile(r"^(?P<path>[^\s:;]+)(?::\d+)?: ")
+
+
+def _error_path(root: Path, e: Exception) -> str:
+	"""The file a raised error is about: the path its message starts with, when that names
+	one in the app; else ``pyproject.toml`` for a configuration error and ``.`` otherwise."""
+	m = _ERROR_PATH.match(str(e))
+	if m and not Path(m["path"]).is_absolute() and ".." not in Path(m["path"]).parts:
+		if os.path.lexists(root / m["path"]):
+			return m["path"]
+	return "pyproject.toml" if isinstance(e, ConfigError) else "."
+
+
+def check_reported(root: Path, args: argparse.Namespace) -> int:
+	"""``--check``, where an error that stops the plan (not a repo, a schema error, an unknown
+	sibling, a malformed local region, a crash) is still a report in ``json`` and ``github``:
+	``ironclad-audit`` and the CI annotations always get a document (§3.3)."""
+	if args.format == "text":
+		repo.toplevel(root)
+		return check(root, args)
+	try:
+		repo.toplevel(root)
+		return check(root, args)
+	except IroncladError as e:
+		code, problem, path = e.code, str(e), _error_path(root, e)
+	except Exception as e:
+		# The CLI's own internal-error path, with the report on top: never exit 1 (drift).
+		if os.environ.get("IRONCLAD_DEBUG"):
+			traceback.print_exc()
+		code, problem, path = ENVIRONMENT, f"internal error: {type(e).__name__}: {e}", "."
+	print(f"ironclad sync: {problem}", file=sys.stderr)
+	rev = ""
+	with contextlib.suppress(Exception):
+		rev = engine.locked_rev(root) or ""
+	frappe_nix = {"rev": rev, "version": ironclad.__version__}
+	sys.stdout.write(render([Finding(path, "", problem)], args.format, code, frappe_nix))
 	return code
 
 
@@ -235,10 +288,14 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 				argv += ["--upgrade-package", pkg]
 		runner.run(argv)
 		touched.append("tools/uv.lock")
+		if (root / "tools/uv.lock").is_file():
+			_stage(root, ["tools/uv.lock"], runner)  # now, so a failure below leaves it staged
 	yarn_item = by_path.get("yarn.lock")
 	if yarn_item and (yarn_item.command or "package.json" in touched):
 		runner.run(["yarn", "install", "--non-interactive"])
 		touched.append("yarn.lock")
+		if (root / "yarn.lock").is_file():
+			_stage(root, ["yarn.lock"], runner)
 
 	# Formatting (§3.2): whole files are already in oxfmt's form; this settles the merged ones.
 	oxfmt = root / "node_modules" / ".bin" / "oxfmt"
@@ -258,6 +315,7 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 		for path in seeded:
 			print(f"ironclad sync: + {path} (seed)", file=sys.stderr)
 		touched += seeded
+		_stage(root, seeded, runner)  # before relock, which may fail
 
 	# Step 11: the bench lock follows the flake inputs.
 	if not only and not args.skip_lock and (lock_changed or not (root / "nix/uv.lock").is_file()):
@@ -274,8 +332,10 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 				return readme[0]
 			touched.append("README.md")
 
-	# Step 13 (the deletions are staged already, right after they were made).
-	_stage(root, [p for p in touched if (root / p).exists()], runner)
+	# Step 13 (the deletions are staged already, right after they were made). A lock or seed
+	# an earlier, failed run wrote is staged too: its step does not run again to stage it.
+	untracked = [] if runner.dry_run or only else engine.untracked_locks(root)
+	_stage(root, [p for p in touched if (root / p).exists()] + untracked, runner)
 
 	if runner.dry_run:
 		return CLEAN
@@ -310,11 +370,11 @@ def write(root: Path, args: argparse.Namespace) -> int:
 
 def _run(args: argparse.Namespace) -> int:
 	root = Path.cwd()
+	if args.check:
+		return check_reported(root, args)
 	repo.toplevel(root)
 	if os.environ.get("IRONCLAD_OFFLINE") == "1":
 		args.offline = True
-	if args.check:
-		return check(root, args)
 	try:
 		return write(root, args)
 	except SystemExit as e:

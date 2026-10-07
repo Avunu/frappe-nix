@@ -756,6 +756,32 @@ def lock_problems(plan: Plan) -> list[Item]:
 	return []
 
 
+# The files the lock steps make (phase A's lock, steps 8 to 11). A run that fails after one
+# of them is written leaves it untracked, and the step that made it does not run again.
+LOCK_PATHS = ("flake.lock", "tools/uv.lock", "yarn.lock", "nix/uv.lock", "nix/node-locks")
+
+
+def untracked_locks(root: Path) -> list[str]:
+	"""The lock files and node-lock seeds that exist but are neither tracked nor staged
+	(git-ignored ones aside): the flake and CI see only tracked files."""
+	out = repo.git(root, "ls-files", "-z", "--others", "--exclude-standard", "--", *LOCK_PATHS)
+	return sorted(p for p in out.split("\0") if p)
+
+
+def untracked_lock_problems(plan: Plan) -> list[Item]:
+	return [
+		Item(
+			path,
+			"lock",
+			None,
+			None,
+			"exists but is not tracked (the flake and CI see only tracked files): run `frappe-init --sync`",
+			DRIFT,
+		)
+		for path in untracked_locks(plan.root)
+	]
+
+
 def skew_problems(plan: Plan, expect_rev: str | None) -> list[Item]:
 	"""§3.7: the caller workflows, the lock and the running ironclad name one frappe-nix."""
 	if os.environ.get("IRONCLAD_ALLOW_SKEW") == "1":

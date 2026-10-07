@@ -181,8 +181,11 @@ def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 		for key in ("extend-select", "extend-ignore", "unfixable", "isort"):
 			if key in keys:
 				out.append((INVALID, f"{table}.{key} is forbidden (the ruff profile is fixed, S27)"))
+		# [tool.ruff.lint].ignore is a managed exact key: the merge sets it, so a longer list
+		# there (bench new-app writes 13 codes) is drift that --sync fixes. The top-level
+		# spelling is not managed, and sync never touches it.
 		extra = [c for c in (keys.get("ignore") or []) if c not in RUFF_IGNORE]
-		if extra:
+		if extra and table == "[tool.ruff]":
 			out.append(
 				(
 					INVALID,
