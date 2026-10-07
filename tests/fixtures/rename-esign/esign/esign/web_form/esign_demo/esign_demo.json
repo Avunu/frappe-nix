@@ -1,0 +1,9 @@
+{
+ "doctype": "Web Form",
+ "client_script": "frappe.call('esign.esign.custom.web_form.accept')",
+ "custom_css": "@import url('/assets/esign/dist/esign-fonts.css');",
+ "module": "eSign",
+ "modified": "2026-01-01 00:00:00.000000",
+ "name": "esign-demo",
+ "route": "esign-demo"
+}

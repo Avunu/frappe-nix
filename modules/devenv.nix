@@ -21,21 +21,38 @@ let
     ;
   inherit (flake-parts-lib) mkPerSystemOption;
 
-  # Per-bench port offset, 0..899, hashed from the bench name.
+  # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
+  # the values; the names go into the migrate and reconcile scripts too.
+  appPairs =
+    let
+      appName = "[a-z][a-z0-9_]*";
+    in
+    types.addCheck (types.attrsOf (types.strMatching appName)) (
+      pairs: lib.all (old: builtins.match appName old != null) (lib.attrNames pairs)
+    )
+    // {
+      description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
+    };
+
+  # Per-bench port offset, 0..899, hashed from the bench name (lib/ports.nix).
   #
   # NOT from the project path, though that is the obvious choice and is what
-  # devenv itself hashes for DEVENV_RUNTIME. The web port has to be written into
-  # sites/common_site_config.json — realtime/utils.js reads webserver_port
-  # straight out of the JSON and no env var can reach it — and that file is
-  # committed. A path-derived port would therefore differ in every clone and
-  # dirty the worktree forever. `benchName` is committed in the bench's own
-  # flake.nix, so every clone on every machine derives the same number.
+  # devenv itself hashes for DEVENV_RUNTIME. In bench mode the web port has to be
+  # written into sites/common_site_config.json — realtime/utils.js reads
+  # webserver_port straight out of the JSON and no env var can reach it — and
+  # that file is committed. A path-derived port would therefore differ in every
+  # clone and dirty the worktree forever. `benchName` is committed in the bench's
+  # own flake.nix, so every clone on every machine derives the same number.
   #
-  # Two clones of one bench running at once is then devenv's port allocator's
-  # problem, which is exactly what it is for.
-  portOffsetFor =
-    benchName:
-    lib.mod (lib.fromHexString (builtins.substring 0 4 (builtins.hashString "sha256" benchName))) 900;
+  # Nothing moves a port at run time: devenv's port allocator is the identity
+  # under its flake integration, so two clones of one bench running at once
+  # collide. App mode salts a linked worktree's offset with its path (its bench
+  # is generated, so nothing committed moves), and FRAPPE_NIX_PORT_OFFSET picks
+  # one by hand; see the `ports.offset` option.
+  ports = import ../lib/ports.nix { inherit lib; };
+  envPortOffset = ports.parseEnvOffset (builtins.getEnv "FRAPPE_NIX_PORT_OFFSET");
+  # The offset a perSystem frappe-nix config resolves to.
+  portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;
 
   # The same python/nodejs/requires-python/override-dependencies matrix
   # `frappe-init` scaffolds a bench from. App mode picks a row by name rather
@@ -589,6 +606,36 @@ in
           };
         };
 
+        renamedApps = mkOption {
+          type = appPairs;
+          default = { };
+          example = literalExpression ''{ esign = "esign_webforms"; }'';
+          description = ''
+            Apps renamed in place, `OLD = NEW` (`frappe-rename-app`, see
+            docs/app-standards/rename.md). The bench carries NEW only; `siteName`'s
+            database still names OLD, so `reconcile-apps` (which `devenv up` runs
+            under `appsReconcile.enable`) first runs `frappe-rename-app --site`
+            on it, before it installs anything: installing NEW beside the
+            renamed OLD would fail on the Module Def they share. Run
+            `bench migrate` afterwards. A no-op once the site names NEW.
+          '';
+        };
+
+        replacedApps = mkOption {
+          type = appPairs;
+          default = { };
+          example = literalExpression ''{ old_app = "new_app"; }'';
+          description = ''
+            Apps replaced by a new app rather than renamed, `OLD = NEW` (spec
+            §5.10). Both are on the bench. On a site that has OLD installed,
+            `reconcile-apps` installs NEW (if it is not yet) and then uninstalls
+            OLD, whose hooks the uninstall still needs, so OLD leaves the bench
+            only after every site has run this. A no-op where OLD is not
+            installed. The production counterpart is
+            `services.frappe.sites.<site>.replacedApps`.
+          '';
+        };
+
         assets = {
           reassert = {
             hooks = mkOption {
@@ -674,22 +721,72 @@ in
         };
 
         ports = {
+          worktreeSalt = mkOption {
+            type = types.bool;
+            default =
+              config.frappe-nix.app.enable
+              && (import ../lib/standards/shell.nix {
+                inherit pkgs;
+                pyproject = config.frappe-nix.app.src + "/pyproject.toml";
+              }).optedIn;
+            defaultText = lib.literalMD "whether the app opted in to the app standards (a `[tool.frappe-nix]` table in its pyproject.toml)";
+            description = ''
+              App mode: salt `ports.offset` with the checkout's path in a linked
+              worktree (`git worktree add`, whose `.git` is a file), so a second
+              worktree of the same app gets its own ports. The primary checkout
+              keeps the bench-name hash either way.
+
+              On by default only for an app that opted in to the app standards
+              (docs/app-standards/spec.md §5.12, S35), so the linked worktrees of
+              an app that has not keep the ports they had. Any app may set it
+              either way. Bench mode ignores it: its web port is committed.
+            '';
+          };
+
+          offset = mkOption {
+            type = types.ints.between 0 899;
+            default = ports.offsetFor (
+              ports.seed {
+                inherit (config.frappe-nix) benchName;
+                salt = config.frappe-nix.app.enable && config.frappe-nix.ports.worktreeSalt;
+                pwd = builtins.getEnv "PWD";
+                gitKind = ports.gitKindAt (builtins.getEnv "PWD");
+              }
+            );
+            defaultText = lib.literalMD "a hash of `benchName`, salted with the checkout's path in an app-mode linked worktree when `ports.worktreeSalt` is on";
+            description = ''
+              The offset every TCP port of this bench is derived from: the web
+              port (nginx) is `8000 + offset`, MariaDB's unbound port `3306 +
+              offset`, and Mailpit's SMTP, web UI and POP3 ports `19000`, `20000`
+              and `21000 + offset`.
+
+              By default it is a hash of `benchName`, so every bench lands
+              somewhere different and every clone of one bench lands in the same
+              place, which keeps the port out of a bench's committed
+              sites/common_site_config.json. In app mode with
+              `ports.worktreeSalt` on, a linked worktree (`git worktree add`,
+              whose `.git` is a file) hashes `benchName@<path>` instead, so a
+              second worktree of the same app gets its own ports; the primary
+              checkout keeps the bench-name hash.
+
+              The ports are fixed when the shell is evaluated: devenv's port
+              allocator does not move them under flake integration. When one is
+              already taken, `devenv up` stops and names it; set
+              `FRAPPE_NIX_PORT_OFFSET` (0 to 899) to pick another offset for that
+              shell. It wins over this option.
+            '';
+            example = 123;
+          };
+
           base = mkOption {
             type = types.nullOr types.port;
             default = null;
             description = ''
-              First port this bench tries, overriding the value derived from
-              `benchName`.
+              The web port, overriding `8000 + ports.offset`. Only the web port:
+              Mailpit and MariaDB keep theirs from `ports.offset`.
 
-              By default the offset is a hash of `benchName`, so every bench
-              lands somewhere different and every *clone* of one bench lands in
-              the same place — which is what keeps the port out of
-              sites/common_site_config.json's git diff. devenv's allocator walks
-              forward from here if something is genuinely in the way, so this is
-              a preference, not a reservation.
-
-              Mailpit is offset from this by fixed amounts (see mailpitSmtpBase
-              in modules/devenv.nix).
+              It is the port nginx binds, not a starting point: nothing moves it
+              if it is taken.
             '';
             example = 8200;
           };
@@ -749,8 +846,8 @@ in
 
             smtpPort = mkOption {
               type = types.port;
-              default = 19000 + portOffsetFor config.frappe-nix.benchName;
-              defaultText = lib.literalMD "`19000` + a hash of `benchName`";
+              default = 19000 + portOffsetOf config.frappe-nix;
+              defaultText = lib.literalMD "`19000` + `ports.offset`";
               description = ''
                 Catcher SMTP port — drives both Mailpit and Frappe.
 
@@ -758,17 +855,18 @@ in
                 and kept clear of the 11000 range because that would cover
                 11311, Frappe's own default redis_queue port.
 
-                This is where devenv's allocator starts looking, so the running
-                Mailpit may end up one or two higher; the resolved value is
-                written to $DEVENV_RUNTIME/devguard-runtime.json, which
-                frappe_devguard prefers over this baked-in one.
+                This is the port Mailpit binds: nothing moves it at run time
+                (devenv's allocator is the identity under flake integration),
+                and `devenv up` stops before starting anything if it is taken.
+                $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
+                prefers over this baked-in value, records the same port.
               '';
             };
 
             httpPort = mkOption {
               type = types.port;
-              default = 20000 + portOffsetFor config.frappe-nix.benchName;
-              defaultText = lib.literalMD "`20000` + a hash of `benchName`";
+              default = 20000 + portOffsetOf config.frappe-nix;
+              defaultText = lib.literalMD "`20000` + `ports.offset`";
               description = "Mailpit web UI port. Per-bench by default; see smtpPort.";
             };
 
@@ -813,8 +911,8 @@ in
 
               port = mkOption {
                 type = types.port;
-                default = 21000 + portOffsetFor config.frappe-nix.benchName;
-                defaultText = lib.literalMD "`21000` + a hash of `benchName`";
+                default = 21000 + portOffsetOf config.frappe-nix;
+                defaultText = lib.literalMD "`21000` + `ports.offset`";
                 description = "Mailpit POP3 port. Per-bench by default; see smtpPort.";
               };
 
@@ -1401,6 +1499,9 @@ in
             projectName = "${normalizeDist cfg.app.name}-bench";
             preset = presets.${cfg.app.frappeVersion};
             lockFile = if withLock then lockPath else null;
+            # Opted-in apps only: ruff, pre-commit and semgrep leave the root's
+            # dev group where the app pins its own (S1, lib/app-workspace.nix).
+            appTools = if standardsShell.optedIn then cfg.app.src + "/tools/pyproject.toml" else null;
           };
 
         # Two of them, and the difference matters: `relock` exists precisely for
@@ -1623,18 +1724,20 @@ in
 
         sockets = cfg.sockets.enable;
 
-        portOffset = portOffsetFor cfg.benchName;
+        portOffset = portOffsetOf cfg;
+        portBases = ports.basesFor portOffset;
 
-        # Every base below is where devenv's allocator starts looking, not a
-        # reservation: it walks forward if something is genuinely in the way.
-        webBase = if cfg.ports.base != null then cfg.ports.base else 8000 + portOffset;
+        # Every base below is the port itself, not where an allocator starts
+        # looking: devenv's allocator is the identity under flake integration,
+        # so a taken port stays taken. `devenv up` checks nginx's and Mailpit's
+        # before it starts anything (portsFreeCheck).
+        webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;
 
-        # Per-bench, for the same reason every other port here is: the allocator
-        # that would move a second bench off a taken port only runs under
-        # `devenv up`, so a shared base means two benches both *resolve* to 3306
-        # and whichever answers first wins. See the mysqld settings below for
-        # what connects over TCP at all when the socket is right there.
-        dbBase = 3306 + portOffset;
+        # Per-bench, for the same reason every other port here is: a shared base
+        # means two benches both resolve to 3306 and whichever answers first
+        # wins. See the mysqld settings below for what connects over TCP at all
+        # when the socket is right there.
+        dbBase = portBases.db;
 
         # These carry the per-bench offset through their option defaults, so a
         # consumer overriding devguard.mail.smtpPort still drives both Mailpit
@@ -1927,6 +2030,9 @@ in
           pyproject = cfg.app.src + "/pyproject.toml";
         };
 
+        # FRAPPE_NIX_CI's enterShell snippets. See lib/ci-mode.nix.
+        ciMode = import ../lib/ci-mode.nix { inherit lib; };
+
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
@@ -1961,6 +2067,17 @@ in
           inherit (cfg) nodeNestedFrontendExcludes;
           inherit appMode;
           lockDir = cfg.app.lockDir;
+        };
+
+        # reconcile-apps with the renames and replacements around it (the
+        # renamedApps and replacedApps options). Unchanged when both are empty.
+        # lib/scripts.nix's own body exits early on its quiet paths, so it runs
+        # as a script of its own between the two steps.
+        reconcileAppsExec = import ../lib/rename/reconcile.nix { inherit pkgs lib; } {
+          reconcileExec = scripts.reconcile-apps.exec;
+          pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
+          benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
+          inherit (cfg) renamedApps replacedApps;
         };
 
         # The object-store half of `bench restore`, kept separate so shellcheck
@@ -2249,6 +2366,43 @@ in
               else
                 config.processes.web.ports.main.value;
 
+            # The top of `devenv up`, before process-compose starts anything:
+            # stop when a TCP port this bench is about to bind is already taken,
+            # by another bench whose offset collides or by this one already
+            # running elsewhere. Nothing would move it (the allocator is the
+            # identity under flake integration), so without this nginx or
+            # Mailpit dies on bind and the processes that wait on it hang.
+            # A connect, not a bind: it needs no privileges and no extra tool.
+            portsFreeCheck =
+              let
+                wanted = [
+                  "${if sockets then "nginx" else "web"} 127.0.0.1 ${toString webPort}"
+                ]
+                ++ lib.optionals mailEnabled (
+                  [
+                    "mailpit-smtp ${mc.host} ${toString config.processes.mailpit.ports.smtp.value}"
+                    "mailpit-ui ${mc.host} ${toString config.processes.mailpit.ports.ui.value}"
+                  ]
+                  ++ lib.optional mc.pop3.enable "mailpit-pop3 ${mc.host} ${toString config.processes.mailpit.ports.pop3.value}"
+                );
+              in
+              ''
+                _frappe_nix_taken=""
+                for _frappe_nix_port in ${lib.escapeShellArgs wanted}; do
+                  read -r _what _host _port <<< "$_frappe_nix_port"
+                  if ${pkgs.coreutils}/bin/timeout 2 ${pkgs.bash}/bin/bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$_host" "$_port" 2>/dev/null; then
+                    _frappe_nix_taken="$_frappe_nix_taken $_what=$_host:$_port"
+                  fi
+                done
+                if [ -n "$_frappe_nix_taken" ]; then
+                  echo "frappe-nix: cannot start ${cfg.benchName}: already in use:$_frappe_nix_taken" >&2
+                  echo "  Another bench on the same ports, or this bench already up in another shell." >&2
+                  echo "  Pick other ports for this shell (offset now ${toString portOffset}, 0 to 899):" >&2
+                  echo "    FRAPPE_NIX_PORT_OFFSET=<n> nix develop --no-pure-eval   (or direnv reload)" >&2
+                  exit 1
+                fi
+              '';
+
             redisCli =
               "${config.services.redis.package}/bin/redis-cli "
               + (if sockets then ''-s "${redisSocket}"'' else "-p ${toString config.services.redis.port}");
@@ -2510,6 +2664,11 @@ in
             imports = lib.optional appMode standardsShell.devenvModule;
 
             enterShell = ''
+              # CI mode (FRAPPE_NIX_CI, lib/ci-mode.nix): read here, at entry, so
+              # one shell derivation serves both. It skips the apps report, the
+              # node_modules steps and the banner below; everything else runs.
+              ${ciMode.exports}
+
               ${lib.optionalString (!appMode) ''
                 # First, before anything below works in apps/<x>: check out the
                 # app submodules a fresh clone has never had, then say which
@@ -2518,7 +2677,7 @@ in
                 # entry runs on every `nix develop` and direnv reload; past a
                 # clone's first entry, only you, or `bench update --pull`, move
                 # a submodule. See lib/apps-report.nix.
-                ${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true
+                ${ciMode.unlessCi ''${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true''}
 
                 # sites/apps.txt and sites/apps.json are generated from the
                 # workspace members and the submodule checkouts — and committed,
@@ -2607,31 +2766,38 @@ in
               # install would skip right over it. What this finds damaged it
               # deletes, and the install puts back. Skipped, in well under a
               # second, while nothing has been installed since the last clean scan.
-              ${lib.optionalString (benchInfra.appsWithNode != [ ]) ''
-                ${nodeVerifyTool}/bin/frappe-nix-node-verify "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
-                ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
-              ''}
+              ${lib.optionalString (benchInfra.appsWithNode != [ ]) (
+                ciMode.unlessCi ''
+                  ${nodeVerifyTool}/bin/frappe-nix-node-verify "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
+                  ${nodeModulesTool}/bin/frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" ${lib.escapeShellArgs benchInfra.appsWithNode} || true
+                ''
+              )}
 
-              # Read back rather than interpolate: the port allocator only runs
-              # for `devenv up`, so a value baked in here would be the base while
-              # the running nginx might have moved on.
-              _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
+              ${ciMode.banner {
+                inherit (cfg) benchName;
+                interactive = ''
+                  # Read back rather than interpolate: the port allocator only runs
+                  # for `devenv up`, so a value baked in here would be the base while
+                  # the running nginx might have moved on.
+                  _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
 
-              ${richPython}/bin/python ${../lib/banner.py} \
-                --bench-name ${lib.escapeShellArg cfg.benchName} \
-                --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
-                --bench-root "$FRAPPE_BENCH_ROOT" \
-                --port "''${_port:-${toString webBase}}" \
-                ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
-                ${lib.optionalString (cfg.siteName != "") "--site-name ${lib.escapeShellArg cfg.siteName}"} \
-                ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
-                ${
-                  lib.optionalString mailEnabled (
-                    "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
-                    + lib.optionalString mc.pop3.enable " --mail-pop3"
-                  )
-                } \
-                ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
+                  ${richPython}/bin/python ${../lib/banner.py} \
+                    --bench-name ${lib.escapeShellArg cfg.benchName} \
+                    --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
+                    --bench-root "$FRAPPE_BENCH_ROOT" \
+                    --port "''${_port:-${toString webBase}}" \
+                    ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
+                    ${lib.optionalString (cfg.siteName != "") "--site-name ${lib.escapeShellArg cfg.siteName}"} \
+                    ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
+                    ${
+                      lib.optionalString mailEnabled (
+                        "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
+                        + lib.optionalString mc.pop3.enable " --mail-pop3"
+                      )
+                    } \
+                    ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
+                '';
+              }}
             '';
 
             services.mysql = {
@@ -2834,26 +3000,30 @@ in
             # FRAPPE_NIX_SCOPED stops the re-run from scoping itself again. The
             # show-environment probe makes a machine with no user manager (a bare
             # SSH login, a container) run unscoped instead of failing to start.
-            process.manager.before =
-              let
-                ps = cfg.processScope;
-                unitName = lib.concatMapStrings (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "-") (
-                  lib.stringToCharacters cfg.benchName
-                );
-              in
-              lib.mkIf (ps.enable && config.process.manager.implementation != "native") ''
-                if [ -z "''${FRAPPE_NIX_SCOPED:-}" ] \
-                  && command -v systemd-run >/dev/null 2>&1 \
-                  && systemctl --user show-environment >/dev/null 2>&1; then
-                  export FRAPPE_NIX_SCOPED=1
-                  exec systemd-run --user --scope --quiet --collect \
-                    --unit="frappe-nix-${unitName}-$$" \
-                    --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.benchName})"} \
-                    -p MemoryHigh=${lib.escapeShellArg ps.memoryHigh} \
-                    ${lib.optionalString (ps.memoryMax != null) "-p MemoryMax=${lib.escapeShellArg ps.memoryMax}"} \
-                    -- "$0" "$@"
-                fi
-              '';
+            process.manager.before = lib.mkMerge [
+              portsFreeCheck
+              (
+                let
+                  ps = cfg.processScope;
+                  unitName = lib.concatMapStrings (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "-") (
+                    lib.stringToCharacters cfg.benchName
+                  );
+                in
+                lib.mkIf (ps.enable && config.process.manager.implementation != "native") ''
+                  if [ -z "''${FRAPPE_NIX_SCOPED:-}" ] \
+                    && command -v systemd-run >/dev/null 2>&1 \
+                    && systemctl --user show-environment >/dev/null 2>&1; then
+                    export FRAPPE_NIX_SCOPED=1
+                    exec systemd-run --user --scope --quiet --collect \
+                      --unit="frappe-nix-${unitName}-$$" \
+                      --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.benchName})"} \
+                      -p MemoryHigh=${lib.escapeShellArg ps.memoryHigh} \
+                      ${lib.optionalString (ps.memoryMax != null) "-p MemoryMax=${lib.escapeShellArg ps.memoryMax}"} \
+                      -- "$0" "$@"
+                  fi
+                ''
+              )
+            ];
 
             # Ordering uses devenv's own `after`, not the raw process-compose
             # `depends_on` this replaces: `after` is honoured by whichever manager
@@ -3017,7 +3187,7 @@ in
                     after = needsConfig ++ [ "devenv:processes:redis" ];
                   }
                   // lib.optionalAttrs (!sockets) {
-                    ports.main.allocate = 9000 + portOffset;
+                    ports.main.allocate = portBases.socketio;
                     env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
                   }
                   // lib.optionalAttrs sockets {
@@ -3268,7 +3438,7 @@ in
               "frappe:apps-reconcile" = {
                 exec = ''
                   export FRAPPE_SITE="${cfg.siteName}"
-                  ${scripts.reconcile-apps.exec}
+                  ${reconcileAppsExec}
                 '';
                 after = [
                   "devenv:processes:mysql"
@@ -3294,6 +3464,11 @@ in
 
             scripts =
               scripts
+              // {
+                reconcile-apps = scripts.reconcile-apps // {
+                  exec = reconcileAppsExec;
+                };
+              }
               // cfg.extraScripts
               // lib.optionalAttrs assetsReassertActive {
                 # On-demand trigger for the same check the task/process run —
