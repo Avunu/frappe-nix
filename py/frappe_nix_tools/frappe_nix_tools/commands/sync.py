@@ -431,8 +431,16 @@ def write(root: Path, args: argparse.Namespace) -> int:
 	bootstrap.override_url()
 	lock_changed = False
 	if args.phase == "preflight":
-		# frappe-init --app, before it writes its template files.
-		bootstrap.require_release_branch(runner, bootstrap.context.default_frappe_nix_url())
+		# frappe-init --app, before it writes its template files: what phase A would refuse
+		# (an invalid table, a --standards or --frappe-version it contradicts, an unknown
+		# profile, a missing release branch) is refused now, with nothing written.
+		plan = _build(root, args, phases=("a",))
+		code = _invalid(plan.items)
+		if code:
+			return code
+		only = _only(args)
+		if only is None or {"flake.nix", ".envrc"} & set(only):
+			bootstrap.require_release_branch(runner, plan.ctx.frappe_nix.url)
 		return CLEAN
 	if args.phase in ("all", "a"):
 		lock_changed = phase_a(root, args, runner)

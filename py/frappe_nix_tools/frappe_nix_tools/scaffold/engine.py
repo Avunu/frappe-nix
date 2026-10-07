@@ -1392,6 +1392,13 @@ def build(
 			f"[tool.frappe-nix] already names profile {table.get('profile', 'minimal')!r}: edit profile there"
 			f" instead of passing --standards {standards}"
 		)
+	elif frappe_version and frappe_version != f"version-{table.get('frappe-major')}":
+		# The table's frappe-major is what renders; a --frappe-version it contradicts would be
+		# shown to the user (frappe-init's plan) and then silently ignored.
+		raise ConfigError(
+			f"[tool.frappe-nix] has frappe-major = {table.get('frappe-major')}: edit frappe-major there"
+			f" instead of passing --frappe-version {frappe_version}"
+		)
 	resolved = resolve(app, created=created, profile_dir=profile_dir, bootstrap=phases == ("a",))
 	if created is not None:
 		created = with_integration_branch(root, created, resolved)

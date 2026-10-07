@@ -397,6 +397,43 @@ class TestReleaseBranchPreflight(FakeNix):
 		self.assertEqual(code, 3, err)
 		self.assertEqual(git(self.root, "status", "--porcelain"), "")
 
+	def test_preflight_refuses_what_phase_a_would(self):
+		"""frappe-init --app runs the preflight before it writes templates/app's files: an
+		invalid configuration is exit 2 there, with nothing written or probed."""
+		for argv, needle in (
+			(("--standards", "minimal"), "already names profile 'recommended'"),
+			(("--frappe-version", "version-15"), "has frappe-major = 16"),
+		):
+			with self.subTest(argv=argv):
+				code, _, err = self.fn("sync", "--write", "--phase", "preflight", *argv)
+				self.assertEqual(code, 2, err)
+				self.assertIn(needle, err)
+				self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.frappe-nix]")[0])
+		self.commit()
+		code, _, err = self.fn(
+			"sync",
+			"--write",
+			"--phase",
+			"preflight",
+			"--standards",
+			"./nope",
+			"--frappe-version",
+			"version-16",
+		)
+		self.assertEqual(code, 2, err)
+		self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.assertEqual(self.calls(), [])
+
+	def test_preflight_follows_the_apps_own_frappe_nix_url(self):
+		"""dev-shell.frappe-nix-url is the app's choice: the preflight checks the URL phase A
+		would lock (the pre-release escape hatch), not release-1."""
+		self.absent()
+		self.table('dev-shell.frappe-nix-url = "github:Avunu/frappe-nix"\n')
+		self.commit()
+		code, _, err = self.fn("sync", "--write", "--phase", "preflight")
+		self.assertEqual(code, 0, err)
+
 	def test_a_lock_already_on_the_branch_is_not_probed(self):
 		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
 		self.assertFalse(bootstrap.release_ref_needed(self.root, URL))

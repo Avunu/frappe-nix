@@ -35,7 +35,11 @@
 #                       refuses an unknown flag (exit 1, nothing written). On
 #                       an app that opted in, `frappe-init --app` leaves the
 #                       .gitignore block to sync: --only package.json and a
-#                       failing sync both leave it as committed.
+#                       failing sync both leave it as committed. What sync
+#                       would refuse (a contradicted --frappe-version or
+#                       --standards, an unknown profile) is refused before
+#                       --app writes anything; an opted-in app's major is its
+#                       table's.
 {
   pkgs,
   frappeNixTools,
@@ -304,6 +308,27 @@ in
         [ "$code" = 2 ] || fail "frappe-init --app with an invalid table exited $code, not 2"
         git diff --quiet HEAD -- .gitignore || fail "a failed sync under frappe-init --app left .gitignore changed: $(git diff HEAD -- .gitignore)"
         echo "ok   frappe-init --app on an app that opted in leaves the .gitignore block to sync"
+
+        # What sync would refuse is refused before --app writes anything (the preflight builds
+        # phase A's plan): a --frappe-version or --standards the table contradicts, an unknown
+        # profile. Without --frappe-version, an app that opted in takes its table's major.
+        git checkout -q -- pyproject.toml
+        for argv in "--frappe-version version-15" "--standards minimal --frappe-version version-16" \
+          "--frappe-version version-15 --dry-run"; do
+          # shellcheck disable=SC2086 # word-split on purpose
+          code="$(code_of frappe-init --app $argv --skip-lock)"
+          [ "$code" = 2 ] || fail "frappe-init --app $argv on the opted-in fixture exited $code, not 2"
+          [ -z "$(git status --porcelain)" ] || fail "frappe-init --app $argv wrote $(git status --porcelain)"
+        done
+        frappe-init --app --only package.json --skip-lock < /dev/null > "$TMPDIR/out" 2>&1 ||
+          fail "frappe-init --app without --frappe-version did not take the table's: $(cat "$TMPDIR/out")"
+        grep -q 'frappe version : version-16' "$TMPDIR/out" || fail "frappe-init --app did not plan the table's major"
+        grep -q "list it in \[tool.frappe-nix\] siblings" "$TMPDIR/out" || fail "frappe-init --app printed the plain next steps"
+        cd ../flags
+        code="$(code_of frappe-init --app --standards ./nope --frappe-version version-16 --skip-lock)"
+        [ "$code" = 2 ] || fail "frappe-init --app --standards ./nope exited $code, not 2"
+        [ -z "$(git status --porcelain)" ] || fail "frappe-init --app --standards ./nope wrote $(git status --porcelain)"
+        echo "ok   frappe-init --app refuses what sync would before writing, and takes an opted-in app's major"
         touch "$out"
       '';
 }
