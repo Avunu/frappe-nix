@@ -1,0 +1,33 @@
+{
+	"name": "ironclad-fixture",
+	"version": "16.0.0",
+	"private": true,
+	"description": "The app frappe-nix's Ironclad self-tests sync, test and check",
+	"license": "MIT",
+	"author": "Avunu LLC",
+	"type": "module",
+	"scripts": {
+		"format": "oxfmt",
+		"format:check": "oxfmt --check",
+		"lint": "oxlint",
+		"typecheck": "tsc --build tsconfig.json",
+		"lint:py": "uv run --frozen --project tools ruff check . && uv run --frozen --project tools ruff format --check .",
+		"typecheck:py": "uv run --frozen --project tools ty check --python \"${FRAPPE_BENCH_ROOT:-.frappe-nix/bench}/env\"",
+		"check": "yarn -s format:check && yarn -s lint && yarn -s typecheck"
+	},
+	"devDependencies": {
+		"@types/node": "^26.6.4",
+		"frappe-types": "https://codeload.github.com/Avunu/frappe-types/tar.gz/4fe23e5f56c94498bc35013913fcde2e4d0b62ae",
+		"oxfmt": "^0.72.0",
+		"oxlint": "^1.87.0",
+		"typescript": "^7.0.2"
+	},
+	"engines": {
+		"node": ">=24"
+	},
+	"packageManager": "yarn@1.22.22",
+	"frappe": {
+		"major": "16",
+		"branch": "version-16"
+	}
+}

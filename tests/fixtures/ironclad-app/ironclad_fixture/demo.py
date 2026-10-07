@@ -1,3 +1,6 @@
+# Copyright (c) 2026, Avunu LLC and contributors
+# For license information, please see license.txt
+
 """Demo data for frappe-demo (docs/ironclad/spec.md §5.4): idempotent, dated from ctx["today"]."""
 
 import frappe

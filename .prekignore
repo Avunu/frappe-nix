@@ -1,0 +1,4 @@
+# Not prek projects of this repository: the fixture apps carry their own
+# .pre-commit-config.yaml (the Ironclad fixture's is a managed file under test),
+# which runs in its own checkout in selftest-scaffold.yml, never from here.
+tests/fixtures/

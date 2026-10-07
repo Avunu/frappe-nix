@@ -224,7 +224,7 @@ in
     set -e
     [ "$code" = 2 ] || fail "ironclad nonexistent exited $code, not 2"
     for c in config data-path pin-path; do
-      grep -q "'$c'" err || fail "ironclad nonexistent does not list $c: $(cat err)"
+      grep -qw -- "$c" err || fail "ironclad nonexistent does not list $c: $(cat err)"
     done
     echo "ok   ironclad nonexistent exits 2 and lists the commands"
 
