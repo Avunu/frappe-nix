@@ -24,9 +24,14 @@ _OPT_IN_LINE = re.compile(r"[ \t\n\v\f\r]*\[{1,2}tool\.frappe-nix[].].*", re.DOT
 
 
 def read(path: Path) -> str:
-	"""The text of ``pyproject.toml``; missing or unreadable is an ``EnvError``."""
+	"""The text of ``pyproject.toml``; missing or unreadable is an ``EnvError``.
+
+	Its line endings are kept as they are, as Nix's ``builtins.readFile`` keeps them: the
+	dev shell's line match (``opt_in_line``) splits on ``\\n`` alone, so a lone ``\\r``
+	must reach TOML as itself (which refuses it, exit 2) and not as a newline.
+	"""
 	try:
-		return path.read_text()
+		return path.read_bytes().decode("utf-8")
 	except FileNotFoundError as e:
 		raise EnvError(f"{path} does not exist") from e
 	except (OSError, UnicodeDecodeError) as e:

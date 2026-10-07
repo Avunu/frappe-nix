@@ -421,6 +421,20 @@ class TestOptInSpelling(unittest.TestCase):
 						self.assertEqual(code, 2)
 						self.assertIn(error, err)
 
+	def test_line_endings_reach_toml_as_written(self):
+		# Nix splits the raw text on \n: CRLF lines still match the header, but a file
+		# ending its lines with a lone \r is one line the match never sees. TOML refuses
+		# a lone \r, so the tools must see it too rather than a translated newline.
+		text = '[project]\nname = "demo_app"\n\n[tool.frappe-nix]\n' + TABLE
+		with tempfile.TemporaryDirectory() as tmp:
+			path = Path(tmp) / "pyproject.toml"
+			path.write_bytes(text.replace("\n", "\r\n").encode())
+			self.assertEqual(run_cli("config", "frappe-major", "--pyproject", str(path)), (0, "16\n", ""))
+			path.write_bytes(text.replace("\n", "\r").encode())
+			code, _, err = run_cli("config", "frappe-major", "--pyproject", str(path))
+			self.assertEqual(code, 2)
+			self.assertIn("Expected newline or end of document", err)
+
 
 if __name__ == "__main__":
 	unittest.main()

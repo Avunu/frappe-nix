@@ -36,7 +36,8 @@
 #                       match disagree on (a quoted key, spaces in the
 #                       brackets, dotted keys, a header line in a string) get
 #                       the line match's verdict here; frappe-nix-tools
-#                       refuses each with exit 2.
+#                       refuses each with exit 2. CRLF line endings opt in;
+#                       lone-CR ones don't, and TOML refuses them (exit 2).
 #
 # The loader and flake facts are evaluated, so a regression fails
 # `nix flake check --no-build` already; the derivations record what was seen.
@@ -340,6 +341,29 @@ let
       apps = builtins.attrNames fixtureApps;
       shell = map (p: p.name) shellFragment.packages;
     };
+
+  # --- opt-in ----------------------------------------------------------------
+
+  # Each opt-in fixture's pyproject.toml by name: the directories under
+  # ./fixtures/optin, and with-table's text with CRLF and with lone-CR line
+  # endings, written here since a lone CR is not TOML and check-toml would
+  # refuse it as a tracked file. Nix splits the raw text on \n, so CRLF lines
+  # still match the header while a lone-CR file is a single line that doesn't.
+  optinWithTable = builtins.readFile ./fixtures/optin/with-table/pyproject.toml;
+  optinFiles =
+    lib.mapAttrs (name: _: ./fixtures/optin + "/${name}/pyproject.toml") (
+      builtins.readDir ./fixtures/optin
+    )
+    // {
+      crlf = builtins.toFile "pyproject.toml" (
+        builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable
+      );
+      lone-cr = builtins.toFile "pyproject.toml" (
+        builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable
+      );
+    };
+  # `<name>=<file>` words for the standards-cli loops.
+  optinCases = lib.concatMapStringsSep " " (name: "${name}=${optinFiles.${name}}");
 in
 {
   standards-cli =
@@ -378,17 +402,33 @@ in
 
         # The opt-in fixtures, read by the tools: they agree with the line match
         # (standards-optin), or refuse a spelling the two would disagree on.
-        optin=${./fixtures/optin}
-        for case in with-table datetime-opted-in; do
-          [ "$(frappe-nix config frappe-major --pyproject "$optin/$case/pyproject.toml")" = 16 ] \
-            || fail "config does not read the table of optin/$case"
+        for pair in ${
+          optinCases [
+            "with-table"
+            "datetime-opted-in"
+            "crlf"
+          ]
+        }; do
+          [ "$(frappe-nix config frappe-major --pyproject "''${pair#*=}")" = 16 ] \
+            || fail "config does not read the table of optin/''${pair%%=*}"
         done
-        for case in without-table datetime commented quoted-key spaced-brackets dotted-keys in-string; do
+        for pair in ${
+          optinCases [
+            "without-table"
+            "datetime"
+            "commented"
+            "quoted-key"
+            "spaced-brackets"
+            "dotted-keys"
+            "in-string"
+            "lone-cr"
+          ]
+        }; do
           set +e
-          frappe-nix config frappe-major --pyproject "$optin/$case/pyproject.toml" 2> err
+          frappe-nix config frappe-major --pyproject "''${pair#*=}" 2> err
           code=$?
           set -e
-          [ "$code" = 2 ] || fail "config on optin/$case exited $code, not 2: $(cat err)"
+          [ "$code" = 2 ] || fail "config on optin/''${pair%%=*} exited $code, not 2: $(cat err)"
         done
         echo "ok   frappe-nix config agrees with the shell's opt-in test or refuses the spelling"
 
@@ -449,7 +489,7 @@ in
         name:
         import ../../lib/standards/shell.nix {
           inherit pkgs;
-          pyproject = ./fixtures/optin + "/${name}/pyproject.toml";
+          pyproject = optinFiles.${name};
         };
       expected = {
         without-table = false;
@@ -464,6 +504,10 @@ in
         spaced-brackets = false;
         dotted-keys = false;
         in-string = true;
+        # Line endings: CRLF lines still match; a lone-CR file is one line that
+        # doesn't, and TOML refuses it (exit 2).
+        crlf = true;
+        lone-cr = false;
       };
       seen = lib.mapAttrs (name: _: (shellFor name).optedIn) expected;
       wrong = lib.filterAttrs (name: want: seen.${name} != want) expected;
