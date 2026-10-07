@@ -16,6 +16,7 @@ import ast
 import json
 import operator
 import os
+import re
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
@@ -48,11 +49,22 @@ def nix_string(value: str) -> str:
 	return f'"{escaped}"'
 
 
+_NIX_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_'-]*")
+_NIX_KEYWORDS = {"assert", "else", "if", "in", "inherit", "let", "or", "rec", "then", "with"}
+
+
+def nix_attr(name: str) -> str:
+	"""``name`` as a Nix attribute name: bare when it is an identifier, else quoted (a sibling
+	repository may be named ``my.app`` or ``1st-app``)."""
+	return name if _NIX_IDENT.fullmatch(name) and name not in _NIX_KEYWORDS else nix_string(name)
+
+
 def _configure(env: jinja2.Environment) -> jinja2.Environment:
 	env.filters["json"] = lambda v: jsonfmt.dumps(v)
 	env.filters["jsonc"] = lambda v: jsonfmt.dumps(v, jsonc=True)
 	env.filters["json_string"] = lambda v: json.dumps(v, ensure_ascii=False)
 	env.filters["nix_string"] = nix_string
+	env.filters["nix_attr"] = nix_attr
 	env.filters["glob_to_regex"] = globs.glob_to_regex
 	return env
 

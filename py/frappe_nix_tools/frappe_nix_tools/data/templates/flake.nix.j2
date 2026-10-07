@@ -16,7 +16,7 @@
     };
 {% endif %}
 {% for s in siblings %}
-    {{ s.input }} = {
+    {{ s.input | nix_attr }} = {
       url = {{ s.flake_url | nix_string }};
       flake = false;
     };
@@ -85,7 +85,7 @@
 {% for s in siblings %}
                   {
                     name = "{{ s.name }}";
-                    src = inputs.{{ s.input }};
+                    src = inputs.{{ s.input | nix_attr }};
                   }
 {% endfor %}
                 ];

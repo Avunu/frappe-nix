@@ -53,10 +53,10 @@ from frappe_nix_tools.scaffold import render as rendering
 # The version of an app that names none anywhere (§2.8: "<__version__ or 0.1.0>").
 DEFAULT_VERSION = "0.1.0"
 BLAME_LINE = re.compile(r"^[0-9a-f]{40}  # \S.*$")
-_FLAKE_INPUT = re.compile(r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)\s*=\s*\{")
-_FLAKE_ATTR = re.compile(
-	r'^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_\'-]*)\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";'
-)
+# An input's name: a Nix identifier, or a quoted one (render.nix_attr) such as "my.app".
+_FLAKE_NAME = r"""(?:(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)|"(?P<quoted>[^"\\$]*)")"""
+_FLAKE_INPUT = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{")
+_FLAKE_ATTR = re.compile(rf'^\s{{4}}{_FLAKE_NAME}\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 _FLAKE_INNER = re.compile(r'^\s{6}(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 # The inputs flake.nix manages; a local `inputs` region may not define one (§2.5).
 MANAGED_INPUTS = ("frappe-nix", "nixpkgs", "frappe", flakelock.PROFILE_INPUT)
@@ -201,6 +201,10 @@ def read(root: Path, path: str) -> str | None:
 _NIX_COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|#[^\n]*')
 
 
+def _input_name(m: re.Match[str]) -> str:
+	return m["name"] if m["name"] is not None else m["quoted"]
+
+
 def strip_nix_comments(text: str) -> str:
 	"""``text`` without its ``#`` comments (string literals kept): templates/app's flake.nix
 	shows siblings in comments, which are not the app's."""
@@ -254,9 +258,9 @@ def flake_input_urls(text: str) -> dict[str, str]:
 	for line in m["body"].splitlines() if m else []:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
 			if one["attr"] == "url":
-				out[one["name"]] = one["value"]
+				out[_input_name(one)] = one["value"]
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
-			block = opened["name"]
+			block = _input_name(opened)
 		elif block and re.match(r"^\s{4}\};", line):
 			block = None
 		elif block and (inner := _FLAKE_INNER.match(line)) and inner["attr"] == "url":
@@ -1450,9 +1454,9 @@ def flake_input_specs(text: str) -> dict[str, str | None]:
 	block = None
 	for line in m["body"].splitlines() if m else []:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
-			specs[one["name"]] = input_spec(one["attr"], one["value"])
+			specs[_input_name(one)] = input_spec(one["attr"], one["value"])
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
-			block = opened["name"]
+			block = _input_name(opened)
 			specs.setdefault(block, None)
 		elif block and re.match(r"^\s{4}\};", line):
 			block = None

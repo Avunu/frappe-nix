@@ -3,6 +3,8 @@ on throwaway apps opted in with ``recommended``. The 1.2 cases are in test_stand
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -670,6 +672,39 @@ class TestNodeLocks(AppCase):
 			self.assertTrue((self.root / "nix/node-locks" / key / "source.json").is_file(), key)
 		self.assertEqual(self.read("nix/node-locks/hrms/roster/yarn.lock"), "mine\n")
 		self.assertFalse((self.root / "nix/node-locks/hrms/roster/source.json").exists())
+
+
+class TestOddSiblingNames(AppCase):
+	"""A sibling repository's name is its flake input's: one that is not a Nix identifier
+	(``my.app``, ``1st-app``, a keyword) is quoted, so flake.nix stays valid Nix."""
+
+	required: ClassVar[list[str]] = ["acme/my.app", "acme/1st-app", "acme/or"]
+	extra_pyproject = 'siblings = ["acme/my.app", "acme/1st-app", "acme/or"]\n'
+
+	def test_quoted_inputs(self):
+		from frappe_nix_tools.scaffold import engine
+
+		self.synced()
+		flake = self.read("flake.nix")
+		for name in ("my.app", "1st-app", "or"):
+			self.assertIn(f'    "{name}" = {{', flake)
+			self.assertIn(f'src = inputs."{name}";', flake)
+		self.assertIn("my.app", engine.flake_inputs(flake))
+		self.assertIn("1st-app", engine.flake_inputs(flake))
+		if shutil.which("nix-instantiate"):
+			parsed = subprocess.run(
+				["nix-instantiate", "--parse", str(self.root / "flake.nix")], capture_output=True, text=True
+			)
+			self.assertEqual(parsed.returncode, 0, parsed.stderr)
+		# A stale node is still found under a quoted name.
+		lock = json.loads(self.read("flake.lock"))
+		del lock["nodes"]["my.app"]
+		del lock["nodes"]["root"]["inputs"]["my.app"]
+		self.write("flake.lock", json.dumps(lock))
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("my.app (no node)", out)
 
 
 class TestNodeLockLinks(AppCase):
