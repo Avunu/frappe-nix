@@ -11,6 +11,7 @@ Every command exits with one of these codes, and when several apply the highest 
 """
 
 import json
+import secrets
 from dataclasses import asdict, dataclass
 
 CLEAN = 0
@@ -54,8 +55,28 @@ def worst(*codes: int) -> int:
 	return max((CLEAN, *codes))
 
 
+def _escape_data(text: str) -> str:
+	"""A workflow command's message: GitHub reads ``%``, CR and LF as escapes and line ends."""
+	return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(text: str) -> str:
+	"""A workflow command's property value, where ``:`` and ``,`` also end the value."""
+	return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def annotation(f: Finding) -> str:
+	"""The ``::error`` workflow command for one finding."""
+	return f"::error file={_escape_property(f.path)}::{_escape_data(f.problem)}"
+
+
 def render(findings: list[Finding], fmt: str, code: int, frappe_nix: dict | None = None) -> str:
-	"""Format ``findings`` as ``text``, ``json`` or ``github`` (text plus ``::error`` annotations)."""
+	"""Format ``findings`` as ``text``, ``json`` or ``github`` (text plus ``::error`` annotations).
+
+	In ``github`` the text part (paths, problems and diffs, which hold file contents) is
+	wrapped in ``::stop-commands::``, so no line of it runs as a workflow command, and the
+	annotations follow it, escaped.
+	"""
 	if fmt == "json":
 		doc = {
 			"status": STATUS.get(code, "error"),
@@ -65,13 +86,18 @@ def render(findings: list[Finding], fmt: str, code: int, frappe_nix: dict | None
 		return json.dumps(doc, indent=2, sort_keys=False) + "\n"
 	if fmt not in ("text", "github"):
 		raise ConfigError(f"unknown report format {fmt!r} (text, json or github)")
-	out = []
+	text = []
 	for f in findings:
-		out.append(f"{f.path} ({f.strategy}): {f.problem}")
+		text.append(f"{f.path} ({f.strategy}): {f.problem}")
 		if f.diff:
-			out.append(f.diff.rstrip("\n"))
-		if fmt == "github":
-			out.append(f"::error file={f.path}::{f.problem}")
+			text.append(f.diff.rstrip("\n"))
+	out = []
+	if fmt == "github" and text:
+		token = secrets.token_hex(16)
+		out += [f"::stop-commands::{token}", *text, f"::{token}::"]
+		out += [annotation(f) for f in findings]
+	else:
+		out += text
 	drifted = len(findings)
 	if drifted:
 		out.append(f"ironclad: {drifted} file(s) drifted — run `frappe-init --sync`")
