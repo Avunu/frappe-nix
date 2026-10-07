@@ -43,6 +43,19 @@ let
     optionalString
     ;
 
+  # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
+  # the values; the names go into the migrate and reconcile scripts too.
+  appPairs =
+    let
+      appName = "[a-z][a-z0-9_]*";
+    in
+    types.addCheck (types.attrsOf (types.strMatching appName)) (
+      pairs: lib.all (old: builtins.match appName old != null) (lib.attrNames pairs)
+    )
+    // {
+      description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
+    };
+
   cfg = config.services.frappe;
 
   enabledSites = filterAttrs (_: s: s.enable) cfg.sites;
@@ -461,6 +474,7 @@ let
       offlineMigrateTool = import ../lib/offline-migrate.nix { inherit pkgs; };
 
       dbName = siteCfg.database.name;
+      renamedList = concatStringsSep ", " (mapAttrsToList (o: n: "${o} -> ${n}") siteCfg.renamedApps);
       # Connection flags shared by mysqldump (snapshot) and mysql (rollback).
       # Password comes from MYSQL_PWD (exported below) to keep it out of argv.
       # Connect the same way Frappe does: over the unix socket when one is
@@ -549,9 +563,7 @@ let
       ${optionalString (siteCfg.renamedApps != { }) ''
         # Before anything imports the apps: the site still names OLD, which this
         # package no longer has. A failure here is a failed migrate.
-        echo "frappe-migrate(${name}): renaming ${
-          concatStringsSep ", " (mapAttrsToList (o: n: "${o} -> ${n}") siteCfg.renamedApps)
-        }"
+        echo ${lib.escapeShellArg "frappe-migrate(${name}): renaming ${renamedList}"}
         (cd ${runtimeBenchDir}/sites && ${pyEnv}/bin/python ${../lib/rename/frappe_rename_app.py} \
           --site ${name} --yes ${
             lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.renamedApps)
@@ -1277,7 +1289,7 @@ let
         };
 
         renamedApps = mkOption {
-          type = types.attrsOf (types.strMatching "[a-z][a-z0-9_]*");
+          type = appPairs;
           default = { };
           example = lib.literalExpression ''{ esign = "esign_webforms"; }'';
           description = ''
@@ -1293,7 +1305,7 @@ let
         };
 
         replacedApps = mkOption {
-          type = types.attrsOf (types.strMatching "[a-z][a-z0-9_]*");
+          type = appPairs;
           default = { };
           example = lib.literalExpression ''{ jailbreak = "data_steward"; }'';
           description = ''

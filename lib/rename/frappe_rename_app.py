@@ -18,8 +18,8 @@ Two halves, run at different times:
         Run with the bench's interpreter from its sites/ directory.
 
 Exit status: 0 done, or nothing to do; 1 a precondition failed (a dirty tree, a replace
-pair, an app missing from the bench, both apps installed); 2 a database error, rolled
-back.
+pair, an app missing from the bench, both apps installed, a malformed OLD=NEW); 2 a
+database error, rolled back.
 """
 
 import argparse
@@ -117,6 +117,24 @@ def dotted(old: str) -> re.Pattern:
 	return re.compile(rf"(?<![\w./]){re.escape(old)}\.(?=[A-Za-z_])")
 
 
+def module_path(old: str, modules: set[str]) -> re.Pattern:
+	"""``OLD.<x>`` where ``<x>`` is one of ``modules`` (what NEW's package can name).
+
+	Anything else after ``OLD.`` is not a path into the package: a JavaScript namespace
+	(``frappe.provide("esign"); esign.accept(…)``) or a file name, which the rename keeps.
+	"""
+	if not modules:
+		return re.compile(r"(?!)")
+	names = "|".join(re.escape(m) for m in sorted(modules, key=len, reverse=True))
+	return re.compile(rf"(?<![\w./]){re.escape(old)}\.(?=(?:{names})(?![\w-]))")
+
+
+def rewrite_paths(text: str, old: str, new: str, modules: set[str]) -> str:
+	"""Every ``OLD.<module>`` in ``text`` as ``NEW.<module>``; the code half's patches.txt
+	and the site half's Patch Log and site-authored text, so the three agree."""
+	return module_path(old, modules).sub(f"{new}.", text)
+
+
 class Rewriter:
 	"""The text rewrite of step 2, for one OLD → NEW, after step 1's moves."""
 
@@ -140,9 +158,9 @@ class Rewriter:
 
 	def rewrite(self, rel: str, text: str) -> str:
 		if Path(rel).name == "patches.txt":
-			# Line for line with the site half's own pattern, so every renamed line is
+			# Line for line with the site half's own rewrite, so every renamed line is
 			# exactly the Patch Log entry the site half writes and no patch runs again.
-			return dotted(self.old).sub(f"{self.new}.", text)
+			return rewrite_paths(text, self.old, self.new, self.modules)
 		out = []
 		pos = 0
 		for m in self.token.finditer(text):
@@ -479,10 +497,20 @@ class Precondition(Exception):
 	pass
 
 
-def rewrite_text(text, old: str, new: str):
+def rewrite_text(text, old: str, new: str, modules: set[str]):
 	if not isinstance(text, str) or not text:
 		return text
-	return dotted(old).sub(f"{new}.", text.replace(f"/assets/{old}/", f"/assets/{new}/"))
+	return rewrite_paths(text.replace(f"/assets/{old}/", f"/assets/{new}/"), old, new, modules)
+
+
+def package_dir(app: str) -> Path:
+	"""Where ``app``'s package is on this bench, found without importing it."""
+	import importlib.util
+
+	spec = importlib.util.find_spec(app)
+	if spec is None or not spec.submodule_search_locations:
+		raise Precondition(f"cannot find {app}'s package on this bench")
+	return Path(next(iter(spec.submodule_search_locations)))
 
 
 def mentions(text, old: str) -> bool:
@@ -495,6 +523,8 @@ class SiteRename:
 		self.db = frappe.db
 		self.dry_run = dry_run
 		self.log: list[str] = []
+		# NEW → what its package can name after `NEW.` (module_names), from check().
+		self.modules: dict[str, set[str]] = {}
 
 	def has_column(self, doctype: str, field: str) -> bool:
 		return self.db.table_exists(doctype) and self.db.has_column(doctype, field)
@@ -513,6 +543,7 @@ class SiteRename:
 			)
 		if new not in bench_apps:
 			raise Precondition(f"{new} is not in sites/apps.txt: put its code on the bench first")
+		self.modules[new] = module_names(package_dir(new))
 		# Raw SQL, not frappe.get_all: the query builder loads every installed app's hooks
 		# (filters_config), and OLD's package is no longer there to import.
 		owned = [
@@ -533,6 +564,9 @@ class SiteRename:
 			self.db.sql(sql, values)
 
 	def rename(self, old: str, new: str) -> None:
+		# What NEW's package can name after `NEW.`: the code half rewrote exactly those
+		# `OLD.<x>`, and kept every other (JS namespaces, file names), so the site does too.
+		modules = self.modules[new]
 		installed = self.installed()
 		after = [new if a == old else a for a in installed]
 		self.log.append(f"installed_apps: {installed} -> {after}")
@@ -560,7 +594,7 @@ class SiteRename:
 		for name, patch in self.db.sql(
 			"select name, patch from `tabPatch Log` where patch like %s", (f"%{old}.%",)
 		):
-			renamed = dotted(old).sub(f"{new}.", patch)
+			renamed = rewrite_paths(patch, old, new, modules)
 			if renamed != patch:
 				self.log.append(f"Patch Log [{name}]: {patch} -> {renamed}")
 				self.update("update `tabPatch Log` set patch=%s where name=%s", (renamed, name))
@@ -573,7 +607,7 @@ class SiteRename:
 				(f"%{old}.%", f"%/assets/{old}/%"),
 			)
 			for name, value in rows:
-				renamed = rewrite_text(value, old, new)
+				renamed = rewrite_text(value, old, new, modules)
 				if renamed != value:
 					self.log.append(f"{doctype}.{field} [{name}]: {value[:100]!r} -> {renamed[:100]!r}")
 					self.update(f"update `tab{doctype}` set `{field}`=%s where name=%s", (renamed, name))
@@ -581,7 +615,7 @@ class SiteRename:
 			for field, value in self.db.sql(
 				"select field, value from `tabSingles` where doctype=%s", doctype
 			):
-				renamed = rewrite_text(value, old, new)
+				renamed = rewrite_text(value, old, new, modules)
 				if renamed != value:
 					self.log.append(f"{doctype}.{field}: {value[:100]!r} -> {renamed[:100]!r}")
 					self.update(
@@ -625,7 +659,7 @@ def cmd_site(args) -> int:
 	for pair in args.pairs:
 		old, sep, new = pair.partition("=")
 		if not sep or not NAME.match(old) or not NAME.match(new) or old == new:
-			die(f"{pair!r} is not OLD=NEW", 2)
+			die(f"{pair!r} is not OLD=NEW")
 		pairs.append((old, new))
 	read_only = args.dry_run or args.scan
 

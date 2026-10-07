@@ -20,7 +20,7 @@ frappe-rename-app code --from esign --to esign_webforms             # the same, 
 It:
 
 1. moves the package (`git mv esign esign_webforms`), keeping every module folder and every `modules.txt` line, and renames each file under it whose name starts with `esign.` (the bundles `esign.desk.bundle.js`, `esign.control.bundle.css`, …), so the names `hooks.py` gives and the files agree;
-2. rewrites the tracked text: dotted paths (`esign.esign.custom.web_form.accept`), Python imports, `/assets/esign/` and `/api/method/esign.` URLs, template paths (`esign/templates/…`), `patches.txt` line by line, `[project].name` and flit's module name in `pyproject.toml`, `package.json`'s `name`, `app_name`, the CI's `--app` and release-please's `package-name`;
+2. rewrites the tracked text: dotted paths (`esign.esign.custom.web_form.accept`), Python imports, `/assets/esign/` and `/api/method/esign.` URLs, template paths (`esign/templates/…`), `patches.txt` line by line (only paths into the package: `"esign.check()"` in an `execute:` line is a JavaScript namespace and stays), `[project].name` and flit's module name in `pyproject.toml`, `package.json`'s `name`, `app_name`, the CI's `--app` and release-please's `package-name`;
 3. bumps `modified` in every standard JSON whose content changed, or existing sites would never re-import it;
 4. appends an `override_whitelisted_methods` shim to `hooks.py`, between `# ironclad:rename-shim-begin esign` and `# ironclad:rename-shim-end`, mapping each whitelisted function's old dotted path to its new one, for the callers you cannot update in the same release: cached bundles, webhooks, bookmarks. Keep it for at least one minor release.
 
@@ -45,9 +45,9 @@ In one transaction, it rewrites:
 - the Patch Log, so no renamed patch runs again;
 - `Scheduled Job Type.method` and `Scheduler Event.method` in place, so each job keeps its row, its `stopped` flag and its log;
 - the columns that hold an app name: `Desktop Icon`, `Dock`, `Sidebar`, `Sidebar Item Group`, `Workspace Sidebar` and `Website Theme Ignore App` `.app`, `Notification Log.app`, `User.default_app`, `System Settings.default_app` and `User Invitation.app_name`;
-- `esign.` dotted paths and `/assets/esign/` URLs in what a site's users write: report and server and client scripts, print formats, web forms and pages, web templates, custom HTML blocks, letter heads, website route redirects, number cards, DocType actions and navbar items.
+- `esign.<x>` dotted paths, where `<x>` is a module or name of the new package (the same rule as the code half, so a JavaScript namespace like `esign.accept(…)` is kept), and `/assets/esign/` URLs in what a site's users write: report and server and client scripts, print formats, web forms and pages, web templates, custom HTML blocks, letter heads, website route redirects, number cards, DocType actions and navbar items.
 
-After the commit it updates the `installed_apps` copy in `site_config.json` and drops the cached app and module maps. It refuses (exit 1) when both apps are installed, when the new app is not on the bench (`sites/apps.txt`), or when its `modules.txt` lacks a module the old app owns. A database error rolls everything back (exit 2). On a site without the old app it prints `esign not installed on <site>: nothing to do`, so it is safe to run on every deploy. `--scan` reports, read-only, every text column in every table that still names the old app, logs excepted.
+After the commit it updates the `installed_apps` copy in `site_config.json` and drops the cached app and module maps. It refuses (exit 1) when both apps are installed, when the new app is not on the bench (`sites/apps.txt`), or when its `modules.txt` lacks a module the old app owns. A database error rolls everything back (exit 2); an argument that is not `OLD=NEW` exits 1. On a site without the old app it prints `esign not installed on <site>: nothing to do`, so it is safe to run on every deploy. `--scan` reports, read-only, every text column in every table that still names the old app, logs excepted.
 
 ## Where it runs
 

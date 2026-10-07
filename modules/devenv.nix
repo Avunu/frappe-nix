@@ -21,6 +21,19 @@ let
     ;
   inherit (flake-parts-lib) mkPerSystemOption;
 
+  # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
+  # the values; the names go into the migrate and reconcile scripts too.
+  appPairs =
+    let
+      appName = "[a-z][a-z0-9_]*";
+    in
+    types.addCheck (types.attrsOf (types.strMatching appName)) (
+      pairs: lib.all (old: builtins.match appName old != null) (lib.attrNames pairs)
+    )
+    // {
+      description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
+    };
+
   # Per-bench port offset, 0..899, hashed from the bench name (lib/ports.nix).
   #
   # NOT from the project path, though that is the obvious choice and is what
@@ -594,7 +607,7 @@ in
         };
 
         renamedApps = mkOption {
-          type = types.attrsOf (types.strMatching "[a-z][a-z0-9_]*");
+          type = appPairs;
           default = { };
           example = literalExpression ''{ esign = "esign_webforms"; }'';
           description = ''
@@ -609,7 +622,7 @@ in
         };
 
         replacedApps = mkOption {
-          type = types.attrsOf (types.strMatching "[a-z][a-z0-9_]*");
+          type = appPairs;
           default = { };
           example = literalExpression ''{ jailbreak = "data_steward"; }'';
           description = ''
@@ -819,10 +832,11 @@ in
                 and kept clear of the 11000 range because that would cover
                 11311, Frappe's own default redis_queue port.
 
-                This is where devenv's allocator starts looking, so the running
-                Mailpit may end up one or two higher; the resolved value is
-                written to $DEVENV_RUNTIME/devguard-runtime.json, which
-                frappe_devguard prefers over this baked-in one.
+                This is the port Mailpit binds: nothing moves it at run time
+                (devenv's allocator is the identity under flake integration),
+                and `devenv up` stops before starting anything if it is taken.
+                $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
+                prefers over this baked-in value, records the same port.
               '';
             };
 

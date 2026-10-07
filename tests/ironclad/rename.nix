@@ -36,6 +36,8 @@ let
 
   # A bench whose `bench` and `python` log every call and keep the site's
   # installed apps in $STATE/installed, and a database whose clients succeed.
+  # STUB_FAIL_RENAME=1 fails frappe_rename_app.py, STUB_FAIL_INSTALL=<app> that
+  # app's install-app, and STUB_INSTALL_DELAY makes install-app take that long.
   stubEnv = pkgs.runCommand "stub-bench-env" { } ''
     mkdir -p "$out/bin"
     cat > "$out/bin/bench" <<'EOF'
@@ -43,13 +45,17 @@ let
     echo "bench $*" >> "$STATE/log"
     case "$*" in
       *" list-apps --format json") printf '{"%s": [' "$2"; sed 's/.*/"&"/' "$STATE/installed" | paste -sd, | tr -d '\n'; printf ']}\n' ;;
-      *" install-app "*) echo "''${4}" >> "$STATE/installed" ;;
+      *" install-app "*)
+        [ "''${STUB_FAIL_INSTALL:-}" != "''${4}" ] || exit 1
+        sleep "''${STUB_INSTALL_DELAY:-0}"
+        echo "''${4}" >> "$STATE/installed" ;;
       *" uninstall-app "*) grep -vx "''${4}" "$STATE/installed" > "$STATE/installed.new"; mv "$STATE/installed.new" "$STATE/installed" ;;
     esac
     EOF
     cat > "$out/bin/python" <<'EOF'
     #!${lib.getExe pkgs.bash}
     echo "python $* (in $PWD)" >> "$STATE/log"
+    case "$*" in *frappe_rename_app.py*) [ -z "''${STUB_FAIL_RENAME:-}" ] || exit 1 ;; esac
     EOF
     chmod +x "$out/bin/"*
   '';
@@ -100,6 +106,7 @@ let
       ];
     }).config;
   migrateScript = nixos.systemd.services."frappe-migrate-${site}".serviceConfig.ExecStart;
+  dbName = nixos.services.frappe.sites.${site}.database.name;
 
   # --- devenv -----------------------------------------------------------------
 
@@ -198,14 +205,51 @@ in
         grep -q '"package-name": "esign_webforms"' release-please-config.json || fail "release-please package-name"
         grep -q -- '--app esign_webforms' .github/workflows/ci.yml || fail "the CI --app"
         grep -qx 'esign_webforms.patches.v1.fix_signatures' esign_webforms/patches.txt || fail "patches.txt"
-        grep -q '"esign_webforms.check()"' esign_webforms/patches.txt || fail "patches.txt execute: line"
+        grep -qxF 'execute:frappe.db.set_value("Web Form", "esign-demo", "client_script", "esign.check()")' esign_webforms/patches.txt \
+          || fail "patches.txt: the JS namespace in an execute: line's string was rewritten"
+        grep -q '^esign\.accept = ' esign_webforms/public/js/esign_webforms.desk.bundle.js || fail "the JS namespace esign.accept was rewritten"
         grep -q 'from esign_webforms.esign import' esign_webforms/esign/custom/web_form.py || fail "the import"
         grep -q '"esign_webforms/templates/esign_webforms.html"' esign_webforms/esign/custom/web_form.py || fail "the template path"
         grep -q '/api/method/esign_webforms.esign.custom.web_form.accept' esign_webforms/esign/custom/web_form.py || fail "the /api/method URL"
         grep -q '^import esign_webforms$' esign_webforms/patches/v1/fix_signatures.py || fail "import OLD"
         grep -q 'localStorage.getItem("esign_signature_pad")' esign_webforms/public/js/esign_webforms.desk.bundle.js || fail "a localStorage key changed"
         cmp -s CHANGELOG.md ${../fixtures/rename-esign/CHANGELOG.md} || fail "CHANGELOG.md changed"
-        echo "ok   names, dotted paths, patches, imports and URLs rewritten; history and keys kept"
+        echo "ok   names, dotted paths, patches, imports and URLs rewritten; history, keys and JS namespaces kept"
+
+        # The site half rewrites what the code half does: OLD.<module of NEW>, not a
+        # JS namespace (the bundle above still defines esign), and the Patch Log line
+        # equals the patches.txt line.
+        python3 - ${tool} <<'PY'
+        import importlib.util, pathlib, sys
+        spec = importlib.util.spec_from_file_location("fra", sys.argv[1])
+        fra = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fra)
+        mods = fra.module_names(pathlib.Path("esign_webforms"))
+        cases = {
+            "esign.accept(frm.doc.name)": "esign.accept(frm.doc.name)",
+            'frappe.call({method: "esign.esign.custom.web_form.accept"})': 'frappe.call({method: "esign_webforms.esign.custom.web_form.accept"})',
+            '<link href="/assets/esign/dist/x.css">': '<link href="/assets/esign_webforms/dist/x.css">',
+            "esign.config.after_install": "esign_webforms.config.after_install",
+            "esign.legacy.bundle.css": "esign.legacy.bundle.css",
+        }
+        for text, want in cases.items():
+            got = fra.rewrite_text(text, "esign", "esign_webforms", mods)
+            if got != want:
+                sys.exit(f"FAIL site half: {text!r} -> {got!r}, want {want!r}")
+        PY
+        python3 - ${tool} ${../fixtures/rename-esign/esign/patches.txt} <<'PY'
+        import importlib.util, pathlib, sys
+        spec = importlib.util.spec_from_file_location("fra", sys.argv[1])
+        fra = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fra)
+        mods = fra.module_names(pathlib.Path("esign_webforms"))
+        before = pathlib.Path(sys.argv[2]).read_text().splitlines()
+        after = pathlib.Path("esign_webforms/patches.txt").read_text().splitlines()
+        site = [fra.rewrite_paths(line, "esign", "esign_webforms", mods) for line in before]
+        if site != after:
+            sys.exit(f"FAIL the Patch Log rewrite {site} is not patches.txt's {after}")
+        PY
+        echo "ok   the site half keeps JS namespaces and file names, and matches patches.txt line for line"
 
         json=esign_webforms/esign/web_form/esign_demo/esign_demo.json
         grep -q '/assets/esign_webforms/dist/esign-fonts.css' "$json" || fail "the JSON's asset URL"
@@ -255,6 +299,28 @@ in
     ! grep -q 'install-app\|uninstall-app' "$STATE/log" || fail "a second run touched the apps: $(cat "$STATE/log")"
     grep -q ' migrate' "$STATE/log" || fail "a second run did not migrate"
     echo "ok   a second run installs and uninstalls nothing"
+
+    # A failed step: nothing after it runs, the snapshot comes back, and the
+    # site stays in maintenance mode.
+    failed() { # <label> <env…>
+      local label="$1" rc=0
+      shift
+      rm -f site/.frappe-migrate-build
+      printf '%s\n' frappe esign jailbreak > "$STATE/installed"
+      : > "$STATE/log"
+      env "$@" ./migrate || rc=$?
+      [ "$rc" != 0 ] || fail "$label: the migrate unit exited 0"
+      ! grep -q 'uninstall-app' "$STATE/log" || fail "$label: uninstalled an app: $(cat "$STATE/log")"
+      ! grep -q ' migrate$' "$STATE/log" || fail "$label: ran bench migrate: $(cat "$STATE/log")"
+      ! grep -q 'set-maintenance-mode off' "$STATE/log" || fail "$label: maintenance mode went off"
+      grep -q "CONCAT('DROP " "$STATE/log" || fail "$label: no rollback (drop): $(cat "$STATE/log")"
+      grep -q '^mysql .* ${dbName}$' "$STATE/log" || fail "$label: no rollback (re-import): $(cat "$STATE/log")"
+      echo "ok   $label: exit $rc, no uninstall, no migrate, rolled back, maintenance left on"
+    }
+    failed "a failed rename" STUB_FAIL_RENAME=1
+    ! grep -q 'install-app' "$STATE/log" || fail "a failed rename still installed: $(cat "$STATE/log")"
+    failed "a failed install-app data_steward" STUB_FAIL_INSTALL=data_steward
+    grep -q 'install-app data_steward' "$STATE/log" || fail "the install was not tried"
     cp ${migrateScript} "$out"
   '';
 
@@ -288,6 +354,20 @@ in
       ${lib.getExe pkgs.bash} reconcile-apps
       ! grep -q 'install-app' "$STATE/log" || fail "a second run touched the apps: $(cat "$STATE/log")"
       echo "ok   a second run installs and uninstalls nothing"
+
+      # Every process that waits on frappe:apps-reconcile runs it, at once: one
+      # install and one uninstall between them.
+      printf '%s\n' frappe esign jailbreak > "$STATE/installed"
+      : > "$STATE/log"
+      STUB_INSTALL_DELAY=1 ${lib.getExe pkgs.bash} reconcile-apps & a=$!
+      STUB_INSTALL_DELAY=1 ${lib.getExe pkgs.bash} reconcile-apps & b=$!
+      STUB_INSTALL_DELAY=1 ${lib.getExe pkgs.bash} reconcile-apps & c=$!
+      wait "$a" && wait "$b" && wait "$c" || fail "a concurrent copy failed: $(cat "$STATE/log")"
+      [ "$(grep -c 'install-app data_steward' "$STATE/log")" = 1 ] \
+        && [ "$(grep -c 'uninstall-app jailbreak' "$STATE/log")" = 1 ] \
+        || fail "three copies at once: $(cat "$STATE/log")"
+      [ "$(sort "$STATE/installed" | tr '\n' ' ')" = "data_steward esign frappe " ] || fail "installed: $(cat "$STATE/installed")"
+      echo "ok   three copies at once: one install-app, one uninstall-app (reconcile-apps' lock)"
 
       rm -rf bench/sites/dev.localhost
       : > "$STATE/log"
