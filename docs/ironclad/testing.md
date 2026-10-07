@@ -24,8 +24,8 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 
 | Stage | What | Fails with |
 |---|---|---|
-| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and the web port. | 10 |
-| site | `provision-site` (unless `--reuse-site` and the site exists), `allow_tests`, then the `[tool.ironclad.test] setup` steps. | 10 |
+| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and the web port; a failed `devenv up` (a taken port, say) fails at once. | 10 |
+| site | `provision-site` for the `--site` (unless `--reuse-site` and the site exists), `allow_tests`, then the `[tool.ironclad.test] setup` steps. | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |
 | testmap | Every whitelisted function and hook target ran, or is exempt. | 3 |
@@ -33,6 +33,8 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 | ty | `uv run --frozen --project tools ty check` against the bench's interpreter (`--ty`). | 5 |
 | nix-lint | `nixfmt --check`, `statix`, `deadnix` over `flake.nix` and `nix/*.nix` (`--nix-lint`). | 6 |
 | shell checks | Each `[tool.ironclad] shell-checks` command, which must leave the tree as it found it (`--shell-checks`). | 7 |
+
+A usage error (an unknown flag, no app, no site) exits 64, and running it outside the app dev shell exits 10, so neither reads as a verdict.
 
 `--ci` turns on the last three, writes a JUnit report to `.dev-dist/test/junit.xml`, and appends the summary to `$GITHUB_STEP_SUMMARY`.
 

@@ -21,7 +21,8 @@
 #   9 report        ironclad-report.json, summary.md, $GITHUB_STEP_SUMMARY
 #
 # The exit status is the verdict of the first failing stage, 10 for an
-# environment failure in stage 1 or 2, and 0 otherwise.
+# environment failure (stage 1 or 2, or no dev shell), 64 (EX_USAGE) for a usage
+# error, and 0 otherwise. Neither collides with a verdict.
 set -uo pipefail
 
 usage() {
@@ -52,7 +53,8 @@ shell checks, a JUnit report and the step summary: what CI's `ci / test` runs.
 
 Exit status: the first failing stage's verdict: 1 tests, 2 coverage, 3 testmap,
 4 composition, 5 ty, 6 nix-lint, 7 shell checks; 10 when the bench or the site
-could not be brought up; 0 when everything passed.
+could not be brought up, or outside the app dev shell; 64 for a usage error;
+0 when everything passed.
 EOF
 }
 
@@ -61,10 +63,11 @@ MODULE="" DOCTYPE="" TESTS=()
 COVERAGE=1 TESTMAP=1 COMPOSITION=1 TY=0 NIXLINT=0 SHELLCHECKS=0
 JUNIT="" OUT=""
 
-need() { [ "$#" -ge 2 ] && [ -n "$2" ] || {
-  echo "frappe-test: $1 needs a value" >&2
-  exit 2
-}; }
+usage_error() {
+  echo "frappe-test: $1" >&2
+  exit 64
+}
+need() { [ "$#" -ge 2 ] && [ -n "$2" ] || usage_error "$1 needs a value"; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --app) need "$@"; APP="$2"; shift ;;
@@ -86,16 +89,17 @@ while [ "$#" -gt 0 ]; do
     --out) need "$@"; OUT="$2"; shift ;;
     -h | --help) usage; exit 0 ;;
     *)
-      echo "frappe-test: unknown argument: $1" >&2
       usage >&2
-      exit 2
+      usage_error "unknown argument: $1"
       ;;
   esac
   shift
 done
 
-: "${FRAPPE_BENCH_ROOT:?frappe-test: run it inside the app dev shell (nix develop)}"
-: "${DEVENV_ROOT:?frappe-test: run it inside the app dev shell (nix develop)}"
+if [ -z "${FRAPPE_BENCH_ROOT:-}" ] || [ -z "${DEVENV_ROOT:-}" ]; then
+  echo "frappe-test: run it inside the app dev shell (nix develop)" >&2
+  exit 10
+fi
 REPO="$(realpath "$DEVENV_ROOT")"
 BENCH="$FRAPPE_BENCH_ROOT"
 PY="$BENCH/env/bin/python"
@@ -124,14 +128,8 @@ if [ -z "$APP" ]; then
     fi
   done
 fi
-if [ -z "$APP" ]; then
-  echo "frappe-test: cannot tell which app this is; pass --app" >&2
-  exit 2
-fi
-if [ -z "$SITE" ]; then
-  echo "frappe-test: no site: set FRAPPE_SITE or pass --site" >&2
-  exit 2
-fi
+[ -n "$APP" ] || usage_error "cannot tell which app this is; pass --app"
+[ -n "$SITE" ] || usage_error "no site: set FRAPPE_SITE or pass --site"
 
 FILTERED=0
 if [ -n "$MODULE" ] || [ -n "$DOCTYPE" ] || [ "${#TESTS[@]}" -gt 0 ]; then
@@ -191,7 +189,18 @@ else
   if DEVENV_IN_DIRENV_SHELL=true PC_TUI_ENABLED=0 devenv up -D; then
     STARTED=1
   else
-    echo "frappe-test: devenv up failed" >&2
+    # Its own message (a taken port and the FRAPPE_NIX_PORT_OFFSET hint) is
+    # just above; nothing of this bench's is up to wait for.
+    up_rc=$?
+    # Whatever it did start before failing is ours to stop.
+    if [ -n "${PC_SOCKET_PATH:-}" ] && process-compose -U -u "$PC_SOCKET_PATH" process list > /dev/null 2>&1; then
+      process-compose -U -u "$PC_SOCKET_PATH" down > /dev/null 2>&1 || true
+    fi
+    endgroup
+    echo "::error::frappe-test: devenv up -D failed (exit $up_rc); see its output above" >&2
+    STAGE[up]=error
+    ENV_FAILED=1
+    finish
   fi
 fi
 if [ "$STARTED" = 1 ] && [ "$KEEP_UP" = 0 ]; then
@@ -251,25 +260,42 @@ else
   fi
   # bench new-site asks for the MariaDB root password through getpass, which
   # reads a line from stdin without a tty; the dev bench's root has none.
-  printf '\n' | provision-site "${FRAPPE_TEST_ADMIN_PASSWORD:-admin}" || site_ok=0
+  # provision-site creates $FRAPPE_SITE: point it at the site under test.
+  printf '\n' | FRAPPE_SITE="$SITE" provision-site "${FRAPPE_TEST_ADMIN_PASSWORD:-admin}" || site_ok=0
   for proc in "${stopped[@]}"; do
     process-compose -U -u "$PC_SOCKET_PATH" process start "$proc" > /dev/null 2>&1 || true
   done
 fi
 [ "$site_ok" = 0 ] || bench --site "$SITE" set-config allow_tests true || site_ok=0
 
+SETUP=()
 if [ "$site_ok" = 1 ]; then
-  mapfile -t SETUP < <(ironclad config test.setup --pyproject "$REPO/pyproject.toml")
-  if [ "${#SETUP[@]}" -eq 0 ]; then
-    # The default (spec §2.1): erpnext's test bootstrap when erpnext is a
-    # sibling, else the setup wizard frappe's own UI tests complete.
-    if ironclad config siblings --pyproject "$REPO/pyproject.toml" | grep -qx erpnext \
+  # Read before use, not through a process substitution, whose exit status is
+  # lost: a config that cannot be read fails the stage instead of turning into
+  # the default setup.
+  if setup_out="$(ironclad config test.setup --pyproject "$REPO/pyproject.toml")"; then
+    [ -z "$setup_out" ] || mapfile -t SETUP <<< "$setup_out"
+  else
+    echo "frappe-test: could not read [tool.ironclad.test] setup (ironclad config exit $?)" >&2
+    site_ok=0
+  fi
+fi
+if [ "$site_ok" = 1 ] && [ "${#SETUP[@]}" -eq 0 ]; then
+  # The default (spec §2.1): erpnext's test bootstrap when erpnext is a
+  # sibling, else the setup wizard frappe's own UI tests complete.
+  if siblings="$(ironclad config siblings --pyproject "$REPO/pyproject.toml")"; then
+    if grep -qx erpnext <<< "$siblings" \
       || grep -qx erpnext "$BENCH/sites/apps.txt" 2> /dev/null; then
       SETUP=("module:erpnext.tests.bootstrap_test_data")
     else
       SETUP=("execute:frappe.utils.install.complete_setup_wizard")
     fi
+  else
+    echo "frappe-test: could not read [tool.ironclad] siblings (ironclad config exit $?)" >&2
+    site_ok=0
   fi
+fi
+if [ "$site_ok" = 1 ]; then
   for step in "${SETUP[@]}"; do
     echo "frappe-test: setup $step"
     case "$step" in
@@ -412,11 +438,16 @@ fi
 # Each command must leave the tree as it found it: a generator whose output is
 # committed proves that output fresh. Compared as trees (a scratch index over
 # the work tree, untracked files included, ignored ones not), so a tree that was
-# already dirty is judged only on what the command changed.
+# already dirty is judged only on what the command changed. The scratch index
+# starts as a copy of the real one: `git add -A` on an empty index would skip a
+# tracked file under an ignored path (generated output committed with
+# `git add -f`), which is exactly what these checks are for.
 snapshot() {
-  local index
+  local index real
   index="$(mktemp)"
   rm -f "$index"
+  real="$(cd "$REPO" && git rev-parse --path-format=absolute --git-path index)"
+  [ ! -f "$real" ] || cp "$real" "$index"
   (cd "$REPO" && GIT_INDEX_FILE="$index" git add -A -- . \
     ':(exclude).frappe-nix' ':(exclude).devenv' ':(exclude).direnv' ':(exclude).dev-dist' \
     && GIT_INDEX_FILE="$index" git write-tree)
@@ -425,8 +456,16 @@ snapshot() {
 if [ "$SHELLCHECKS" = 0 ]; then
   STAGE[shell-checks]=skipped
 else
-  mapfile -t CHECKS < <(ironclad config shell-checks --pyproject "$REPO/pyproject.toml")
-  if [ "${#CHECKS[@]}" -eq 0 ]; then
+  CHECKS=()
+  if ! checks_out="$(ironclad config shell-checks --pyproject "$REPO/pyproject.toml")"; then
+    echo "::error::frappe-test: could not read [tool.ironclad] shell-checks (ironclad config exit $?)" >&2
+    STAGE[shell-checks]=error
+  elif [ -n "$checks_out" ]; then
+    mapfile -t CHECKS <<< "$checks_out"
+  fi
+  if [ "${STAGE[shell-checks]:-}" = error ]; then
+    :
+  elif [ "${#CHECKS[@]}" -eq 0 ]; then
     STAGE[shell-checks]=ok
   else
     group "shell checks"

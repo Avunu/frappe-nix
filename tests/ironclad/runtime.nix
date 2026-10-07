@@ -218,8 +218,14 @@ in
     assert lib.assertMsg (contains "\${ciMode.exports}" devenvSource)
       "devenv.nix: enterShell lost ciMode.exports";
     assert lib.assertMsg (
-      contains "ciMode.unlessCi ''\n" devenvSource
-      && contains "frappe-nix-node-verify \"$FRAPPE_BENCH_ROOT\"" devenvSource
+      # One contiguous block: both node steps are the body of ciMode.unlessCi, so
+      # moving either out of it breaks the match.
+      contains (lib.concatStringsSep "\n" [
+        "ciMode.unlessCi ''"
+        "                  \${nodeVerifyTool}/bin/frappe-nix-node-verify \"$FRAPPE_BENCH_ROOT\" \${lib.escapeShellArgs benchInfra.appsWithNode} || true"
+        "                  \${nodeModulesTool}/bin/frappe-nix-node-modules \"$FRAPPE_BENCH_ROOT\" \${lib.escapeShellArgs benchInfra.appsWithNode} || true"
+        "                ''"
+      ]) devenvSource
     ) "devenv.nix: the node steps are not wrapped in ciMode.unlessCi";
     assert lib.assertMsg (contains "\${ciMode.banner {" devenvSource)
       "devenv.nix: the banner is not ciMode.banner";
@@ -317,19 +323,101 @@ in
     touch "$out"
   '';
 
-  ironclad-frappe-test = pkgs.runCommand "ironclad-frappe-test-check" { } ''
-    set -euo pipefail
-    cat > frappe-test <<'EOF'
-    #!${lib.getExe pkgs.bash}
-    ${frappeTest}
-    EOF
-    chmod +x frappe-test
-    ./frappe-test --help | grep -q -- '--reuse-site'
-    set +e
-    ./frappe-test --no-such-flag 2> err; [ "$?" = 2 ] || { echo "FAIL an unknown flag is not exit 2" >&2; exit 1; }
-    env -u FRAPPE_BENCH_ROOT ./frappe-test 2> err; rc=$?
-    set -e
-    [ "$rc" != 0 ] && grep -q 'app dev shell' err || { echo "FAIL outside a shell: rc $rc, $(cat err)" >&2; exit 1; }
-    touch "$out"
-  '';
+  ironclad-frappe-test =
+    pkgs.runCommand "ironclad-frappe-test-check"
+      {
+        nativeBuildInputs = [
+          pkgs.git
+          pkgs.python3
+          pkgs.curl
+          pkgs.coreutils
+        ];
+      }
+      ''
+        set -euo pipefail
+        fail() { echo "FAIL $*" >&2; exit 1; }
+        cat > frappe-test <<'EOF'
+        #!${lib.getExe pkgs.bash}
+        ${frappeTest}
+        EOF
+        chmod +x frappe-test
+        ./frappe-test --help | grep -q -- '--reuse-site'
+        rc=0; ./frappe-test --no-such-flag 2> err || rc=$?
+        [ "$rc" = 64 ] || fail "an unknown flag is exit $rc, not 64 (usage)"
+        rc=0; env -u FRAPPE_BENCH_ROOT ./frappe-test 2> err || rc=$?
+        [ "$rc" = 10 ] && grep -q 'app dev shell' err || fail "outside a shell: rc $rc, $(cat err)"
+        echo "ok   usage errors exit 64, no dev shell exits 10"
+
+        # A dev shell of stubs: the bench answers, every call is logged.
+        export HOME="$PWD" STATE="$PWD/state" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+        mkdir -p "$STATE" stubs bench/env/bin bench/sites/dev.localhost bench/apps
+        port=18765
+        python3 -m http.server --bind 127.0.0.1 "$port" > /dev/null 2>&1 &
+        server=$!
+        trap 'kill "$server" 2> /dev/null || true' EXIT
+        for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$port/" && break; sleep 0.2; done
+        echo "{\"webserver_port\": $port}" > bench/sites/common_site_config.json
+        stub() { # <path> <body>
+          printf '#!%s\necho "%s $*" >> "$STATE/log"\n%s\n' ${lib.getExe pkgs.bash} "$(basename "$1")" "$2" > "$1"
+          chmod +x "$1"
+        }
+        stub stubs/devenv 'echo "frappe-nix: port already in use: nginx=8000; set FRAPPE_NIX_PORT_OFFSET" >&2; exit 1'
+        stub stubs/process-compose 'case "$*" in *" process list") [ -z "$STUB_PC_DOWN" ] ;; *" process get "*) exit 1 ;; esac'
+        stub stubs/mariadb-admin 'exit 0'
+        stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"; mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"'
+        stub stubs/ironclad 'case "$1 $2" in
+          "config $STUB_CONFIG_FAIL") exit 2 ;;
+          "config test.setup") echo "execute:fixture.setup" ;;
+          "config shell-checks") [ -z "$STUB_CHECK" ] || echo "$STUB_CHECK" ;;
+        esac'
+        stub bench/env/bin/bench 'exit 0'
+        stub bench/env/bin/python 'exit 0'
+
+        git init -q repo
+        printf '[project]\nname = "fixture"\n' > repo/pyproject.toml
+        echo gen/ > repo/.gitignore
+        mkdir repo/gen && echo v1 > repo/gen/types.ts
+        git -C repo add pyproject.toml .gitignore && git -C repo add -f gen/types.ts && git -C repo commit -qm fixture
+        ln -s "$PWD/repo" bench/apps/fixture
+
+        export PATH="$PWD/stubs:$PATH" FRAPPE_BENCH_ROOT="$PWD/bench" DEVENV_ROOT="$PWD/repo" \
+          FRAPPE_SITE=dev.localhost PC_SOCKET_PATH="$PWD/pc.sock" FRAPPE_DB_SOCKET=/nowhere \
+          STUB_PC_DOWN="" STUB_CONFIG_FAIL="" STUB_CHECK=""
+        run() { # <expected exit> <label> <args…>
+          local want="$1" label="$2" rc=0
+          shift 2
+          : > "$STATE/log"
+          timeout 60 ./frappe-test --no-coverage --out "$PWD/out" "$@" > run.log 2>&1 || rc=$?
+          [ "$rc" = "$want" ] || { cat run.log "$STATE/log"; fail "$label: exit $rc, want $want"; }
+        }
+
+        began="$SECONDS"
+        STUB_PC_DOWN=1 run 10 "devenv up fails" --reuse-site
+        [ $((SECONDS - began)) -lt 30 ] || fail "a failed devenv up waited"
+        grep -q 'FRAPPE_NIX_PORT_OFFSET' run.log && grep -q 'devenv up -D failed' run.log || fail "devenv up's message is lost: $(cat run.log)"
+        grep -q 'test-report .*--stage up=error' "$STATE/log" || fail "no report with up=error: $(cat "$STATE/log")"
+        ! grep -q 'mariadb-admin' "$STATE/log" || fail "it waited for the database after devenv up failed"
+        echo "ok   a failed devenv up -D exits 10 at once, with devenv's message"
+
+        run 0 "--site other.localhost" --site other.localhost
+        grep -qx 'provision-site created other.localhost' "$STATE/log" || fail "--site: provisioned $(grep created "$STATE/log")"
+        grep -q 'bench --site other.localhost set-config allow_tests true' "$STATE/log" || fail "--site: allow_tests on the wrong site"
+        grep -q 'bench --site other.localhost execute fixture.setup' "$STATE/log" || fail "--site: setup on the wrong site"
+        echo "ok   --site S provisions S, not \$FRAPPE_SITE"
+
+        STUB_CONFIG_FAIL=test.setup run 10 "test.setup unreadable" --reuse-site
+        ! grep -q 'run-tests' "$STATE/log" || fail "the tests ran with an unreadable setup"
+        echo "ok   an unreadable [tool.ironclad.test] setup fails stage 2 (exit 10)"
+
+        STUB_CONFIG_FAIL=shell-checks run 7 "shell-checks unreadable" --reuse-site --shell-checks
+        grep -q 'shell-checks=error' "$STATE/log" || fail "shell-checks stage: $(cat "$STATE/log")"
+        echo "ok   unreadable shell-checks fail stage 8b (exit 7)"
+
+        STUB_CHECK='echo v1 > gen/types.ts; echo scratch > gen/other' run 0 "a clean shell check" --reuse-site --shell-checks
+        STUB_CHECK='echo v2 > gen/types.ts' run 7 "a stale committed generator" --reuse-site --shell-checks
+        grep -q 'gen/types.ts' out/shell-checks.log || fail "the changed file is not listed: $(cat out/shell-checks.log)"
+        git -C repo checkout -q gen/types.ts
+        echo "ok   a shell check that rewrites a tracked file under an ignored path fails (exit 7)"
+        touch "$out"
+      '';
 }
