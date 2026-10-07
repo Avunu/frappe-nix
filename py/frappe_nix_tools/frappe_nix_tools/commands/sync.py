@@ -121,6 +121,7 @@ def _build(root: Path, args: argparse.Namespace, phases: tuple[str, ...] = ("a",
 		profile_dir=args.profile_dir,
 		standards=getattr(args, "standards", None),
 		phases=phases,
+		frappe_nix_lock=getattr(args, "dry_run_lock", None),
 	)
 
 
@@ -342,6 +343,16 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 		print(
 			"would run: nix flake lock (when flake.lock is missing or stale, or frappe-nix is not locked from flake.nix's URL)"
 		)
+		# §3.3: phase B of a dry run renders against the rev that lock would take.
+		url = plan.ctx.frappe_nix.url
+		if not runner.offline and not bootstrap.override_url() and bootstrap.release_ref_needed(root, url):
+			rev = bootstrap.release_branch_rev(root, f"release-{plan.ctx.frappe_nix.major}")
+			if rev:
+				args.dry_run_lock = {
+					"rev": rev,
+					"owner": plan.ctx.frappe_nix.owner,
+					"repo": plan.ctx.frappe_nix.name,
+				}
 	return changed
 
 

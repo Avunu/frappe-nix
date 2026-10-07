@@ -434,6 +434,28 @@ class TestReleaseBranchPreflight(FakeNix):
 		code, _, err = self.fn("sync", "--write", "--phase", "preflight")
 		self.assertEqual(code, 0, err)
 
+	def test_a_dry_run_renders_against_the_rev_the_lock_would_take(self):
+		"""§3.3: a dry run on an unbootstrapped app renders phase B against release-1's head,
+		as `git ls-remote` reports it, not an empty rev."""
+		from frappe_nix_tools.scaffold import engine
+
+		revs = []
+		real = engine.build
+
+		def build(*a, **kw):
+			plan = real(*a, **kw)
+			revs.append((kw.get("phases"), plan.ctx.frappe_nix.rev))
+			return plan
+
+		with (
+			mock.patch.object(bootstrap, "release_branch_rev", return_value="c" * 40),
+			mock.patch.object(engine, "build", build),
+		):
+			code, _, err = self.fn("sync", "--write", "--dry-run")
+		self.assertEqual(code, 0, err)
+		self.assertIn((("b",), "c" * 40), revs, revs)
+		self.assertEqual(self.calls(), [])
+
 	def test_a_lock_already_on_the_branch_is_not_probed(self):
 		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
 		self.assertFalse(bootstrap.release_ref_needed(self.root, URL))

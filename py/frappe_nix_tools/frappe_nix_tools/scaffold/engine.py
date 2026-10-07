@@ -1401,12 +1401,16 @@ def build(
 	phases: tuple[str, ...] = ("a", "b"),
 	profile_dir: Path | None = None,
 	standards: str | None = None,
+	frappe_nix_lock: dict | None = None,
 ) -> Plan:
 	"""The plan for the app at ``root``.
 
 	``standards`` is ``--standards <profile>``: it creates ``[tool.frappe-nix]`` when there is
 	none, and must name the table's profile when there is one. Without either, the app has
 	not opted in (exit 2, S35).
+
+	``frappe_nix_lock`` stands in for ``flake.lock``'s frappe-nix node: a dry run on an app
+	whose lock phase A would (re)lock renders against the rev that lock would take (§3.3).
 	"""
 	app = load_app(root)
 	table = pyproject.tool_frappe_nix(app.pyproject)
@@ -1445,7 +1449,8 @@ def build(
 	check_preset(app, cfg, resolved.modules)
 	check_frappe_nix_url(cfg, resolved.modules)
 	man = manifest.load()
-	ctx = context.build(app, resolved, lock=locked_frappe_nix(root), floors=man.floors, options=options)
+	lock = frappe_nix_lock if frappe_nix_lock is not None else locked_frappe_nix(root)
+	ctx = context.build(app, resolved, lock=lock, floors=man.floors, options=options)
 	ctx["previous"] = previous(root, profile_dir)
 	ctx["history"] = history(root, profile_dir)
 	plan = Plan(root, app, resolved, ctx, created_config=created, notices=list(resolved.notices))
