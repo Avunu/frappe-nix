@@ -12,7 +12,7 @@ Every command exits with one of these codes, and when several apply the highest 
 
 import json
 import secrets
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 CLEAN = 0
 DRIFT = 1
@@ -48,6 +48,8 @@ class Finding:
 	strategy: str
 	problem: str
 	diff: str = ""
+	# The module that manages the file (§2.4), or "" for a whole-repo check.
+	module: str = ""
 
 
 def worst(*codes: int) -> int:
@@ -81,7 +83,17 @@ def render(findings: list[Finding], fmt: str, code: int, frappe_nix: dict | None
 		doc = {
 			"status": STATUS.get(code, "error"),
 			"frappe_nix": frappe_nix or {},
-			"files": [asdict(f) for f in findings],
+			# In §3.3's key order: path, strategy, module, problem, diff.
+			"files": [
+				{
+					"path": f.path,
+					"strategy": f.strategy,
+					"module": f.module,
+					"problem": f.problem,
+					"diff": f.diff,
+				}
+				for f in findings
+			],
 		}
 		return json.dumps(doc, indent=2, sort_keys=False) + "\n"
 	if fmt not in ("text", "github"):

@@ -1,0 +1,427 @@
+name: selftest-scaffold
+
+# The managed-file engine end to end (docs/app-standards/spec.md §7, "N3: scaffold"),
+# where the flake checks cannot go: the network, the real tools, and the Nix
+# bootstrap. Each job works on a copy of tests/fixtures/standards-app in a git
+# repository of its own, synced against this checkout of frappe-nix
+# (FRAPPE_NIX_URL_OVERRIDE, which is why skew is allowed).
+#
+#   rendered   with the fixture's own profile (recommended) and with the
+#              fictitious example-org profile (every module on, in-repo): the
+#              synced fixture through nixfmt, oxfmt, ruff, actionlint, zizmor
+#              (this workflow too, and the fixture's rendered workflows once
+#              N4's fragment renders them), uv lock --check, prek (every hook,
+#              network included) and tsc --build against the published
+#              frappe-types; its flake evaluates; and `frappe-init --check` on a
+#              pinned carbon_frappe commit, which has not opted in, exits 2 with
+#              the opt-in hint, and with a table added reports drift (no crash).
+#   bootstrap  one `frappe-init --sync` with neither yarn nor uv on PATH, from a
+#              fixture with no flake.nix (postgrid, jwt_auth; its lock holds only
+#              the fixture's frappe node, so frappe is fixed) and from one whose
+#              lock pins frappe-nix main (carbon, taskview, timeclock); and
+#              (reenter) a bare `frappe-nix sync --write` on the main-locked
+#              shape, which has to relock and re-enter through the app's dev
+#              shell: --check is clean right after, and the locks exist.
+#   real-lock  `frappe-init --app --standards recommended` on a bare app with no
+#              override: before release-1 exists it refuses (exit 3) with the
+#              tree untouched, after it locks release-1.
+#   no-nix     `uv tool install` from a clone with no checkout left on disk, then
+#              `frappe-nix sync --check` and `frappe-nix compat` on the fixture:
+#              the package is self-contained (S10). Then the fixture on the in-repo
+#              example-org profile: `--check` reads it from the checkout (exit 1 with
+#              its values), and an offline `--sync` settles it.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/selftest-scaffold.yml
+      # flake.nix builds frappe-init and frappe-nix-tools; flake.lock is the nixpkgs
+      # of every tool here; modules/ is the app-mode flake the fixture evaluates and
+      # relocks; version.txt is what the re-exec compares.
+      - flake.nix
+      - flake.lock
+      - version.txt
+      - lib/*.nix
+      - lib/standards/**
+      - lib/sh/**
+      - modules/**
+      - py/frappe_nix_tools/**
+      - templates/app/**
+      - tests/fixtures/standards-app/**
+      - tests/fixtures/profiles/**
+      - tests/standards/**
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  rendered:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [recommended, example-org]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init, frappe-nix and the tools from this checkout
+        run: |
+          set -euo pipefail
+          nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+          nix build .#frappe-nix --out-link "$RUNNER_TEMP/frappe-nix"
+          for p in nodejs_24 yarn uv nixfmt python314; do
+            nix build --inputs-from . "nixpkgs#$p" --out-link "$RUNNER_TEMP/tool-$p"
+            echo "$RUNNER_TEMP/tool-$p/bin" >> "$GITHUB_PATH"
+          done
+          echo "$RUNNER_TEMP/frappe-init/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/frappe-nix/bin" >> "$GITHUB_PATH"
+
+      - name: Copy the fixture into a repository of its own
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/standards-app "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          if [ "$PROFILE" = example-org ]; then
+            cp -r "$GITHUB_WORKSPACE/tests/fixtures/profiles/example-org" .standards-profile
+            sed -i 's#^profile = "recommended"$#profile = "./.standards-profile"#' pyproject.toml
+          fi
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+
+      - name: frappe-init --sync against this checkout, then --check
+        working-directory: ${{ runner.temp }}/app
+        env:
+          FRAPPE_NIX_URL_OVERRIDE: path:${{ github.workspace }}
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -euo pipefail
+          frappe-init --sync
+          if [ "$PROFILE" = recommended ]; then
+            # Only the lock moves (it now pins this checkout) and relock writes nix/uv.lock
+            # and the node-lock seeds; every other path must be as committed.
+            changed="$(git status --porcelain | grep -v -E '^.. (flake\.lock|nix/uv\.lock|nix/node-locks/.*)$' || true)"
+            if [ -n "$changed" ]; then
+              echo "::error::sync changed the committed fixture:"
+              echo "$changed"
+              git diff --cached
+              exit 1
+            fi
+          fi
+          frappe-init --check
+          yarn install --frozen-lockfile --non-interactive
+
+      - name: nixfmt, oxfmt, ruff format and uv lock --check
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          nixfmt --check flake.nix
+          yarn -s oxfmt --check
+          uv run --frozen --project tools ruff format --check .
+          uv lock --check --project tools
+
+      - name: actionlint and zizmor, with the fixture's pinned tools
+        working-directory: ${{ runner.temp }}/app
+        env:
+          SELF: ${{ github.workspace }}/.github/workflows/selftest-scaffold.yml
+        run: |
+          set -euo pipefail
+          # This workflow, so the step checks something before N4 renders workflows.
+          uv run --frozen --project tools actionlint "$SELF"
+          uv run --frozen --project tools zizmor --offline "$SELF"
+          # The fixture's rendered workflows: none until N4's manifest.d/ci.json
+          # renders them; from then on they must exist and pass.
+          if jq -s -e '[.[].entries[]?.path | select(startswith(".github/"))] | length > 0' \
+            "$(frappe-nix data-path manifest.d)"/*.json > /dev/null; then
+            test -d .github/workflows || { echo "::error::the manifest renders .github files, but the fixture has none"; exit 1; }
+          fi
+          if [ -d .github/workflows ]; then
+            uv run --frozen --project tools actionlint
+            uv run --frozen --project tools zizmor --config .github/zizmor.yml .github/workflows .github/dependabot.yml
+          fi
+
+      - name: prek run --all-files
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          git add -A
+          uv run --frozen --project tools prek run --all-files --show-diff-on-failure
+
+      - name: tsc --build
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          # marketplace/shots.d.ts is N5's managed file; until its fragment
+          # lands, a stand-in lets the scripts project resolve the import.
+          if [ ! -f marketplace/shots.d.ts ]; then
+            printf 'export interface ShotSpec {\n\tdemo: unknown;\n\tshots: unknown[];\n}\n' > marketplace/shots.d.ts
+          fi
+          yarn -s typecheck
+
+      - name: The flake evaluates
+        working-directory: ${{ runner.temp }}/app
+        env:
+          FRAPPE_NIX: path:${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          nix flake lock --override-input frappe-nix "$FRAPPE_NIX"
+          nix eval --no-pure-eval --raw --override-input frappe-nix "$FRAPPE_NIX" .#packages.x86_64-linux.default.drvPath
+
+      - name: frappe-init --check on a read-only, pinned carbon_frappe
+        if: matrix.profile == 'recommended'
+        env:
+          # carbon_frappe's develop before its adoption PR (2026-10-07): a fixed input, so
+          # this step changes meaning only when frappe-nix does. It has no [tool.frappe-nix].
+          CARBON_SHA: e275a300648910846c8d71ac785ce4758734c5ce
+        run: |
+          set -euo pipefail
+          git init -q "$RUNNER_TEMP/carbon"
+          cd "$RUNNER_TEMP/carbon"
+          git fetch -q --depth 1 https://github.com/Avunu/carbon_frappe "$CARBON_SHA"
+          git checkout -q FETCH_HEAD
+          chmod -R a-w "$RUNNER_TEMP/carbon"
+          set +e
+          frappe-init --check > "$RUNNER_TEMP/carbon-report.txt" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/carbon-report.txt"
+          if [ "$code" != 2 ]; then
+            echo "::error::frappe-init --check on carbon_frappe $CARBON_SHA exited $code, not 2 (not opted in)"
+            exit 1
+          fi
+          grep -q 'has not opted in' "$RUNNER_TEMP/carbon-report.txt"
+
+          # The same tree with a [tool.frappe-nix] table: a report, never a crash (3).
+          cp -r "$RUNNER_TEMP/carbon" "$RUNNER_TEMP/carbon-in"
+          chmod -R u+w "$RUNNER_TEMP/carbon-in"
+          cd "$RUNNER_TEMP/carbon-in"
+          printf '\n[tool.frappe-nix]\nschema = 1\nprofile = "recommended"\nfrappe-major = 16\n' >> pyproject.toml
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm opt-in
+          set +e
+          frappe-init --check > "$RUNNER_TEMP/carbon-in-report.txt" 2>&1
+          code=$?
+          set -e
+          tail -n 40 "$RUNNER_TEMP/carbon-in-report.txt"
+          case "$code" in
+            1 | 2) ;;
+            *) echo "::error::frappe-init --check on an opted-in carbon_frappe exited $code"; exit 1 ;;
+          esac
+          grep -q 'drifted' "$RUNNER_TEMP/carbon-in-report.txt"
+
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shape: [no-flake, main-locked, reenter]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init and frappe-nix from this checkout
+        run: |
+          set -euo pipefail
+          nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+          nix build .#frappe-nix --out-link "$RUNNER_TEMP/frappe-nix"
+
+      - name: Prepare the ${{ matrix.shape }} shape
+        env:
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/standards-app "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          rm -rf tools/uv.lock yarn.lock nix
+          if [ "$SHAPE" = no-flake ]; then
+            # No flake.nix, and a lock that holds only the fixture's frappe node: phase A
+            # locks frappe-nix and the rest around it, so relock resolves a fixed frappe
+            # instead of whatever version-16 is today.
+            jq '{nodes: {root: {inputs: {frappe: "frappe"}}, frappe: .nodes.frappe}, root: "root", version: .version}' \
+              flake.lock > "$RUNNER_TEMP/frappe-only.lock"
+            rm -f flake.nix flake.lock .envrc
+            mv "$RUNNER_TEMP/frappe-only.lock" flake.lock
+          else
+            sed -i 's|github:Avunu/frappe-nix/release-1|github:Avunu/frappe-nix|' flake.nix
+            git init -q && git add -A
+            nix flake lock --refresh
+            rm -rf .git
+          fi
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+
+      - name: One sync, with neither yarn nor uv on PATH
+        working-directory: ${{ runner.temp }}/app
+        env:
+          FRAPPE_NIX_URL_OVERRIDE: path:${{ github.workspace }}
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          set -euo pipefail
+          path="/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+          if PATH="$path" command -v yarn || PATH="$path" command -v uv; then
+            echo "::error::yarn or uv is on the bare PATH"
+            exit 1
+          fi
+          if [ "$SHAPE" = reenter ]; then
+            # frappe-init carries uv and yarn; a bare frappe-nix does not, so phase B
+            # relocks (no nix/uv.lock) and re-enters through `nix develop`.
+            PATH="$path:$RUNNER_TEMP/frappe-nix/bin" frappe-nix sync --write --frappe-version version-16 2>&1 |
+              tee "$RUNNER_TEMP/sync.log"
+            grep -q -- '\$ nix run --no-pure-eval --override-input frappe-nix .* \.#relock' "$RUNNER_TEMP/sync.log"
+            grep -q -- '\$ nix develop --no-pure-eval --override-input frappe-nix .* -c frappe-nix sync --write --phase b' "$RUNNER_TEMP/sync.log"
+            PATH="$path:$RUNNER_TEMP/frappe-nix/bin" frappe-nix sync --check
+          else
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --frappe-version version-16
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
+          fi
+          for f in flake.nix flake.lock yarn.lock tools/uv.lock nix/uv.lock; do
+            test -f "$f" || { echo "::error::$f is missing after the bootstrap"; exit 1; }
+          done
+
+  real-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init from this checkout
+        run: nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+
+      - name: frappe-init --app --standards with no override locks the real release branch
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/bare" && cd "$RUNNER_TEMP/bare"
+          git init -q
+          printf '[project]\nname = "bare_app"\ndynamic = ["version"]\n' > pyproject.toml
+          mkdir bare_app
+          printf '__version__ = "0.0.1"\n' > bare_app/__init__.py
+          printf 'app_title = "Bare App"\n' > bare_app/hooks.py
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm app
+          set +e
+          "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --standards recommended --frappe-version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
+          code="${PIPESTATUS[0]}"
+          set -e
+          if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix release-1 > /dev/null; then
+            [ "$code" = 0 ] || { echo "::error::frappe-init --app exited $code with release-1 present"; exit 1; }
+            grep -q '"ref": "release-1"' flake.lock || { echo "::error::flake.lock is not on release-1"; exit 1; }
+          else
+            # Before v1.0.0 (S32): refused up front, nothing written or staged.
+            [ "$code" = 3 ] || { echo "::error::frappe-init --app exited $code, not 3, without release-1"; exit 1; }
+            grep -q 'has no release-1 branch yet' "$RUNNER_TEMP/app.log"
+            [ -z "$(git status --porcelain)" ] || { echo "::error::the refused run changed the tree"; git status; exit 1; }
+          fi
+
+  no-nix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install frappe-nix-tools from a clone, then leave no frappe-nix on disk
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/standards-app "$RUNNER_TEMP/app"
+          cp -r tests/fixtures/profiles/example-org "$RUNNER_TEMP/example-org"
+          git clone -q --no-local "$GITHUB_WORKSPACE" "$RUNNER_TEMP/clone"
+          rev="$(git -C "$RUNNER_TEMP/clone" rev-parse HEAD)"
+          git -C "$RUNNER_TEMP/clone" switch --quiet -c selftest "$rev"
+          uv tool install --python 3.14 "frappe-nix-tools @ git+file://$RUNNER_TEMP/clone@$rev#subdirectory=py/frappe_nix_tools"
+          uv tool dir --bin >> "$GITHUB_PATH"
+          rm -rf "$RUNNER_TEMP/clone"
+          find "$GITHUB_WORKSPACE" -mindepth 1 -delete
+
+      - name: frappe-nix sync --check on the fixture
+        working-directory: ${{ runner.temp }}/app
+        env:
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+        run: |
+          set -euo pipefail
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+          frappe-nix data-path known-apps.json
+          frappe-nix sync --check
+          frappe-nix compat
+
+      - name: an in-repo profile is read from the checkout (example-org)
+        env:
+          FRAPPE_NIX_ALLOW_SKEW: "1"
+          PROFILE_SRC: ${{ runner.temp }}/example-org
+        run: |
+          set -euo pipefail
+          cp -r "$RUNNER_TEMP/app" "$RUNNER_TEMP/app-org"
+          cd "$RUNNER_TEMP/app-org"
+          cp -r "$PROFILE_SRC" .standards-profile
+          sed -i 's#^profile = "recommended"$#profile = "./.standards-profile"#' pyproject.toml
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm "in-repo profile"
+          # Drift that only the profile's values explain: they were read without Nix.
+          rc=0
+          frappe-nix sync --check > report.txt || rc=$?
+          cat report.txt
+          [ "$rc" = 1 ] || { echo "::error::sync --check exited $rc, not 1 (drift)"; exit 1; }
+          grep -q '^SECURITY.md (whole): missing' report.txt
+          grep -q '^+.*"author": "Example Org"' report.txt
+          rm report.txt
+          # An offline sync (no nix, uv or yarn) settles it.
+          frappe-nix sync --write --offline
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm synced
+          frappe-nix sync --check

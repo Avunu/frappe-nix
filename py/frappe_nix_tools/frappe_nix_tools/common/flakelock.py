@@ -86,22 +86,31 @@ class Pin:
 		raise ValueError(f"a {self.type} pin has no tarball")
 
 
-def load(path: Path) -> dict:
-	"""The parsed lock file; unreadable or not a version-7 lock is an ``EnvError``."""
+def parse(text: str, label: str) -> dict:
+	"""A lock file's text parsed (``label`` names it in errors), as ``load`` checks it."""
 	try:
-		lock = json.loads(path.read_text())
-	except FileNotFoundError as e:
-		raise EnvError(f"{path} does not exist") from e
-	except (OSError, json.JSONDecodeError) as e:
-		raise EnvError(f"{path} is unreadable: {e}") from e
+		lock = json.loads(text)
+	except json.JSONDecodeError as e:
+		raise EnvError(f"{label} is unreadable: {e}") from e
 	if (
 		not isinstance(lock, dict)
 		or not isinstance(lock.get("nodes"), dict)
 		or not isinstance(lock.get("root"), str)
 		or not all(isinstance(node, dict) for node in lock["nodes"].values())
 	):
-		raise EnvError(f"{path} is not a flake lock file")
+		raise EnvError(f"{label} is not a flake lock file")
 	return lock
+
+
+def load(path: Path) -> dict:
+	"""The parsed lock file; unreadable or not a version-7 lock is an ``EnvError``."""
+	try:
+		text = path.read_text()
+	except FileNotFoundError as e:
+		raise EnvError(f"{path} does not exist") from e
+	except OSError as e:
+		raise EnvError(f"{path} is unreadable: {e}") from e
+	return parse(text, str(path))
 
 
 def _node(lock: dict, name: object) -> dict:

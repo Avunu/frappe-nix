@@ -1,0 +1,100 @@
+# App-specific Nix goes in nix/local.nix, a flake-parts module imported below when it exists.
+{
+  description = {{ (app ~ ": " ~ title) | nix_string }};
+
+  inputs = {
+    frappe-nix.url = {{ frappe_nix.url | nix_string }};
+    nixpkgs.follows = "frappe-nix/nixpkgs";
+    frappe = {
+      url = "github:frappe/frappe/{{ frappe.branch }}";
+      flake = false;
+    };
+{% if profile_input %}
+    standards-profile = {
+      url = {{ profile_input | nix_string }};
+      flake = false;
+    };
+{% endif %}
+{% for s in siblings %}
+    {{ s.input }} = {
+      url = {{ s.flake_url | nix_string }};
+      flake = false;
+    };
+{% endfor %}
+    # frappe-nix:local-begin inputs
+    # frappe-nix:local-end inputs
+  };
+
+  nixConfig = {
+{% set substituters = ["https://devenv.cachix.org"] + cfg["dev-shell"]["extra-substituters"] %}
+{% if substituters | length == 1 %}
+    extra-substituters = [ "https://devenv.cachix.org" ];
+{% else %}
+    extra-substituters = [
+{% for u in substituters %}
+      {{ u | nix_string }}
+{% endfor %}
+    ];
+{% endif %}
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+{% for k in cfg["dev-shell"]["extra-trusted-public-keys"] %}
+      {{ k | nix_string }}
+{% endfor %}
+    ];
+  };
+
+  outputs =
+    { frappe-nix, ... }@inputs:
+    frappe-nix.lib.mkFlake { inherit inputs; } (
+      { lib, ... }:
+      {
+        imports = [
+          frappe-nix.flakeModules.default
+        ]
+        ++ lib.optional (builtins.pathExists ./nix/local.nix) ./nix/local.nix;
+
+{% set systems = cfg["dev-shell"]["systems"] | sort %}
+{% if systems | length == 1 %}
+        systems = [ {{ systems[0] | nix_string }} ];
+{% else %}
+        systems = [
+{% for sys in systems %}
+          {{ sys | nix_string }}
+{% endfor %}
+        ];
+{% endif %}
+
+        perSystem =
+          { pkgs, ... }:
+          {
+            formatter = pkgs.nixfmt;
+            frappe-nix = {
+              enable = true;
+              siteName = {{ site | nix_string }};
+              app = {
+                enable = true;
+                frappeVersion = "{{ frappe.preset }}";
+                inherit (inputs) frappe;
+{% if modules["docs-site"] and discover.docs_site %}
+                # docs-site/ is the docs tool's, not a frontend the bench builds (spec §5.11).
+                excludeNodeTargets = [ "docs-site" ];
+{% endif %}
+{% if siblings %}
+                siblings = [
+{% for s in siblings %}
+                  {
+                    name = "{{ s.name }}";
+                    src = inputs.{{ s.input }};
+                  }
+{% endfor %}
+                ];
+{% else %}
+                siblings = [ ];
+{% endif %}
+              };
+            };
+          };
+      }
+    );
+}

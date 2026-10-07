@@ -262,8 +262,12 @@ def validate_app(table: dict) -> None:
 		raise ConfigError("invalid configuration:\n  " + "\n  ".join(errors))
 
 
-def _read_profile_dir(directory: Path, label: str) -> dict:
+def read_profile_dir(directory: Path, label: str) -> dict:
 	path = directory / "profile.toml"
+	if path.is_symlink():
+		raise ConfigError(
+			f"profile {label}: profile.toml is a symlink: a profile is read only from regular files"
+		)
 	try:
 		return tomllib.loads(path.read_text())
 	except FileNotFoundError as e:
@@ -285,6 +289,16 @@ def org_profile_dir(profile: str, root: Path, lock_path: Path | None = None) -> 
 		rel = PurePosixPath(profile)
 		if ".." in rel.parts or rel.is_absolute():
 			raise ConfigError(f"profile {profile!r}: an in-repo profile must stay inside the app")
+		# Part of the pull request --check runs on: a committed link (``.lnk -> ../elsewhere``)
+		# would read a profile, and print templates, from outside the checkout.
+		cur = root
+		for i, part in enumerate(rel.parts):
+			cur = cur / part
+			if cur.is_symlink():
+				raise ConfigError(
+					f"profile {profile!r}: {PurePosixPath(*rel.parts[: i + 1])} is a symlink: an in-repo"
+					" profile is never read through a link (remove it)"
+				)
 		return root / rel, ""
 	if not profile.startswith(ORG_PROFILE_PREFIXES):
 		raise ConfigError(
@@ -426,11 +440,16 @@ def resolve_doc(
 	root: Path | None = None,
 	lock_path: Path | None = None,
 	profile_dir: Path | None = None,
+	profile_doc: dict | None = None,
+	on_github: bool | None = None,
 ) -> Resolved:
 	"""Resolve a parsed ``pyproject.toml`` (§8.4).
 
 	``root`` is the app's directory (in-repo profiles, the lock, origin); ``profile_dir``
 	replaces the org profile's locked tree with a local checkout (``--profile-path``).
+	``profile_doc`` is the org profile's ``profile.toml`` read by the caller, and
+	``on_github`` the host rule's answer when the caller knows it: both for a committed
+	state (``engine.history``), whose profile and host may not be today's.
 	"""
 	app = pyproject.tool_frappe_nix(doc)
 	if app is None:
@@ -446,14 +465,17 @@ def resolve_doc(
 		stem, base = builtin_profile(name)
 		profile_info["name"] = stem
 	else:
-		if profile_dir is not None:
-			directory, rev = profile_dir, ""
-		elif root is None:
-			raise ConfigError(f"profile {name!r} needs the app's directory to be read")
+		if profile_doc is not None:
+			org_doc, rev = profile_doc, ""
 		else:
-			directory, rev = org_profile_dir(name, root, lock_path)
+			if profile_dir is not None:
+				directory, rev = profile_dir, ""
+			elif root is None:
+				raise ConfigError(f"profile {name!r} needs the app's directory to be read")
+			else:
+				directory, rev = org_profile_dir(name, root, lock_path)
+			org_doc = read_profile_dir(directory, name)
 		label = f"org:{name}@{rev}" if rev else f"org:{name}"
-		org_doc = _read_profile_dir(directory, name)
 		validate_profile(org_doc, f"profile {name}", org=True)
 		check_requires(org_doc.get("requires-frappe-nix"), f"profile {name}")
 		stem, base = builtin_profile(org_doc["extends"])
@@ -492,7 +514,8 @@ def resolve_doc(
 		cfg["repo"] = repo_path
 
 	notices: list[str] = []
-	modules = _modules(cfg, app, host in (None, "github.com"), notices)
+	github = host in (None, "github.com") if on_github is None else on_github
+	modules = _modules(cfg, app, github, notices)
 	return Resolved(
 		cfg=cfg, modules=modules, profile=profile_info, sources=sources, repo_host=host, notices=notices
 	)

@@ -1,3 +1,6 @@
+// Copyright (c) 2026, Example Org and contributors
+// For license information, please see license.txt
+
 import type { ShotSpec } from "./shots.d.ts";
 
 export default {

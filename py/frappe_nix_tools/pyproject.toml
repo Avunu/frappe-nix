@@ -24,6 +24,9 @@ dependencies = [
     # No upper cap: the nixpkgs frappe-nix locks ships 0.15.0.
     "tomlkit>=0.13",
     "packaging>=24",
+    # sync compares YAML whole files as data while an app formats them with its own tool
+    # (spec §2.10, §3.2).
+    "pyyaml>=6",
 ]
 
 [project.scripts]
