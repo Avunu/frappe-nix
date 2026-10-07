@@ -286,7 +286,6 @@ EOF
   ok "code renamed, renamedApps set, relocked"
 
   expect 0 "$WORK/rename-site.log" dev "$app" bash "$HERE/run.sh" rename-site
-  cat "$WORK/rename-site.log"
 }
 
 # Inside the renamed app's dev shell.

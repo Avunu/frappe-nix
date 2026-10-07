@@ -234,9 +234,18 @@ site_ok=1
 if [ "$REUSE" = 1 ] && [ -d "$BENCH/sites/$SITE" ]; then
   echo "frappe-test: reusing $SITE"
 else
+  # Under reconcile-apps' own lock: `devenv up` re-runs that task whenever the
+  # runtime restarts, and once new-site has made the site's directory it would
+  # install the same apps alongside provision-site (a duplicate Module Def).
+  # Holding it, the task waits and then finds every app installed.
+  mkdir -p "$BENCH/sites/$SITE/locks"
+  exec 9> "$BENCH/sites/$SITE/locks/reconcile-apps.lock"
+  flock 9
   # bench new-site asks for the MariaDB root password through getpass, which
   # reads a line from stdin without a tty; the dev bench's root has none.
   printf '\n' | provision-site "${FRAPPE_TEST_ADMIN_PASSWORD:-admin}" || site_ok=0
+  flock -u 9
+  exec 9>&-
 fi
 [ "$site_ok" = 0 ] || bench --site "$SITE" set-config allow_tests true || site_ok=0
 
