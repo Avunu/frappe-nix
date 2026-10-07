@@ -27,22 +27,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-	parser = build_parser()
-	args = parser.parse_args(argv)
-	if args.command is None:
-		parser.print_help(sys.stderr)
-		return INVALID
+	# Building the parser imports every command module, so a broken module or a missing
+	# dependency fails inside the try below too: exit 3, never Python's 1.
+	prefix = "frappe-nix"
 	try:
+		parser = build_parser()
+		args = parser.parse_args(argv)
+		if args.command is None:
+			parser.print_help(sys.stderr)
+			return INVALID
+		prefix = f"frappe-nix {args.command}"
 		return args.func(args)
 	except FrappeNixError as e:
-		print(f"frappe-nix {args.command}: {e}", file=sys.stderr)
+		print(f"{prefix}: {e}", file=sys.stderr)
 		return e.code
 	except Exception as e:
 		# A bug, or a failure no command anticipated: never exit 1, which means drift
 		# (spec §3.3). FRAPPE_NIX_DEBUG=1 prints the traceback.
 		if os.environ.get("FRAPPE_NIX_DEBUG"):
 			traceback.print_exc()
-		print(f"frappe-nix {args.command}: internal error: {type(e).__name__}: {e}", file=sys.stderr)
+		print(f"{prefix}: internal error: {type(e).__name__}: {e}", file=sys.stderr)
 		return ENVIRONMENT
 
 

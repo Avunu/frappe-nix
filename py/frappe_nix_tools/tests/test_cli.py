@@ -1,8 +1,10 @@
+import importlib
 import os
 import unittest
 from unittest import mock
 
 import frappe_nix_tools
+from frappe_nix_tools import cli
 from frappe_nix_tools.commands import paths
 from frappe_nix_tools.common.report import ConfigError
 from helpers import run_cli
@@ -44,6 +46,23 @@ class TestCli(unittest.TestCase):
 			code, _, err = run_cli("data-path", "known-apps.json")
 		self.assertEqual(code, 3)
 		self.assertIn("Traceback", err)
+
+	def test_a_command_module_that_fails_to_import_exits_3(self):
+		# A broken commands/* module, or a dependency missing from the environment, fails
+		# while the parser is built: an environment error, never 1 (drift).
+		real = importlib.import_module
+
+		def broken(name, *args):
+			if name.startswith("frappe_nix_tools.commands."):
+				raise ModuleNotFoundError("No module named 'packaging'")
+			return real(name, *args)
+
+		with mock.patch.object(cli.importlib, "import_module", side_effect=broken):
+			code, _, err = run_cli("config", "modules.ci")
+		self.assertEqual(code, 3)
+		self.assertEqual(
+			err, "frappe-nix: internal error: ModuleNotFoundError: No module named 'packaging'\n"
+		)
 
 
 if __name__ == "__main__":
