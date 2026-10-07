@@ -15,6 +15,9 @@ mode is detected from the target directory (default: the current directory when
 it is a bench or a Frappe app, otherwise a new bench).
 
 Mode:
+  --sync                   Write this app's managed files (frappe-nix sync --write);
+                           the app must have opted in, or pass --standards
+  --check                  Report drift in them and change nothing (frappe-nix sync --check)
   --init                   Force scaffold mode
   --migrate                Force migration mode (also re-syncs a frappe-nix bench)
   --app                    Force app mode: this repo is one Frappe app, and the
@@ -29,6 +32,16 @@ Common:
   --site <site>            Default site (default: existing default_site)
   --skip-lock              Do not run `uv lock`
   -h, --help               Show this help
+
+App standards (app mode; see https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards):
+  --standards <profile>    Opt in: minimal | recommended | recommended@<minor> |
+                           github:<owner>/<repo>[/<ref>] | ./<dir>  (with --app or --sync)
+  --profile-path <dir>     Read the org profile from a local checkout (profile authors)
+  --only <path,…>          Limit to these managed files
+  --init-listing           --sync: also seed marketplace/listing.toml
+  --format <f>             --check: text | json | github
+  --expect-rev <sha>       --check: the frappe-nix revision frappe-nix-tools came from
+  (--force with --sync replaces an unmanaged flake.nix or .envrc on first opt-in)
 
 Scaffold only:
   --apps <a,b,c>           Apps to add (names, owner/repo, or git URLs)
@@ -48,7 +61,14 @@ EOF
 }
 
 parse_args() {
+  local unknown=""
   while [ "$#" -gt 0 ]; do
+    # A value-taking flag at the end of the line is a usage error (2), not an
+    # unbound $2 under set -u, which exits 1 and reads as drift to --check.
+    case "$1" in
+      --frappe-version | --apps | --name | --site | --vendor | --legacy-apps | --only | --format | --expect-rev | --standards | --profile-path)
+        [ "$#" -ge 2 ] || die "$1 needs a value" 2 ;;
+    esac
     case "$1" in
       --frappe-version) frappe_version="$2"; shift 2 ;;
       --frappe-version=*) frappe_version="${1#*=}"; shift ;;
@@ -64,6 +84,13 @@ parse_args() {
       --legacy-apps=*) LEGACY_APPS="${1#*=}"; shift ;;
       --commit) DO_COMMIT=true; shift ;;
       --commit=*) DO_COMMIT=true; COMMIT_MSG="${1#*=}"; shift ;;
+      --sync) MODE=app; APP_ACTION=sync; shift ;;
+      --check) MODE=app; APP_ACTION=check; shift ;;
+      --standards) STANDARDS="$2"; shift 2 ;;
+      --standards=*) STANDARDS="${1#*=}"; shift ;;
+      --only | --format | --expect-rev | --profile-path) SYNC_ARGS+=("$1" "$2"); shift 2 ;;
+      --only=* | --format=* | --expect-rev=* | --profile-path=*) SYNC_ARGS+=("$1"); shift ;;
+      --init-listing) SYNC_ARGS+=("$1"); shift ;;
       --init) MODE=init; shift ;;
       --migrate) MODE=migrate; shift ;;
       --app) MODE=app; shift ;;
@@ -77,10 +104,17 @@ parse_args() {
       --absorb-gitdirs) ABSORB_GITDIRS=true; shift ;;
       --keep-db-root-password) KEEP_DB_ROOT_PW=true; shift ;;
       -h | --help) usage; exit 0 ;;
-      -*) usage >&2; die "unknown flag: $1" ;;
+      -*) unknown="${unknown:-$1}"; shift ;;
       *) target="$1"; shift ;;
     esac
   done
+  # Reported once every flag is read: under --sync/--check (wherever it comes) a
+  # usage error is 2, since 1 is drift there.
+  if [ -n "$unknown" ]; then
+    usage >&2
+    if [ -n "$APP_ACTION" ]; then die "unknown flag: $unknown" 2; fi
+    die "unknown flag: $unknown"
+  fi
 }
 
 # Runs with the working directory already inside the target. Sets RESOLVED_MODE
@@ -132,6 +166,15 @@ main() {
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
 
   parse_args "$@"
+
+  # --sync / --check: the app in the current directory (or the target given),
+  # handed to `frappe-nix sync`, which checks that it is one.
+  if [ -n "$APP_ACTION" ]; then
+    if [ -n "$target" ]; then
+      cd "$target" || die "cannot enter $target" 3
+    fi
+    cmd_app_sync
+  fi
 
   # No target given: work on the current directory when it is a bench or a Frappe
   # app, else fall through to scaffolding (which prompts for a directory).

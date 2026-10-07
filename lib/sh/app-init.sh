@@ -5,6 +5,13 @@
 # nothing else. In particular it never edits the app's pyproject.toml — that file
 # is the app's packaging metadata, and the workspace root frappe-nix generates is
 # a different file living in the Nix store.
+#
+# That is all it does for an app that has not opted in to the app standards
+# (S35, docs/app-standards/spec.md §3.3). With --standards <profile>, or on an
+# app whose pyproject.toml already has a [tool.frappe-nix] table, it copies the
+# same template and then hands over to `frappe-nix sync --write`, which writes
+# the opted-in flake.nix, .envrc and .gitignore block, the table, everything the
+# profile renders, and the locks (relock included).
 
 # A Frappe app is a pyproject.toml whose [project].name names a sibling package
 # that holds hooks.py. That is what `bench get-app` looks for, and it is enough to
@@ -49,6 +56,13 @@ cmd_app_init() {
   info "into .frappe-nix/ on shell entry and is gitignored."
   printf '\n'
 
+  local standards=false rc=0
+  if [ -n "$STANDARDS" ] || app_opted_in; then
+    standards=true
+    info "app standards  : ${STANDARDS:-the [tool.frappe-nix] table} (frappe-nix sync --write follows)"
+    printf '\n'
+  fi
+
   if $DRY_RUN; then
     printf -- '--dry-run: nothing was changed.\n'
     return 0
@@ -56,6 +70,13 @@ cmd_app_init() {
 
   [ -d .git ] || git rev-parse --git-dir > /dev/null 2>&1 ||
     die "'$(pwd -P)' is not a git repository. A flake's source tree is exactly its tracked files, so frappe-nix cannot see an app that git cannot." 6
+
+  if $standards; then
+    # Before anything is written: the flake sync renders follows frappe-nix's
+    # release-<N> branch, which exists only from v<N>.0.0 on (spec S32).
+    frappe-nix sync --write --phase preflight || rc=$?
+    [ "$rc" = 0 ] || die "frappe-nix's release branch is not available; nothing was changed" "$rc"
+  fi
 
   step "Writing the flake"
   TEMPLATE="$APP_TEMPLATE"
@@ -74,18 +95,27 @@ cmd_app_init() {
       die "$p is excluded by .gitignore — the Nix build cannot see it"
   done
 
-  step "Resolving the Python workspace"
-  if $SKIP_LOCK; then
-    info "skipping (--skip-lock)"
-  elif ! command -v nix > /dev/null 2>&1; then
-    warn "nix is not on PATH — run 'nix run .#relock' yourself before entering the shell"
+  if $standards; then
+    # The opted-in forms of the three files, the [tool.frappe-nix] table and what
+    # the profile renders, then the locks: `frappe-nix sync --write` (§3.3).
+    step "Writing the managed files (frappe-nix sync --write)"
+    sync_write_args
+    frappe-nix sync "${SYNC_WRITE[@]}" || rc=$?
+    [ "$rc" = 0 ] || die "'frappe-nix sync --write' exited $rc — fix what it reported above and run 'frappe-init --sync'" "$rc"
   else
-    # The first lock has to come from the flake we just wrote, and it cannot come
-    # from the dev shell: without nix/uv.lock the shell is exactly what refuses to
-    # evaluate. `relock` is wired to be reachable without one.
-    nix run --impure .#relock || {
-      warn "'nix run .#relock' failed — fix the error above and re-run it; everything else is already written"
-    }
+    step "Resolving the Python workspace"
+    if $SKIP_LOCK; then
+      info "skipping (--skip-lock)"
+    elif ! command -v nix > /dev/null 2>&1; then
+      warn "nix is not on PATH — run 'nix run .#relock' yourself before entering the shell"
+    else
+      # The first lock has to come from the flake we just wrote, and it cannot come
+      # from the dev shell: without nix/uv.lock the shell is exactly what refuses to
+      # evaluate. `relock` is wired to be reachable without one.
+      nix run --impure .#relock || {
+        warn "'nix run .#relock' failed — fix the error above and re-run it; everything else is already written"
+      }
+    fi
   fi
 
   step "Done — $(pwd -P)"
