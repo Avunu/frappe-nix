@@ -331,6 +331,25 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 	return changed
 
 
+def _repo_settings(ns: object | None) -> list[str]:
+	"""The modules of ``ns`` (a plan's context or ``previous``) on that need a repository
+	setting (§3.3 step 5): ``releases``, and ``dependabot`` with ``auto-merge``."""
+	if ns is None:
+		return []
+	modules, cfg = ns["modules"], ns["cfg"]
+	out = ["releases"] if modules.get("releases") else []
+	if modules.get("dependabot") and (cfg.get("dependabot") or {}).get("auto-merge", True):
+		out.append("dependabot (auto-merge)")
+	return out
+
+
+def needs_repo_settings(plan: engine.Plan) -> list[str]:
+	"""What this sync turns on that needs a repository setting: on now, and off at ``HEAD``
+	(or no table there yet)."""
+	before = set(_repo_settings(plan.ctx.get("previous")))
+	return [m for m in _repo_settings(plan.ctx) if m not in before]
+
+
 def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock_changed: bool) -> int:
 	"""Steps 5 to 13."""
 	lock_changed = lock_changed or bootstrap.inherited_lock_change()
@@ -342,6 +361,12 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	code = _invalid(plan.items)
 	if code:
 		return code
+	for module in needs_repo_settings(plan):
+		print(
+			f"frappe-nix sync: notice: {module} is on now and needs a repository setting:"
+			" run `frappe-nix repo doctor` (spec §5.6)",
+			file=sys.stderr,
+		)
 	touched = _apply(root, plan.items, runner)
 	# Staged now as well as at step 13, so a lock or formatter step that fails below leaves
 	# what sync wrote staged rather than half-applied in the work tree.

@@ -912,6 +912,30 @@ class TestShallowBenchApp(ShallowCase):
 		self.assertIn("frappe-dependencies", before)
 
 
+class TestRepoDoctorNotice(AppCase):
+	"""§3.3 step 5: a sync that turns on a module needing a repository setting (releases,
+	dependabot with auto-merge) says to run `frappe-nix repo doctor`, once."""
+
+	profile = "minimal"
+
+	def test_once_when_turned_on(self):
+		self.synced()
+		# Like the retraction notices, it is said on the run whose HEAD has the module off.
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace('profile = "minimal"', 'profile = "recommended"'),
+		)
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn("releases is on now and needs a repository setting: run `frappe-nix repo doctor`", err)
+		self.assertIn("dependabot (auto-merge) is on now", err)
+		self.fake_locks()
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertNotIn("repo doctor", err)
+
+
 class TestVersionSeed(AppCase):
 	def test_no_version_anywhere_agrees_from_the_first_sync(self):
 		self.write("demo_app/__init__.py", "# only a comment\n")
