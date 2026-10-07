@@ -15,6 +15,7 @@ the same configuration. Templates get:
 import ast
 import json
 import operator
+import os
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
@@ -56,14 +57,55 @@ def _configure(env: jinja2.Environment) -> jinja2.Environment:
 	return env
 
 
-def _environment(directory: str) -> jinja2.Environment:
+def _link_error(rel: str) -> ConfigError:
+	return ConfigError(
+		f"the profile's templates/{rel} is a symlink: a profile's templates are read only as regular"
+		" files, never through a link (an in-repo profile is part of the pull request --check runs on)"
+	)
+
+
+def template_files(directory: Path) -> list[Path]:
+	"""Every file under a profile's ``templates/``, sorted; a symlink anywhere in it (a file
+	or a directory, dangling or not) is exit 2, unread: ``--check`` renders an in-repo
+	profile's templates on untrusted pull requests, and a link would print what it reaches."""
+	out: list[Path] = []
+	for dirpath, dirnames, filenames in os.walk(directory):
+		here = Path(dirpath)
+		for name in [*dirnames, *filenames]:
+			if (here / name).is_symlink():
+				raise _link_error((here / name).relative_to(directory).as_posix())
+		out += [here / name for name in filenames]
+	return sorted(out)
+
+
+class _NoLinkLoader(jinja2.FileSystemLoader):
+	"""A ``FileSystemLoader`` that refuses a template reached through a symlink (exit 2), so an
+	``include`` or an override can never read outside the profile's ``templates/``."""
+
+	def get_source(
+		self, environment: jinja2.Environment, template: str
+	) -> tuple[str, str, Callable[[], bool]]:
+		pieces = jinja2.loaders.split_template_path(template)
+		for searchpath in self.searchpath:
+			base = Path(searchpath)
+			if base.is_symlink():
+				raise _link_error("")
+			cur = base
+			for i, piece in enumerate(pieces):
+				cur = cur / piece
+				if cur.is_symlink():
+					raise _link_error("/".join(pieces[: i + 1]))
+		return super().get_source(environment, template)
+
+
+def _environment(directory: str, *, links: bool = True) -> jinja2.Environment:
 	# Sandboxed: an org profile's templates and [[extra-files]] paths are data a pull request
 	# can change (an in-repo profile), and --check renders them on untrusted PRs. The sandbox
 	# refuses the attribute walks (``cycler.__init__.__globals__``) that reach Python, and the
 	# immutable one also keeps a template from changing the context the next file renders with.
 	return _configure(
 		ImmutableSandboxedEnvironment(
-			loader=jinja2.FileSystemLoader(directory),
+			loader=jinja2.FileSystemLoader(directory) if links else _NoLinkLoader(directory),
 			undefined=jinja2.StrictUndefined,
 			trim_blocks=True,
 			lstrip_blocks=True,
@@ -81,8 +123,9 @@ def environment() -> jinja2.Environment:
 
 @cache
 def profile_environment(directory: str) -> jinja2.Environment:
-	"""An org profile's ``templates/``, rendered with the same configuration."""
-	return _environment(directory)
+	"""An org profile's ``templates/``, rendered with the same configuration; a template reached
+	through a symlink is refused."""
+	return _environment(directory, links=False)
 
 
 def _refused(what: str, e: SecurityError) -> ConfigError:

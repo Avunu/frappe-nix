@@ -3,8 +3,10 @@ toggles and retraction, profiles, and the review-round parameters (Appendix R2).
 
 import json
 import os
+import shutil
 import tomllib
 import unittest
+from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
@@ -713,7 +715,7 @@ class TestOrgProfile(ProfileCase):
 		"""Commit signing and a global hooks path must not reach the throwaway repositories."""
 		hooks = self.root.parent / (self.root.name + "-hooks")
 		hooks.mkdir()
-		self.addCleanup(lambda: __import__("shutil").rmtree(hooks))
+		self.addCleanup(lambda: shutil.rmtree(hooks))
 		(hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
 		(hooks / "pre-commit").chmod(0o755)
 		gitconfig = self.root.parent / (self.root.name + "-gitconfig")
@@ -724,6 +726,85 @@ class TestOrgProfile(ProfileCase):
 				"profile", "validate", str(self.root / ".standards-profile/profile.toml")
 			)
 		self.assertEqual(code, 0, out + err)
+
+	def _outside(self, text: str = "SECRET_TOKEN=hunter2\n") -> Path:
+		outside = self.root.parent / (self.root.name + "-secret")
+		outside.write_text(text)
+		self.addCleanup(outside.unlink)
+		return outside
+
+	def _refused_unread(self, needle: str) -> None:
+		"""--check and --write are exit 2, never print the link's target and write nothing."""
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn(needle, out)
+		self.assertNotIn("hunter2", out)
+		for fmt in ("json", "github"):
+			code, out, err = self.fn("sync", "--check", "--format", fmt)
+			self.assertEqual(code, 2, out + err)
+			self.assertNotIn("hunter2", out + err)
+		before = self.snapshot()
+		code, out, err = self.fn("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertNotIn("hunter2", out + err)
+		self.assertEqual(self.snapshot(), before)
+
+	def test_a_symlinked_template_is_refused_unread(self):
+		template = self.root / ".standards-profile/templates/SECURITY.md.j2"
+		template.unlink()
+		template.symlink_to(self._outside())
+		self.commit()
+		self._refused_unread("templates/SECURITY.md.j2 is a symlink")
+		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
+		self.assertEqual(code, 2, out + err)
+		self.assertNotIn("hunter2", out + err)
+
+	def test_a_symlinked_template_directory_is_refused(self):
+		outside = self.root.parent / (self.root.name + "-templates")
+		(outside / "sub").mkdir(parents=True)
+		self.addCleanup(lambda: shutil.rmtree(outside))
+		(outside / "sub" / "x.j2").write_text("SECRET_TOKEN=hunter2\n")
+		(self.root / ".standards-profile/templates/sub").symlink_to(outside / "sub")
+		self.commit()
+		self._refused_unread("templates/sub is a symlink")
+		shutil.rmtree(self.root / ".standards-profile/templates")
+		(self.root / ".standards-profile/templates").symlink_to(outside)
+		self.commit()
+		self._refused_unread("templates/ is a symlink")
+
+	def test_a_symlinked_profile_toml_is_refused(self):
+		outside = self._outside(self.read(".standards-profile/profile.toml") + "# hunter2\n")
+		(self.root / ".standards-profile/profile.toml").unlink()
+		(self.root / ".standards-profile/profile.toml").symlink_to(outside)
+		self.commit()
+		self._refused_unread("profile.toml is a symlink")
+
+	def test_a_symlinked_profile_directory_is_refused(self):
+		"""``./.lnk`` passes the ``..`` check; the link it is must not."""
+		elsewhere = write_profile(self.root.parent, rel=self.root.name + "-extprof")
+		self.addCleanup(lambda: shutil.rmtree(elsewhere))
+		(elsewhere / "templates" / "SECURITY.md.j2").write_text("SECRET_TOKEN=hunter2\n")
+		(self.root / ".lnk").symlink_to(elsewhere)
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace('profile = "./.standards-profile"', 'profile = "./.lnk"'),
+		)
+		self.commit()
+		self._refused_unread(".lnk is a symlink")
+
+	def test_the_loader_refuses_a_link_it_is_handed(self):
+		"""The template loader checks too, whatever reaches it (an include, an override)."""
+		from frappe_nix_tools.common.report import ConfigError
+		from frappe_nix_tools.scaffold import render
+
+		templates = self.root / ".standards-profile/templates"
+		(templates / "inc.j2").symlink_to(self._outside())
+		env = render.profile_environment(str(templates))
+		with self.assertRaises(ConfigError) as caught:
+			env.get_template("inc.j2")
+		self.assertIn("templates/inc.j2 is a symlink", str(caught.exception))
+		rendered = env.get_template("SECURITY.md.j2").render(app="a", org={"email": "e@x"})
+		self.assertEqual(rendered, "# Security\n\nReport vulnerabilities in a to e@x.\n")
 
 	def test_profile_list_describes_each(self):
 		code, out, _ = self.fn("profile", "list")
@@ -813,7 +894,7 @@ class TestFlakeProfileInput(AppCase):
 
 	def test_github_profile_and_back(self):
 		profile = write_profile(self.root.parent / (self.root.name + "-profile"), rel="p")
-		self.addCleanup(__import__("shutil").rmtree, profile.parent, True)
+		self.addCleanup(shutil.rmtree, profile.parent, True)
 		self.write(
 			"pyproject.toml",
 			self.read("pyproject.toml").replace(
@@ -845,7 +926,7 @@ class TestFlakeProfileInput(AppCase):
 
 	def test_other_hosts(self):
 		profile = write_profile(self.root.parent / (self.root.name + "-gl"), rel="p")
-		self.addCleanup(__import__("shutil").rmtree, profile.parent, True)
+		self.addCleanup(shutil.rmtree, profile.parent, True)
 		self.write(
 			"pyproject.toml",
 			self.read("pyproject.toml").replace(
@@ -869,7 +950,7 @@ class TestFlakeProfileInput(AppCase):
 
 		rev = "c" * 40
 		work = self.root.parent / (self.root.name + "-pins")
-		self.addCleanup(__import__("shutil").rmtree, work, True)
+		self.addCleanup(shutil.rmtree, work, True)
 		tree = write_profile(work / "src", rel=f"profile-{rev}")
 		archive = work / "profile.tar.gz"
 
@@ -916,7 +997,7 @@ class TestFlakeProfileInput(AppCase):
 			# The archive itself tampered: its narHash no longer matches the lock.
 			(tree / "profile.toml").write_text(EXAMPLE_ORG.replace("Example Org", "Evil Org"))
 			pack()
-			__import__("shutil").rmtree(self.root / ".dev-dist/pins")
+			shutil.rmtree(self.root / ".dev-dist/pins")
 			code, out = self.check()
 			self.assertEqual(code, 3, out)
 			self.assertIn("does not match flake.lock: narHash", out)

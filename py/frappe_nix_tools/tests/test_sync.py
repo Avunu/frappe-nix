@@ -762,6 +762,52 @@ class TestShallowHistory(AppCase):
 			bool(shallow == full)
 
 
+class TestShallowRetraction(AppCase):
+	"""Retraction asks the history whether a module that is off now was ever on: a shallow
+	clone that can't tell fails (exit 3) instead of disagreeing with a full clone."""
+
+	def _clone(self) -> Path:
+		clone = self.root.parent / (self.root.name + "-shallow")
+		__import__("shutil").rmtree(clone, ignore_errors=True)
+		self.addCleanup(__import__("shutil").rmtree, clone, True)
+		git(self.root, "clone", "-q", "--depth", "1", f"file://{self.root}", str(clone))
+		return clone
+
+	def _check(self, root: Path) -> tuple[int, str]:
+		code, out, err = run_cli("sync", "--check", cwd=root)
+		return code, out + err
+
+	def test_a_module_turned_off_needs_the_history(self):
+		self.synced()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml") + "\n[tool.frappe-nix.python-types]\nenable = false\n",
+		)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("pyproject.toml (toml-merge)", out)
+		code, out = self._check(self._clone())
+		self.assertEqual(code, 3, out)
+		self.assertIn("fetch-depth: 0", out)
+
+		# Once synced, nothing is left to ask about: both clones agree it is clean.
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.fake_locks()
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+		code, out = self._check(self._clone())
+		self.assertEqual(code, 0, out)
+
+	def test_a_shallow_clone_of_a_never_changed_table_is_clean(self):
+		"""Opted in with modules off and nothing of theirs present: no question, no exit 3."""
+		self.synced()
+		git(self.root, "commit", "-q", "--allow-empty", "-m", "later")
+		code, out = self._check(self._clone())
+		self.assertEqual(code, 0, out)
+
+
 class TestVersionSeed(AppCase):
 	def test_no_version_anywhere_agrees_from_the_first_sync(self):
 		self.write("demo_app/__init__.py", "# only a comment\n")

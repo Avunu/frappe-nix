@@ -144,17 +144,21 @@ def validate(args: argparse.Namespace) -> int:
 		profile = Path(tmp) / "profile"
 		profile.mkdir()
 		(profile / "profile.toml").write_text(path.read_text())
+		if templates.is_symlink():
+			raise ConfigError(
+				f"{templates} is a symlink: a profile's templates are read only as regular files"
+			)
 		if templates.is_dir():
-			shutil.copytree(templates, profile / "templates")
+			# A link in it is refused here, as sync refuses it, rather than copied as its target.
+			rendering.template_files(templates)
+			shutil.copytree(templates, profile / "templates", symlinks=True)
 		for name, siblings in CONTEXTS.items():
 			app = _throwaway(Path(tmp), profile, siblings)
 			# Resolution checks the needs under the profile's own switches (the app sets none),
 			# and the plan checks [[extra-files]] and every override's place.
 			plan = engine.build(app, options={"init_listing": False})
 			for file in (
-				sorted(p for p in (profile / "templates").rglob("*") if p.is_file())
-				if (profile / "templates").is_dir()
-				else []
+				rendering.template_files(profile / "templates") if (profile / "templates").is_dir() else []
 			):
 				rel = file.relative_to(profile / "templates").as_posix()
 				try:

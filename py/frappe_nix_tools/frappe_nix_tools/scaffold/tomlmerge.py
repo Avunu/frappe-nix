@@ -30,7 +30,7 @@ import tomlkit.items
 
 from frappe_nix_tools.common import known_apps
 from frappe_nix_tools.common.report import DRIFT, INVALID
-from frappe_nix_tools.scaffold import hooks
+from frappe_nix_tools.scaffold import context, hooks
 
 FRAPPE_APPS = ("frappe", "erpnext", "hrms", "payments")
 COVERAGE_OMIT = ["*/tests/*", "*/test_*.py", "*/patches/*"]
@@ -68,7 +68,7 @@ def _on(ctx: Any, module: str) -> bool:
 def _was_on(ctx: Any, module: str) -> bool:
 	"""Whether ``module``'s group was on in any ``[tool.frappe-nix]`` table since the app opted
 	in (``ctx.history``): its keys are then sync's to retract."""
-	return any(_on(h, module) for h in ctx.get("history") or [])
+	return context.ever(ctx.get("history"), lambda h: _on(h, module))
 
 
 def _turns_off(ctx: Any, module: str) -> bool:
@@ -465,10 +465,10 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> Merged:
 		for path, value in wanted:
 			table_path, key = path[:-1], path[-1]
 			if not on:
-				if not _was_on(ctx, module):
-					continue
+				# The history is asked only about a key that is there (a shallow clone may
+				# not know the answer: context.ever).
 				have = _plain(_get(doc, path))
-				if have is None:
+				if have is None or not _was_on(ctx, module):
 					continue
 				if have == value:
 					del table_at(table_path)[key]
@@ -544,9 +544,12 @@ def managed_view(doc: dict, ctx: Any) -> dict:
 	the enabled modules' keys, and whether each disabled module's rendered keys are gone."""
 	view = {".".join(path): _get(doc, path) for path, _ in managed(ctx)}
 	for module, keys in groups(ctx).items():
-		if not _on(ctx, module) and _was_on(ctx, module):
-			for path, value in keys:
-				view[f"{'.'.join(path)} (off)"] = _get(doc, path) == value
+		if _on(ctx, module):
+			continue
+		left = {f"{'.'.join(path)} (off)": _get(doc, path) == value for path, value in keys}
+		# None left reads the same either way, so the history is asked only when one is.
+		if any(left.values()) and _was_on(ctx, module):
+			view.update(left)
 	if _on(ctx, "metadata"):
 		view["project.dynamic has version"] = "version" in (_get(doc, ("project", "dynamic")) or [])
 	if _on(ctx, "test-utils"):

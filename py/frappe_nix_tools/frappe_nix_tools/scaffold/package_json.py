@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from frappe_nix_tools.common.report import DRIFT, INVALID
-from frappe_nix_tools.scaffold import floors
+from frappe_nix_tools.scaffold import context, floors
 
 VITE_REGISTER = "node scripts/vite-register.mjs"
 FORBIDDEN_DEP = re.compile(r"^(eslint.*|prettier.*|@typescript-eslint/.+|eslint-config-.+)$")
@@ -139,7 +139,7 @@ def _on_in(conf: Any, module: str) -> bool:
 def _was_on(ctx: Any, module: str) -> bool:
 	"""Whether ``module`` was on in any ``[tool.frappe-nix]`` table since the app opted in
 	(``ctx.history``): only then are its keys sync's to retract."""
-	return any(_on_in(h, module) for h in ctx.get("history") or [])
+	return context.ever(ctx.get("history"), lambda h: _on_in(h, module))
 
 
 def _turns_off(ctx: Any, module: str) -> bool:
@@ -326,9 +326,13 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 		build = sc.get("build")
 		if c8_live(ctx) and isinstance(build, str) and not build.rstrip().endswith(VITE_REGISTER):
 			sc["build"] = f"{build.rstrip()} && {VITE_REGISTER}"
-		elif not modules.get("vite-register") and _was_on(ctx, "vite-register"):
-			if isinstance(build, str) and build.rstrip().endswith(f" && {VITE_REGISTER}"):
-				sc["build"] = build.rstrip()[: -len(f" && {VITE_REGISTER}")]
+		elif (
+			not modules.get("vite-register")
+			and isinstance(build, str)
+			and build.rstrip().endswith(f" && {VITE_REGISTER}")
+			and _was_on(ctx, "vite-register")
+		):
+			sc["build"] = build.rstrip()[: -len(f" && {VITE_REGISTER}")]
 		# check belongs to js (oxc); with js off it is the app's.
 		check = check_script(sc)
 		if js_on:
@@ -336,7 +340,7 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 				sc.pop("check", None)
 			else:
 				_put(sc, "check", check, script_order)
-		elif _was_on(ctx, "js") and "check" in sc:
+		elif "check" in sc and _was_on(ctx, "js"):
 			# Rendered from the scripts present before this run retracted any (typecheck may
 			# go in the same run as js), or from today's with js's own.
 			js = scripts(ctx)["js"]

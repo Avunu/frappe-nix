@@ -462,7 +462,7 @@ def previous(root: Path, profile_dir: Path | None = None) -> context.NS | None:
 HISTORY_DEPTH = 100
 
 
-def history(root: Path, profile_dir: Path | None = None) -> list[context.NS]:
+def history(root: Path, profile_dir: Path | None = None) -> context.History:
 	"""The modules and configuration of every ``[tool.frappe-nix]`` table ``pyproject.toml`` has
 	had since the app opted in, newest first (``HEAD``'s included, each distinct table once).
 
@@ -471,13 +471,18 @@ def history(root: Path, profile_dir: Path | None = None) -> list[context.NS]:
 	alone would miss a module turned off in a commit made before syncing, which is what
 	``--check`` sees on a pull request (and then the leftovers would stay for good). The walk
 	stops at the newest commit without the table: the app's settings before it opted in are
-	its own (opting in with ``minimal`` removes nothing). A shallow clone reads what it has."""
+	its own (opting in with ``minimal`` removes nothing).
+
+	A shallow clone whose walk reaches its boundary with the table still there is
+	``truncated``: a module found on in what it has was on, and a question it can't answer
+	fails (``context.ever``, exit 3), so the verdict never depends on the clone's depth."""
+	out = context.History()
 	try:
 		shas = repo.git(root, "log", f"-n{HISTORY_DEPTH}", "--format=%H", "--", "pyproject.toml").split()
 	except EnvError:
-		return []
-	out: list[context.NS] = []
+		return out
 	seen: set[str] = set()
+	stopped = len(shas) >= HISTORY_DEPTH
 	for sha in shas:
 		try:
 			doc = tomllib.loads(repo.git(root, "show", f"{sha}:./pyproject.toml"))
@@ -485,6 +490,7 @@ def history(root: Path, profile_dir: Path | None = None) -> list[context.NS]:
 			continue
 		table = pyproject.tool_frappe_nix(doc)
 		if table is None:
+			stopped = True
 			break
 		key = json.dumps(table, sort_keys=True, default=str)
 		if key in seen:
@@ -495,6 +501,11 @@ def history(root: Path, profile_dir: Path | None = None) -> list[context.NS]:
 		except Exception:
 			continue  # a table that no longer resolves (an old profile) tells nothing
 		out.append(context.ns({"modules": resolved.modules, "cfg": resolved.cfg}))
+	if shas and not stopped:
+		try:
+			out.truncated = repo.git(root, "rev-parse", "--is-shallow-repository").strip() == "true"
+		except EnvError:
+			out.truncated = True
 	return out
 
 
@@ -511,16 +522,22 @@ def profile_templates(root: Path, cfg: dict, profile_dir: Path | None) -> Path |
 		except (ConfigError, EnvError):
 			return None
 	templates = directory / "templates"
+	if templates.is_symlink():
+		raise ConfigError(
+			"the profile's templates/ is a symlink: a profile's templates are read only as regular"
+			" files, never through a link"
+		)
 	return templates if templates.is_dir() else None
 
 
 def check_overrides(templates: Path | None, entries: list[manifest.Entry]) -> None:
 	"""Each file in the profile's ``templates/`` replaces an overridable template or is an
-	``[[extra-files]]`` template; anything else is exit 2 naming it (§8.1)."""
+	``[[extra-files]]`` template; anything else is exit 2 naming it (§8.1), and so is a symlink
+	anywhere in it (``rendering.template_files``)."""
 	if templates is None:
 		return
 	allowed = {e.template for e in entries if e.template and (e.overridable or e.profile_template)}
-	for path in sorted(p for p in templates.rglob("*") if p.is_file()):
+	for path in rendering.template_files(templates):
 		rel = path.relative_to(templates).as_posix()
 		if rel not in allowed:
 			raise ConfigError(
@@ -1003,7 +1020,7 @@ def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list
 def _was_on(plan: Plan, entry: manifest.Entry) -> bool:
 	"""Whether one of the entry's modules was on in any table since the app opted in
 	(``history``): only then is what sync would have written there sync's to retract."""
-	return any(any(h.modules.get(m) for m in entry.modules) for h in plan.ctx.get("history") or [])
+	return context.ever(plan.ctx.get("history"), lambda h: any(h.modules.get(m) for m in entry.modules))
 
 
 def _on_at_head(plan: Plan, entry: manifest.Entry) -> bool:
@@ -1019,10 +1036,8 @@ def _retract(plan: Plan, entry: manifest.Entry, path: str, templates: Path | Non
 	if current is None:
 		return None
 	if entry.strategy == "blocks" and entry.handler == "init-py":
-		if not _was_on(plan, entry):
-			return None
 		wanted = blocks.init_py_unblocked(current)
-		if wanted == current:
+		if wanted == current or not _was_on(plan, entry):
 			return None
 		return Item(
 			path, entry.strategy, current, wanted, "the version block's markers go with releases", DRIFT

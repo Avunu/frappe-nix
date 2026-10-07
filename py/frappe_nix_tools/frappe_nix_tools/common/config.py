@@ -252,6 +252,10 @@ def validate_app(table: dict) -> None:
 
 def _read_profile_dir(directory: Path, label: str) -> dict:
 	path = directory / "profile.toml"
+	if path.is_symlink():
+		raise ConfigError(
+			f"profile {label}: profile.toml is a symlink: a profile is read only from regular files"
+		)
 	try:
 		return tomllib.loads(path.read_text())
 	except FileNotFoundError as e:
@@ -273,6 +277,16 @@ def org_profile_dir(profile: str, root: Path, lock_path: Path | None = None) -> 
 		rel = PurePosixPath(profile)
 		if ".." in rel.parts or rel.is_absolute():
 			raise ConfigError(f"profile {profile!r}: an in-repo profile must stay inside the app")
+		# Part of the pull request --check runs on: a committed link (``.lnk -> ../elsewhere``)
+		# would read a profile, and print templates, from outside the checkout.
+		cur = root
+		for i, part in enumerate(rel.parts):
+			cur = cur / part
+			if cur.is_symlink():
+				raise ConfigError(
+					f"profile {profile!r}: {PurePosixPath(*rel.parts[: i + 1])} is a symlink: an in-repo"
+					" profile is never read through a link (remove it)"
+				)
 		return root / rel, ""
 	if not profile.startswith(ORG_PROFILE_PREFIXES):
 		raise ConfigError(

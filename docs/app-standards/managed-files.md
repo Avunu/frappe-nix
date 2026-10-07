@@ -99,6 +99,8 @@ Every file and key above belongs to a module, so turning a module off in `[tool.
 
 "Was on" means on in any `[tool.frappe-nix]` table the app has committed since it opted in, so it makes no difference whether you sync before committing the change or after: `--check` on the pull request reports what is left, and the next `--sync` removes it. What sync leaves to you (a key or file you changed, a seed) is reported once, on the run that turns the module off.
 
+That answer comes from the git history of `pyproject.toml`. A shallow clone that holds a file or key a module that is off now could have written, without the commits that would say whether it was ever on, exits 3 ("fetch-depth: 0") rather than give a verdict a full clone would contradict. A shallow clone with nothing of the kind left to ask about checks as usual.
+
 Turning the module back on restores the files, byte for byte where sync laid them out.
 
 ### The app's own Nix
@@ -153,7 +155,7 @@ A file name says nothing about what a workflow does, so name-only rules belong t
 
 Two of them need something first. A `requirements.txt` that lists a package `[project].dependencies` doesn't name is exit 2, naming the missing ones: move them into `pyproject.toml`, then sync deletes the file. Sync drops `node update-assets.mjs` steps from the `package.json` scripts when it deletes the script, and any other script that still names it is exit 2. In an app with a Vite config, `update-assets.mjs` is retired only once frappe-nix renders `scripts/vite-register.mjs`, which replaces it.
 
-A managed path with a symlink anywhere on it (the file or a directory above it) is exit 2: sync never reads or writes through a link. A retired link is deleted as a link.
+A managed path with a symlink anywhere on it (the file or a directory above it) is exit 2: sync never reads or writes through a link. A retired link is deleted as a link. The same holds for what sync reads from an org profile: an in-repo profile directory reached through a link, a linked `profile.toml`, or a link anywhere under the profile's `templates/` is exit 2, unread.
 
 ## `frappe-nix compat`
 

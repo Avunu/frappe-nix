@@ -111,6 +111,33 @@ class ShallowHistory:
 		return "ShallowHistory()"
 
 
+class History(list):
+	"""The ``[tool.frappe-nix]`` tables ``pyproject.toml`` has had since the app opted in,
+	newest first (``engine.history``). ``truncated`` when the walk ended at a shallow clone's
+	boundary rather than at the commit before the opt-in: older tables are unknown there."""
+
+	truncated = False
+
+	MESSAGE = (
+		"retracting what a module that is off now left behind needs the history of pyproject.toml"
+		" since the app opted in, and this clone is shallow: fetch it with `git fetch --unshallow`"
+		" (actions/checkout: fetch-depth: 0)"
+	)
+
+
+def ever(history: Any, on: Any) -> bool:
+	"""Whether ``on(table)`` holds for a table of ``history`` (a ``History``).
+
+	Found in the commits a shallow clone has, it holds in a full clone too. Not found there,
+	the answer is in commits the clone lacks, so it fails (exit 3) rather than give a verdict
+	a full clone of the same commit contradicts."""
+	if any(on(h) for h in history or []):
+		return True
+	if getattr(history, "truncated", False):
+		raise EnvError(History.MESSAGE)
+	return False
+
+
 def first_commit_year(root: Path) -> int | ShallowHistory | None:
 	"""The year of the first commit, which never changes (§2.19); ``None`` before one exists."""
 	try:
