@@ -31,7 +31,7 @@ fail() {
 ok() { echo "ok   $*"; }
 group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$*"; else echo "── $* ──"; fi; }
 endgroup() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::endgroup::"; fi; }
-commit() { git -C "$1" add -A && git -C "$1" -c user.name=selftest -c user.email=selftest@localhost commit -qm "$2"; }
+commit() { git -C "$1" add -A && git -C "$1" -c user.name=selftest -c user.email=selftest@localhost commit -q --allow-empty -m "$2"; }
 
 # A copy of the fixture app at <dir>, a git repository of its own whose
 # generated directories are ignored without a .gitignore (sync owns that file).
@@ -42,7 +42,7 @@ prepare() {
   cp -r "$FN/tests/fixtures/ironclad-app" "$dir"
   chmod -R u+w "$dir"
   git -C "$dir" init -q
-  printf '%s\n' /.devenv/ /.frappe-nix/ /.dev-dist/ /.direnv/ >> "$dir/.git/info/exclude"
+  printf '%s\n' /.devenv/ /.frappe-nix/ /.dev-dist/ /.direnv/ __pycache__/ '*.pyc' >> "$dir/.git/info/exclude"
   commit "$dir" fixture
 }
 
@@ -263,7 +263,7 @@ import frappe
 def execute():
 	frappe.get_doc({"doctype": "Fixture Note", "title": "patch ran"}).insert(ignore_permissions=True)
 EOF
-  printf '[post_model_sync]\nironclad_fixture.patches.count_runs\n' > "$app/ironclad_fixture/patches.txt"
+  printf '[pre_model_sync]\n\n[post_model_sync]\nironclad_fixture.patches.count_runs\n' > "$app/ironclad_fixture/patches.txt"
   commit "$app" "a patch that counts its runs"
   expect 0 "$WORK/rename-record.log" dev "$app" bash -c "
     set -e
@@ -273,12 +273,13 @@ EOF
   ok "recorded: a note, the daily job stopped, the patch run once"
 
   expect 0 "$WORK/rename-dry.log" dev "$app" frappe-rename-app code --from ironclad_fixture --to ironclad_fixture2 --dry-run
-  grep -q 'rename from ironclad_fixture/hooks.py' "$WORK/rename-dry.log" || fail "code --dry-run shows no rename"
+  grep -q 'rename from ironclad_fixture/api.py' "$WORK/rename-dry.log" || fail "code --dry-run shows no rename"
   [ -z "$(git -C "$app" status --porcelain)" ] || fail "code --dry-run changed the tree"
   expect 0 "$WORK/rename-code.log" dev "$app" frappe-rename-app code --from ironclad_fixture --to ironclad_fixture2
   grep -qx 'ironclad_fixture2.patches.count_runs' "$app/ironclad_fixture2/patches.txt" || fail "patches.txt not renamed"
-  sed -i 's/^\( *\)siteName = \(.*\);$/&\n\1renamedApps = { ironclad_fixture = "ironclad_fixture2"; };/' "$app/flake.nix"
-  grep -q 'renamedApps = { ironclad_fixture = "ironclad_fixture2"; };' "$app/flake.nix" || fail "could not set renamedApps"
+  sed -i 's/^\( *\)siteName = \(.*\);$/&\n\1renamedApps.ironclad_fixture = "ironclad_fixture2";/' "$app/flake.nix"
+  grep -q 'renamedApps.ironclad_fixture = "ironclad_fixture2";' "$app/flake.nix" || fail "could not set renamedApps"
+  nix run --inputs-from "$FN" nixpkgs#nixfmt -- "$app/flake.nix"
   commit "$app" "rename to ironclad_fixture2"
   (cd "$app" && nix run "${NIXFLAGS[@]}" .#relock)
   commit "$app" relock
@@ -299,8 +300,9 @@ cmd_rename_site() {
     sleep 2
   done
   [ -n "$port" ] || fail "the renamed bench did not come up (did reconcile-apps rename the site?)"
-  (cd "$FRAPPE_BENCH_ROOT/sites" && ../env/bin/bench --site "$SITE" list-apps) | tee "$WORK/rename-apps.txt"
-  grep -q ironclad_fixture2 "$WORK/rename-apps.txt" || fail "devenv up did not rename the site (renamedApps)"
+  # The installed_apps global (list-apps reads Installed Application, which only migrate rebuilds).
+  (cd "$FRAPPE_BENCH_ROOT" && env/bin/bench --site "$SITE" execute frappe.get_installed_apps) | tee "$WORK/rename-apps.txt"
+  grep -q '"ironclad_fixture2"' "$WORK/rename-apps.txt" || fail "devenv up did not rename the site (renamedApps)"
   ok "devenv up: reconcile-apps renamed the site before anything imported the app"
 
   (cd "$FRAPPE_BENCH_ROOT" && env/bin/bench --site "$SITE" migrate)
@@ -385,6 +387,7 @@ case "${1:-}" in
   main) cmd_main ;;
   variants) cmd_variants ;;
   up-and-report) cmd_up_and_report ;;
+  rename) cmd_rename ;; # resume after main's ports, by hand
   rename-site) cmd_rename_site ;;
   erpnext) cmd_erpnext ;;
   *)

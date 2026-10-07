@@ -513,7 +513,11 @@ class SiteRename:
 			)
 		if new not in bench_apps:
 			raise Precondition(f"{new} is not in sites/apps.txt: put its code on the bench first")
-		owned = self.frappe.get_all("Module Def", filters={"app_name": old, "custom": 0}, pluck="name")
+		# Raw SQL, not frappe.get_all: the query builder loads every installed app's hooks
+		# (filters_config), and OLD's package is no longer there to import.
+		owned = [
+			r[0] for r in self.db.sql("select name from `tabModule Def` where app_name=%s and custom=0", old)
+		]
 		declared = self.frappe.get_module_list(new)
 		missing = sorted(set(owned) - set(declared))
 		if missing:
@@ -529,7 +533,6 @@ class SiteRename:
 			self.db.sql(sql, values)
 
 	def rename(self, old: str, new: str) -> None:
-		f = self.frappe
 		installed = self.installed()
 		after = [new if a == old else a for a in installed]
 		self.log.append(f"installed_apps: {installed} -> {after}")
@@ -544,7 +547,10 @@ class SiteRename:
 				self.log.append(f"{doctype}.{field}: {count} row(s) {old} -> {new}")
 				self.update(f"update `tab{doctype}` set `{field}`=%s where `{field}`=%s", (new, old))
 		for doctype, field in SINGLE_APP_FIELDS:
-			if f.db.get_single_value(doctype, field) == old:
+			value = self.db.sql(
+				"select value from `tabSingles` where doctype=%s and field=%s", (doctype, field)
+			)
+			if value and value[0][0] == old:
 				self.log.append(f"{doctype}.{field}: {old} -> {new}")
 				self.update(
 					"update `tabSingles` set value=%s where doctype=%s and field=%s", (new, doctype, field)
@@ -606,6 +612,14 @@ class SiteRename:
 				self.log.append(f"scan: {table}.{column}: {hits} row(s) still name {old}")
 
 
+def drop_caches(frappe) -> None:
+	"""Forget the cached app and module maps (redis and frappe's per-process cache)."""
+	for cache in (frappe.cache, getattr(frappe, "client_cache", None)):
+		if cache is not None:
+			for key in CACHE_KEYS:
+				cache.delete_value(key)
+
+
 def cmd_site(args) -> int:
 	pairs = []
 	for pair in args.pairs:
@@ -621,6 +635,8 @@ def cmd_site(args) -> int:
 	frappe.init(site=args.site, sites_path=args.sites_path)
 	frappe.connect()
 	try:
+		# The cached app lists still name OLD; frappe would try to import it.
+		drop_caches(frappe)
 		job = SiteRename(frappe, dry_run=read_only)
 		installed = job.installed()
 		bench_apps = frappe.get_all_apps(with_internal_apps=False)
@@ -657,10 +673,7 @@ def cmd_site(args) -> int:
 		# it, but it should not lie) and the caches that hold the app and module maps.
 		if "installed_apps" in frappe.get_site_config():
 			update_site_config("installed_apps", job.installed())
-		for cache in (frappe.cache, getattr(frappe, "client_cache", None)):
-			if cache is not None:
-				for key in CACHE_KEYS:
-					cache.delete_value(key)
+		drop_caches(frappe)
 		frappe.clear_cache()
 		print(
 			f"frappe-rename-app: renamed {', '.join(f'{o} -> {n}' for o, n in todo)} on {args.site}; now migrate"

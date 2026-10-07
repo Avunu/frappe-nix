@@ -22,9 +22,13 @@ def state(app: str) -> dict:
 	return {
 		"app": app,
 		"installed_apps": frappe.get_installed_apps(),
-		"job": frappe.db.get_value("Scheduled Job Type", {"method": method}, ["name", "stopped"], as_dict=True),
+		"job": frappe.db.get_value(
+			"Scheduled Job Type", {"method": method}, ["name", "stopped"], as_dict=True
+		),
 		"note": frappe.db.exists("Fixture Note", {"title": "keep me"}),
-		"patch_log": frappe.get_all("Patch Log", filters={"patch": ("like", f"{app}.patches.%")}, pluck="patch"),
+		"patch_log": frappe.get_all(
+			"Patch Log", filters={"patch": ("like", f"{app}.patches.%")}, pluck="patch"
+		),
 		"patch_runs": frappe.db.count("Fixture Note", {"title": "patch ran"}),
 		"module_app": frappe.db.get_value("Module Def", "Ironclad Fixture", "app_name"),
 	}

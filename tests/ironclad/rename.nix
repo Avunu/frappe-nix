@@ -23,7 +23,6 @@
   pkgs,
   lib,
   self,
-  inputs,
   ...
 }:
 
@@ -105,31 +104,20 @@ let
   # --- devenv -----------------------------------------------------------------
 
   shell =
-    (inputs.flake-parts.lib.mkFlake
+    (import ./fixtures/bench-flake.nix { inherit self pkgs; } (
+      { pkgs, ... }:
       {
-        inputs = inputs // {
-          inherit self;
+        frappe-nix = {
+          enable = true;
+          python = pkgs.python314;
+          benchName = "rename-check";
+          siteName = "rename.localhost";
+          workspaceRoot = ./fixtures/bench-dev-group;
+          renamedApps.esign = "esign_webforms";
+          replacedApps.jailbreak = "data_steward";
         };
       }
-      {
-        imports = [ self.flakeModules.default ];
-        systems = [ system ];
-        debug = true;
-        perSystem =
-          { pkgs, ... }:
-          {
-            frappe-nix = {
-              enable = true;
-              python = pkgs.python314;
-              benchName = "rename-check";
-              siteName = "rename.localhost";
-              workspaceRoot = ./fixtures/bench-dev-group;
-              renamedApps.esign = "esign_webforms";
-              replacedApps.jailbreak = "data_steward";
-            };
-          };
-      }
-    ).allSystems.${system}.config.devenv.shells.default;
+    )).devenv.shells.default;
   reconcileScript = pkgs.writeText "reconcile-apps" shell.scripts.reconcile-apps.exec;
   reconcileTask = pkgs.writeText "frappe-apps-reconcile" shell.tasks."frappe:apps-reconcile".exec;
 in

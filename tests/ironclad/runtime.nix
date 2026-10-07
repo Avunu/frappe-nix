@@ -31,21 +31,7 @@ let
 
   # --- ports, through the module ----------------------------------------------
 
-  benchFlake =
-    perSystem:
-    (inputs.flake-parts.lib.mkFlake
-      {
-        inputs = inputs // {
-          inherit self;
-        };
-      }
-      {
-        imports = [ self.flakeModules.default ];
-        systems = [ pkgs.stdenv.hostPlatform.system ];
-        debug = true;
-        inherit perSystem;
-      }
-    ).allSystems.${pkgs.stdenv.hostPlatform.system}.config;
+  benchFlake = import ./fixtures/bench-flake.nix { inherit self pkgs; };
 
   portsOf =
     extra:
