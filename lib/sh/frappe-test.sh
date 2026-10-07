@@ -258,8 +258,8 @@ fi
 # is on (with --ci) or the tests were asked for.
 bench_stages() {
   # The bench root's dev group brings both, unless the app has not opted in
-  # and its lock predates them (a version-15 lock: lib/app-workspace.nix keeps
-  # the root to what the lock resolves). Said before anything starts.
+  # and its lock's root predates them (lib/app-workspace.nix keeps such a root
+  # to the dev group main rendered, S35). Said before anything starts.
   local absent=()
   if [ "$COVERAGE" = 1 ] && ! "$PY" -c 'import coverage' > /dev/null 2>&1; then absent+=(coverage); fi
   if [ -n "$JUNIT" ] && ! "$PY" -c 'import xmlrunner' > /dev/null 2>&1; then absent+=(unittest-xml-reporting); fi

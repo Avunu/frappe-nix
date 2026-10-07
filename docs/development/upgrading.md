@@ -42,10 +42,9 @@ A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from i
 
 In an [app repository](../scaffolding/app-mode.md) the pins are flake inputs, so a newer frappe-nix is the same `nix flake update frappe-nix`. Moving the Frappe pin or a sibling is `nix flake update frappe`, then `nix run .#relock`, and you commit `flake.lock` with `nix/`.
 
-The bench root's dev group gained `coverage` and `unittest-xml-reporting`, which [`frappe-test`](../app-standards/testing.md) runs the tests under. An app that has not opted in to the [app standards](../app-standards/README.md) gets them only where its committed `nix/uv.lock` already has them, so no app has to relock after the upgrade:
+The bench root's dev group gained `coverage` and `unittest-xml-reporting`, which [`frappe-test`](../app-standards/testing.md) runs the tests under. An app that has not opted in to the [app standards](../app-standards/README.md) keeps the root it had: each of the two stays out of it unless the root package in the committed `nix/uv.lock` already lists it in its `dev` group. On version-15 and version-16 alike, the generated root, the dev environment and the lock stay exactly as they were, and `nix run .#relock` leaves `nix/uv.lock` as it is. A version-16 lock does have both packages, through Frappe's `test` extra, but that does not put them in the dev environment.
 
-- **On version-16** the lock has both already (Frappe's `test` extra), so the dev environment gains `coverage` and `xmlrunner`. The next `nix run .#relock` also adds four lines to `nix/uv.lock`: the two names under the root package's `dev` group and their two requirements. Commit them with whatever else that relock changed.
-- **On version-15** the lock has neither, so the root and the environment stay exactly as they were. `frappe-test` then has no coverage to run under and says so (exit 10): pass `--no-coverage`, or opt in and run `nix run .#relock`, which adds them.
+`frappe-test` then has no coverage to run under and says so (exit 10): pass `--no-coverage`, or opt in and run `nix run .#relock`, which adds them.
 
 ## The runtime moves with frappe-nix
 

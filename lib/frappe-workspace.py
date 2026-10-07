@@ -121,22 +121,36 @@ def app_tools(path):
 
 
 # What frappe-test runs an app's tests under (spec S17), added to every root by
-# the template. version-16 Frappe locks both already (its `test` extra);
-# version-15 Frappe has no such extra, so the committed nix/uv.lock of a
-# version-15 app-mode app that has not opted in does not have them, and the
-# lock audit (lib/lock-audit.nix) would refuse its root until it relocked. Such
-# a root drops each one its lock lacks (lib/app-workspace.nix passes
-# --test-tools-lock for an app that has not opted in, and only then).
+# the template. An app-mode app that has not opted in must see no change from
+# frappe-nix main (spec S35), and main's root dev group had neither: so such a
+# root keeps each one only where its committed nix/uv.lock's own root already
+# lists it in its dev group (lib/app-workspace.nix passes --test-tools-lock, or
+# --test-tools-unlocked with no lock yet, for an app that has not opted in, and
+# only then). Whether a package of that name is locked anywhere does not count:
+# a version-16 lock always has both through frappe's `test` extra, and keeping
+# them on that ground makes main's lock stale and the next relock rewrite it.
 TEST_TOOLS = ("coverage", "unittest-xml-reporting")
 
 
-def locked_packages(path):
-	"""The normalized package names a uv.lock resolves, or None when there is no lock."""
+def locked_root_dev(path):
+	"""The normalized names a uv.lock's workspace root lists in its dev group.
+
+	The root is the lock's `source = { virtual = "." }` package; what it lists
+	is [package.metadata.requires-dev].dev (what the root's pyproject.toml asked
+	for), not [package.dev-dependencies] (which carries markers and extras per
+	entry, and is what that resolves to). An empty set when the lock has no such
+	package, None when there is no lock at all.
+	"""
 	try:
 		text = Path(path).read_text()
 	except FileNotFoundError:
 		return None
-	return {normalize(p["name"]) for p in tomllib.loads(text).get("package", []) if "name" in p}
+	for package in tomllib.loads(text).get("package", []):
+		if package.get("source", {}).get("virtual") != ".":
+			continue
+		requires_dev = package.get("metadata", {}).get("requires-dev", {})
+		return {normalize(r["name"]) for r in requires_dev.get("dev", []) if "name" in r}
+	return set()
 
 
 def drop_unlocked_test_tools(dev, locked):
@@ -151,7 +165,9 @@ def drop_unlocked_test_tools(dev, locked):
 		and requirement_name(item) in TEST_TOOLS
 		and requirement_name(item) not in locked
 	]
-	changed = [f"[dependency-groups].dev -= {dev[i]} (not in the app's uv.lock)" for i in gone]
+	changed = [
+		f"[dependency-groups].dev -= {dev[i]} (not in the dev group of the app's uv.lock)" for i in gone
+	]
 	for i in reversed(gone):
 		del dev[i]
 	return changed
@@ -189,8 +205,9 @@ def cmd_ensure_root(args):
 	absent, and the file is written only when something changed, so a run that
 	changes nothing leaves the mtime (and git) alone. lib/app-workspace.nix
 	passes only --app-tools, for the generated root of an app that opted in to
-	the app standards (drop_app_pinned), or only --test-tools-lock, for the
-	generated root of one that has not (drop_unlocked_test_tools).
+	the app standards (drop_app_pinned), or only --test-tools-lock (or
+	--test-tools-unlocked), for the generated root of one that has not
+	(drop_unlocked_test_tools).
 	"""
 	original = Path(args.pyproject).read_text()
 	doc = tomlkit.parse(original)
@@ -242,13 +259,15 @@ def cmd_ensure_root(args):
 	# something a root has.
 	if args.app_tools:
 		changed += drop_app_pinned(groups["dev"], app_tools(args.app_tools))
-	# Only for the generated root of an app that has not opted in, with a
-	# committed lock (lib/app-workspace.nix): that app's root stays what its
-	# lock resolves, so upgrading frappe-nix never forces it to relock.
-	if args.test_tools_lock:
-		locked = locked_packages(args.test_tools_lock)
-		if locked is not None:
-			changed += drop_unlocked_test_tools(groups["dev"], locked)
+	# Only for the generated root of an app that has not opted in
+	# (lib/app-workspace.nix): that root's dev group stays what main rendered
+	# for it, so upgrading frappe-nix neither changes its dev env nor makes its
+	# committed lock stale. With no lock yet that is main's dev group, without
+	# either test tool; a missing lock file reads the same way.
+	if args.test_tools_unlocked:
+		changed += drop_unlocked_test_tools(groups["dev"], set())
+	elif args.test_tools_lock:
+		changed += drop_unlocked_test_tools(groups["dev"], locked_root_dev(args.test_tools_lock) or set())
 
 	uv = table_at(doc, "tool", "uv")
 	# Not optional: the workspace root is a virtual package. lib/python.nix
@@ -813,8 +832,11 @@ def main():
 	# each of ruff, pre-commit and semgrep it pins a replacement for (APP_PINNED).
 	p.add_argument("--app-tools", default="")
 	# An app-mode app's committed uv.lock, for an app that has not opted in: drop
-	# from the dev group each TEST_TOOLS entry the lock does not resolve.
+	# from the dev group each TEST_TOOLS entry the lock's own root does not list
+	# in its dev group. --test-tools-unlocked: the same app, with no lock yet;
+	# drop both.
 	p.add_argument("--test-tools-lock", default="")
+	p.add_argument("--test-tools-unlocked", action="store_true")
 	p.set_defaults(func=cmd_ensure_root)
 
 	p = sub.add_parser("add-app")

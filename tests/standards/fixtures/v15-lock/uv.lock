@@ -1,7 +1,7 @@
 # A version-15 app-mode app's committed nix/uv.lock, cut down to the bench
-# root's dev group as frappe-nix main shipped it: no coverage and no
-# unittest-xml-reporting (frappe 15 has no `test` extra). Read only for its
-# package names (standards-bench-dev-group).
+# root and its dev group as frappe-nix main shipped it: no coverage and no
+# unittest-xml-reporting, in the root's dev group or anywhere else (frappe 15
+# has no `test` extra). Read only for that (standards-bench-dev-group).
 version = 1
 revision = 3
 requires-python = ">=3.10, <3.13"
@@ -10,6 +10,21 @@ requires-python = ">=3.10, <3.13"
 name = "frappe"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "jwt-auth-bench"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "responses" },
+    { name = "ruff", specifier = ">=0.15.0" },
+    { name = "semgrep" },
+]
 
 [[package]]
 name = "pre-commit"

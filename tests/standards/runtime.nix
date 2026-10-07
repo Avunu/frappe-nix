@@ -22,8 +22,15 @@
 #                            bench-mode root, keeps all three, byte for byte.
 #                            A root that has not opted in keeps coverage and
 #                            unittest-xml-reporting only where its committed
-#                            lock has them, so a version-15 lock still covers
-#                            it without a relock.
+#                            lock's own root lists them (no lock: neither), so
+#                            a lock main produced, version-15 or version-16,
+#                            gets main's root.
+#   standards-relock-main-lock a version-16 app that has not opted in, with the
+#                            nix/uv.lock frappe-nix main's relock wrote for it:
+#                            its generated root is main's, `uv lock --check`
+#                            passes, and a relock leaves the lock byte for
+#                            byte (S35). The template's root, with both test
+#                            tools, fails the same check.
 #   standards-coverage-env    `import coverage` (and xmlrunner) works in the dev
 #                            virtualenv lib/python.nix builds from that group.
 #   standards-frappe-test     frappe-test builds (shellcheck), parses its
@@ -273,33 +280,61 @@ let
   toolsAll = ./fixtures/app-tools/all/pyproject.toml;
   toolsRuff = ./fixtures/app-tools/ruff/pyproject.toml;
   # A non-opted-in app's committed lock: a version-15 one (no coverage, no
-  # unittest-xml-reporting) and a version-16 one (both, from frappe's `test`
-  # extra; the dev-group fixture's lock has them the same way).
+  # unittest-xml-reporting anywhere); a version-16 one main's relock wrote
+  # (both as packages, through a `test` extra, but not in its root's dev
+  # group); and one whose root lists both in its dev group, as a relock under
+  # this template writes it (the dev-group fixture's). And none at all: a path
+  # that does not exist, as lib/app-workspace.nix sees an app with no lock yet.
   v15Lock = ./fixtures/v15-lock/uv.lock;
-  v16Lock = devGroupFixture + "/uv.lock";
+  mainV16Lock = ./fixtures/main-v16-lock/uv.lock;
+  rootListsLock = devGroupFixture + "/uv.lock";
+  noLock = ./fixtures/no-such-dir/uv.lock;
   appRoot = appTools: appRootWith { inherit appTools; };
   appRootWith =
     {
       appTools ? null,
       testToolsLock ? null,
     }:
-    (import ../../lib/app-workspace.nix {
+    appWorkspaceWith { inherit appTools testToolsLock; } + "/pyproject.toml";
+  appWorkspaceWith =
+    {
+      appTools ? null,
+      testToolsLock ? null,
+      lockFile ? null,
+      app ? {
+        name = "standards_fixture";
+        src = ../fixtures/standards-app;
+      },
+    }:
+    import ../../lib/app-workspace.nix {
       inherit
         pkgs
         lib
         appTools
         testToolsLock
+        lockFile
         ;
-      apps = [
-        {
-          name = "standards_fixture";
-          src = ../fixtures/standards-app;
-        }
-      ];
-      projectName = "standards-fixture-bench";
+      apps = [ app ];
+      projectName = "${lib.replaceStrings [ "_" ] [ "-" ] app.name}-bench";
       preset = (lib.importJSON ../../lib/frappe-presets.json).version-16;
-    })
-    + "/pyproject.toml";
+    };
+  # The version-16 app main-v16-lock was locked for, and its workspace here:
+  # with that lock, the way modules/devenv.nix assembles an app that has not
+  # opted in (testToolsLock is the lock), and the template's root (what the
+  # lock-name test before the S35 fix kept for every version-16 lock).
+  lockCheckApp = {
+    name = "lock_check_app";
+    src = ./fixtures/lock-check-app;
+  };
+  mainLockWorkspace = appWorkspaceWith {
+    app = lockCheckApp;
+    lockFile = mainV16Lock;
+    testToolsLock = mainV16Lock;
+  };
+  templateLockWorkspace = appWorkspaceWith {
+    app = lockCheckApp;
+    lockFile = mainV16Lock;
+  };
   envs = import ../../lib/python.nix {
     inherit pkgs lib;
     python = pkgs.python314;
@@ -408,10 +443,17 @@ in
 
         expect "the template keeps all three and adds coverage and xmlrunner" ${../../templates/bench/pyproject.toml} \
           coverage unittest-xml-reporting ruff pre-commit semgrep
-        expect "an app-mode root that has not opted in, with no lock yet" ${appRoot null} \
+        expect "an app-mode root nobody passed a lock for (tests/app-workspace.nix)" ${appRoot null} \
           coverage unittest-xml-reporting ruff pre-commit semgrep
-        expect "an app-mode root that has not opted in, with a version-16 lock" ${
-          appRootWith { testToolsLock = v16Lock; }
+        expect "an app-mode root that has not opted in, with no lock yet" ${
+          appRootWith { testToolsLock = noLock; }
+        } \
+          ruff pre-commit semgrep pydantic pytest responses -- coverage unittest-xml-reporting
+        v16=${appRootWith { testToolsLock = mainV16Lock; }}
+        expect "an app-mode root that has not opted in, with the version-16 lock main wrote" "$v16" \
+          ruff pre-commit semgrep pydantic pytest responses -- coverage unittest-xml-reporting
+        expect "an app-mode root that has not opted in, with a lock whose root lists both" ${
+          appRootWith { testToolsLock = rootListsLock; }
         } \
           coverage unittest-xml-reporting ruff pre-commit semgrep
         v15=${appRootWith { testToolsLock = v15Lock; }}
@@ -426,10 +468,15 @@ in
         if missing:
             sys.exit(f"FAIL the version-15 root needs a relock for {missing}")
         PY
-        # The root the old template rendered, but for its comment: the same lock resolves it.
-        diff <(grep -v '^#' "$v15") <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' ${appRoot null} | grep -v '^#') \
+        # The root the old template rendered, byte for byte: the same lock resolves it.
+        diff "$v15" <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' ${appRoot null}) \
           || fail "the version-15 root differs from the template without the two test tools"
         echo "ok   a version-15 lock covers that root's dev group: no relock after upgrading frappe-nix"
+        cmp -s "$v15" "$v16" || fail "the version-16 root differs from the version-15 one"
+        cmp -s "$v15" ${
+          appRootWith { testToolsLock = noLock; }
+        } || fail "the no-lock root differs from the version-15 one"
+        echo "ok   no lock, a version-15 lock and main's version-16 lock: the same root, main's"
         expect "an opted-in root whose tools/pyproject.toml lists ruff, semgrep and prek" ${appRoot toolsAll} \
           coverage unittest-xml-reporting pydantic -- ruff pre-commit semgrep
         expect "an opted-in root whose tools/pyproject.toml lists only ruff" ${appRoot toolsRuff} \
@@ -460,6 +507,71 @@ in
         frappe-nix-workspace ensure-root --pyproject missing.toml --app-tools "$PWD/no-such-file.toml"
         cmp -s missing.toml before.toml || fail "an absent tools/pyproject.toml dropped something"
         echo "ok   no tools/pyproject.toml, nothing dropped"
+
+        # --test-tools-lock reads the lock's root, never a package elsewhere in it.
+        cp before.toml locked.toml
+        frappe-nix-workspace ensure-root --pyproject locked.toml --test-tools-lock ${mainV16Lock} > locked.log
+        expect "ensure-root --test-tools-lock (main's version-16 lock)" locked.toml \
+          ruff pre-commit semgrep -- coverage unittest-xml-reporting
+        grep -q 'dev -= coverage>=7.10' locked.log || fail "ensure-root does not say what it dropped: $(cat locked.log)"
+        cp before.toml listed.toml
+        frappe-nix-workspace ensure-root --pyproject listed.toml --test-tools-lock ${rootListsLock}
+        cmp -s listed.toml before.toml || fail "a lock whose root lists both dropped something"
+        cp before.toml unlocked.toml
+        frappe-nix-workspace ensure-root --pyproject unlocked.toml --test-tools-unlocked
+        expect "ensure-root --test-tools-unlocked" unlocked.toml ruff pre-commit semgrep -- coverage unittest-xml-reporting
+        cp before.toml gone.toml
+        frappe-nix-workspace ensure-root --pyproject gone.toml --test-tools-lock "$PWD/no-such-lock"
+        cmp -s gone.toml unlocked.toml || fail "a missing lock file is not the same as no lock"
+        touch "$out"
+      '';
+
+  standards-relock-main-lock =
+    pkgs.runCommand "standards-relock-main-lock-check"
+      {
+        nativeBuildInputs = [
+          pkgs.uv
+          pkgs.python314
+        ];
+      }
+      ''
+        set -euo pipefail
+        fail() { echo "FAIL $*" >&2; exit 1; }
+        export HOME="$TMPDIR" UV_CACHE_DIR="$TMPDIR/uv-cache" UV_NO_CONFIG=1 UV_OFFLINE=1 \
+          UV_PYTHON=${lib.getExe pkgs.python314} UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
+        unset SSL_CERT_FILE NIX_SSL_CERT_FILE
+
+        # main's root: the template's, byte for byte, without the two test tools.
+        diff ${mainLockWorkspace}/pyproject.toml \
+          <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' ${templateLockWorkspace}/pyproject.toml) \
+          || fail "the root of an app that has not opted in, with main's version-16 lock, is not main's"
+        echo "ok   the generated root is main's, byte for byte"
+
+        # `nix run .#relock`'s steps (modules/devenv.nix), offline: a writable
+        # copy of the workspace, the committed lock seeded, `uv lock`.
+        relock() { # <workspace> <dir>
+          cp -a "$1/." "$2/" && chmod -R u+w "$2"
+          install -m 0644 ${mainV16Lock} "$2/uv.lock"
+        }
+        mkdir main template
+        relock ${mainLockWorkspace} main
+        (cd main && uv lock --check -v) > main.log 2>&1 || { cat main.log; fail "main's version-16 lock is stale under this root"; }
+        ! grep -q 'Resolving despite existing lockfile' main.log || { cat main.log; fail "uv re-resolved main's lock"; }
+        (cd main && uv lock)
+        cmp -s main/uv.lock ${mainV16Lock} || { diff -u ${mainV16Lock} main/uv.lock || true; fail "a relock rewrote main's lock"; }
+        echo "ok   main's version-16 lock is current, and a relock leaves it byte for byte"
+
+        # The control: the template's root, both test tools in it, is what the
+        # lock-name test produced. The same check has to catch it.
+        # Offline, uv cannot finish that relock (it would fetch frappe-runtime's
+        # git source), so this reads why it started one: the root's dev group.
+        relock ${templateLockWorkspace} template
+        if (cd template && uv lock --check -v) > template.log 2>&1; then
+          fail "uv lock --check passed on the template's root: this check cannot see the regression"
+        fi
+        grep -q 'Resolving despite existing lockfile due to mismatched dependency groups' template.log \
+          || { cat template.log; fail "uv lock --check failed on the template's root for another reason"; }
+        echo "ok   the template's root (coverage and unittest-xml-reporting) would make that lock stale"
         touch "$out"
       '';
 

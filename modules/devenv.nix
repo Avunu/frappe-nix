@@ -1513,9 +1513,10 @@ in
             # dev group where the app pins its own (S1, lib/app-workspace.nix).
             appTools = if standardsShell.optedIn then cfg.app.src + "/tools/pyproject.toml" else null;
             # Apps that have not opted in: coverage and unittest-xml-reporting
-            # stay in the root's dev group only where the committed lock has
-            # them, so no such app has to relock (S35, lib/app-workspace.nix).
-            # The same lock for both workspaces: relock's must agree.
+            # stay in the root's dev group only where the committed lock's own
+            # root lists them, so such an app keeps main's root, dev env and
+            # lock (S35, lib/app-workspace.nix). The same lock for both
+            # workspaces: relock's must agree.
             testToolsLock = if standardsShell.optedIn then null else lockPath;
           };
 

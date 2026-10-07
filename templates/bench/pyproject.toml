@@ -23,9 +23,6 @@ dependencies = [
 ]
 
 # Dev-only tools — in the devenv shell, excluded from production containers.
-# coverage and unittest-xml-reporting are what `frappe-test` runs an app's tests
-# under (coverage scoped to the app, a JUnit report). An app-mode app that has
-# not opted in to the app standards keeps each only while its uv.lock has it.
 [dependency-groups]
 dev = [
     "coverage>=7.10",
