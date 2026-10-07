@@ -1,0 +1,257 @@
+name: selftest-scaffold
+
+# The managed-file engine end to end (docs/ironclad/spec.md §7, "N3: scaffold"),
+# where the flake checks cannot go: the network, the real tools, and the Nix
+# bootstrap. Each job works on a copy of tests/fixtures/ironclad-app in a git
+# repository of its own, synced against this checkout of frappe-nix
+# (IRONCLAD_FRAPPE_NIX_URL, which is why skew is allowed).
+#
+#   rendered   the synced fixture through nixfmt, oxfmt, ruff, actionlint,
+#              zizmor, uv lock --check, prek (every hook, network included) and
+#              tsc --build; its flake evaluates; and `frappe-init --check` on a
+#              clone of carbon_frappe reports drift without crashing.
+#   bootstrap  one `frappe-init --sync` with neither yarn nor uv on PATH, from a
+#              fixture with no flake (postgrid, jwt_auth) and from one whose lock
+#              pins frappe-nix main (carbon, taskview, timeclock): --check is
+#              clean right after, and the locks exist.
+#   no-nix     `uv tool install` from a clone with no checkout left on disk, then
+#              `ironclad sync --check` on the fixture: the package is
+#              self-contained (S10).
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/selftest-scaffold.yml
+      - lib/init.nix
+      - lib/ironclad/**
+      - lib/sh/**
+      - py/ironclad/**
+      - templates/app/**
+      - tests/fixtures/ironclad-app/**
+      - tests/ironclad/**
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  rendered:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init, ironclad and the tools from this checkout
+        run: |
+          set -euo pipefail
+          nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+          nix build .#ironclad --out-link "$RUNNER_TEMP/ironclad"
+          for p in nodejs_24 yarn uv nixfmt python314; do
+            nix build --inputs-from . "nixpkgs#$p" --out-link "$RUNNER_TEMP/tool-$p"
+            echo "$RUNNER_TEMP/tool-$p/bin" >> "$GITHUB_PATH"
+          done
+          echo "$RUNNER_TEMP/frappe-init/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/ironclad/bin" >> "$GITHUB_PATH"
+
+      - name: Copy the fixture into a repository of its own
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/ironclad-app "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+
+      - name: frappe-init --sync against this checkout, then --check
+        working-directory: ${{ runner.temp }}/app
+        env:
+          IRONCLAD_FRAPPE_NIX_URL: path:${{ github.workspace }}
+          IRONCLAD_ALLOW_SKEW: "1"
+        run: |
+          set -euo pipefail
+          frappe-init --sync
+          # Only the lock moves (it now pins this checkout) and relock writes nix/uv.lock.
+          changed="$(git status --porcelain | grep -v -E ' (flake\.lock|nix/.*)$' || true)"
+          if [ -n "$changed" ]; then
+            echo "::error::sync changed the committed fixture:"
+            echo "$changed"
+            git diff
+            exit 1
+          fi
+          frappe-init --check
+          yarn install --frozen-lockfile --non-interactive
+
+      - name: nixfmt, oxfmt, ruff format and uv lock --check
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          nixfmt --check flake.nix
+          yarn -s oxfmt --check
+          uv run --frozen --project tools ruff format --check .
+          uv lock --check --project tools
+
+      - name: actionlint and zizmor on the rendered workflows
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          if [ -d .github/workflows ]; then
+            uv run --frozen --project tools actionlint
+            uv run --frozen --project tools zizmor --config .github/zizmor.yml .github/workflows .github/dependabot.yml
+          else
+            echo "::notice::the fixture has no rendered workflows yet (they arrive with N4's manifest.d/ci.json)"
+          fi
+
+      - name: prek run --all-files
+        working-directory: ${{ runner.temp }}/app
+        run: uv run --frozen --project tools prek run --all-files --show-diff-on-failure
+
+      - name: tsc --build
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          set -euo pipefail
+          # marketplace/shots.d.ts is N5's managed file; until its fragment
+          # lands, a stand-in lets the scripts project resolve the import.
+          if [ ! -f marketplace/shots.d.ts ]; then
+            printf 'export interface ShotSpec {\n\tdemo: unknown;\n\tshots: unknown[];\n}\n' > marketplace/shots.d.ts
+          fi
+          yarn -s typecheck
+
+      - name: The flake evaluates
+        working-directory: ${{ runner.temp }}/app
+        env:
+          FRAPPE_NIX: path:${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          nix flake lock --override-input frappe-nix "$FRAPPE_NIX"
+          nix eval --no-pure-eval --raw --override-input frappe-nix "$FRAPPE_NIX" .#packages.x86_64-linux.default.drvPath
+
+      - name: frappe-init --check on a read-only clone of carbon_frappe
+        run: |
+          set -euo pipefail
+          git clone -q --depth 1 https://github.com/Avunu/carbon_frappe "$RUNNER_TEMP/carbon"
+          chmod -R a-w "$RUNNER_TEMP/carbon"
+          cd "$RUNNER_TEMP/carbon"
+          set +e
+          frappe-init --check > "$RUNNER_TEMP/carbon-report.txt"
+          code=$?
+          set -e
+          tail -n 40 "$RUNNER_TEMP/carbon-report.txt"
+          # Drift (1), or an app-owned key sync refuses to touch (2): carbon's develop
+          # sets [tool.ty.rules] to "warn", which §2.12 forbids. Never 3, a crash.
+          if [ "$code" != 1 ] && [ "$code" != 2 ]; then
+            echo "::error::frappe-init --check on carbon_frappe exited $code, not 1 or 2"
+            exit 1
+          fi
+          grep -q 'drifted' "$RUNNER_TEMP/carbon-report.txt"
+
+  bootstrap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shape: [no-flake, main-locked]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init from this checkout
+        run: nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+
+      - name: Prepare the ${{ matrix.shape }} shape
+        env:
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/ironclad-app "$RUNNER_TEMP/app"
+          cd "$RUNNER_TEMP/app"
+          rm -rf tools/uv.lock yarn.lock nix
+          if [ "$SHAPE" = no-flake ]; then
+            rm -f flake.nix flake.lock .envrc
+          else
+            sed -i 's|github:Avunu/frappe-nix/release-1|github:Avunu/frappe-nix|' flake.nix
+            git init -q && git add -A
+            nix flake lock --refresh
+            rm -rf .git
+          fi
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+
+      - name: One frappe-init --sync, with neither yarn nor uv on PATH
+        working-directory: ${{ runner.temp }}/app
+        env:
+          IRONCLAD_FRAPPE_NIX_URL: path:${{ github.workspace }}
+          IRONCLAD_ALLOW_SKEW: "1"
+        run: |
+          set -euo pipefail
+          path="/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+          if PATH="$path" command -v yarn || PATH="$path" command -v uv; then
+            echo "::error::yarn or uv is on the bare PATH"
+            exit 1
+          fi
+          PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --frappe-version version-16
+          PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
+          for f in flake.nix flake.lock yarn.lock tools/uv.lock nix/uv.lock nix/node-locks/frappe/ui/yarn.lock; do
+            test -f "$f" || { echo "::error::$f is missing after the bootstrap"; exit 1; }
+          done
+
+  no-nix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Install ironclad from a clone, then leave no frappe-nix on disk
+        run: |
+          set -euo pipefail
+          cp -r tests/fixtures/ironclad-app "$RUNNER_TEMP/app"
+          git clone -q --no-local "$GITHUB_WORKSPACE" "$RUNNER_TEMP/clone"
+          git -C "$RUNNER_TEMP/clone" checkout -q -b selftest
+          uv tool install --python 3.14 "ironclad @ git+file://$RUNNER_TEMP/clone@selftest#subdirectory=py/ironclad"
+          uv tool dir --bin >> "$GITHUB_PATH"
+          rm -rf "$RUNNER_TEMP/clone"
+          find "$GITHUB_WORKSPACE" -mindepth 1 -delete
+
+      - name: ironclad sync --check on the fixture
+        working-directory: ${{ runner.temp }}/app
+        env:
+          IRONCLAD_ALLOW_SKEW: "1"
+        run: |
+          set -euo pipefail
+          git init -q
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+          ironclad data-path known-apps.json
+          ironclad sync --check
+          ironclad compat
