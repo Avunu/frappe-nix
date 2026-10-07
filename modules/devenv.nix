@@ -1917,6 +1917,11 @@ in
           schema = import ../lib/secrets-schema.nix { inherit lib; };
         };
 
+        # App mode's Ironclad tools (`ironclad`, `frappe-init`, and every
+        # lib/ironclad/tools/*.nix), their `nix run .#<tool>` apps and their
+        # enterShell snippet. See lib/ironclad/shell.nix.
+        ironcladShell = import ../lib/ironclad/shell.nix { inherit pkgs; };
+
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
           inherit (benchInfra) appsWithNode;
@@ -2161,10 +2166,18 @@ in
 
         # Deliberately outside every other output's dependency graph: it has to
         # evaluate when nothing that touches the Python workspace can.
-        apps.relock = {
-          type = "app";
-          program = "${relockTool}/bin/frappe-nix-relock";
-        };
+        apps = lib.mkMerge [
+          {
+            relock = {
+              type = "app";
+              program = "${relockTool}/bin/frappe-nix-relock";
+            };
+          }
+          # `nix run .#frappe-init -- --sync` with the frappe-nix flake.lock
+          # pins, and `.#<tool>` for each Ironclad tool (docs/ironclad/spec.md
+          # §3.3, §5).
+          (lib.mkIf appMode ironcladShell.apps)
+        ];
 
         devenv.shells.default =
           {
@@ -2360,6 +2373,7 @@ in
               ]
               # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
               ++ lib.optional cfg.mariadb.noCow dbNocowTool
+              ++ lib.optionals appMode ironcladShell.packages
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -2527,6 +2541,8 @@ in
               ''}
 
               ${lib.optionalString appMode appBenchMaterialize}
+
+              ${lib.optionalString appMode ironcladShell.enterShell}
 
               # Create required directories. Frappe writes pids and lock files
               # into config/ and logs/, so both must be real and writable.

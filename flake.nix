@@ -41,6 +41,27 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-parts.follows = "flake-parts";
     };
+
+    # The registry checks an app must pass, pinned (docs/ironclad/spec.md S20).
+    # Not flakes: plain source trees. They reach each app through its
+    # flake.lock, where `ironclad pin-path <name>` finds them under the
+    # frappe-nix node, and Dependabot's `nix` entry moves them here.
+    #
+    # frappe/marketplace: the registry's own semgrep rules and add_release.py.
+    marketplace = {
+      url = "github:frappe/marketplace";
+      flake = false;
+    };
+    # frappe/pilot: the get-app validator (and app-assets.yml).
+    pilot = {
+      url = "github:frappe/pilot/develop";
+      flake = false;
+    };
+    # frappe/semgrep-rules: the rules every app's `lint` runs.
+    frappe-semgrep-rules = {
+      url = "github:frappe/semgrep-rules";
+      flake = false;
+    };
   };
 
   nixConfig = {
@@ -68,6 +89,8 @@
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
       frappeInit = pkgs: import ./lib/init.nix { inherit pkgs; };
+      # The Ironclad tools, one per lib/ironclad/tools/*.nix: packages and apps.
+      ironclad = pkgs: import ./lib/ironclad/outputs.nix { inherit pkgs; };
     in
     {
       flakeModules.default = ./modules/flake-module.nix;
@@ -89,18 +112,22 @@
       };
 
       # `nix run github:Avunu/frappe-nix` scaffolds a new bench (bench-init style).
-      packages = forAllSystems (pkgs: rec {
-        frappe-init = frappeInit pkgs;
-        default = frappe-init;
+      packages = forAllSystems (
+        pkgs:
+        (ironclad pkgs).packages
+        // rec {
+          frappe-init = frappeInit pkgs;
+          default = frappe-init;
 
-        # The object-store half of `bench restore`, standalone. Exposed because
-        # a production host restores too, and its NixOS module otherwise keeps
-        # its own copy of the same folder-selection and download logic — which
-        # is how the three copies of this got out of step in the first place.
-        # `--fetch-only` style use: it prints a JSON manifest and touches no
-        # database, so the deployment keeps its own restore half.
-        backup-fetch = import ./lib/backup-fetch.nix { inherit pkgs; };
-      });
+          # The object-store half of `bench restore`, standalone. Exposed because
+          # a production host restores too, and its NixOS module otherwise keeps
+          # its own copy of the same folder-selection and download logic — which
+          # is how the three copies of this got out of step in the first place.
+          # `--fetch-only` style use: it prints a JSON manifest and touches no
+          # database, so the deployment keeps its own restore half.
+          backup-fetch = import ./lib/backup-fetch.nix { inherit pkgs; };
+        }
+      );
 
       apps = forAllSystems (
         pkgs:
@@ -112,7 +139,8 @@
             meta.description = "Scaffold a new frappe-nix bench (bench-init style)";
           };
         in
-        {
+        (ironclad pkgs).apps
+        // {
           default = app;
           frappe-init = app;
         }
@@ -461,6 +489,9 @@
         # frappe-nix's own lint and type checks, and the drift check that keeps
         # its ruff config on the pinned upstream Frappe's. See dev/.
         // import ./dev/checks.nix { inherit pkgs inputs; }
+        # The Ironclad platform's checks, one file per area, and `ironclad-all`
+        # that builds them all. See tests/ironclad/default.nix.
+        // import ./tests/ironclad { inherit self pkgs inputs; }
       );
 
       # frappe-nix's own dev shell: what a bench gets, pointed back at this
