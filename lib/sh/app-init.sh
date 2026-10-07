@@ -1,10 +1,13 @@
 # frappe-init — app mode: put a frappe-nix dev environment in an app's own repo.
 #
 # The bench modes reconcile a directory that *is* a bench. This one does the
-# opposite: it writes a flake that says "assemble a bench around me", and touches
-# nothing else. In particular it never edits the app's pyproject.toml — that file
-# is the app's packaging metadata, and the workspace root frappe-nix generates is
-# a different file living in the Nix store.
+# opposite: it puts in the files that say "assemble a bench around me". Only
+# .envrc and the .gitignore block come from templates/app; everything else
+# (flake.nix and its lock, [tool.ironclad] and the managed keys of
+# pyproject.toml, the tool configs and locks) is `ironclad sync --write`, the
+# engine `frappe-init --sync` runs later (docs/ironclad/spec.md §3.3), so a new
+# app starts in sync. The workspace root frappe-nix generates is a different
+# file, living in the Nix store.
 
 # A Frappe app is a pyproject.toml whose [project].name names a sibling package
 # that holds hooks.py. That is what `bench get-app` looks for, and it is enough to
@@ -43,10 +46,11 @@ cmd_app_init() {
   info "app            : $app_name"
   info "frappe version : $frappe_version (python $pyver / node ${nodejs#nodejs_})"
   info "bench name     : $name"
-  info "default site   : $site"
+  info "default site   : $site ([tool.ironclad] site sets another)"
   printf '\n'
-  info "flake.nix and .envrc are written here; the bench itself is generated"
-  info "into .frappe-nix/ on shell entry and is gitignored."
+  info ".envrc and the .gitignore block come from the app template; every other"
+  info "managed file is written by 'ironclad sync --write'. The bench itself is"
+  info "generated into .frappe-nix/ on shell entry and is gitignored."
   printf '\n'
 
   if $DRY_RUN; then
@@ -57,35 +61,32 @@ cmd_app_init() {
   [ -d .git ] || git rev-parse --git-dir > /dev/null 2>&1 ||
     die "'$(pwd -P)' is not a git repository. A flake's source tree is exactly its tracked files, so frappe-nix cannot see an app that git cannot." 6
 
-  step "Writing the flake"
+  # templates/app holds exactly .envrc and .gitignore: install_template copies
+  # every file in it, so nothing else may live there (spec §1.2).
+  step "Copying the app template"
   TEMPLATE="$APP_TEMPLATE"
   render_template
   install_template keep
   install_gitignore_block
+  git add -- .envrc .gitignore
 
-  # Staged, not just written: a flake's source tree is only its tracked files, so
-  # an untracked flake.nix is one `nix run` away from "does not provide attribute".
-  mkdir -p nix
-  git add -- flake.nix .envrc .gitignore
+  if git check-ignore -q -- .envrc; then
+    die ".envrc is excluded by .gitignore — the Nix build cannot see it"
+  fi
 
-  local p
-  for p in flake.nix .envrc; do
-    ! git check-ignore -q -- "$p" ||
-      die "$p is excluded by .gitignore — the Nix build cannot see it"
-  done
+  # Staged as it goes: a flake's source tree is only its tracked files, so an
+  # untracked flake.nix is one `nix run` away from "does not provide attribute".
+  step "Writing the managed files (ironclad sync --write)"
+  local -a args=(--write --frappe-version "$frappe_version")
+  if $SKIP_LOCK; then args+=(--skip-lock); fi
+  local rc=0
+  ironclad sync "${args[@]}" || rc=$?
+  if [ "$rc" != 0 ]; then
+    die "'ironclad sync --write' exited $rc — fix what it reported above and run 'frappe-init --sync'" "$rc"
+  fi
 
-  step "Resolving the Python workspace"
-  if $SKIP_LOCK; then
-    info "skipping (--skip-lock)"
-  elif ! command -v nix > /dev/null 2>&1; then
-    warn "nix is not on PATH — run 'nix run .#relock' yourself before entering the shell"
-  else
-    # The first lock has to come from the flake we just wrote, and it cannot come
-    # from the dev shell: without nix/uv.lock the shell is exactly what refuses to
-    # evaluate. `relock` is wired to be reachable without one.
-    nix run --impure .#relock || {
-      warn "'nix run .#relock' failed — fix the error above and re-run it; everything else is already written"
-    }
+  if git check-ignore -q -- flake.nix; then
+    die "flake.nix is excluded by .gitignore — the Nix build cannot see it"
   fi
 
   step "Done — $(pwd -P)"
@@ -97,8 +98,8 @@ Next steps:
   devenv up                    # MariaDB, Redis, web, scheduler, worker, …
   provision-site               # (in another shell) create $site + install $app_name
 
-To add a sibling app (erpnext, hrms, …), declare it as a flake input and list it
-under frappe-nix.app.siblings in flake.nix, then re-run 'nix run .#relock'.
-Commit nix/ — a flake's source tree is only its tracked files.
+To add a sibling app (erpnext, hrms, …), list it in [tool.ironclad] siblings in
+pyproject.toml and run 'nix run .#frappe-init -- --sync'. Commit nix/ — a flake's
+source tree is only its tracked files.
 EOF
 }

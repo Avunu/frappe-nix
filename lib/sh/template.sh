@@ -17,8 +17,10 @@ render_template() {
   (
     cd "$STAGING"
     # Substitute across every file that carries a token, rather than an explicit
-    # file list that has to be kept in sync with the template's contents.
-    grep -rlZ '@[A-Z_]*@' . 2>/dev/null | xargs -0 -r sed -i \
+    # file list that has to be kept in sync with the template's contents. The
+    # app template has none (.envrc and .gitignore), and grep finding nothing
+    # must not end the script under pipefail.
+    { grep -rlZ '@[A-Z_]*@' . 2>/dev/null || true; } | xargs -0 -r sed -i \
       -e "s|@BENCH_NAME@|$name|g" \
       -e "s|@PROJECT_NAME@|$PROJECT_NAME|g" \
       -e "s|@SITE_NAME@|$site|g" \

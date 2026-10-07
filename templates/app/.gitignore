@@ -27,3 +27,9 @@ env
 .env
 .env.*
 !.env.example
+
+# Ironclad: pinned trees and reports, the tsc --build cache, tool caches.
+/.dev-dist/
+*.tsbuildinfo
+.ruff_cache/
+__pycache__/

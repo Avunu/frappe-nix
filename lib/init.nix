@@ -11,6 +11,13 @@ let
 
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
 
+  # `ironclad` itself (the bin/ link, which propagates nothing), for --sync,
+  # --check and the app scaffold. Sync's phase B also runs uv, yarn and node
+  # (tools/uv.lock, yarn.lock), so they come along: `nix run …#frappe-init --
+  # --sync` then needs only nix and git (spec §3.3), and the dev-shell
+  # re-entry is only the fallback for a bare `ironclad sync`.
+  ironclad = (import ./ironclad/outputs.nix { inherit pkgs; }).packages.ironclad;
+
   # Concatenated rather than sourced at runtime: writeShellApplication runs
   # shellcheck over the produced file, and a `source` would hide every
   # cross-file definition from it. main.sh must come last — it is the only file
@@ -24,6 +31,7 @@ let
     ./sh/pipeline.sh
     ./sh/init.sh
     ./sh/app-init.sh
+    ./sh/app-sync.sh
     ./sh/migrate.sh
     ./sh/main.sh
   ];
@@ -42,6 +50,11 @@ pkgs.writeShellApplication {
     findutils
     diffutils
     workspaceTool
+    ironclad
+    nodejs_24
+    yarn
+    # uv lock --project tools resolves for requires-python >=3.14.
+    python314
   ];
   # The scripts are plain .sh files (no Nix-string escaping); bake the presets
   # file and template dir store paths in via placeholders.

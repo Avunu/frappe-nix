@@ -15,6 +15,8 @@ mode is detected from the target directory (default: the current directory when
 it is a bench or a Frappe app, otherwise a new bench).
 
 Mode:
+  --sync                   Write this app's frappe-nix managed files (ironclad sync --write)
+  --check                  Report drift in them and change nothing (ironclad sync --check)
   --init                   Force scaffold mode
   --migrate                Force migration mode (also re-syncs a frappe-nix bench)
   --app                    Force app mode: this repo is one Frappe app, and the
@@ -29,6 +31,12 @@ Common:
   --site <site>            Default site (default: existing default_site)
   --skip-lock              Do not run `uv lock`
   -h, --help               Show this help
+
+--sync / --check (app mode; see https://frappe-nix.avunu.net/docs/ironclad/managed-files):
+  --only <path,…>          Limit to these managed files
+  --init-listing           --sync: also seed marketplace/listing.toml
+  --format <f>             --check: text | json | github
+  --expect-rev <sha>       --check: the frappe-nix revision the running ironclad came from
 
 Scaffold only:
   --apps <a,b,c>           Apps to add (names, owner/repo, or git URLs)
@@ -64,6 +72,11 @@ parse_args() {
       --legacy-apps=*) LEGACY_APPS="${1#*=}"; shift ;;
       --commit) DO_COMMIT=true; shift ;;
       --commit=*) DO_COMMIT=true; COMMIT_MSG="${1#*=}"; shift ;;
+      --sync) MODE=app; APP_ACTION=sync; shift ;;
+      --check) MODE=app; APP_ACTION=check; shift ;;
+      --only | --format | --expect-rev) SYNC_ARGS+=("$1" "$2"); shift 2 ;;
+      --only=* | --format=* | --expect-rev=*) SYNC_ARGS+=("$1"); shift ;;
+      --init-listing) SYNC_ARGS+=("$1"); shift ;;
       --init) MODE=init; shift ;;
       --migrate) MODE=migrate; shift ;;
       --app) MODE=app; shift ;;
@@ -132,6 +145,15 @@ main() {
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
 
   parse_args "$@"
+
+  # --sync / --check: the app in the current directory (or the target given),
+  # handed to `ironclad sync`, which checks that it is one.
+  if [ -n "$APP_ACTION" ]; then
+    if [ -n "$target" ]; then
+      cd "$target" || die "cannot enter $target"
+    fi
+    cmd_app_sync
+  fi
 
   # No target given: work on the current directory when it is a bench or a Frappe
   # app, else fall through to scaffolding (which prompts for a directory).
