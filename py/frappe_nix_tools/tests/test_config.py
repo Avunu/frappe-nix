@@ -363,6 +363,26 @@ class TestConfigCommand(unittest.TestCase):
 	def test_unreadable_pyproject_exits_3(self):
 		self.assertEqual(run_cli("config", "site", "--pyproject", self.tmp.name)[0], 3)
 
+	def test_profile_lists_print(self):
+		# retire, replace-apps and extra-files are the org profile's alone (§8.4), so the
+		# app schema lacks them, but they are resolved values all the same (§5.13).
+		profile = Path(self.tmp.name) / "prof"
+		profile.mkdir()
+		(profile / "profile.toml").write_text(
+			ORG_PROFILE + '\n[[replace-apps]]\nfrom = "old_app"\nto = "new_app"\n'
+		)
+		self.path.write_text(PYPROJECT.replace('profile = "recommended"', 'profile = "./prof"'))
+		code, out, err = self.config("replace-apps", "--json")
+		self.assertEqual((code, err), (0, ""))
+		self.assertEqual(json.loads(out), [{"from": "old_app", "to": "new_app"}])
+		code, out, _ = self.config("retire", "--json")
+		self.assertEqual(json.loads(out), [{"paths": [".github/workflows/check.yml"], "module": "ci"}])
+		self.assertEqual(self.config("extra-files", "--json"), (0, "[]\n", ""))
+		self.assertEqual(self.config("replace-apps.from")[0], 2)
+		# A built-in profile has none of them.
+		self.path.write_text(PYPROJECT)
+		self.assertEqual(self.config("replace-apps", "--json"), (0, "[]\n", ""))
+
 
 if __name__ == "__main__":
 	unittest.main()
