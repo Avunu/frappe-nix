@@ -38,7 +38,7 @@ The ports are hashed from `benchName` and not from the project path, so every cl
 - **Two checkouts of one app.** In app mode a linked worktree (`git worktree add`, whose `.git` is a file) hashes `benchName@<its path>` instead, so a second worktree of the same app gets its own ports and both can run at once. The primary checkout keeps the bench-name hash. App mode's bench is generated, so nothing committed changes.
 - **Pick an offset by hand** with `FRAPPE_NIX_PORT_OFFSET=<0-899>`, read when the shell is evaluated (`FRAPPE_NIX_PORT_OFFSET=123 nix develop --no-pure-eval`, or exported before `direnv reload`). It wins over `ports.offset`: web 8123, Mailpit 19123, 20123 and 21123.
 - Override the web port alone with [`ports.base`](../reference/dev-shell-options.md#ports-and-sockets).
-- Set `sockets.enable = false` to put everything back on TCP. Ports are still allocated dynamically in that mode, so benches still do not collide, but they use more ports and there is no nginx. Socket mode needs Frappe 15.46 or newer.
+- Set `sockets.enable = false` to put everything back on TCP. There is no nginx in that mode and more ports are used. They all derive from the same offset, so benches whose offsets differ still do not collide, but two whose offsets collide do: `devenv up`'s check covers only the web and Mailpit ports, so a clash on any other port (socketio's, for one) shows up as that process failing to bind. Socket mode needs Frappe 15.46 or newer.
 
 ### MariaDB and TCP clients
 
