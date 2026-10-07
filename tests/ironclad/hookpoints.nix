@@ -13,7 +13,10 @@
 #   ironclad-app-flake the fixture app's flake, evaluated against this checkout
 #                      (what `--override-input frappe-nix path:.` does), exposes
 #                      apps.frappe-init and the tools; the app-mode shell
-#                      fragment carries `ironclad` and `frappe-init`.
+#                      fragment carries `ironclad` and `frappe-init`, and none
+#                      of its packages propagates anything, so no Python
+#                      site-packages reach the shell's PYTHONPATH ahead of the
+#                      bench venv's.
 #
 # The loader and flake facts are evaluated, so a regression fails
 # `nix flake check --no-build` already; the derivations record what was seen.
@@ -173,6 +176,17 @@ let
 
   shellFragment = import ../../lib/ironclad/shell.nix { inherit pkgs; };
   shellPrograms = map lib.getExe shellFragment.packages;
+  # A package that propagates inputs (a buildPythonPackage propagates python3
+  # and its dependencies) drags them into the app's dev shell, where python's
+  # setup hook puts their site-packages on PYTHONPATH.
+  propagating = map (p: p.name) (
+    builtins.filter (
+      p:
+      p ? pythonModule
+      || (p.propagatedBuildInputs or [ ]) != [ ]
+      || (p.propagatedNativeBuildInputs or [ ]) != [ ]
+    ) shellFragment.packages
+  );
 
   flakeFacts =
     assert lib.assertMsg (fixtureApps ? frappe-init) "app flake: apps.frappe-init is missing";
@@ -184,6 +198,9 @@ let
       "app shell: ironclad is not among the packages";
     assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/frappe-init") shellPrograms)
       "app shell: frappe-init is not among the packages";
+    assert lib.assertMsg (
+      propagating == [ ]
+    ) "app shell: ${lib.concatStringsSep ", " propagating} propagates inputs into the dev shell";
     assert lib.assertMsg (lib.hasInfix "blame.ignoreRevsFile" shellFragment.enterShell)
       "app shell: enterShell lost the blame setting";
     {
@@ -228,5 +245,29 @@ in
     EOF
   '';
 
-  ironclad-app-flake = pkgs.writeText "ironclad-app-flake-check.json" (builtins.toJSON flakeFacts);
+  # The shell fragment's packages as a build's inputs set up the environment
+  # the dev shell gets: any propagated Python would show in PYTHONPATH.
+  ironclad-app-flake =
+    pkgs.runCommand "ironclad-app-flake-check"
+      {
+        nativeBuildInputs = shellFragment.packages;
+        facts = builtins.toJSON flakeFacts;
+      }
+      ''
+        set -euo pipefail
+        if [ -n "''${PYTHONPATH:-}" ]; then
+          echo "FAIL the app shell's packages put $PYTHONPATH on PYTHONPATH" >&2
+          exit 1
+        fi
+        for f in ${
+          lib.concatMapStringsSep " " (p: "${p}/nix-support/propagated-*") shellFragment.packages
+        }; do
+          if [ -e "$f" ]; then
+            echo "FAIL $f: the app shell's packages propagate inputs" >&2
+            exit 1
+          fi
+        done
+        ironclad --version > /dev/null
+        printf '%s\n' "$facts" > "$out"
+      '';
 }

@@ -4,7 +4,8 @@
 # `nix run .#<name>` (modules/devenv.nix merges the same apps there).
 #
 # A tool file is a function of { pkgs, lib, ironclad } (take `...`) returning a
-# derivation with meta.mainProgram; adding a tool is adding a file, and neither
+# derivation with meta.mainProgram that propagates no inputs (wrap a Python
+# package's bin/, see tools/ironclad.nix); adding a tool is adding a file, and neither
 # flake.nix nor this loader changes. `toolsDir` is a parameter only so that
 # tests/ironclad/hookpoints.nix can point it at a fixture directory.
 {
