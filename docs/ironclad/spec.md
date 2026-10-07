@@ -369,7 +369,8 @@ ignore = []                                  # appended to ignorePatterns
 globals = {}                                 # merged into the desk-JS override's globals
 overrides = []                               # appended; each {files=[…], rules={…}, globals={…}}.
                                              # It MUST NOT name typescript/no-explicit-any, typescript/ban-ts-comment,
-                                             # typescript/consistent-type-imports, or change categories (exit 2)
+                                             # typescript/consistent-type-imports in any spelling oxlint accepts
+                                             # (@typescript-eslint/…, typescript-eslint/…, bare), or change categories (exit 2)
 
 [tool.ironclad.oxfmt]
 ignore = []                                  # appended to ignorePatterns
@@ -910,6 +911,10 @@ exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@(abc\\.)?abs
 
 [tool.vulture]                             # test_utils' static_analysis runs vulture over "."
 exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
+
+[tool.test_utils.static-analysis]          # MUST contain these; the app may add entries (kept, in its order)
+whitelist = ["frappe.*", "<sibling>.*", …]  # frappe's and each sibling's namespace: outside a bench,
+                                           # static_analysis has no frappe sources to resolve frappe.client.* against
 ```
 
 **App-owned, but validated.** Sync never touches these.
@@ -919,7 +924,7 @@ exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
 | `[project]` `name`, `authors`, `description`, `readme`, `license`, `dependencies` | `dependencies` MUST NOT name `frappe`, `erpnext`, `hrms` or `payments` (exit 1) |
 | `tool.coverage.report.fail_under` | Required; a number from 0 to 100. Ratcheted (S24). |
 | `tool.ruff.extend-exclude` | Allowed. `ironclad-audit` reports a non-empty list as amber. |
-| `tool.ruff.lint.per-file-ignores` | Allowed, except that F401 and E402 MUST NOT appear for a glob that matches `<app>/**` or `**` (exit 2) |
+| `tool.ruff.lint.per-file-ignores` | Allowed, except that F401 and E402 (or a selector covering them: `F`, `E4`, `ALL`, …) MUST NOT appear for a glob that ruff applies to every module of `<app>` (exit 2). The same holds for `extend-per-file-ignores` and for both keys at the top of `[tool.ruff]`. "Applies" is ruff's own matching: `*` crosses `/`, a pattern also matches the file's basename (so `"*.py"` and `"<app>/*"` are package-wide), and `!` negates. |
 | `tool.ty.src.exclude` | Allowed; reported as amber in audit |
 | `[dependency-groups]` | App-owned. The app's test-only packages go here (`responses`, …). |
 | `[tool.bench.assets]` | App-owned. Required when `pilot-assets = true`: `build_dir`, `out_dir` and `index_html_path` (frappe-listing validates them). |
@@ -927,7 +932,7 @@ exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
 
 **Forbidden** (exit 2):
 
-- `tool.ruff.lint.extend-select`, `extend-ignore`, `ignore` beyond the managed pair, `unfixable`, `tool.ruff.lint.isort`;
+- `tool.ruff.lint.extend-select`, `extend-ignore`, `ignore` beyond the managed pair, `unfixable`, `tool.ruff.lint.isort`, and the same keys at the top of `[tool.ruff]` (ruff still reads them there);
 - `tool.ty.rules` with any value other than `"error"`, and `tool.ty.overrides`;
 - `tool.coverage.run.source` and `tool.coverage.run.relative_files`, which belong to frappe-test;
 - `[tool.poetry]` (D6 uses flit);
@@ -1078,8 +1083,10 @@ repos:
       - id: validate_doctype_python_types
       - id: validate_copyright
         args: [--app, {{ app }}]
-        # Never stamp a managed file (its header is line 1) or a generated one (its freshness diff would fail).
-        exclude: ^(docs/|docs-site/|marketplace/shots\.d\.ts$|types/doctypes\.d\.ts$|scripts/ironclad-vite-register\.mjs$|tsconfig[^/]*\.json${% for g in cfg.generated %}|{{ g | glob_to_regex }}{% endfor %})
+        # Never stamp a managed file (its header is line 1) or a generated one (its freshness diff would fail),
+        # nor a script: a stamp above `#!/usr/bin/env node` breaks it (scripts/ and ci/ hold the node tools).
+        exclude: ^(docs/|docs-site/|scripts/|ci/|marketplace/shots\.d\.ts$|types/doctypes\.d\.ts$|tsconfig[^/]*\.json${% for g in cfg.generated %}|{{ g | glob_to_regex }}{% endfor %})
+        exclude_types: [executable]
       # Bench-aware: silent no-ops outside a bench. CI runs them in a mini-bench (`ironclad minibench`).
       - id: validate_customizations
         stages: [manual]
@@ -1467,9 +1474,9 @@ frappe-init --check [--format text|json|github] [--only …] [--expect-rev <sha>
   nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --frappe-version version-16
   ```
 
-  This is the single documented entry point for PR A. It needs only `nix` and `git`. `release-1` exists from `v1.0.0` on, so migrations start after N6 tags it (S32).
+  This is the single documented entry point for PR A. It needs only `nix` and `git`. `release-1` exists from `v1.0.0` on, so migrations start after N6 tags it (S32). Until then, a sync that would lock `release-<N>` (no `flake.lock`, or one whose `frappe-nix` node is not on that branch) asks `git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix release-<N>` first and, when the branch is definitely absent, exits 3 with nothing written (`frappe-init --app` asks before it copies its template). `--offline`, `--dry-run` and `IRONCLAD_FRAPPE_NIX_URL` skip the question; a network failure leaves the error to the lock step.
 - Later runs inside an app: `nix run .#frappe-init -- --sync` is preferred. It uses the frappe-nix from `flake.lock`, and the app-mode flake exposes `apps.frappe-init` (N3a).
-- `frappe-init --app` (a new app) copies `templates/app/` (`.envrc`, `.gitignore`) with `install_template keep`, then runs `ironclad sync --write`. Nothing else is copied (N3).
+- `frappe-init --app` (a new app) copies `templates/app/` (`.envrc`, `.gitignore`) with `install_template keep`, then runs `ironclad sync --write`. Nothing else is copied (N3). Its `--site <name>` reaches sync as `--site`, which only `[tool.ironclad]` creation reads (step 1).
 
 `--sync` runs in **two phases** (S32). Each step is a no-op when there is nothing to do.
 
@@ -1477,7 +1484,8 @@ frappe-init --check [--format text|json|github] [--only …] [--expect-rev <sha>
 
 1. Load or create `[tool.ironclad]`. When creating it:
    - `frappe-major` comes from `--frappe-version`, else the existing `flake.nix` `frappeVersion`, else it is an error;
-   - `siblings` comes from `hooks.required_apps`, with the existing flake siblings appended.
+   - `siblings` comes from `hooks.required_apps`, with the existing flake siblings appended;
+   - `site` is `--site`, else the existing flake's `siteName`, and is written only when it isn't `<app-hyphen>.localhost`. A `--site` that isn't `[a-z0-9][a-z0-9.-]*` is exit 2. An existing table's `site` is the app's: `--site` doesn't change it.
 2. Render and write `flake.nix` and `.envrc` only.
 3. If `flake.lock` is missing, its input set differs from `flake.nix`, an input is locked from another URL or `follows` than `flake.nix` gives it (a frappe-major bump moves `frappe` and the siblings to `version-<N+1>` under the same names), or its `frappe-nix` node's `original.ref` isn't `release-<N>` for the running ironclad's major: `nix flake lock` (adding `--update-input frappe-nix` in the last case). The lock now holds a `release-1` commit. For frappe-nix's own self-tests only, `IRONCLAD_FRAPPE_NIX_URL` (e.g. `path:$GITHUB_WORKSPACE`) is passed as `--override-input frappe-nix <url>` to the lock step and every later `nix` call; it is never rendered into `flake.nix`, and sync refuses it unless `IRONCLAD_ALLOW_SKEW=1`.
 4. Re-read `frappe_nix.rev` from the new lock. If it differs from the running ironclad's own rev (a bootstrap from a newer or older release), sync re-executes itself as `nix run --no-pure-eval .#frappe-init -- --sync <same args>` once, so phase B always renders with the ironclad that the lock pins. The environment variable `IRONCLAD_SYNC_REEXEC=1` prevents a second re-exec.
@@ -1488,7 +1496,7 @@ frappe-init --check [--format text|json|github] [--only …] [--expect-rev <sha>
 6. Delete entries whose `when` is false but that still match an earlier render (an empty diff against the would-be render of the previous context); otherwise warn.
 7. Delete every `retire` match (§2.4.1).
 8. If `tools/pyproject.toml` changed, `tools/uv.lock` is missing, or a lock floor isn't met: `uv lock --project tools [--upgrade-package …]`.
-9. If a managed `package.json` key changed or `yarn.lock` is missing: `yarn install --non-interactive`.
+9. If a managed `package.json` key changed, `yarn.lock` is missing, or `yarn.lock` has no entry for a `name@range` that `package.json`'s `dependencies`, `devDependencies` or `optionalDependencies` declares (`link:`, `portal:`, `workspace:` and workspace packages aside): `yarn install --non-interactive`. `--check` reports the last two as drift on `yarn.lock`.
 10. Seed the missing `nix/node-locks/<key>` for each present sibling, where key ∈ {`frappe/ui`, `erpnext/banking`, `hrms/frontend`, `hrms/roster`}.
 11. If phase A changed `flake.lock` (the `frappe-nix` or a sibling node moved) or `nix/uv.lock` is missing, and `--skip-lock` isn't given: `nix run --no-pure-eval .#relock`. (Appendix I: relock writes no header into `nix/uv.lock`, which is uv's file.)
 12. If `discover.has_listing`: `ironclad listing readme --write`.
@@ -2995,6 +3003,12 @@ Changes an implementing PR made to this spec, with the reason. Each PR adds its 
 | N3 | §2.6 | The `.gitignore` block also ignores `/result-*`. | `nix build` of several outputs leaves `result-1`, `result-2`, …, which then end up committed and in the flake's source. |
 | N3 | §3.7 | `--check` compares the running ironclad with the lock through `--expect-rev` and the caller workflows' `# v<version>` comments only. Without either, a bare local run of an ironclad from another release is not detected. | A package built from a source tree does not know its commit (as for the re-exec), and `--check` runs no `nix` to read the locked `version.txt`. The dev shell's ironclad comes from the lock by construction, and CI passes `--expect-rev` (§4.1). |
 | N3 | §3.1 | A manifest entry may also carry `handler` (the Python strategy for a merge, block or seed file), `command` (the tool that makes a seeded lock), `phase` (`a` for `flake.nix` and `.envrc`) and `header_note`; a fragment may carry `floors` by kind (`npm`, `npm-ts`, `npm-scss`, `uv`). | The merge and block strategies need per-file rules, and the floors are data every fragment can extend. |
+| N3 | §3.3 step 3, S32 | Before `release-<N>` exists, a sync that would lock it refuses up front (exit 3, nothing written, `frappe-init --app` included) instead of failing in `nix flake lock` with a GitHub 422 and a half-staged tree. Hidden `ironclad sync --write --phase preflight` runs only that question, for `frappe-init --app`. | Review: `frappe-init --app` on a bare app exited 3 after staging `.envrc`, `.gitignore`, `flake.nix` and `pyproject.toml`, and the suggested `frappe-init --sync` failed the same way. S32 already defers app mode to `v1.0.0`; the refusal says so. |
+| N3 | §3.3 step 1, §3.4 | `ironclad sync --site <name>` sets `[tool.ironclad] site` when sync creates the table; `frappe-init --app --site` passes it through. | `frappe-init --app --site X` printed X but rendered `<app-hyphen>.localhost` (the old template substituted `@SITE_NAME@`). |
+| N3 | §2.12, §2.14 | `[tool.test_utils.static-analysis] whitelist` must contain `frappe.*` and each sibling's `<name>.*` (merged: app entries are kept). | prek runs at the repo root, outside a bench, so static_analysis has no frappe sources: every app calling `frappe.client.get_list` failed the managed hook (erpnext_taskview, carbon_frappe). |
+| N3 | §2.14 | `validate_copyright` also excludes `scripts/`, `ci/` and executable files (`exclude_types: [executable]`); `scripts/ironclad-vite-register\.mjs$` is covered by `scripts/`. | The stamp went above `#!/usr/bin/env node` in carbon_frappe's 13 scripts, which then failed oxfmt, `node` and `yarn build`. |
+| N3 | §2.1, §2.12 | The locked oxlint rules are matched by bare rule name, so every plugin spelling is refused; the F401/E402 per-file-ignores rule uses ruff's glob semantics and also reads `extend-per-file-ignores` and the top-level `[tool.ruff]` spellings (as do the other forbidden ruff keys). | oxlint treats `@typescript-eslint/no-explicit-any` and `no-explicit-any` as the locked rule; ruff's `*` crosses `/` and matches basenames, so `"<app>/*"`, `"*.py"` and `extend-per-file-ignores` slipped past. |
+| N3 | §3.3 step 9 | `yarn.lock` lacking a `package.json` dependency's `name@range` is drift and triggers `yarn install`. | An offline sync that changed `package.json` left `yarn.lock` stale and every later `--sync`/`--check` called it current; CI's `yarn install --frozen-lockfile` failed. |
 | N3 | §3.3 steps 3, `--check` | The lock is also stale when an input is locked from another URL or `follows` than `flake.nix` gives it (forge owner and repository compared case-insensitively), and `--check` reports that as drift. | A frappe-major bump keeps the input names: `--sync` ran no `nix flake lock` and no relock, `--check` stayed clean, and compat's C3 failed right after. |
 | N3 | §3.3 steps 4, phase B | A re-exec or dev-shell re-entry passes `IRONCLAD_SYNC_RESULT=<file>`; the child sync writes its exit code there, and the parent exits with it. When the child never wrote one, a non-zero exit of `nix run`/`nix develop` is exit 3. | Nix exits 1 on any evaluation, fetch or build failure, which read as drift. |
 | N3 | §2.4, §2.9 | A Vite app's own `tsconfig*.json` (no managed header) where sync renders no such project is the same §2.9 exit 2 as when it renders one; any other file that should not exist and that sync did not write says that sync leaves it and to delete it. | frappe_editor and timeclock (no browser, desk or scripts project) got an exit-1 "file should not exist" that no `--sync` ever cleared, with no pointer to `[[tool.ironclad.typescript.spa]]`. |

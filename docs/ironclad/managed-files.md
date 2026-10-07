@@ -48,14 +48,14 @@ It needs only `nix` and `git`. Sync runs in two phases. **Phase A** creates `[to
 | `.envrc` | whole | always |
 | `.gitignore` | block (`# >>> frappe-nix >>>`) | always |
 | `.editorconfig` | whole, local region `editorconfig` | always |
-| `.pre-commit-config.yaml` | whole, local region `repos`; third-party `rev:`s are floors | always |
+| `.pre-commit-config.yaml` | whole, local region `repos`; third-party `rev:`s are floors. `validate_copyright` never stamps a managed or `generated` file, `scripts/`, `ci/` or an executable (a stamp above a shebang breaks the script) | always |
 | `committed.toml` | whole | always |
 | `tools/pyproject.toml` | whole | always |
 | `tools/uv.lock` | seed (`uv lock --project tools`); versions are floors | always |
 | `pyproject.toml` | toml-merge | always |
 | `<app>/__init__.py` | block (`x-release-please`) | always |
 | `package.json` | json-merge; `devDependencies` are floors | always |
-| `yarn.lock` | seed (`yarn install`) | always |
+| `yarn.lock` | seed (`yarn install`; drift when it lacks a `package.json` dependency's `name@range`) | always |
 | `.oxlintrc.json` | whole, no header (JSON) | always |
 | `.oxfmtrc.jsonc` | whole | always |
 | `.stylelintrc.json` | json-merge | the app has SCSS |
@@ -82,9 +82,9 @@ The CI caller workflows, `.github/dependabot.yml` and `.github/zizmor.yml` ([CI]
 
 ### `pyproject.toml`
 
-Sync owns `requires-python`, `dynamic` (it must contain `version`), `[build-system]`, `[tool.bench.frappe-dependencies]` (exactly frappe plus `required_apps`, with the known ranges), the ruff profile (`[tool.ruff]`, `.lint`, `.format`), `[tool.ty.environment]`, `.src` and `.terminal`, `[tool.coverage.run] omit` (plus each `coverage-omit` glob), the `[tool.coverage.report]` settings, and `[tool.vulture] exclude`. A missing `fail_under` is seeded as 0; from then on it is the app's. A table sync adds goes after the last `[tool.*]` table.
+Sync owns `requires-python`, `dynamic` (it must contain `version`), `[build-system]`, `[tool.bench.frappe-dependencies]` (exactly frappe plus `required_apps`, with the known ranges), the ruff profile (`[tool.ruff]`, `.lint`, `.format`), `[tool.ty.environment]`, `.src` and `.terminal`, `[tool.coverage.run] omit` (plus each `coverage-omit` glob), the `[tool.coverage.report]` settings, `[tool.vulture] exclude`, and the entries `[tool.test_utils.static-analysis] whitelist` must hold (`frappe.*` and each sibling's `<name>.*`, so test_utils' `static_analysis` resolves frappe's own methods outside a bench; the app may add more). A missing `fail_under` is seeded as 0; from then on it is the app's. A table sync adds goes after the last `[tool.*]` table.
 
-Refused (exit 2): extra `[tool.ruff.lint] ignore` codes, `extend-select`, `extend-ignore`, `unfixable`, `isort`; F401 or E402 in a package-wide `per-file-ignores`; `[tool.ty.rules]` other than `"error"`, `[tool.ty.overrides]`; `[tool.coverage.run] source` or `relative_files`; `[tool.poetry]`. `[project].dependencies` naming frappe, erpnext, hrms or payments is exit 1.
+Refused (exit 2): extra `[tool.ruff.lint] ignore` codes, `extend-select`, `extend-ignore`, `unfixable`, `isort` (also at the top of `[tool.ruff]`); F401 or E402 (or `F`, `E4`, `ALL`, …) in a `per-file-ignores` or `extend-per-file-ignores` glob that ruff applies to the whole package (ruff's `*` crosses `/` and a bare pattern matches basenames, so `"<app>/*"` and `"*.py"` count); `[tool.ty.rules]` other than `"error"`, `[tool.ty.overrides]`; `[tool.coverage.run] source` or `relative_files`; `[tool.poetry]`. `[project].dependencies` naming frappe, erpnext, hrms or payments is exit 1.
 
 ### `package.json`
 

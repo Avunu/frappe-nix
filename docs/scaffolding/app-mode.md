@@ -23,13 +23,16 @@ devenv up                             # then `provision-site` in another shell
 
 The scaffolder recognizes an app by a `pyproject.toml` whose `[project].name` names a package that holds a `hooks.py`. It copies `.envrc` and a managed `.gitignore` block, then runs `ironclad sync --write`, which writes `flake.nix` and locks it, adds `[tool.ironclad]` and the managed keys to `pyproject.toml`, writes the app's other [managed files](../ironclad/managed-files.md) and their locks, and runs `nix run .#relock` to produce `nix/uv.lock`. Everything is staged with `git add`; nothing is committed. Later, `nix run .#frappe-init -- --sync` brings an app back in step and `--check` reports drift.
 
+> [!NOTE]
+> The flake sync writes follows frappe-nix's `release-1` branch, which is created when frappe-nix `v1.0.0` is tagged. Before that, app mode refuses with exit 3 and changes nothing ("has no release-1 branch yet").
+
 The workspace root frappe-nix generates is not the app's `pyproject.toml`: that file stays the app's packaging metadata, and the root is a different file that lives in the Nix store.
 
 | Detail         | What the scaffolder does                                                                                              |
 | -------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Frappe version | Prompts for it, or takes `--frappe-version`, which is required without a terminal.                                    |
 | Bench name     | Derived from the app's `[project].name`, normalized. An app repository has exactly one bench, so it is not asked for. |
-| Default site   | `<BENCH_NAME>.localhost`, or `--site`.                                                                                |
+| Default site   | `<BENCH_NAME>.localhost`, or `--site`, which sync records as `[tool.ironclad] site`.                                  |
 | Preview        | `--dry-run` prints the plan and changes nothing.                                                                      |
 | First lock     | `--skip-lock` skips `nix run .#relock`; run it yourself before you enter the shell.                                   |
 
