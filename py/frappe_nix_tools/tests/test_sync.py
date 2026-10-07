@@ -669,6 +669,31 @@ class TestConfigCreation(AppCase):
 		self.assertEqual(cfg["siblings"], [{"repo": "example/shared_lib", "branch": "main"}])
 		self.assertIn('url = "github:example/shared_lib/main";', self.read("flake.nix"))
 
+	def test_a_one_line_input_keeps_its_fork_and_branch(self):
+		"""templates/app's comment suggests `erpnext = { url = "…"; flake = false; };`: a sibling
+		written that way keeps its fork and branch, and an unknown one its repo."""
+		self.drop_table()
+		self.write("demo_app/hooks.py", 'required_apps = ["erpnext"]\n')
+		self.write(
+			"flake.nix",
+			'{\n  inputs = {\n    erpnext = { url = "github:myfork/erpnext/custom-16"; flake = false; };\n'
+			'    shared_lib = { url = "github:example/shared_lib/main"; flake = false; };\n  };\n'
+			'  frappeVersion = "version-16";\n'
+			'  siblings = [ { name = "erpnext"; } { name = "shared_lib"; } ];\n}\n',
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write", "--standards", "minimal", "--force")
+		self.assertEqual(code, 0, err)
+		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["frappe-nix"]
+		self.assertEqual(
+			cfg["siblings"],
+			[
+				{"repo": "myfork/erpnext", "branch": "custom-16"},
+				{"repo": "example/shared_lib", "branch": "main"},
+			],
+		)
+		self.assertIn('url = "github:myfork/erpnext/custom-16";', self.read("flake.nix"))
+
 	def test_no_major_anywhere_is_exit_2(self):
 		self.drop_table()
 		self.commit()

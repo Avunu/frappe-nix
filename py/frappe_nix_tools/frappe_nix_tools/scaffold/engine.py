@@ -58,6 +58,9 @@ _FLAKE_NAME = r"""(?:(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)|"(?P<quoted>[^"\\$]*)")"
 _FLAKE_INPUT = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{")
 _FLAKE_ATTR = re.compile(rf'^\s{{4}}{_FLAKE_NAME}\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 _FLAKE_INNER = re.compile(r'^\s{6}(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
+# An input written on one line: `erpnext = { url = "github:…"; flake = false; };`.
+_FLAKE_INLINE = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{(?P<body>.*)\}};\s*$")
+_FLAKE_INLINE_ATTR = re.compile(r'(?:^|[;{\s])(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 # The inputs flake.nix manages; a local `inputs` region may not define one (§2.5).
 MANAGED_INPUTS = ("frappe-nix", "nixpkgs", "frappe", flakelock.PROFILE_INPUT)
 # The files frappe-init --app's templates/app gives an app that has not opted in (S35).
@@ -266,6 +269,10 @@ def flake_input_urls(text: str) -> dict[str, str]:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
 			if one["attr"] == "url":
 				out[_input_name(one)] = one["value"]
+		elif (inline := _FLAKE_INLINE.match(line)) and not block:
+			for attr in _FLAKE_INLINE_ATTR.finditer(inline["body"]):
+				if attr["attr"] == "url":
+					out[_input_name(inline)] = attr["value"]
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
 			block = _input_name(opened)
 		elif block and re.match(r"^\s{4}\};", line):
@@ -1486,6 +1493,10 @@ def flake_input_specs(text: str) -> dict[str, str | None]:
 	for line in m["body"].splitlines() if m else []:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
 			specs[_input_name(one)] = input_spec(one["attr"], one["value"])
+		elif (inline := _FLAKE_INLINE.match(line)) and not block:
+			specs.setdefault(_input_name(inline), None)
+			for attr in _FLAKE_INLINE_ATTR.finditer(inline["body"]):
+				specs[_input_name(inline)] = input_spec(attr["attr"], attr["value"])
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
 			block = _input_name(opened)
 			specs.setdefault(block, None)
