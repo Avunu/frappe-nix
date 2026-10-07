@@ -33,12 +33,14 @@ A path listed by two fragments, or twice in one, is an error: the engine refuses
 """
 
 import json
+import re
 from dataclasses import dataclass
 from functools import cache
 from typing import Any
 
 from frappe_nix_tools.common import data_path
 from frappe_nix_tools.common.config import MODULES
+from frappe_nix_tools.common.report import ConfigError
 
 STRATEGIES = ("whole", "toml-merge", "json-merge", "seed", "blocks")
 HEADERS = ("yaml", "toml", "shell", "ini", "nix", "jsonc", "ts", "none")
@@ -269,14 +271,25 @@ def extra_entries(cfg: dict) -> list[Entry]:
 
 
 def profile_retire(cfg: dict) -> list[Retire]:
-	"""The org profile's ``[[retire]]`` rules (§8.1), applied like the built-in ones."""
-	return [
-		Retire(
-			paths=tuple(raw["paths"]),
-			rule="the profile's [[retire]] rule",
-			fragment="profile",
-			module=raw["module"],
-			contains=tuple(raw.get("contains", [])),
+	"""The org profile's ``[[retire]]`` rules (§8.1), applied like the built-in ones. A
+	``contains`` that is not a regular expression is the profile's error (exit 2)."""
+	out = []
+	for i, raw in enumerate(cfg.get("retire", [])):
+		contains = tuple(raw.get("contains", []))
+		for pattern in contains:
+			try:
+				re.compile(pattern)
+			except re.error as e:
+				raise ConfigError(
+					f"the org profile's [[retire]] {i} contains {pattern!r}, which is not a regular expression: {e}"
+				) from e
+		out.append(
+			Retire(
+				paths=tuple(raw["paths"]),
+				rule="the profile's [[retire]] rule",
+				fragment="profile",
+				module=raw["module"],
+				contains=contains,
+			)
 		)
-		for raw in cfg.get("retire", [])
-	]
+	return out

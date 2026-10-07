@@ -871,6 +871,52 @@ class TestOrgProfile(ProfileCase):
 		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
 		self.assertEqual(code, 2, out + err)
 
+	def test_a_broken_profile_template_or_retire_regex_is_exit_2(self):
+		"""An org profile's template error or bad [[retire]] regex is the profile's (exit 2 from
+		sync and from profile validate), never an internal error (exit 3)."""
+		profile = self.read(".standards-profile/profile.toml")
+		template = self.read(".standards-profile/templates/SECURITY.md.j2")
+		cases = (
+			("{{ undefined_name }}", "", "UndefinedError"),
+			("{{ org.nope }}", "", "UndefinedError"),
+			("{% if %}", "", "TemplateSyntaxError"),
+			(
+				template,
+				'\n[[retire]]\npaths = ["x.txt"]\nmodule = "hygiene"\ncontains = ["("]\n',
+				"regular expression",
+			),
+		)
+		for text, extra, needle in cases:
+			with self.subTest(text=text, extra=extra):
+				self.write(".standards-profile/templates/SECURITY.md.j2", text)
+				self.write(".standards-profile/profile.toml", profile + extra)
+				self.commit()
+				for argv in (
+					("sync", "--check"),
+					("sync", "--check", "--format", "json"),
+					("sync", "--write"),
+				):
+					code, out, err = self.fn(*argv)
+					self.assertEqual(code, 2, out + err)
+					self.assertIn(needle, out + err)
+					self.assertNotIn("internal error", out + err)
+				code, out, err = self.fn(
+					"profile", "validate", str(self.root / ".standards-profile/profile.toml")
+				)
+				self.assertEqual(code, 2, out + err)
+				self.assertIn(needle, out + err)
+
+	def test_profile_validate_renders_every_fixture_context(self):
+		"""§5.13: a template that breaks only for one §7 N3 context (here an app with SCSS) fails
+		validate, not the first sync of such an app."""
+		self.write(
+			".standards-profile/templates/SECURITY.md.j2",
+			"# Security\n{% if discover.scss %}{{ org.brand.nope }}{% endif %}\n",
+		)
+		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
+		self.assertEqual(code, 2, out + err)
+		self.assertIn("the scss app", out + err)
+
 	def _refused_unread(self, needle: str) -> None:
 		"""--check and --write are exit 2, never print the link's target and write nothing."""
 		code, out = self.check()

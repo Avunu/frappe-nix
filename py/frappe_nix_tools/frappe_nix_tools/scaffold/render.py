@@ -132,12 +132,19 @@ def _refused(what: str, e: SecurityError) -> ConfigError:
 	return ConfigError(f"{what}: the template reaches outside its data, which the sandbox refuses: {e}")
 
 
+def _broken(what: str, e: jinja2.TemplateError) -> ConfigError:
+	return ConfigError(f"{what} does not render: {type(e).__name__}: {e}")
+
+
 def render_string(source: str, ctx: dict[str, Any]) -> str:
-	"""A one-line template, such as an entry's ``path``."""
+	"""A one-line template, such as an entry's ``path`` (an org profile's ``[[extra-files]]``
+	path is profile data, so an error in it is a configuration error, exit 2)."""
 	try:
 		return environment().from_string(source).render(**ctx)
 	except SecurityError as e:
 		raise _refused(repr(source), e) from e
+	except jinja2.TemplateError as e:
+		raise _broken(repr(source), e) from e
 
 
 def render(template: str, ctx: dict[str, Any], current: str | None, *, directory: Path | None = None) -> str:
@@ -155,6 +162,12 @@ def render(template: str, ctx: dict[str, Any], current: str | None, *, directory
 		return env.get_template(template).render(**ctx, **helpers)
 	except SecurityError as e:
 		raise _refused(f"templates/{template}", e) from e
+	except jinja2.TemplateError as e:
+		if directory is None:
+			raise  # a built-in template is frappe-nix's own: a bug, exit 3
+		# An org profile's template (§8.1): an undefined name or a syntax error is the
+		# profile's, exit 2 like any other profile error (§3.3).
+		raise _broken(f"the org profile's templates/{template}", e) from e
 
 
 # What a ``when`` may call, and how each operator of one compares.
