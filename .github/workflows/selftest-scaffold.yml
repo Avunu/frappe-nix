@@ -12,7 +12,8 @@ name: selftest-scaffold
 #              hook, network included) and tsc --build; its flake evaluates; and
 #              `frappe-init --check` on a pinned carbon_frappe commit exits 2.
 #   bootstrap  one `frappe-init --sync` with neither yarn nor uv on PATH, from a
-#              fixture with no flake (postgrid, jwt_auth) and from one whose lock
+#              fixture with no flake.nix (postgrid, jwt_auth; its lock holds only the
+#              fixture's frappe node, so frappe is fixed) and from one whose lock
 #              pins frappe-nix main (carbon, taskview, timeclock); and (reenter) a
 #              bare `ironclad sync --write` on the main-locked shape, which has
 #              to relock and re-enter through the app's dev shell: --check is
@@ -228,7 +229,14 @@ jobs:
           cd "$RUNNER_TEMP/app"
           rm -rf tools/uv.lock yarn.lock nix
           if [ "$SHAPE" = no-flake ]; then
+            # No flake.nix, and a lock that holds only the fixture's frappe node: phase A
+            # locks frappe-nix and the rest around it, so relock resolves a fixed frappe
+            # instead of whatever version-16 is today (its HEAD of 2026-10-07 pins a pypika
+            # that frappe[dev]'s pypika-stubs refuses, and relock fails on it).
+            jq '{nodes: {root: {inputs: {frappe: "frappe"}}, frappe: .nodes.frappe}, root: "root", version: .version}' \
+              flake.lock > "$RUNNER_TEMP/frappe-only.lock"
             rm -f flake.nix flake.lock .envrc
+            mv "$RUNNER_TEMP/frappe-only.lock" flake.lock
           else
             sed -i 's|github:Avunu/frappe-nix/release-1|github:Avunu/frappe-nix|' flake.nix
             git init -q && git add -A
