@@ -19,6 +19,7 @@ node_modules
 /.devenv/
 /.direnv/
 /result
+/result-*
 
 # The Nix-built dev virtualenv is symlinked into the bench, not here, but a
 # stray one from a classic `bench init` would shadow it.
