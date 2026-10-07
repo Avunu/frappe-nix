@@ -2378,7 +2378,6 @@ in
               ]
               # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
               ++ lib.optional cfg.mariadb.noCow dbNocowTool
-              ++ lib.optionals appMode standardsShell.packages
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -2505,6 +2504,11 @@ in
             })
             // cfg.extraEnv;
 
+            # The app standards' packages and enterShell snippet, as a module of
+            # their own (lib/standards/shell.nix; empty unless the app opted in,
+            # S35), so tests/standards/hookpoints.nix can find and evaluate them.
+            imports = lib.optional appMode standardsShell.devenvModule;
+
             enterShell = ''
               ${lib.optionalString (!appMode) ''
                 # First, before anything below works in apps/<x>: check out the
@@ -2545,9 +2549,7 @@ in
                 ${rootSyncTool}/bin/frappe-nix-root-sync "$FRAPPE_BENCH_ROOT" || true
               ''}
 
-              ${lib.optionalString appMode (
-                appBenchMaterialize + lib.optionalString standardsShell.optedIn "\n${standardsShell.enterShell}"
-              )}
+              ${lib.optionalString appMode appBenchMaterialize}
 
               # Create required directories. Frappe writes pids and lock files
               # into config/ and logs/, so both must be real and writable.

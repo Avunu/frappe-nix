@@ -3,7 +3,8 @@
 #   standards-vendor-neutral  vendor_neutral.py `code` finds no line of
 #                             vendor-denylist.txt in frappe-nix's built-ins: the
 #                             frappe-nix-tools code and data (profiles, templates,
-#                             manifests, schemas, known-apps.json), lib/**,
+#                             manifests, schemas, known-apps.json), lib/** (its
+#                             tests/ and fixtures/ included),
 #                             templates/app/**, the repo-policy defaults and the
 #                             reusable app-*.yml and fleet-audit.yml workflows.
 #                             Then each planted variant must fail, naming its file
@@ -40,8 +41,9 @@ let
   denylist = ./vendor-denylist.txt;
   python = "${pkgs.python3}/bin/python3";
 
-  # Each plant: a file (created when missing) and a line appended to it. The scan
-  # must then fail and name that file and line.
+  # Each plant: a file (created when missing) and a line appended to it, after a
+  # line holding a byte that is not UTF-8 when `latin1` is set, or a NUL byte
+  # when `nul` is. The scan must then fail and name that file and line.
   plants = [
     {
       file = "py/frappe_nix_tools/frappe_nix_tools/data/templates/package.json.j2";
@@ -59,13 +61,40 @@ let
       file = ".github/workflows/app-release.yml";
       line = ''registry-fork: { default: "Avunu/marketplace" }'';
     }
+    # lib/** is in scope whole, its tests/ and fixtures/ directories included.
+    {
+      file = "lib/rename/tests/pairs.py";
+      line = ''REPLACE_PAIRS = {"jailbreak": "data_steward"}  # avunu'';
+    }
+    {
+      file = "lib/devguard/fixtures/x.toml";
+      line = ''publisher = "Avunu LLC"'';
+    }
+    # One stray byte must not hide the rest of the file.
+    {
+      file = "lib/x.nix";
+      line = ''author = "Avunu LLC";'';
+      latin1 = true;
+    }
+    # Nor one NUL byte.
+    {
+      file = "lib/y.nix";
+      line = ''author = "Avunu LLC";'';
+      nul = true;
+    }
   ];
+  # A line with an é in Latin-1 (0xE9), which is not UTF-8.
+  latin1 = "printf '# caf\\351\\n' >> \"tree/$file\"";
+  nul = "printf '# \\000\\n' >> \"tree/$file\"";
   plantScript = lib.concatMapStringsSep "\n" (p: ''
+    file=${lib.escapeShellArg p.file}
     rm -rf tree
     cp -r ${scoped} tree
     chmod -R u+w tree
     mkdir -p "$(dirname tree/${lib.escapeShellArg p.file})"
     touch tree/${lib.escapeShellArg p.file}
+    ${lib.optionalString (p.latin1 or false) latin1}
+    ${lib.optionalString (p.nul or false) nul}
     line="$(( $(wc -l < tree/${lib.escapeShellArg p.file}) + 1 ))"
     printf '%s\n' ${lib.escapeShellArg p.line} >> tree/${lib.escapeShellArg p.file}
     if ${python} ${scanner} code tree ${denylist} > found; then
@@ -122,6 +151,11 @@ in
     grep -q '^docs/app-standards/page.md:7: ' found || fail "the docs lint did not name page.md:7"
     printf '%s\n' 'An example:' '```toml' 'tile-color = "#834AFF"' '```' > "$page"
     if ${python} ${scanner} docs planted ${denylist} > found; then fail "an unmarked fence naming an org value passed"; fi
+    # The frappe-types source URL is allowed, and only the URL: the rest of its line is checked.
+    printf '%s\n' 'frappe-types comes from https://github.com/Avunu/frappe-types.' > "$page"
+    ${python} ${scanner} docs planted ${denylist} || fail "the frappe-types source URL was flagged"
+    printf '%s\n' 'frappe-types (https://github.com/Avunu/frappe-types) is published by Avunu LLC.' > "$page"
+    if ${python} ${scanner} docs planted ${denylist} > found; then fail "an org value beside the frappe-types URL passed"; fi
     echo "ok   planted docs values are caught outside Avunu profile example blocks"
     touch "$out"
   '';

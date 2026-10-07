@@ -1,0 +1,9 @@
+# Valid TOML for the table, but not the header line the shell matches: not opted in
+# here, and `frappe-nix config` refuses it (exit 2) so the two never disagree silently.
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[ tool.frappe-nix ]
+schema = 1
+frappe-major = 16

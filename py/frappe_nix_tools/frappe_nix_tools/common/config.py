@@ -113,6 +113,9 @@ APP_ONLY = (
 	"unchecked-js",
 	"override-doctype-class",
 )
+# The resolved lists only the org profile sets (§8.4 step 4): in ``cfg``, never in the app's
+# table or its schema.
+RESOLVED_FROM_PROFILE = ("retire", "replace-apps", "extra-files")
 ORG_PROFILE_PREFIXES = ("github:", "gitlab:", "git+https://")
 
 
@@ -150,7 +153,11 @@ class Resolved:
 		return "default"
 
 	def get(self, key: str) -> Any:
-		"""The resolved value of a dotted key: a ``cfg`` key, ``modules[.<m>]`` or ``profile[.<k>]``."""
+		"""The resolved value of a dotted key: a ``cfg`` key, ``modules[.<m>]`` or ``profile[.<k>]``.
+
+		A ``cfg`` key is one of the app schema's, or ``retire``, ``replace-apps`` or
+		``extra-files``, which only the org profile sets.
+		"""
 		head, _, rest = key.partition(".")
 		roots = {"modules": self.modules, "profile": self.profile}
 		if head in roots:
@@ -158,6 +165,11 @@ class Resolved:
 			if rest and (not isinstance(value, dict) or rest not in value):
 				raise ConfigError(f"no key {key!r}")
 			return value[rest] if rest else value
+		if head in RESOLVED_FROM_PROFILE:
+			# Lists the org profile alone sets (§8.4 step 4); not in the app's schema.
+			if rest:
+				raise ConfigError(f"no key {key!r}: {head} is a list")
+			return self.cfg.get(head, [])
 		if schema.node_at(APP_SCHEMA, key) is None:
 			raise ConfigError(f"[tool.frappe-nix] has no key {key!r}")
 		value = self.cfg
@@ -461,7 +473,7 @@ def resolve_doc(
 		}
 		cfg = _merge(cfg, body, label, sources)
 	cfg["schema"] = app["schema"]
-	for key in ("retire", "replace-apps", "extra-files"):
+	for key in RESOLVED_FROM_PROFILE:
 		cfg[key] = copy.deepcopy(org_doc.get(key, [])) if org_doc else []
 	cfg = _fill_defaults(cfg, schema.defaults(PROFILE_SCHEMA))
 	cfg = _fill_defaults(cfg, schema.defaults(APP_SCHEMA))
@@ -489,8 +501,14 @@ def resolve_doc(
 def resolve(
 	pyproject_path: Path, *, lock_path: Path | None = None, profile_dir: Path | None = None
 ) -> Resolved:
-	"""Resolve the app whose ``pyproject.toml`` is ``pyproject_path``."""
+	"""Resolve the app whose ``pyproject.toml`` is ``pyproject_path``.
+
+	Its text must spell the table the way the dev shell's line match finds it
+	(``pyproject.check_opt_in_spelling``), so the shell and the tools never disagree on
+	whether the app opted in.
+	"""
 	root = pyproject_path.resolve().parent
-	return resolve_doc(
-		pyproject.load(pyproject_path), root=root, lock_path=lock_path, profile_dir=profile_dir
-	)
+	text = pyproject.read(pyproject_path)
+	doc = pyproject.parse(text, pyproject_path)
+	pyproject.check_opt_in_spelling(text, doc)
+	return resolve_doc(doc, root=root, lock_path=lock_path, profile_dir=profile_dir)

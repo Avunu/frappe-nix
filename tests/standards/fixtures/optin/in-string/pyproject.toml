@@ -1,0 +1,10 @@
+# The header line, inside a multi-line string: TOML sees no table, the line match
+# opts in. `frappe-nix config` refuses it (exit 2) so the two never disagree silently.
+[project]
+name = "plain_app"
+version = "0.0.1"
+
+[tool.notes]
+text = """
+[tool.frappe-nix]
+"""

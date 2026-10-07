@@ -363,6 +363,78 @@ class TestConfigCommand(unittest.TestCase):
 	def test_unreadable_pyproject_exits_3(self):
 		self.assertEqual(run_cli("config", "site", "--pyproject", self.tmp.name)[0], 3)
 
+	def test_profile_lists_print(self):
+		# retire, replace-apps and extra-files are the org profile's alone (§8.4), so the
+		# app schema lacks them, but they are resolved values all the same (§5.13).
+		profile = Path(self.tmp.name) / "prof"
+		profile.mkdir()
+		(profile / "profile.toml").write_text(
+			ORG_PROFILE + '\n[[replace-apps]]\nfrom = "old_app"\nto = "new_app"\n'
+		)
+		self.path.write_text(PYPROJECT.replace('profile = "recommended"', 'profile = "./prof"'))
+		code, out, err = self.config("replace-apps", "--json")
+		self.assertEqual((code, err), (0, ""))
+		self.assertEqual(json.loads(out), [{"from": "old_app", "to": "new_app"}])
+		code, out, _ = self.config("retire", "--json")
+		self.assertEqual(json.loads(out), [{"paths": [".github/workflows/check.yml"], "module": "ci"}])
+		self.assertEqual(self.config("extra-files", "--json"), (0, "[]\n", ""))
+		self.assertEqual(self.config("replace-apps.from")[0], 2)
+		# A built-in profile has none of them.
+		self.path.write_text(PYPROJECT)
+		self.assertEqual(self.config("replace-apps", "--json"), (0, "[]\n", ""))
+
+
+# The spellings of the table the dev shell's line match (lib/standards/shell.nix) and TOML
+# disagree on, beside the ones they agree on; tests/standards/fixtures/optin has the same
+# cases for the Nix side. None: opted in; otherwise the error the config command prints.
+TABLE = "schema = 1\nfrappe-major = 16\n"
+SPELLINGS = {
+	"header": ("[tool.frappe-nix]\n" + TABLE, None),
+	"indented": ("  [tool.frappe-nix]\n" + TABLE, None),
+	"subtable only": ('[[tool.frappe-nix.untested]]\ntarget = "a.b"\nreason = "r"\n', "schema"),
+	"quoted key": ('[tool."frappe-nix"]\n' + TABLE, "write the table as a [tool.frappe-nix] header"),
+	"spaces in brackets": ("[ tool.frappe-nix ]\n" + TABLE, "write the table as a [tool.frappe-nix] header"),
+	"dotted keys": (
+		"[tool]\nfrappe-nix.schema = 1\nfrappe-nix.frappe-major = 16\n",
+		"write the table as a [tool.frappe-nix] header",
+	),
+	"inline table": (
+		"[tool]\nfrappe-nix = { schema = 1, frappe-major = 16 }\n",
+		"write the table as a [tool.frappe-nix] header",
+	),
+	"in a string": ('[tool.notes]\ntext = """\n[tool.frappe-nix]\n"""\n', "inside a multi-line string"),
+	"commented": ("# [tool.frappe-nix]\n", "has not opted in"),
+}
+
+
+class TestOptInSpelling(unittest.TestCase):
+	def test_the_shell_and_the_tools_agree_or_it_is_exit_2(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			path = Path(tmp) / "pyproject.toml"
+			for name, (table, error) in SPELLINGS.items():
+				with self.subTest(name):
+					path.write_text('[project]\nname = "demo_app"\n\n' + table)
+					code, out, err = run_cli("config", "frappe-major", "--pyproject", str(path))
+					if error is None:
+						self.assertEqual((code, out, err), (0, "16\n", ""))
+					else:
+						self.assertEqual(code, 2)
+						self.assertIn(error, err)
+
+	def test_line_endings_reach_toml_as_written(self):
+		# Nix splits the raw text on \n: CRLF lines still match the header, but a file
+		# ending its lines with a lone \r is one line the match never sees. TOML refuses
+		# a lone \r, so the tools must see it too rather than a translated newline.
+		text = '[project]\nname = "demo_app"\n\n[tool.frappe-nix]\n' + TABLE
+		with tempfile.TemporaryDirectory() as tmp:
+			path = Path(tmp) / "pyproject.toml"
+			path.write_bytes(text.replace("\n", "\r\n").encode())
+			self.assertEqual(run_cli("config", "frappe-major", "--pyproject", str(path)), (0, "16\n", ""))
+			path.write_bytes(text.replace("\n", "\r").encode())
+			code, _, err = run_cli("config", "frappe-major", "--pyproject", str(path))
+			self.assertEqual(code, 2)
+			self.assertIn("Expected newline or end of document", err)
+
 
 if __name__ == "__main__":
 	unittest.main()

@@ -5,10 +5,17 @@
 
 Each match prints as ``<path>:<line>: <pattern> matches <text>`` and the exit status is 1.
 
+In ``code`` mode the scope is §7 N3a's: all of ``lib/**``, and the package's code and data
+without its ``tests/`` and fixtures directories.
+
 In ``docs`` mode a match is allowed on a line containing "Avunu profile example", inside
-the fenced code block whose opening fence follows that line (after blank lines only), and on lines naming
-the frappe-types dependency's source (spec §2.9). The spec itself is the contract, which
-describes the Avunu profile as its worked example, and is not linted.
+the fenced code block whose opening fence follows that line (after blank lines only), and
+in the frappe-types dependency's source URL (spec §2.9), which is cut out of a line before
+it is matched, so the rest of that line is still checked. The spec itself is the contract,
+which describes the Avunu profile as its worked example, and is not linted.
+
+Every file in scope is read as bytes and decoded leniently, so no stray byte (not UTF-8,
+or NUL) hides the rest of it. A binary that ever needs leaving out is excluded by path.
 """
 
 import re
@@ -24,11 +31,16 @@ CODE_SCOPE = (
 	".github/workflows/app-*.yml",
 	".github/workflows/fleet-audit.yml",
 )
-CODE_EXCLUDE = ("**/tests/**", "**/fixtures/**", "**/__pycache__/**")
+CODE_EXCLUDE = (
+	"py/frappe_nix_tools/frappe_nix_tools/**/tests/**",
+	"py/frappe_nix_tools/frappe_nix_tools/**/fixtures/**",
+	"**/__pycache__/**",
+)
 DOCS_SCOPE = ("docs/app-standards/*.md",)
 DOCS_EXCLUDE = ("docs/app-standards/spec.md",)
 EXAMPLE = re.compile(r"avunu profile example", re.IGNORECASE)
-DOCS_ALLOWED = re.compile(r"frappe-types", re.IGNORECASE)
+# The frappe-types dependency's source (spec §2.9): the URL alone, never its line.
+DOCS_ALLOWED = re.compile(r"(?:https?://)?github\.com/Avunu/frappe-types(?![\w-])", re.IGNORECASE)
 
 
 def patterns(denylist: Path) -> list[re.Pattern]:
@@ -62,10 +74,7 @@ def files(root: Path, scope: tuple[str, ...], exclude: tuple[str, ...]) -> list[
 
 
 def lines(path: Path) -> list[str]:
-	try:
-		return path.read_text().splitlines()
-	except UnicodeDecodeError:
-		return []
+	return path.read_bytes().decode("utf-8", errors="replace").splitlines()
 
 
 def scan(root: Path, denylist: Path, mode: str) -> list[str]:
@@ -91,8 +100,9 @@ def scan(root: Path, denylist: Path, mode: str) -> list[str]:
 						continue
 					if text.strip():
 						armed = False
-				if example or DOCS_ALLOWED.search(text):
+				if example:
 					continue
+				text = DOCS_ALLOWED.sub("", text)
 			for pat in pats:
 				m = pat.search(text)
 				if m:

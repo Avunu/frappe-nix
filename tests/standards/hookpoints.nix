@@ -4,7 +4,8 @@
 #   standards-cli       the package builds against the locked nixpkgs with its
 #                       unittest suites and pythonRuntimeDepsCheck; `--version`,
 #                       the unknown-command exit, `data-path` and `config`
-#                       behave.
+#                       behave, and `config` reads the opt-in fixtures as
+#                       standards-optin does or refuses them (exit 2).
 #   standards-loaders   a lib/scripts.d file and a lib/standards/tools file are
 #                       picked up (fixtures under ./fixtures) and a drop-in gets
 #                       every argument and snippet; a drop-in that redefines a
@@ -18,12 +19,25 @@
 #                       `frappe-init`, and none of its packages propagates
 #                       anything, so no Python site-packages reach the shell's
 #                       PYTHONPATH ahead of the bench venv's.
+#   standards-app-shell modules/devenv.nix's wiring of that fragment, read from
+#                       the fixture app's own evaluation (opted in) and from
+#                       the same flake over a source without [tool.frappe-nix]:
+#                       the shell imports the fragment's devenv module, which
+#                       carries frappe-nix, frappe-init and the blame setting
+#                       only when opted in; the shell's other packages are the
+#                       same either way and never include them; and the
+#                       flake's apps differ by exactly the fragment's apps.
 #   standards-optin     the opt-in test of lib/standards/shell.nix (S35): an app
 #                       without [tool.frappe-nix] gets no package, no app and no
 #                       enterShell; one with it gets them; a pyproject.toml that
 #                       Nix's fromTOML rejects evaluates as not opted in (and as
 #                       opted in with the table); a commented-out table line
-#                       does not opt in.
+#                       does not opt in. The spellings TOML and the line
+#                       match disagree on (a quoted key, spaces in the
+#                       brackets, dotted keys, a header line in a string) get
+#                       the line match's verdict here; frappe-nix-tools
+#                       refuses each with exit 2. CRLF line endings opt in;
+#                       lone-CR ones don't, and TOML refuses them (exit 2).
 #
 # The loader and flake facts are evaluated, so a regression fails
 # `nix flake check --no-build` already; the derivations record what was seen.
@@ -203,6 +217,110 @@ let
     ) shellFragment.packages
   );
 
+  # --- the app-mode dev shell, as modules/devenv.nix wires it -----------------
+  #
+  # A whole devShell can't be evaluated here: it imports the generated bench
+  # workspace (IFD) and needs the app's nix/uv.lock, which only a relock makes.
+  # So the fixture flake is evaluated with flake-parts' `debug` on, and
+  # modules/devenv.nix's own definition of `devenv.shells.default` is called
+  # with the shell's config: its `imports` and `packages` are then plain
+  # values. A package that needs the workspace throws, which tryEval skips.
+  appShell =
+    src:
+    let
+      debugFrappeNix = self // {
+        lib = self.lib // {
+          mkFlake =
+            args: module:
+            self.lib.mkFlake args {
+              imports = [ module ];
+              debug = true;
+            };
+        };
+      };
+      inputs' = fixtureInputs // {
+        self = self';
+        frappe-nix = debugFrappeNix;
+      };
+      outputs = (import (fixtureDir + "/flake.nix")).outputs inputs';
+      self' = outputs // {
+        _type = "flake";
+        outPath = src;
+        inputs = inputs';
+        sourceInfo.outPath = src;
+      };
+      perSystem = outputs.allSystems.${system};
+      ours = builtins.filter (
+        d: lib.hasSuffix "/modules/devenv.nix" (lib.head (lib.splitString ", " d.file))
+      ) perSystem.options.devenv.shells.definitionsWithLocations;
+      shell = (lib.head ours).value.default {
+        config = perSystem.devenv.shells.default;
+        inherit lib pkgs;
+      };
+      key = (import ../../lib/standards/shell.nix { inherit pkgs; }).devenvModule.key;
+      modules = builtins.filter (m: (m.key or null) == key) (shell.imports or [ ]);
+      module = lib.head modules;
+      names = map (p: p.name) module.packages;
+      enter = module.enterShell;
+    in
+    assert lib.assertMsg (
+      builtins.length ours == 1
+    ) "app shell: modules/devenv.nix does not define devenv.shells.default once";
+    {
+      imported = builtins.length modules;
+      packages = names;
+      # Every other package's name, or null where it needs the bench workspace.
+      others = map (
+        p:
+        let
+          name = builtins.tryEval p.name;
+        in
+        if name.success then name.value else null
+      ) shell.packages;
+      # A plain definition is always on; a mkIf only when its condition holds.
+      enterShellOn = enter._type or null != "if" || enter.condition;
+      enterShell = if enter._type or null == "if" then enter.content else enter;
+      apps = builtins.attrNames outputs.apps.${system};
+    };
+
+  shellOn = appShell fixtureDir;
+  shellOff = appShell ./fixtures/optin/without-table;
+  standardsNames = map (p: p.name) shellFragment.packages;
+  standardsApps = builtins.attrNames shellFragment.apps;
+  shellFacts =
+    assert lib.assertMsg (
+      shellOn.imported == 1 && shellOff.imported == 1
+    ) "app shell: modules/devenv.nix does not import lib/standards/shell.nix's devenv module once";
+    assert lib.assertMsg (standardsNames != [ ] && shellOn.packages == standardsNames)
+      "app shell: an opted-in shell's standards packages are ${builtins.toJSON shellOn.packages}, not ${builtins.toJSON standardsNames}";
+    assert lib.assertMsg (builtins.any (lib.hasPrefix "frappe-nix-") shellOn.packages)
+      "app shell: an opted-in shell lacks frappe-nix";
+    assert lib.assertMsg (builtins.elem "frappe-init" shellOn.packages)
+      "app shell: an opted-in shell lacks frappe-init";
+    assert lib.assertMsg (
+      shellOn.enterShellOn && lib.hasInfix "blame.ignoreRevsFile" shellOn.enterShell
+    ) "app shell: an opted-in shell does not set blame.ignoreRevsFile";
+    assert lib.assertMsg (
+      shellOff.packages == [ ]
+    ) "app shell: a shell that did not opt in gets ${builtins.toJSON shellOff.packages}";
+    assert lib.assertMsg (
+      !shellOff.enterShellOn
+    ) "app shell: a shell that did not opt in gets the standards enterShell";
+    assert lib.assertMsg (
+      shellOn.others == shellOff.others
+    ) "app shell: opting in changes the shell's other packages";
+    assert lib.assertMsg (
+      !(builtins.any (n: builtins.elem n standardsNames) shellOff.others)
+    ) "app shell: a standards tool is among a shell's own packages";
+    assert lib.assertMsg (
+      shellOff.apps == lib.subtractLists standardsApps shellOn.apps
+      && lib.all (a: builtins.elem a shellOn.apps) standardsApps
+    ) "app shell: the apps of a flake that did not opt in are ${builtins.toJSON shellOff.apps}";
+    {
+      on = removeAttrs shellOn [ "enterShell" ];
+      off = removeAttrs shellOff [ "enterShell" ];
+    };
+
   flakeFacts =
     assert lib.assertMsg (fixtureApps ? frappe-init) "app flake: apps.frappe-init is missing";
     assert lib.assertMsg (lib.hasSuffix "/bin/frappe-init" fixtureApps.frappe-init.program)
@@ -223,6 +341,29 @@ let
       apps = builtins.attrNames fixtureApps;
       shell = map (p: p.name) shellFragment.packages;
     };
+
+  # --- opt-in ----------------------------------------------------------------
+
+  # The opt-in fixtures' texts by name: each directory under ./fixtures/optin,
+  # and with-table's text with CRLF and with lone-CR line endings. Those two
+  # are made here (as strings, and as files in standards-cli) rather than
+  # tracked: a lone CR is not TOML, so check-toml would refuse it. Nix splits
+  # the raw text on \n, so CRLF lines still match the header while a lone-CR
+  # file is a single line that doesn't.
+  optinWithTable = builtins.readFile ./fixtures/optin/with-table/pyproject.toml;
+  optinEndings = {
+    crlf = builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable;
+    lone-cr = builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable;
+  };
+  # `<name>=<file>` words for the standards-cli loops, which first write the
+  # line-ending cases to ./endings.
+  optinCases = lib.concatMapStringsSep " " (
+    name:
+    if optinEndings ? ${name} then
+      "${name}=$PWD/endings/${name}.toml"
+    else
+      "${name}=${./fixtures/optin + "/${name}/pyproject.toml"}"
+  );
 in
 {
   standards-cli =
@@ -258,6 +399,44 @@ in
           [ -f "$p" ] || fail "data-path $rel printed '$p', which is not a file"
           echo "ok   data-path $rel"
         done
+
+        # The opt-in fixtures, read by the tools: they agree with the line match
+        # (standards-optin), or refuse a spelling the two would disagree on.
+        mkdir endings
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: text: ''
+            printf '%s' ${lib.escapeShellArg text} > endings/${name}.toml
+          '') optinEndings
+        )}
+        for pair in ${
+          optinCases [
+            "with-table"
+            "datetime-opted-in"
+            "crlf"
+          ]
+        }; do
+          [ "$(frappe-nix config frappe-major --pyproject "''${pair#*=}")" = 16 ] \
+            || fail "config does not read the table of optin/''${pair%%=*}"
+        done
+        for pair in ${
+          optinCases [
+            "without-table"
+            "datetime"
+            "commented"
+            "quoted-key"
+            "spaced-brackets"
+            "dotted-keys"
+            "in-string"
+            "lone-cr"
+          ]
+        }; do
+          set +e
+          frappe-nix config frappe-major --pyproject "''${pair#*=}" 2> err
+          code=$?
+          set -e
+          [ "$code" = 2 ] || fail "config on optin/''${pair%%=*} exited $code, not 2: $(cat err)"
+        done
+        echo "ok   frappe-nix config agrees with the shell's opt-in test or refuses the spelling"
 
         # The fixture app resolves: recommended, so ssort is off and ci on.
         cp -r ${fixtureDir} app
@@ -306,6 +485,8 @@ in
         printf '%s\n' "$facts" > "$out"
       '';
 
+  standards-app-shell = pkgs.writeText "standards-app-shell-check" (builtins.toJSON shellFacts);
+
   # The opt-in test (S35). Each fixture's shell fragment is evaluated, so a
   # regression fails evaluation; the derivation records what was seen.
   standards-optin =
@@ -323,8 +504,26 @@ in
         datetime-opted-in = true;
         commented = false;
         subtable = true;
+        # Spellings TOML and the line match disagree on; frappe-nix-tools refuses
+        # each of them (exit 2; py/frappe_nix_tools/tests/test_config.py).
+        quoted-key = false;
+        spaced-brackets = false;
+        dotted-keys = false;
+        in-string = true;
+        # Line endings: CRLF lines still match; a lone-CR file is one line that
+        # doesn't, and TOML refuses it (exit 2).
+        crlf = true;
+        lone-cr = false;
       };
-      seen = lib.mapAttrs (name: _: (shellFor name).optedIn) expected;
+      # The line-ending cases are strings, which the fragment's own optedInText
+      # tests as it tests the file builtins.readFile returns.
+      seen = lib.mapAttrs (
+        name: _:
+        if optinEndings ? ${name} then
+          (shellFor "with-table").optedInText optinEndings.${name}
+        else
+          (shellFor name).optedIn
+      ) expected;
       wrong = lib.filterAttrs (name: want: seen.${name} != want) expected;
       off = shellFor "without-table";
       on = shellFor "with-table";
