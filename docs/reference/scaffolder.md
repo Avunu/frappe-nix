@@ -3,7 +3,7 @@ title: Scaffolder
 description: The flags and exit codes of frappe-init, the program behind nix run github:Avunu/frappe-nix that creates, migrates and sets up benches and app repositories.
 order: 4
 tags: [reference, frappe-init, cli, scaffolding]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 `nix run github:Avunu/frappe-nix` runs `frappe-init`, the scaffolder. The flags below follow `frappe-init --help`. Pass them after `--`:
@@ -25,6 +25,8 @@ Usage: frappe-init [options] [target-dir]
 | `--init`      | Force scaffold mode. Needs an empty directory unless you add `--force`.                                    |
 | `--migrate`   | Force migration mode. Also re-syncs a frappe-nix bench.                                                    |
 | `--app`       | Force app mode: this repository is one Frappe app, and the bench around it is generated from flake inputs. |
+| `--sync`      | App mode: write the app's [managed files](../ironclad/managed-files.md) (`ironclad sync --write`).        |
+| `--check`     | App mode: report drift in the managed files and change nothing (`ironclad sync --check`).                  |
 | `--force`     | Relax the mode guard. It never overwrites an existing file.                                                |
 | `--dry-run`   | Print the plan and exit without changing anything.                                                         |
 | `-y`, `--yes` | Assume yes. Required to migrate without a terminal.                                                        |
@@ -40,6 +42,8 @@ Without a mode flag, the mode is detected from the target directory, which is th
 | `--site <SITE>`        | The default site. Defaults to the existing `default_site`.                     |
 | `--skip-lock`          | Do not run `uv lock`.                                                          |
 | `-h`, `--help`         | Show the help.                                                                 |
+
+`--sync` and `--check` also take `--only <path>[,<path>…]`; `--sync` takes `--init-listing`, and `--check` takes `--format text|json|github` and `--expect-rev <sha>`. Their exit codes are `ironclad sync`'s: 0 clean, 1 drift, 2 invalid configuration, 3 environment. See [Managed files](../ironclad/managed-files.md).
 
 New benches default to the site `frappe.localhost`. App mode defaults to `<BENCH_NAME>.localhost`.
 

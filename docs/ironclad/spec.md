@@ -906,6 +906,9 @@ show_missing = true
 skip_covered = true
 precision = 1
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@(abc\\.)?abstractmethod"]
+
+[tool.vulture]                             # test_utils' static_analysis runs vulture over "."
+exclude = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
 ```
 
 **App-owned, but validated.** Sync never touches these.
@@ -1449,6 +1452,7 @@ The baseline is a multiset (S21). `(rule, path, line_sha1)` is unique within the
 
 ```
 frappe-init --sync  [--dry-run] [--skip-lock] [--only <path>[,<path>…]] [--init-listing] [--frappe-version version-16]
+ironclad sync --write --offline …   # (or IRONCLAD_OFFLINE=1) no nix, uv or yarn: the sandboxed checks
 frappe-init --check [--format text|json|github] [--only …] [--expect-rev <sha>]
 ```
 
@@ -1483,7 +1487,7 @@ frappe-init --check [--format text|json|github] [--only …] [--expect-rev <sha>
 8. If `tools/pyproject.toml` changed, `tools/uv.lock` is missing, or a lock floor isn't met: `uv lock --project tools [--upgrade-package …]`.
 9. If a managed `package.json` key changed or `yarn.lock` is missing: `yarn install --non-interactive`.
 10. Seed the missing `nix/node-locks/<key>` for each present sibling, where key ∈ {`frappe/ui`, `erpnext/banking`, `hrms/frontend`, `hrms/roster`}.
-11. If the `frappe-nix` or a sibling lock node changed since the last relock, and `--skip-lock` isn't given: `nix run --no-pure-eval .#relock`. The last relocked state is recorded in `nix/uv.lock`'s header comment, which relock writes.
+11. If phase A changed `flake.lock` (the `frappe-nix` or a sibling node moved) or `nix/uv.lock` is missing, and `--skip-lock` isn't given: `nix run --no-pure-eval .#relock`. (Appendix I: relock writes no header into `nix/uv.lock`, which is uv's file.)
 12. If `discover.has_listing`: `ironclad listing readme --write`.
 13. `git add -A` every path written or deleted. Nothing is committed.
 
@@ -2959,3 +2963,20 @@ Changes an implementing PR made to this spec, with the reason. Each PR adds its 
 | N3a | §1.4 | `pin-path` rehashes a cached `.dev-dist/pins` tree before reusing it and writes no `.narHash` stamp. | The cache lives in the app checkout, so a PR could commit a weakened `frappe-semgrep-rules` tree with a matching stamp and the CI semgrep gate would run it. The trees are small and hashed once per job. |
 | N3a | §1.4 | `pin-path` reads frappe-nix's three pins only through the `frappe-nix` node and refuses (exit 2) one that locks any repository but its own (`frappe/semgrep-rules`, `frappe/marketplace`, `frappe/pilot`). | A PR's `flake.lock` could otherwise retarget `frappe-semgrep-rules` at a repository holding `rules: []` with that repository's `narHash`, or add a root input of that name, and the narHash check would pass. Still accepted: a lock edit that moves one of them to another commit of its own repository (an older or newer rev). Such an edit is a visible `flake.lock` diff, and refusing it would need the installed `ironclad` to carry frappe-nix's lock, which Dependabot's lock-only bumps would then have to keep in step. |
 | N3a | §3.3 | Unexpected failures exit 3; `github` output fences the text in `::stop-commands::` and escapes the annotations. | Exit 1 is drift, so an uncaught exception in `--check` read as drift in CI. Paths come from `git ls-files` and diffs hold file contents, so unescaped they could break annotations or run workflow commands. |
+| N3 | §3.3 | `ironclad sync --write --offline` (or `IRONCLAD_OFFLINE=1`) runs no `nix`, `uv` or `yarn` command; the locks it skips are reported, not drift for the exit code. | The flake checks run sync in the build sandbox, where there is no network, and `frappe-init --app` is checked there too. |
+| N3 | §3.3, S32 | `frappe-init` carries `uv`, `yarn`, Node 24 and Python 3.14 on its own `PATH`, so a bootstrap through it never re-enters the dev shell; the re-entry stays the fallback for a bare `ironclad sync --write`, and relocks first when `nix/uv.lock` is missing. | The dev shell evaluates the bench workspace, which needs `nix/uv.lock`: on a fresh app (postgrid, jwt_auth) `nix develop` fails before phase B could create it. |
+| N3 | §3.3 step 4 | The re-exec compares the locked frappe-nix's `version.txt` (read from the store with `builtins.fetchTree`) with the running `ironclad.__version__`, and is skipped under `IRONCLAD_FRAPPE_NIX_URL`. | A package built from a source tree does not know its own commit; releases are tags, so equal versions mean the same release. |
+| N3 | §3.3 step 3 | `nix flake update frappe-nix` moves frappe-nix to `release-<N>`; under `IRONCLAD_FRAPPE_NIX_URL` every write runs `nix flake lock --override-input frappe-nix <url>`. | `nix flake lock --update-input` is deprecated. |
+| N3 | §3.3 step 11 | Relock runs when phase A changed `flake.lock` or `nix/uv.lock` is missing. | Relock writes no header into `nix/uv.lock` (uv owns that file and would drop a comment). |
+| N3 | §2.3 | `frappe_nix.major` is 1 while `ironclad.__version__` is `0.x` (before `v1.0.0`). | Otherwise every pre-release render pins `release-0`. |
+| N3 | §2.12 | `[tool.vulture] exclude` is managed. A missing `fail_under` is seeded as 0 (then the app's). | test_utils' `static_analysis` runs vulture over `.` and reads this table; without it, `tools/.venv` (made by every `uv run --project tools`) and `.frappe-nix/` are reported as the app's dead code and the hook always fails. Sync can't choose a coverage floor, and a new app must not fail its own first check. |
+| N3 | §2.4.1, §2.12 | `requirements.txt` is retired anywhere (exit 1, deleted by sync) rather than forbidden (exit 2). | The two sections disagreed; the retire list is the one sync can act on. |
+| N3 | §2.8 | A `devDependencies` entry that names a tarball, a git ref or a path is left as the app wrote it. The fixture app installs frappe-types that way. | It has no minimum to compare with a floor, and frappe-types 16.5.0 (the presets) is not published yet. |
+| N3 | §2.9, §2.10 | The `tsconfig*.json` files have no trailing commas; `.oxfmtrc.jsonc` has them. Desk and web projects are rendered when their file set minus the unchecked-js paths and `typescript.exclude` is non-empty; the oxlint overrides use the full sets. `committed.toml` is in oxfmt's form (one type per line). | That is what oxfmt 0.72.0 prints for each extension, and a whole file must already be in oxfmt's form. "After the exclusions" (§2.9) needs the excluded set. |
+| N3 | §2.6, §3.6 | `.envrc` carries the standard §3.6 header. | One header text for every `#` file; templates/app/.envrc is the same file. |
+| N3 | §3.2 | A local region is checked structurally (hook ids, dependabot `ecosystem`/`directory` pairs, EditorConfig sections); the merged YAML is not parsed. | The package has no YAML parser among its three dependencies; prek, zizmor and actionlint parse it in CI. |
+| N3 | §2.4 | A file whose `when` turned false is deleted when it equals the current render or still opens with its managed header and has empty local regions. | The previous context is not known to the run that sees the condition change. |
+| N3 | §3.3 step 1 | Creating `[tool.ironclad]` sets `build = true` when `package.json` has a `build` script and nothing sync can see builds (no Vite config, no nested frontend). | Otherwise the created configuration fails its own §2.8 rule (carbon_frappe). |
+| N3 | §1.2 | New: `.prekignore` (`tests/fixtures/`); `lib/sh/template.sh` tolerates a template without tokens; the fixture's sources gain test_utils' copyright stamps, a `patches/` package and an `after_request` hook that takes only `response`; `docs/scaffolding/app-mode.md` and `docs/reference/scaffolder.md` describe `--sync` and `--check`. | prek discovers nested configs as projects, so frappe-nix's own lint would run the fixture's hooks. `templates/app` no longer has a token, and `grep` finding none ended the script under pipefail. The fixture must pass its own hooks (`validate_patches` needs a patches directory; vulture flags the unused `request`). |
+| N3 | §7 N3 | The fixture's `flake.lock` pins frappe-nix by commit (the N3a head) until `release-1` exists; the self-tests override it. `selftest-scaffold` accepts exit 1 or 2 from carbon_frappe (its develop sets `[tool.ty.rules]` to `warn`, which §2.12 forbids), runs `tsc --build` with a stand-in `marketplace/shots.d.ts` until N5's lands, and the README-clock case is proven on the context (no clock in it), since the README blocks are N5's. | `release-1` and the README templates do not exist yet. |
+| N3 | §3.1 | A manifest entry may also carry `handler` (the Python strategy for a merge, block or seed file), `command` (the tool that makes a seeded lock), `phase` (`a` for `flake.nix` and `.envrc`) and `header_note`; a fragment may carry `floors` by kind (`npm`, `npm-ts`, `npm-scss`, `uv`). | The merge and block strategies need per-file rules, and the floors are data every fragment can extend. |

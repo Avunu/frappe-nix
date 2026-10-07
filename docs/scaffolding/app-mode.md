@@ -3,7 +3,7 @@ title: Develop a single app
 description: Use frappe-nix from one Frappe app's own repository, where a small flake.nix is all you commit and the bench around the app is generated from flake inputs.
 order: 3
 tags: [scaffolding, app-mode, flake-inputs]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 A bench repository is the uv workspace: a committed `pyproject.toml`, a committed `uv.lock` and `apps/*` as git submodules. An app repository has none of that. It is one app, and the bench around it is an implementation detail of developing it.
@@ -21,9 +21,9 @@ direnv allow                          # or: nix develop --no-pure-eval
 devenv up                             # then `provision-site` in another shell
 ```
 
-The scaffolder recognizes an app by a `pyproject.toml` whose `[project].name` names a package that holds a `hooks.py`. It writes three files, `flake.nix`, `.envrc` and a managed `.gitignore` block, stages them with `git add`, and runs `nix run .#relock` to produce `nix/uv.lock`. Nothing is committed.
+The scaffolder recognizes an app by a `pyproject.toml` whose `[project].name` names a package that holds a `hooks.py`. It copies `.envrc` and a managed `.gitignore` block, then runs `ironclad sync --write`, which writes `flake.nix` and locks it, adds `[tool.ironclad]` and the managed keys to `pyproject.toml`, writes the app's other [managed files](../ironclad/managed-files.md) and their locks, and runs `nix run .#relock` to produce `nix/uv.lock`. Everything is staged with `git add`; nothing is committed. Later, `nix run .#frappe-init -- --sync` brings an app back in step and `--check` reports drift.
 
-It never touches the app's own `pyproject.toml`. That file is the app's packaging metadata, and the workspace root frappe-nix generates is a different file that lives in the Nix store.
+The workspace root frappe-nix generates is not the app's `pyproject.toml`: that file stays the app's packaging metadata, and the root is a different file that lives in the Nix store.
 
 | Detail         | What the scaffolder does                                                                                              |
 | -------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -38,11 +38,11 @@ It never touches the app's own `pyproject.toml`. That file is the app's packagin
 
 ## The flake it writes
 
-The flake pins Frappe as a non-flake input, so it is a source tree and not a flake, and enables app mode:
+`flake.nix` is a [managed file](../ironclad/managed-files.md), rendered from `[tool.ironclad]` (the Frappe major and the siblings) and kept in step by `frappe-init --sync`; app-specific Nix goes in `nix/local.nix`. It pins Frappe as a non-flake input, so it is a source tree and not a flake, and enables app mode:
 
 ```nix
 inputs = {
-  frappe-nix.url = "github:Avunu/frappe-nix";
+  frappe-nix.url = "github:Avunu/frappe-nix/release-1";
   nixpkgs.follows = "frappe-nix/nixpkgs";
   frappe = { url = "github:frappe/frappe/version-16"; flake = false; };
   # erpnext = { url = "github:frappe/erpnext/version-16"; flake = false; };
@@ -70,7 +70,7 @@ Everything else is inferred:
 - `python` and `nodejs` come from the `frappeVersion` [preset](README.md#versions-and-presets).
 - `app.lockDir` defaults to `nix`.
 
-Declare other apps your app needs, such as the apps named in its `required_apps` hook, as flake inputs and list them under `app.siblings`, in install order. It is a list and not an attribute set because that order is the members' order and so the order of `sites/apps.txt`. Re-run `nix run .#relock` after you change the list.
+Declare other apps your app needs, such as the apps named in its `required_apps` hook, in `[tool.ironclad] siblings`, in install order, and run `nix run .#frappe-init -- --sync`: it adds the flake inputs and the `app.siblings` entries, and relocks. It is a list and not an attribute set because that order is the members' order and so the order of `sites/apps.txt`.
 
 ## What you get, and where it lives
 
