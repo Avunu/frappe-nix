@@ -333,6 +333,7 @@
 			"rule": "legacy release workflow: release-please now runs from the managed release.yml",
 			"module": "releases",
 			"with": ["ci"],
+			"when": "release_workflow_shipped",
 			"contains": ["release-please-action"],
 			"except": [".github/workflows/docs*.yml", ".github/workflows/docs*.yaml"],
 			"unmanaged": true
@@ -342,6 +343,7 @@
 			"rule": "legacy auto-merge workflow: the managed deps.yml decides what merges automatically",
 			"module": "dependabot",
 			"with": ["ci"],
+			"when": "deps_workflow_shipped",
 			"contains": ["gh pr merge --auto", "dependabot/fetch-metadata"],
 			"except": [".github/workflows/docs*.yml", ".github/workflows/docs*.yaml"],
 			"unmanaged": true

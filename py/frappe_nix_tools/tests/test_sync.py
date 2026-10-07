@@ -18,6 +18,9 @@ from scaffold_helpers import AppCase, git
 
 # N2 packages scripts/vite-register.mjs (manifest.d/assets.json); these cases run as if it did.
 with_vite_register = mock.patch.object(manifest, "ships", lambda path: path == manifest.VITE_REGISTER)
+# N4's CI callers, which the workflow retire rules wait for.
+CI_CALLERS = (".github/workflows/release.yml", ".github/workflows/deps.yml")
+with_ci_callers = mock.patch.object(manifest, "ships", lambda path: path in CI_CALLERS)
 
 
 class TestRoundTrip(AppCase):
@@ -578,6 +581,28 @@ class TestDiscovery(AppCase):
 
 
 class TestRetire(AppCase):
+	def test_workflows_stay_until_the_callers_ship(self):
+		"""The app's own release-please and auto-merge workflows are retired only once this
+		package renders the callers that replace them (N4's release.yml and deps.yml)."""
+		self.synced()
+		self.write(
+			".github/workflows/old.yml",
+			"jobs: { r: { steps: [ { uses: googleapis/release-please-action@v4 } ] } }\n",
+		)
+		self.write(
+			".github/workflows/merge.yml",
+			"jobs: { m: { steps: [ { uses: dependabot/fetch-metadata@v2 } ] } }\n",
+		)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 0, out)
+		with with_ci_callers:
+			code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn(".github/workflows/old.yml (retire): legacy file", out)
+		self.assertIn(".github/workflows/merge.yml (retire): legacy file", out)
+
+	@with_ci_callers
 	def test_legacy_files_are_reported_then_deleted(self):
 		self.synced()
 		self.write(
@@ -910,6 +935,29 @@ class TestShallowBenchApp(ShallowCase):
 		self.assertEqual(doc["tool"]["bench"]["frappe-dependencies"], {"frappe": ">=16.0.0,<17.0.0"})
 		self.assertNotIn("select", doc["tool"]["ruff"]["lint"], "what only sync wrote goes")
 		self.assertIn("frappe-dependencies", before)
+
+
+class TestCommitMsgPolicyHook(AppCase):
+	"""The frappe-major commit-msg hook runs `frappe-nix policy` (N4): it is rendered only when
+	this package has that command, or every commit of such an app would be refused."""
+
+	extra_pyproject = '\n[tool.frappe-nix.releases]\nversion-scheme = "frappe-major"\n'
+
+	def test_rendered_only_with_policy(self):
+		import importlib.util
+
+		self.synced()
+		self.assertNotIn("frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
+		real = importlib.util.find_spec
+		shipped = mock.patch.object(
+			importlib.util,
+			"find_spec",
+			lambda name, *a: object() if name == "frappe_nix_tools.commands.policy" else real(name, *a),
+		)
+		with shipped:
+			code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn("id: frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
 
 
 class TestRepoDoctorNotice(AppCase):

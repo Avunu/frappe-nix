@@ -608,7 +608,7 @@ class TestRetireByFunction(AppCase):
 	RELEASE = "jobs: { r: { steps: [ { uses: googleapis/release-please-action@v4 } ] } }\n"
 	MERGE = "jobs: { m: { steps: [ { uses: dependabot/fetch-metadata@v2 } ] } }\n"
 
-	def test_rules_follow_their_module(self):
+	def _rules_follow_their_module(self):
 		self.synced()
 		self.write(".github/workflows/release.yml", self.RELEASE)
 		self.write(".github/workflows/automerge.yml", self.MERGE)
@@ -622,6 +622,14 @@ class TestRetireByFunction(AppCase):
 		self.table("releases.enable = false\ndependabot.enable = false\n")
 		code, out = self.check()
 		self.assertNotIn("(retire)", out)
+
+	def test_rules_follow_their_module(self):
+		with mock.patch.object(
+			manifest,
+			"ships",
+			lambda path: path in (".github/workflows/release.yml", ".github/workflows/deps.yml"),
+		):
+			self._rules_follow_their_module()
 
 	def test_retire_keep(self):
 		self.synced()

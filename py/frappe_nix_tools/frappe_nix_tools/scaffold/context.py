@@ -11,6 +11,7 @@ gated on (``precommit_live``, ``tools_deps``, ``package_json_live``, ``profile_i
 Nothing here reads the clock: the only date is the year of the first commit (§3.4).
 """
 
+import importlib.util
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -321,6 +322,13 @@ def build(
 			# Whether this package renders scripts/vite-register.mjs (N2): C8, the build append
 			# and retiring a Vite app's update-assets.mjs wait for it.
 			"vite_register_shipped": manifest.ships(manifest.VITE_REGISTER),
+			# Whether this package has `frappe-nix policy` (N4): the commit-msg hook that runs
+			# it is rendered only then, or every commit of a frappe-major app would fail.
+			"policy_shipped": importlib.util.find_spec("frappe_nix_tools.commands.policy") is not None,
+			# Whether this package renders the CI callers (N4's release.yml and deps.yml): an
+			# app's own release-please and auto-merge workflows are retired only for them.
+			"release_workflow_shipped": manifest.ships(".github/workflows/release.yml"),
+			"deps_workflow_shipped": manifest.ships(".github/workflows/deps.yml"),
 			"tools_deps": tools_deps(modules, precommit_live),
 			"package_json_live": any(
 				modules.get(m, False)
