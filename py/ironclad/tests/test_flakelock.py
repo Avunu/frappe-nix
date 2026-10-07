@@ -45,6 +45,32 @@ class TestFlakeLock(unittest.TestCase):
 			path.write_text(json.dumps(LOCK))
 			self.assertEqual(flakelock.load(path), LOCK)
 
+	def test_malformed_locks_are_env_errors(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			path = Path(tmp) / "flake.lock"
+			for doc in (
+				[],
+				{"root": "root", "nodes": []},
+				{"root": 1, "nodes": {}},
+				{"root": "r", "nodes": {"r": 1}},
+			):
+				path.write_text(json.dumps(doc))
+				with self.assertRaises(EnvError, msg=doc):
+					flakelock.load(path)
+		dangling = {"root": "root", "nodes": {"root": {"inputs": {"pilot": "missing"}}}}
+		with self.assertRaises(EnvError):
+			flakelock.input_node(dangling, "pilot")
+		bad_inputs = {"root": "root", "nodes": {"root": {"inputs": ["pilot"]}}}
+		with self.assertRaises(EnvError):
+			flakelock.input_node(bad_inputs, "pilot")
+		not_a_table = {"root": "root", "nodes": {"root": {"inputs": {"p": "p"}}, "p": {"locked": "x"}}}
+		with self.assertRaises(ConfigError):
+			flakelock.github_pin(not_a_table, "p")
+		missing = {"root": "root", "nodes": {"root": {"inputs": {"p": "p"}}, "p": github("o", "r", "a" * 40)}}
+		del missing["nodes"]["p"]["locked"]["narHash"]
+		with self.assertRaisesRegex(EnvError, "no locked narHash"):
+			flakelock.github_pin(missing, "p")
+
 	def test_follows(self):
 		self.assertEqual(flakelock.node_at(LOCK, ["nixpkgs"]), ("nixpkgs", LOCK["nodes"]["nixpkgs"]))
 		self.assertIsNone(flakelock.node_at(LOCK, ["nope"]))

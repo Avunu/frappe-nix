@@ -6,10 +6,14 @@ root's inputs and then among frappe-nix's.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from ironclad.common.report import ConfigError, EnvError
+
+_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+_REV = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -35,9 +39,21 @@ def load(path: Path) -> dict:
 		raise EnvError(f"{path} does not exist") from e
 	except (OSError, json.JSONDecodeError) as e:
 		raise EnvError(f"{path} is unreadable: {e}") from e
-	if not isinstance(lock, dict) or "nodes" not in lock or "root" not in lock:
+	if (
+		not isinstance(lock, dict)
+		or not isinstance(lock.get("nodes"), dict)
+		or not isinstance(lock.get("root"), str)
+		or not all(isinstance(node, dict) for node in lock["nodes"].values())
+	):
 		raise EnvError(f"{path} is not a flake lock file")
 	return lock
+
+
+def _node(lock: dict, name: object) -> dict:
+	node = lock["nodes"].get(name) if isinstance(name, str) else None
+	if not isinstance(node, dict):
+		raise EnvError(f"not a flake lock file: it refers to a node {name!r} it does not have")
+	return node
 
 
 def node_at(lock: dict, path: list[str]) -> tuple[str, dict] | None:
@@ -45,10 +61,12 @@ def node_at(lock: dict, path: list[str]) -> tuple[str, dict] | None:
 
 	Each step's reference is either a node name or, for ``follows``, a path from the root.
 	"""
-	nodes = lock["nodes"]
 	name = lock["root"]
 	for step in path:
-		ref = nodes[name].get("inputs", {}).get(step)
+		inputs = _node(lock, name).get("inputs", {})
+		if not isinstance(inputs, dict):
+			raise EnvError(f"not a flake lock file: node {name!r} has inputs that are not a table")
+		ref = inputs.get(step)
 		if ref is None:
 			return None
 		if isinstance(ref, list):
@@ -58,7 +76,7 @@ def node_at(lock: dict, path: list[str]) -> tuple[str, dict] | None:
 			name = found[0]
 		else:
 			name = ref
-	return name, nodes[name]
+	return name, _node(lock, name)
 
 
 def input_node(lock: dict, name: str) -> tuple[str, dict] | None:
@@ -69,7 +87,9 @@ def input_node(lock: dict, name: str) -> tuple[str, dict] | None:
 def frappe_nix_rev(lock: dict) -> str | None:
 	"""The frappe-nix revision an app locks, or ``None`` (frappe-nix itself has no such input)."""
 	found = node_at(lock, ["frappe-nix"])
-	return found[1].get("locked", {}).get("rev") if found else None
+	locked = found[1].get("locked") if found else None
+	rev = locked.get("rev") if isinstance(locked, dict) else None
+	return rev if isinstance(rev, str) else None
 
 
 def github_pin(lock: dict, name: str) -> Pin:
@@ -78,9 +98,20 @@ def github_pin(lock: dict, name: str) -> Pin:
 	if found is None:
 		raise ConfigError(f"flake.lock has no input {name!r}, neither the app's nor frappe-nix's")
 	locked = found[1].get("locked", {})
-	if locked.get("type") != "github":
-		raise ConfigError(f"input {name!r} is locked as {locked.get('type')!r}, not a GitHub input")
-	try:
-		return Pin(name, locked["owner"], locked["repo"], locked["rev"], locked["narHash"])
-	except KeyError as e:
-		raise EnvError(f"input {name!r} has no locked {e.args[0]}") from e
+	if not isinstance(locked, dict) or locked.get("type") != "github":
+		kind = locked.get("type") if isinstance(locked, dict) else None
+		raise ConfigError(f"input {name!r} is locked as {kind!r}, not a GitHub input")
+	fields = {}
+	for key in ("owner", "repo", "rev", "narHash"):
+		value = locked.get(key)
+		if not isinstance(value, str):
+			raise EnvError(f"input {name!r} has no locked {key}")
+		fields[key] = value
+	# These become a URL and a directory name under .dev-dist/pins/, so a crafted lock
+	# must not be able to leave it.
+	for key in ("owner", "repo"):
+		if not _NAME.fullmatch(fields[key]) or fields[key].startswith("."):
+			raise ConfigError(f"input {name!r} locks {key} {fields[key]!r}, which is not a GitHub name")
+	if not _REV.fullmatch(fields["rev"]):
+		raise ConfigError(f"input {name!r} locks rev {fields['rev']!r}, which is not a commit SHA")
+	return Pin(name, fields["owner"], fields["repo"], fields["rev"], fields["narHash"])

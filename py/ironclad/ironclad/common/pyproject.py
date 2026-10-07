@@ -25,6 +25,8 @@ def load(path: Path) -> dict:
 		return tomllib.loads(path.read_text())
 	except FileNotFoundError as e:
 		raise EnvError(f"{path} does not exist") from e
+	except (OSError, UnicodeDecodeError) as e:
+		raise EnvError(f"{path} is unreadable: {e}") from e
 	except tomllib.TOMLDecodeError as e:
 		raise ConfigError(f"{path}: {e}") from e
 

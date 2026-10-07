@@ -14,6 +14,7 @@ locked tree:
 filled in), for mirrors and for the tests, which serve a tarball from ``file://``.
 """
 
+import http.client
 import os
 import shutil
 import tarfile
@@ -22,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from ironclad.common import flakelock, nar
-from ironclad.common.report import EnvError
+from ironclad.common.report import ConfigError, EnvError
 
 PINS_DIR = ".dev-dist/pins"
 
@@ -31,14 +32,19 @@ def _url(pin: flakelock.Pin) -> str:
 	template = os.environ.get("IRONCLAD_PIN_URL")
 	if not template:
 		return pin.tarball_url
-	return template.format(owner=pin.owner, repo=pin.repo, rev=pin.rev)
+	try:
+		return template.format(owner=pin.owner, repo=pin.repo, rev=pin.rev)
+	except (KeyError, IndexError, ValueError) as e:
+		raise ConfigError(
+			f"IRONCLAD_PIN_URL={template!r} is not a URL template with {{owner}}, {{repo}} and {{rev}}: {e!r}"
+		) from e
 
 
 def _fetch(url: str, dest: Path) -> None:
 	try:
 		with urllib.request.urlopen(url, timeout=120) as response, dest.open("wb") as out:
 			shutil.copyfileobj(response, out)
-	except OSError as e:
+	except (OSError, ValueError, http.client.HTTPException) as e:
 		raise EnvError(f"cannot fetch {url}: {e}") from e
 
 
@@ -66,6 +72,10 @@ def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
 	pins = lock_path.parent / PINS_DIR
 	dest = pins / f"{pin.repo}-{pin.rev}"
 	stamp = pins / f"{pin.repo}-{pin.rev}.narHash"
+	# flakelock.github_pin already refuses names that leave the pins directory; this
+	# keeps it true whatever a future Pin is built from.
+	if dest.parent != pins or stamp.parent != pins or pin.repo.startswith("."):
+		raise ConfigError(f"{pin.repo}-{pin.rev} is not a directory name under {PINS_DIR}")
 	if dest.is_dir() and stamp.is_file() and stamp.read_text().strip() == pin.nar_hash:
 		return dest
 
@@ -80,7 +90,9 @@ def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store") -> Path:
 			raise EnvError(
 				f"{pin.owner}/{pin.repo}@{pin.rev} does not match flake.lock: narHash {got}, locked {pin.nar_hash}"
 			)
-		if dest.exists():
+		if dest.is_symlink() or dest.is_file():
+			dest.unlink()
+		elif dest.exists():
 			shutil.rmtree(dest)
 		tree.rename(dest)
 	stamp.write_text(pin.nar_hash + "\n")

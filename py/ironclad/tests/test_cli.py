@@ -1,7 +1,10 @@
+import os
 import unittest
+from unittest import mock
 
 import ironclad
 from helpers import run_cli
+from ironclad.commands import paths
 from ironclad.common.report import ConfigError
 
 
@@ -26,6 +29,21 @@ class TestCli(unittest.TestCase):
 		code, _, err = run_cli("data-path", "does/not/exist.json")
 		self.assertEqual(code, ConfigError.code)
 		self.assertIn("ironclad data-path: no such data file", err)
+
+	def test_unexpected_exception_exits_3_not_1(self):
+		with mock.patch.object(paths, "data_path", side_effect=RuntimeError("boom")):
+			code, _, err = run_cli("data-path", "known-apps.json")
+		self.assertEqual(code, 3)
+		self.assertEqual(err, "ironclad data-path: internal error: RuntimeError: boom\n")
+
+	def test_unexpected_exception_traceback_on_request(self):
+		with (
+			mock.patch.object(paths, "data_path", side_effect=RuntimeError("boom")),
+			mock.patch.dict(os.environ, {"IRONCLAD_DEBUG": "1"}),
+		):
+			code, _, err = run_cli("data-path", "known-apps.json")
+		self.assertEqual(code, 3)
+		self.assertIn("Traceback", err)
 
 
 if __name__ == "__main__":

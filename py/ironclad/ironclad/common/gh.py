@@ -37,7 +37,10 @@ def api(
 		raise EnvError(f"gh api {method} {endpoint}: {proc.stderr.strip() or proc.returncode}")
 	if not proc.stdout.strip():
 		return None
-	data = json.loads(proc.stdout)
+	try:
+		data = json.loads(proc.stdout)
+	except json.JSONDecodeError as e:
+		raise EnvError(f"gh api {method} {endpoint}: the response is not JSON: {e}") from e
 	if paginate and isinstance(data, list) and all(isinstance(page, list) for page in data):
 		return [item for page in data for item in page]
 	return data

@@ -9,7 +9,7 @@ from unittest import mock
 from helpers import TREE_NAR_HASH, make_tree
 from ironclad.common import nar
 from ironclad.common.pins import pin_path
-from ironclad.common.report import EnvError
+from ironclad.common.report import ConfigError, EnvError
 
 REV = "e" * 40
 
@@ -83,6 +83,31 @@ class TestPins(unittest.TestCase):
 		self.tarball.unlink()
 		with self.assertRaisesRegex(EnvError, "cannot fetch"):
 			pin_path("pilot", self.lock, store_dir=self.store)
+
+	def test_lock_names_cannot_leave_the_pins_directory(self):
+		victim = self.root / "victim-r"
+		victim.mkdir()
+		(victim / "precious").write_text("keep\n")
+		for key, value in (("repo", "../../victim"), ("repo", ".."), ("owner", "a/b"), ("rev", "r")):
+			lock = lock_for(TREE_NAR_HASH)
+			lock["nodes"]["pilot"]["locked"][key] = value
+			self.lock.write_text(json.dumps(lock))
+			with self.assertRaises(ConfigError, msg=f"{key}={value!r}"):
+				pin_path("pilot", self.lock, store_dir=self.store)
+		self.assertEqual((victim / "precious").read_text(), "keep\n")
+		self.assertFalse((self.app / ".dev-dist").exists())
+
+	def test_bad_url_template_is_exit_2(self):
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		with mock.patch.dict(os.environ, {"IRONCLAD_PIN_URL": "{bogus}"}):
+			with self.assertRaises(ConfigError):
+				pin_path("pilot", self.lock, store_dir=self.store)
+
+	def test_not_a_url_is_exit_3(self):
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		with mock.patch.dict(os.environ, {"IRONCLAD_PIN_URL": "notaurl"}):
+			with self.assertRaisesRegex(EnvError, "cannot fetch"):
+				pin_path("pilot", self.lock, store_dir=self.store)
 
 
 if __name__ == "__main__":

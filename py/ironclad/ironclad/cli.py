@@ -2,12 +2,14 @@
 
 import argparse
 import importlib
+import os
 import pkgutil
 import sys
+import traceback
 
 import ironclad.commands
 from ironclad import __version__
-from ironclad.common.report import INVALID, IroncladError
+from ironclad.common.report import ENVIRONMENT, INVALID, IroncladError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,6 +35,13 @@ def main(argv: list[str] | None = None) -> int:
 	except IroncladError as e:
 		print(f"ironclad {args.command}: {e}", file=sys.stderr)
 		return e.code
+	except Exception as e:
+		# A bug, or a failure no command anticipated: never exit 1, which means drift
+		# (spec §3.3). IRONCLAD_DEBUG=1 prints the traceback.
+		if os.environ.get("IRONCLAD_DEBUG"):
+			traceback.print_exc()
+		print(f"ironclad {args.command}: internal error: {type(e).__name__}: {e}", file=sys.stderr)
+		return ENVIRONMENT
 
 
 if __name__ == "__main__":
