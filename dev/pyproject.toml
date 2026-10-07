@@ -33,8 +33,17 @@ dev = [
 
 [tool.uv]
 package = false
-# The version-16 row of lib/frappe-presets.json.
-override-dependencies = ["click~=8.3.1", "requests>=2.34.2", "google-api-python-client~=2.188.0"]
+# The version-16 row of lib/frappe-presets.json. The last entry drops
+# pypika-stubs: from 16.51 frappe pins its PyPika fork at 0.51.1 (which ships
+# py.typed) while its `dev` extra still lists the stubs, and every stubs release
+# pins pypika<0.49. A marker that never holds under requires-python >=3.14
+# removes the requirement; develop already dropped the stubs (frappe#42788).
+override-dependencies = [
+	"click~=8.3.1",
+	"requests>=2.34.2",
+	"google-api-python-client~=2.188.0",
+	"pypika-stubs; python_full_version < '3.14'",
+]
 
 [tool.uv.sources]
 # An archive of one commit, not a git source: uv2nix fetches git sources with a
