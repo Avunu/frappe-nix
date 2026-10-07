@@ -341,6 +341,14 @@ let
       atBench
       atRepo
       siteFlag
+      offlineMigrateEnv
+      workspaceBin
+      registerWorkspaceMember
+      refreshNodeModules
+      refreshNodeModulesSoft
+      regenNodeLocks
+      regenNodeLocksSoft
+      syncRegistry
       ;
   };
   dropInFiles = lib.optionals (scriptsDir != null) (

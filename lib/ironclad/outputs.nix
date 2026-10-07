@@ -21,12 +21,29 @@ let
     builtins.readDir toolsDir
   );
 
-  packages = lib.mapAttrs' (
-    file: _:
-    lib.nameValuePair (lib.removeSuffix ".nix" file) (
-      import (toolsDir + "/${file}") { inherit pkgs lib ironclad; }
-    )
-  ) toolFiles;
+  # Names the flakes already define next to the tools: frappe-nix's packages and
+  # apps, the app-mode `frappe-init` app (lib/ironclad/shell.nix) and the
+  # app-mode `relock` app (modules/devenv.nix). A tool by one of these names
+  # would be shadowed in one flake and clash in the other, so it is refused.
+  reserved = [
+    "default"
+    "frappe-init"
+    "backup-fetch"
+    "relock"
+  ];
+  taken = lib.intersectLists reserved (map (lib.removeSuffix ".nix") (builtins.attrNames toolFiles));
+
+  packages =
+    lib.throwIf (taken != [ ])
+      "lib/ironclad/tools: ${lib.concatStringsSep ", " taken} is a name frappe-nix already uses"
+      (
+        lib.mapAttrs' (
+          file: _:
+          lib.nameValuePair (lib.removeSuffix ".nix" file) (
+            import (toolsDir + "/${file}") { inherit pkgs lib ironclad; }
+          )
+        ) toolFiles
+      );
 in
 {
   inherit ironclad packages;

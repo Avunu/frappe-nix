@@ -25,8 +25,12 @@ The arguments: `lib`, `pkgs`, `appsWithNode`, `benchBin`, `secrets`,
 `nodeModulesBin`, `nodeVerifyBin`, `pythonBin`, `nodeLocksBin`,
 `nodeNestedFrontendExcludes`, `restore`, `offlineMigrate`, `appMode`, `lockDir`,
 and the snippets `atBench` (cd to the bench root), `atRepo` (cd to the
-repository) and `siteFlag` (sets `$SITE_FLAG`). Take `...`, so a new argument
-never breaks an existing file.
+repository), `siteFlag` (sets `$SITE_FLAG`), `offlineMigrateEnv`,
+`workspaceBin`, `registerWorkspaceMember`, `refreshNodeModules`,
+`refreshNodeModulesSoft`, `regenNodeLocks`, `regenNodeLocksSoft` and
+`syncRegistry` (each documented where `lib/scripts.nix` defines it). Take
+`...`, so a new argument never breaks an existing file. A snippet added to
+`lib/scripts.nix` for drop-ins joins `dropInArgs` there.
 
 | File | Owner |
 | --- | --- |

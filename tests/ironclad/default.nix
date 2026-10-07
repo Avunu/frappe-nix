@@ -5,10 +5,17 @@
 # checks, and its owner adds it without editing this file or flake.nix. They are
 # merged into the flake's `checks`, plus `ironclad-all`, a linkFarm of all of
 # them, which is the one name check.yml builds.
+#
+# Every check is named `ironclad-<something>` (and none `ironclad-all`), and no
+# check of frappe-nix's own is, so flake.nix's `// import ./tests/ironclad`
+# can never replace one of them silently. Two areas defining the same check, or
+# a name outside that prefix, fail evaluation. `areasDir` is a parameter only
+# so that hookpoints.nix can point it at a fixture directory.
 {
   pkgs,
   self,
   inputs,
+  areasDir ? ./.,
 }:
 
 let
@@ -27,17 +34,20 @@ let
   areas = builtins.attrNames (
     lib.filterAttrs (
       name: type: type == "regular" && lib.hasSuffix ".nix" name && name != "default.nix"
-    ) (builtins.readDir ./.)
+    ) (builtins.readDir areasDir)
   );
 
   checks = lib.foldl' (
     acc: file:
     let
-      added = import (./. + "/${file}") args;
-      clash = builtins.attrNames (builtins.intersectAttrs added acc);
+      added = import (areasDir + "/${file}") args;
+      clash = builtins.attrNames (builtins.intersectAttrs added (acc // { ironclad-all = null; }));
+      unprefixed = builtins.filter (name: !lib.hasPrefix "ironclad-" name) (builtins.attrNames added);
     in
     lib.throwIf (clash != [ ]) "tests/ironclad/${file} redefines ${lib.concatStringsSep ", " clash}" (
-      acc // added
+      lib.throwIf (unprefixed != [ ])
+        "tests/ironclad/${file}: ${lib.concatStringsSep ", " unprefixed} must be named ironclad-<name>"
+        (acc // added)
     )
   ) { } areas;
 in

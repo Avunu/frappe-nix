@@ -5,8 +5,11 @@
 #                      unittest suites and pythonRuntimeDepsCheck; `--version`,
 #                      the unknown-command exit and `data-path` behave.
 #   ironclad-loaders   a lib/scripts.d file and a lib/ironclad/tools file are
-#                      picked up (fixtures under ./fixtures), and a drop-in that
-#                      redefines a script fails evaluation.
+#                      picked up (fixtures under ./fixtures) and a drop-in gets
+#                      every argument and snippet; a drop-in that redefines a
+#                      script, a tool named like an existing output and a
+#                      check area that could shadow another check all fail
+#                      evaluation.
 #   ironclad-app-flake the fixture app's flake, evaluated against this checkout
 #                      (what `--override-input frappe-nix path:.` does), exposes
 #                      apps.frappe-init and the tools; the app-mode shell
@@ -44,6 +47,34 @@ let
   appScripts = scriptsWith true ./fixtures/scripts.d;
   benchScripts = scriptsWith false ./fixtures/scripts.d;
   clash = builtins.tryEval (builtins.attrNames (scriptsWith true ./fixtures/scripts.d-clash));
+  # Every lib/scripts.nix argument and snippet (spec §1.4).
+  missingDropInArgs = lib.subtractLists (lib.splitString " " appScripts.ironclad-fixture-args.exec) [
+    "lib"
+    "pkgs"
+    "appsWithNode"
+    "benchBin"
+    "secrets"
+    "nodeModulesBin"
+    "nodeVerifyBin"
+    "pythonBin"
+    "nodeLocksBin"
+    "nodeNestedFrontendExcludes"
+    "restore"
+    "offlineMigrate"
+    "appMode"
+    "lockDir"
+    "atBench"
+    "atRepo"
+    "siteFlag"
+    "offlineMigrateEnv"
+    "workspaceBin"
+    "registerWorkspaceMember"
+    "refreshNodeModules"
+    "refreshNodeModulesSoft"
+    "regenNodeLocks"
+    "regenNodeLocksSoft"
+    "syncRegistry"
+  ];
   # The real lib/scripts.d, in both modes: evaluating it is the clash check.
   realScripts = map (appMode: builtins.attrNames (scriptsWith appMode ../../lib/scripts.d)) [
     true
@@ -55,6 +86,25 @@ let
     toolsDir = ./fixtures/tools;
   };
   realTools = import ../../lib/ironclad/outputs.nix { inherit pkgs; };
+  # A tool named like an output frappe-nix already has (frappe-init) is refused.
+  toolClash = builtins.tryEval (
+    builtins.attrNames
+      (import ../../lib/ironclad/outputs.nix {
+        inherit pkgs;
+        toolsDir = ./fixtures/tools-clash;
+      }).packages
+  );
+  # An area defining a check outside ironclad-<name>, or ironclad-all, is refused.
+  areaRefused =
+    areasDir:
+    !(builtins.tryEval (
+      builtins.attrNames (
+        import ./default.nix {
+          inherit pkgs self inputs;
+          inherit areasDir;
+        }
+      )
+    )).success;
 
   loaderFacts =
     assert lib.assertMsg (
@@ -69,6 +119,9 @@ let
     assert lib.assertMsg (
       !(benchScripts ? ironclad-fixture-script)
     ) "scripts.d: an app-mode-only drop-in leaked into bench mode";
+    assert lib.assertMsg (
+      missingDropInArgs == [ ]
+    ) "scripts.d: a drop-in is not given ${lib.concatStringsSep ", " missingDropInArgs}";
     assert lib.assertMsg (
       !clash.success
     ) "scripts.d: a drop-in redefining bench-update did not fail evaluation";
@@ -87,6 +140,11 @@ let
     assert lib.assertMsg (
       realTools.packages ? ironclad && self.packages.${system} ? ironclad
     ) "tools: packages.ironclad is missing";
+    assert lib.assertMsg (!toolClash.success) "tools: a tool named frappe-init did not fail evaluation";
+    assert lib.assertMsg (areaRefused ./fixtures/areas-unprefixed)
+      "checks: an area defining `ty` did not fail evaluation";
+    assert lib.assertMsg (areaRefused ./fixtures/areas-all)
+      "checks: an area defining ironclad-all did not fail evaluation";
     assert lib.assertMsg (self.apps.${system}.ironclad.type == "app") "tools: apps.ironclad is missing";
     {
       scriptsD = builtins.attrNames (removeAttrs appScripts (builtins.attrNames (scriptsWith true null)));

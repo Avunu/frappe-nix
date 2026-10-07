@@ -281,12 +281,12 @@ What N3a's seams accept, so each later PR adds files without editing the seam.
 |---|---|---|
 | `py/ironclad/ironclad/commands/<name>.py` | a module; `cli.py` imports every module there, in name order | `register(subparsers)`, adding one or more subcommands with `set_defaults(func=run)`, where `run(args) -> int` is the exit code. Raise `ironclad.common.report.IroncladError` (`ConfigError` → 2, `EnvError` → 3) for a one-line failure. |
 | `py/ironclad/ironclad/data/**` | a file | Read with `ironclad.common.data_path(rel)` (a `Path`), or printed by `ironclad data-path <rel>`. |
-| `lib/ironclad/tools/<name>.nix` | a file; becomes `packages.<name>`, `apps.<name>`, a dev-shell package in app mode, and `.#<name>` in an app's flake | `{ pkgs, lib, ironclad, ... }: <derivation with meta.mainProgram>` |
-| `lib/scripts.d/<name>.nix` | a file; merged over `lib/scripts.nix`'s scripts in name order. Redefining any script fails evaluation. | `{ lib, pkgs, appMode, lockDir, pythonBin, benchBin, atBench, atRepo, siteFlag, … }: { <script> = { exec; description; }; }` (every `lib/scripts.nix` argument and snippet; take `...`; see `lib/scripts.d/README.md`) |
-| `tests/ironclad/<area>.nix` | a file; its checks join the flake's `checks` and `ironclad-all`. Two areas defining the same check fail evaluation. | `{ pkgs, lib, self, inputs, ironclad, ... }: { <check> = <derivation>; }` |
+| `lib/ironclad/tools/<name>.nix` | a file; becomes `packages.<name>`, `apps.<name>`, a dev-shell package in app mode, and `.#<name>` in an app's flake. A name the flakes already use (`default`, `frappe-init`, `backup-fetch`, `relock`) fails evaluation. | `{ pkgs, lib, ironclad, ... }: <derivation with meta.mainProgram>` |
+| `lib/scripts.d/<name>.nix` | a file; merged over `lib/scripts.nix`'s scripts in name order. Redefining any script fails evaluation. | `{ lib, pkgs, appMode, lockDir, pythonBin, benchBin, atBench, atRepo, siteFlag, … }: { <script> = { exec; description; }; }` (every `lib/scripts.nix` argument and snippet: also `offlineMigrateEnv`, `workspaceBin`, `registerWorkspaceMember`, `refreshNodeModules[Soft]`, `regenNodeLocks[Soft]`, `syncRegistry`; take `...`; see `lib/scripts.d/README.md`) |
+| `tests/ironclad/<area>.nix` | a file; its checks join the flake's `checks` and `ironclad-all`. Every check is named `ironclad-<name>` (no frappe-nix check is), so none can replace another. Two areas defining the same check, a name without the prefix, or `ironclad-all` fail evaluation. | `{ pkgs, lib, self, inputs, ironclad, ... }: { ironclad-<check> = <derivation>; }` |
 | `lib/ironclad/shell.nix` | (N3a only) | `{ pkgs }: { packages, apps, enterShell }`; `modules/devenv.nix` adds all three in app mode. |
 
-`ironclad pin-path <input>` prints the Nix store path when the tree the lock's `narHash` implies is already in the store, and otherwise fetches it into `.dev-dist/pins/<repo>-<rev>/` (with a `<repo>-<rev>.narHash` stamp beside it). `IRONCLAD_PIN_URL` (with `{owner}`, `{repo}`, `{rev}`) replaces the GitHub tarball URL, for mirrors and tests. `ironclad config <key>` takes dotted keys (`test.setup`), applies the schema's `default`s, prints a list one item per line, a boolean as `true`/`false`, and a table as one line of JSON.
+`ironclad pin-path <input>` reads `--lock`, by default the nearest `flake.lock` at or above the current directory without leaving the git work tree (so an app in a subdirectory, like frappe-nix's `tests/fixtures/ironclad-app`, reads its own), falling back to the work tree root's. It prints the Nix store path when the tree the lock's `narHash` implies is already in the store, and otherwise fetches it into `.dev-dist/pins/<repo>-<rev>/` beside that lock (with a `<repo>-<rev>.narHash` stamp beside it). A locked `owner` or `repo` that is not a GitHub name, or a `rev` that is not a 40-hex SHA, exits 2 before anything is fetched or written. `IRONCLAD_PIN_URL` (with `{owner}`, `{repo}`, `{rev}`) replaces the GitHub tarball URL, for mirrors and tests. `ironclad config <key>` reads `--pyproject`, by default the nearest `pyproject.toml` found the same way, takes dotted keys (`test.setup`), applies the schema's `default`s, prints a list one item per line, a boolean as `true`/`false`, and a table as one line of JSON.
 
 ---
 
@@ -1507,7 +1507,7 @@ It never runs `nix`, `uv` or `yarn`, so it works in no-Nix CI.
 | 0 | Clean: nothing to write, or everything written. |
 | 1 | Drift: a managed file is missing, differs, or should not exist; a retired file is tracked; or a lock floor isn't met. `--check` only. |
 | 2 | Invalid configuration that sync can't fix: a `[tool.ironclad]` schema error, an unknown sibling, a forbidden key, a malformed local region, or a missing README marker. |
-| 3 | Environment error: not an app, not a git repo, `flake.lock` unreadable, version skew. |
+| 3 | Environment error: not an app, not a git repo, `flake.lock` unreadable, version skew. Also any failure no command anticipated (`ironclad <cmd>: internal error: …`; `IRONCLAD_DEBUG=1` adds the traceback), so a crash never reads as drift. |
 
 When several apply, the highest code wins.
 
@@ -1515,7 +1515,7 @@ When several apply, the highest code wins.
 
 - `text`: one block per file with `path`, `strategy`, the problem, and a unified diff (`--- current` / `+++ rendered`). The last line is `ironclad: N file(s) drifted — run \`frappe-init --sync\`` or `ironclad: clean`.
 - `json`: `{"status":"clean|drift|invalid|error","frappe_nix":{"rev","version"},"files":[{"path","strategy","problem","diff"}]}`. `ironclad-audit` consumes it.
-- `github`: the text form plus `::error file=<path>::<problem>` annotations.
+- `github`: the text form plus `::error file=<path>::<problem>` annotations. The text form is wrapped in `::stop-commands::<random token>` … `::<token>::`, so no path, problem or diff line runs as a workflow command, and the annotations follow it with the message escaped (`%`, CR, LF) and the path escaped as a property (also `:` and `,`).
 
 ### 3.4 Idempotency
 
@@ -2953,3 +2953,6 @@ Changes an implementing PR made to this spec, with the reason. Each PR adds its 
 | N3a | §1.2 | `ty.toml` and `dev/env.nix` gain `py/ironclad` (owner N3a). | `ty` checks the whole tree and must resolve `ironclad` imports. `tomlkit` is not in `dev/uv.lock`, so N3 adds it to `dev/pyproject.toml`'s dev group when its code first imports it. |
 | N3a | §1.2 | `modules/devenv.nix` keeps `apps.relock` inside an `lib.mkMerge` with the app-mode `apps`. | Nix can't define `apps.relock` and `apps = mkIf …` side by side. The app-mode flake gets every `lib/ironclad/tools` app (`.#<tool>`, as §5 requires) as well as `.#frappe-init`. |
 | N3a | §1.4 | New: the seam interfaces. | §1.2 names the seams but not what a contribution looks like. |
+| N3a | §1.4 | `pin-path` and `config` default to the nearest `flake.lock`/`pyproject.toml` within the git work tree, not the work tree root's. | §4.1 runs every step in `inputs.app-root`, and §7 N4's `selftest-ci` passes `app-root: tests/fixtures/ironclad-app`: the root's lock is frappe-nix's own, which has no `frappe` input. |
+| N3a | §1.4 | `tests/ironclad` checks must be named `ironclad-<name>`; tool names `default`, `frappe-init`, `backup-fetch` and `relock` are refused. | flake.nix merges both seams with `//`, so a clash would otherwise replace frappe-nix's own output silently in one flake and fail with an option conflict in the other. A prefix keeps the guard in the seam instead of reindenting flake.nix's `checks`. Every check §7 names already has it. |
+| N3a | §3.3 | Unexpected failures exit 3; `github` output fences the text in `::stop-commands::` and escapes the annotations. | Exit 1 is drift, so an uncaught exception in `--check` read as drift in CI. Paths come from `git ls-files` and diffs hold file contents, so unescaped they could break annotations or run workflow commands. |
