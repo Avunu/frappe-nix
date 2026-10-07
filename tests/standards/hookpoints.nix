@@ -344,26 +344,26 @@ let
 
   # --- opt-in ----------------------------------------------------------------
 
-  # Each opt-in fixture's pyproject.toml by name: the directories under
-  # ./fixtures/optin, and with-table's text with CRLF and with lone-CR line
-  # endings, written here since a lone CR is not TOML and check-toml would
-  # refuse it as a tracked file. Nix splits the raw text on \n, so CRLF lines
-  # still match the header while a lone-CR file is a single line that doesn't.
+  # The opt-in fixtures' texts by name: each directory under ./fixtures/optin,
+  # and with-table's text with CRLF and with lone-CR line endings. Those two
+  # are made here (as strings, and as files in standards-cli) rather than
+  # tracked: a lone CR is not TOML, so check-toml would refuse it. Nix splits
+  # the raw text on \n, so CRLF lines still match the header while a lone-CR
+  # file is a single line that doesn't.
   optinWithTable = builtins.readFile ./fixtures/optin/with-table/pyproject.toml;
-  optinFiles =
-    lib.mapAttrs (name: _: ./fixtures/optin + "/${name}/pyproject.toml") (
-      builtins.readDir ./fixtures/optin
-    )
-    // {
-      crlf = builtins.toFile "pyproject.toml" (
-        builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable
-      );
-      lone-cr = builtins.toFile "pyproject.toml" (
-        builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable
-      );
-    };
-  # `<name>=<file>` words for the standards-cli loops.
-  optinCases = lib.concatMapStringsSep " " (name: "${name}=${optinFiles.${name}}");
+  optinEndings = {
+    crlf = builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable;
+    lone-cr = builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable;
+  };
+  # `<name>=<file>` words for the standards-cli loops, which first write the
+  # line-ending cases to ./endings.
+  optinCases = lib.concatMapStringsSep " " (
+    name:
+    if optinEndings ? ${name} then
+      "${name}=$PWD/endings/${name}.toml"
+    else
+      "${name}=${./fixtures/optin + "/${name}/pyproject.toml"}"
+  );
 in
 {
   standards-cli =
@@ -402,6 +402,12 @@ in
 
         # The opt-in fixtures, read by the tools: they agree with the line match
         # (standards-optin), or refuse a spelling the two would disagree on.
+        mkdir endings
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: text: ''
+            printf '%s' ${lib.escapeShellArg text} > endings/${name}.toml
+          '') optinEndings
+        )}
         for pair in ${
           optinCases [
             "with-table"
@@ -489,7 +495,7 @@ in
         name:
         import ../../lib/standards/shell.nix {
           inherit pkgs;
-          pyproject = optinFiles.${name};
+          pyproject = ./fixtures/optin + "/${name}/pyproject.toml";
         };
       expected = {
         without-table = false;
@@ -509,7 +515,15 @@ in
         crlf = true;
         lone-cr = false;
       };
-      seen = lib.mapAttrs (name: _: (shellFor name).optedIn) expected;
+      # The line-ending cases are strings, which the fragment's own optedInText
+      # tests as it tests the file builtins.readFile returns.
+      seen = lib.mapAttrs (
+        name: _:
+        if optinEndings ? ${name} then
+          (shellFor "with-table").optedInText optinEndings.${name}
+        else
+          (shellFor name).optedIn
+      ) expected;
       wrong = lib.filterAttrs (name: want: seen.${name} != want) expected;
       off = shellFor "without-table";
       on = shellFor "with-table";
