@@ -79,9 +79,13 @@ def ratchet_message(
 
 	While ``floor`` is below ``target``, a total ``margin`` points or more above it asks
 	for ``min(target, floor(total) - 1)``; after that raise the total is within the margin,
-	so the rule settles. A ``margin`` of 0 turns the ratchet off.
+	so the rule settles. A ``margin`` of 0 turns the ratchet off, and so does an unset
+	``floor``: an app without ``[tool.coverage.report] fail_under`` (one that has not
+	opted in; sync seeds it for one that has) has nothing to raise, and asking it to
+	add one on every run would fail every run of its tests.
 	"""
-	floor = floor or 0.0
+	if floor is None:
+		return None
 	if margin <= 0 or floor >= target or total < floor + margin:
 		return None
 	raise_to = min(target, math.floor(total) - 1)
@@ -106,7 +110,10 @@ def run_ratchet(args: argparse.Namespace) -> int:
 	if message:
 		print(message)
 		return DRIFT
-	print(f"coverage is {total:.1f}; fail_under is {floor if floor is not None else 'unset'}")
+	if floor is None:
+		print(f"coverage is {total:.1f}; no [tool.coverage.report] fail_under, so nothing to ratchet")
+	else:
+		print(f"coverage is {total:.1f}; fail_under is {floor}")
 	return CLEAN
 
 

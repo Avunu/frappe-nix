@@ -51,8 +51,15 @@ let
   # one by hand; see the `ports.offset` option.
   ports = import ../lib/ports.nix { inherit lib; };
   envPortOffset = ports.parseEnvOffset (builtins.getEnv "FRAPPE_NIX_PORT_OFFSET");
-  # The offset a perSystem frappe-nix config resolves to.
-  portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;
+  # The offset a perSystem frappe-nix config resolves to. FRAPPE_NIX_PORT_OFFSET
+  # is app mode's only (spec §5.12): bench mode writes the web port into its
+  # committed sites/common_site_config.json, so it keeps `ports.offset`.
+  portOffsetOf =
+    fcfg:
+    if fcfg.app.enable then
+      ports.effectiveOffset envPortOffset fcfg.ports.offset
+    else
+      fcfg.ports.offset;
 
   # The same python/nodejs/requires-python/override-dependencies matrix
   # `frappe-init` scaffolds a bench from. App mode picks a row by name rather
@@ -734,7 +741,8 @@ in
               App mode: salt `ports.offset` with the checkout's path in a linked
               worktree (`git worktree add`, whose `.git` is a file), so a second
               worktree of the same app gets its own ports. The primary checkout
-              keeps the bench-name hash either way.
+              keeps the bench-name hash either way. It also has `devenv up` stop
+              and name a TCP port that is already taken.
 
               On by default only for an app that opted in to the app standards
               (docs/app-standards/spec.md §5.12, S35), so the linked worktrees of
@@ -770,10 +778,11 @@ in
               checkout keeps the bench-name hash.
 
               The ports are fixed when the shell is evaluated: devenv's port
-              allocator does not move them under flake integration. When one is
-              already taken, `devenv up` stops and names it; set
-              `FRAPPE_NIX_PORT_OFFSET` (0 to 899) to pick another offset for that
-              shell. It wins over this option.
+              allocator does not move them under flake integration. In app mode
+              with `ports.worktreeSalt` on, `devenv up` stops and names one that
+              is already taken. In app mode, `FRAPPE_NIX_PORT_OFFSET` (0 to 899)
+              picks another offset for the shell and wins over this option; bench
+              mode ignores it, because its web port is committed.
             '';
             example = 123;
           };
@@ -856,8 +865,9 @@ in
                 11311, Frappe's own default redis_queue port.
 
                 This is the port Mailpit binds: nothing moves it at run time
-                (devenv's allocator is the identity under flake integration),
-                and `devenv up` stops before starting anything if it is taken.
+                (devenv's allocator is the identity under flake integration).
+                In app mode with `ports.worktreeSalt` on, `devenv up` stops
+                before starting anything if it is taken.
                 $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
                 prefers over this baked-in value, records the same port.
               '';
@@ -1502,6 +1512,11 @@ in
             # Opted-in apps only: ruff, pre-commit and semgrep leave the root's
             # dev group where the app pins its own (S1, lib/app-workspace.nix).
             appTools = if standardsShell.optedIn then cfg.app.src + "/tools/pyproject.toml" else null;
+            # Apps that have not opted in: coverage and unittest-xml-reporting
+            # stay in the root's dev group only where the committed lock has
+            # them, so no such app has to relock (S35, lib/app-workspace.nix).
+            # The same lock for both workspaces: relock's must agree.
+            testToolsLock = if standardsShell.optedIn then null else lockPath;
           };
 
         # Two of them, and the difference matters: `relock` exists precisely for
@@ -2373,10 +2388,18 @@ in
             # identity under flake integration), so without this nginx or
             # Mailpit dies on bind and the processes that wait on it hang.
             # A connect, not a bind: it needs no privileges and no extra tool.
+            #
+            # App mode only, and there only where the worktree salt is in play
+            # (an app that opted in, or one that set ports.worktreeSalt): that
+            # is what makes two checkouts of one app run at once, and every
+            # other bench starts exactly as it did before (S35; §5.12 leaves
+            # bench mode unchanged).
+            portsFreeCheckActive = appMode && (standardsShell.optedIn || cfg.ports.worktreeSalt);
             portsFreeCheck =
               let
+                webName = if sockets then "nginx" else "web";
                 wanted = [
-                  "${if sockets then "nginx" else "web"} 127.0.0.1 ${toString webPort}"
+                  "${webName} 127.0.0.1 ${toString webPort}"
                 ]
                 ++ lib.optionals mailEnabled (
                   [
@@ -2397,6 +2420,14 @@ in
                 if [ -n "$_frappe_nix_taken" ]; then
                   echo "frappe-nix: cannot start ${cfg.benchName}: already in use:$_frappe_nix_taken" >&2
                   echo "  Another bench on the same ports, or this bench already up in another shell." >&2
+                  ${lib.optionalString (cfg.ports.base != null) ''
+                    # ports.base pins the web port: the offset does not move it.
+                    case "$_frappe_nix_taken" in
+                      *" ${webName}="*)
+                        echo "  The web port is frappe-nix.ports.base (${toString cfg.ports.base}), which FRAPPE_NIX_PORT_OFFSET" >&2
+                        echo "  does not move: change ports.base in flake.nix for that one." >&2 ;;
+                    esac
+                  ''}
                   echo "  Pick other ports for this shell (offset now ${toString portOffset}, 0 to 899):" >&2
                   echo "    FRAPPE_NIX_PORT_OFFSET=<n> nix develop --no-pure-eval   (or direnv reload)" >&2
                   exit 1
@@ -3001,7 +3032,7 @@ in
             # show-environment probe makes a machine with no user manager (a bare
             # SSH login, a container) run unscoped instead of failing to start.
             process.manager.before = lib.mkMerge [
-              portsFreeCheck
+              (lib.mkIf portsFreeCheckActive portsFreeCheck)
               (
                 let
                   ps = cfg.processScope;

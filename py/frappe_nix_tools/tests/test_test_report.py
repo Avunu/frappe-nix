@@ -42,8 +42,9 @@ class TestRatchet(unittest.TestCase):
 		self.assertIsNone(test_report.ratchet_message(71.9, 70.0))
 		self.assertIsNone(test_report.ratchet_message(99.0, 80.0))
 		self.assertIsNone(test_report.ratchet_message(99.0, 90.0))
-		# Unset counts as 0.
-		self.assertIn("fail_under to 40", test_report.ratchet_message(41.0, None))
+		# Unset: nothing to raise (an app that has not opted in has no fail_under).
+		self.assertIsNone(test_report.ratchet_message(41.0, None))
+		self.assertIsNone(test_report.ratchet_message(99.0, None, 80.0, 2.0))
 
 	def test_after_the_raise_it_settles(self):
 		for total in (12.0, 50.5, 63.2, 78.9, 81.0, 99.9):
@@ -90,6 +91,12 @@ class TestRatchet(unittest.TestCase):
 			py.write_text("[tool.coverage.report]\nfail_under = 90\n")
 			code, out, _ = run_cli("coverage-ratchet", "--coverage-json", str(cov), "--pyproject", str(py))
 			self.assertEqual(code, 0)
+			py.write_text('[project]\nname = "app"\n')
+			code, out, _ = run_cli("coverage-ratchet", "--coverage-json", str(cov), "--pyproject", str(py))
+			self.assertEqual(
+				(code, out),
+				(0, "coverage is 91.2; no [tool.coverage.report] fail_under, so nothing to ratchet\n"),
+			)
 			py.write_text("[tool.coverage.report]\nfail_under = 60\n")
 			code, out, _ = run_cli(
 				"coverage-ratchet",

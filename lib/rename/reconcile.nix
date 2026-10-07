@@ -50,6 +50,12 @@ else
       cd "$FRAPPE_BENCH_ROOT/sites"
       ${pythonBin} ${./frappe_rename_app.py} --site "$SITE" --yes ${lib.escapeShellArgs (pairs renamedApps)}
     '')}
+    ${lib.optionalString (replacedApps != { }) ''
+      # Each OLD is still in sites/apps.txt (it leaves the bench only after
+      # every site has run this), so reconcile-apps would install it again on
+      # every start, for the step below to uninstall it again.
+      export FRAPPE_NIX_RECONCILE_SKIP=${lib.escapeShellArg (lib.concatStringsSep " " (lib.attrNames replacedApps))}
+    ''}
     ${base} "$@"
     ${lib.optionalString (replacedApps != { }) (onSite ''
       cd "$FRAPPE_BENCH_ROOT"

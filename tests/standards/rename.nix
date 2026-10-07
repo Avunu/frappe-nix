@@ -4,7 +4,9 @@
 #
 #   standards-rename-code    `code` on tests/fixtures/rename-esign: --dry-run
 #                           prints the diff and changes nothing; the real run
-#                           renames the OLD.* bundles, leaves every hooks.py
+#                           renames the OLD.* bundles (not a DocType named like
+#                           the app, whose doctype/OLD/OLD.* files keep their
+#                           names), leaves every hooks.py
 #                           asset naming an existing file, leaves a bare name
 #                           with no file alone and reports it, rewrites the
 #                           names, bumps `modified`, adds the shim; a dirty tree
@@ -148,8 +150,17 @@ let
   # --- devenv -----------------------------------------------------------------
 
   # The wrapper modules/devenv.nix builds, over a stub reconcile-apps body.
+  # The stub logs what lib/scripts.nix's body would install: every app in
+  # sites/apps.txt the site lacks, but for FRAPPE_NIX_RECONCILE_SKIP.
   reconcile = import ../../lib/rename/reconcile.nix { inherit pkgs lib; } {
-    reconcileExec = ''echo "reconcile $*" >> "$STATE/log"'';
+    reconcileExec = ''
+      echo "reconcile $*" >> "$STATE/log"
+      [ -d "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE" ] || exit 0
+      while read -r app; do
+        case " ''${FRAPPE_NIX_RECONCILE_SKIP:-} " in *" $app "*) continue ;; esac
+        grep -qxF "$app" "$STATE/installed" || echo "reconcile would install $app" >> "$STATE/log"
+      done < "$FRAPPE_BENCH_ROOT/sites/apps.txt"
+    '';
     pythonBin = "${stubEnv}/bin/python";
     benchBin = "${stubEnv}/bin/bench";
     renamedApps.esign = "esign_webforms";
@@ -252,6 +263,14 @@ in
         done
         [ ! -e esign_webforms/public/js/esign.desk.bundle.js ] || fail "esign.desk.bundle.js is still there"
         echo "ok   the OLD.* bundles are NEW.*"
+        # The eSign DocType scrubs to the app's name: frappe loads it from
+        # doctype/esign/esign.{json,py,js}, so those keep their names.
+        for f in esign.json esign.py esign.js; do
+          [ -f "esign_webforms/esign/doctype/esign/$f" ] || fail "the eSign DocType's $f was renamed: $(ls esign_webforms/esign/doctype/esign)"
+        done
+        ! ls esign_webforms/esign/doctype/esign | grep -q esign_webforms || fail "a file of the eSign DocType took the new name"
+        grep -q '^from frappe.model.document import Document$' esign_webforms/esign/doctype/esign/esign.py || fail "the DocType's controller changed"
+        echo "ok   a DocType named like the app keeps its folder and files"
 
         # Every asset hooks.py names by file name exists, except the one that never did.
         python3 - <<'PY'
@@ -402,6 +421,11 @@ in
     assert lib.assertMsg (
       plain == "echo plain"
     ) "reconcile-apps changes with no renamed or replaced apps";
+    assert lib.assertMsg
+      (contains "case \" ''\${FRAPPE_NIX_RECONCILE_SKIP:-} \" in *\" $app \"*) continue ;; esac" (
+        builtins.readFile ../../lib/scripts.nix
+      ))
+      "lib/scripts.nix: reconcile-apps does not skip FRAPPE_NIX_RECONCILE_SKIP";
     assert lib.assertMsg (
       contains "reconcile-apps = scripts.reconcile-apps // {\n                  exec = reconcileAppsExec;" devenvSource
       && contains "\${reconcileAppsExec}" devenvSource
@@ -412,6 +436,8 @@ in
       export STATE="$PWD/state" FRAPPE_BENCH_ROOT="$PWD/bench" FRAPPE_SITE=dev.localhost
       mkdir -p "$STATE" bench/sites/dev.localhost
       printf '%s\n' frappe esign old_app > "$STATE/installed"
+      # Both are on the bench while the replacement runs.
+      printf '%s\n' frappe esign new_app old_app > bench/sites/apps.txt
       cp ${pkgs.writeText "reconcile-apps" reconcile} reconcile-apps
 
       ${lib.getExe pkgs.bash} reconcile-apps
@@ -427,7 +453,8 @@ in
       : > "$STATE/log"
       ${lib.getExe pkgs.bash} reconcile-apps
       ! grep -q 'install-app' "$STATE/log" || fail "a second run touched the apps: $(cat "$STATE/log")"
-      echo "ok   a second run installs and uninstalls nothing"
+      ! grep -q 'would install old_app' "$STATE/log" || fail "reconcile-apps would install the replaced old_app again: $(cat "$STATE/log")"
+      echo "ok   a second run installs and uninstalls nothing, and reconcile-apps leaves the replaced app alone"
 
       # Every process that waits on frappe:apps-reconcile runs it, at once: one
       # install and one uninstall between them.

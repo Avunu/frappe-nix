@@ -1,0 +1,42 @@
+# A version-15 app-mode app's committed nix/uv.lock, cut down to the bench
+# root's dev group as frappe-nix main shipped it: no coverage and no
+# unittest-xml-reporting (frappe 15 has no `test` extra). Read only for its
+# package names (standards-bench-dev-group).
+version = 1
+revision = 3
+requires-python = ">=3.10, <3.13"
+
+[[package]]
+name = "frappe"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "pre-commit"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "pydantic"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "pytest"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "responses"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "ruff"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "semgrep"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }

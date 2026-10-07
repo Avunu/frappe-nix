@@ -239,7 +239,9 @@ def body_span(file: Path, first_line: int) -> tuple[int, int, int] | None:
 
 	``first_line`` is a decorator's line or the ``def`` line, as ``co_firstlineno`` gives
 	it. The body starts after the signature and the docstring; a function that is only a
-	docstring has an empty span (first > last).
+	docstring has an empty span (first > last), and so does a one-line function
+	(``def ping(): return "pong"``): its body shares the ``def`` line, which runs when the
+	module is imported, so no line of it shows whether the function itself ever ran.
 	"""
 	for node in ast.walk(_tree(file)):
 		if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -256,7 +258,9 @@ def body_span(file: Path, first_line: int) -> tuple[int, int, int] | None:
 		):
 			body = body[1:]
 		end = node.end_lineno or node.lineno
-		return node.lineno, (body[0].lineno if body else end + 1), end
+		if not body or body[0].lineno <= node.lineno:
+			return node.lineno, end + 1, end
+		return node.lineno, body[0].lineno, end
 	return None
 
 
@@ -288,6 +292,15 @@ def judge(file: Path, first_line: int, index: dict[str, dict]) -> tuple[int, boo
 	if span is None:
 		return first_line, False, "its definition was not found in the source"
 	def_line, start, end = span
+	if start > end and end == def_line:
+		return (
+			def_line,
+			False,
+			(
+				"its body shares the def line, which runs on import, so coverage cannot show it ran; "
+				"give the body a line of its own, or exempt it"
+			),
+		)
 	entry = index.get(str(file))
 	if entry is None:
 		return def_line, False, None

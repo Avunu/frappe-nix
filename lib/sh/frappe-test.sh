@@ -35,7 +35,7 @@ set -uo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
+Usage: frappe-test [--app APP] [--site SITE] [--reuse-site | --recreate-site] [--keep-up | --down] [--ci]
                    [--module M] [--doctype DT] [--test T]
                    [--no-coverage] [--no-testmap] [--no-composition] [--ty] [--nix-lint] [--shell-checks]
                    [--junit PATH] [--out DIR]
@@ -48,6 +48,10 @@ the Nix linters and the shell checks among them), a JUnit report and the step su
   --app APP          the app under test (default: the app this repository is)
   --site SITE        the site (default: $FRAPPE_SITE)
   --reuse-site       keep an existing site instead of recreating it
+  --recreate-site    recreate an existing site: DROPS ITS DATABASE and resets
+                     Administrator's password to $FRAPPE_TEST_ADMIN_PASSWORD (admin).
+                     Without --ci, an existing site needs one of the two (or a yes
+                     at the prompt on a terminal); --ci recreates it
   --keep-up          leave the bench running afterwards (default: stop what this started)
   --down             stop a bench --keep-up left running, and exit
   --ci               the configured stages, plus --junit $OUT/junit.xml
@@ -67,7 +71,7 @@ app dev shell; 64 for a usage error; 0 when everything passed.
 EOF
 }
 
-APP="" SITE="${FRAPPE_SITE:-}" REUSE=0 KEEP_UP=0 DOWN=0 CI=0
+APP="" SITE="${FRAPPE_SITE:-}" REUSE=0 RECREATE=0 KEEP_UP=0 DOWN=0 CI=0
 MODULE="" DOCTYPE="" TESTS=()
 # Empty: not given on the command line, so --ci's plan (or the default) decides.
 COVERAGE="" TESTMAP="" COMPOSITION="" TY="" NIXLINT="" SHELLCHECKS=""
@@ -83,6 +87,7 @@ while [ "$#" -gt 0 ]; do
     --app) need "$@"; APP="$2"; shift ;;
     --site) need "$@"; SITE="$2"; shift ;;
     --reuse-site) REUSE=1 ;;
+    --recreate-site) RECREATE=1 ;;
     --keep-up) KEEP_UP=1 ;;
     --down) DOWN=1 ;;
     --ci) CI=1 ;;
@@ -137,6 +142,26 @@ if [ -z "$APP" ]; then
 fi
 [ -n "$APP" ] || usage_error "cannot tell which app this is; pass --app"
 [ -n "$SITE" ] || usage_error "no site: set FRAPPE_SITE or pass --site"
+[ "$REUSE" = 0 ] || [ "$RECREATE" = 0 ] || usage_error "--reuse-site and --recreate-site exclude each other"
+
+# Stage 2 recreates the site with `bench new-site --force`, which drops its
+# database, and the default site is the dev shell's own. In CI that is the
+# point; at a desk it is somebody's work, so an existing site is only dropped
+# when asked: --recreate-site, or a yes at the prompt.
+if [ "$CI" = 0 ] && [ "$REUSE" = 0 ] && [ "$RECREATE" = 0 ] && [ -d "$BENCH/sites/$SITE" ]; then
+  if [ -t 0 ] && [ -t 2 ]; then
+    printf 'frappe-test: %s exists. Recreating it drops its database and resets Administrator'"'"'s password.
+  Recreate it? [y/N] ' "$SITE" >&2
+    answer=""
+    read -r answer || true
+    case "$answer" in
+      y | Y | yes | YES) RECREATE=1 ;;
+      *) usage_error "kept $SITE; pass --reuse-site to test on it as it is, or --recreate-site" ;;
+    esac
+  else
+    usage_error "$SITE exists: pass --reuse-site to test on it as it is, or --recreate-site to drop its database and create it again"
+  fi
+fi
 
 FILTERED=0
 if [ -n "$MODULE" ] || [ -n "$DOCTYPE" ] || [ "${#TESTS[@]}" -gt 0 ]; then
@@ -232,6 +257,19 @@ fi
 # Stages 1 to 6: they need the bench, so they run only while the tests module
 # is on (with --ci) or the tests were asked for.
 bench_stages() {
+  # The bench root's dev group brings both, unless the app has not opted in
+  # and its lock predates them (a version-15 lock: lib/app-workspace.nix keeps
+  # the root to what the lock resolves). Said before anything starts.
+  local absent=()
+  if [ "$COVERAGE" = 1 ] && ! "$PY" -c 'import coverage' > /dev/null 2>&1; then absent+=(coverage); fi
+  if [ -n "$JUNIT" ] && ! "$PY" -c 'import xmlrunner' > /dev/null 2>&1; then absent+=(unittest-xml-reporting); fi
+  if [ "${#absent[@]}" -gt 0 ]; then
+    echo "::error::frappe-test: the bench's environment has no ${absent[*]}: this app's nix/uv.lock does not resolve it." >&2
+    echo "  Run without it (--no-coverage, no --junit), or opt in to the app standards and run 'nix run .#relock'." >&2
+    ENV_FAILED=1
+    finish
+  fi
+
   # ── 1. up ────────────────────────────────────────────────────────────────────
   group "up"
   STARTED=0

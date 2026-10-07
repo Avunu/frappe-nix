@@ -362,13 +362,24 @@ def apply_code(repo: Path, old: str, new: str) -> dict:
 	if (repo / new).exists():
 		die(f"{repo}/{new} already exists")
 
-	# 1. the package, then every tracked OLD.* file under it
+	# 1. the package, then every tracked OLD.* file under it: the bundles and
+	# their templates. Not a standard document's own files: a DocType, Page,
+	# Report, Web Form or Print Format whose name scrubs to OLD keeps its
+	# folder and files (`<module>/doctype/OLD/OLD.json`, `OLD.py`, `OLD.js`),
+	# because frappe finds the document by that name, and step 5 keeps
+	# document names.
 	git(repo, "mv", old, new)
 	renamed = set()
-	for rel in git(repo, "ls-files", "-z", "--", new).split("\0"):
-		if not rel:
-			continue
+	tracked = [rel for rel in git(repo, "ls-files", "-z", "--", new).split("\0") if rel]
+	documents = {
+		str(Path(rel).parent)
+		for rel in tracked
+		if Path(rel).name == f"{old}.json" and Path(rel).parent.name == old
+	}
+	for rel in tracked:
 		path = Path(rel)
+		if str(path.parent) in documents:
+			continue
 		if path.name.startswith(f"{old}."):
 			target = path.with_name(new + path.name[len(old) :])
 			git(repo, "mv", rel, str(target))

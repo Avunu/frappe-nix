@@ -315,6 +315,35 @@ class TestBodySpan(unittest.TestCase):
 			self.assertEqual(testmap_probe.body_span(f, 6), (6, 12, 13))
 			self.assertIsNone(testmap_probe.body_span(f, 1))
 
+	def test_a_one_line_function_is_never_tested(self):
+		# Importing the module runs the def line, and with it a one-line body's only line.
+		with tempfile.TemporaryDirectory() as tmp:
+			f = (Path(tmp) / "api.py").resolve()
+			f.write_text(
+				textwrap.dedent(
+					"""\
+					import functools
+
+
+					@functools.cache
+					def ping(): return "pong"
+
+
+					def pong():
+						return "ping"
+					"""
+				)
+			)
+			index = {str(f): {"executed_lines": [1, 4, 5, 8], "missing_lines": [9]}}
+			self.assertEqual(testmap_probe.body_span(f, 4), (5, 6, 5))
+			line, tested, error = testmap_probe.judge(f, 4, index)
+			self.assertEqual((line, tested), (5, False))
+			self.assertIn("shares the def line", error)
+			self.assertEqual(testmap_probe.judge(f, 8, index), (8, False, None))
+			index[str(f)] = {"executed_lines": [1, 4, 5, 8, 9], "missing_lines": []}
+			self.assertEqual(testmap_probe.judge(f, 8, index), (8, True, None))
+			self.assertFalse(testmap_probe.judge(f, 4, index)[1])
+
 
 class TestMarkdown(unittest.TestCase):
 	REPORT: ClassVar[dict] = {

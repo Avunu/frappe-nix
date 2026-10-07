@@ -20,6 +20,10 @@
 #                            reconciles a root that had it); every other root,
 #                            an app-mode root that has not opted in and a
 #                            bench-mode root, keeps all three, byte for byte.
+#                            A root that has not opted in keeps coverage and
+#                            unittest-xml-reporting only where its committed
+#                            lock has them, so a version-15 lock still covers
+#                            it without a relock.
 #   standards-coverage-env    `import coverage` (and xmlrunner) works in the dev
 #                            virtualenv lib/python.nix builds from that group.
 #   standards-frappe-test     frappe-test builds (shellcheck), parses its
@@ -65,6 +69,15 @@ let
     };
 
   today = portsOf { };
+  # What `devenv up` runs before process-compose, in bench mode.
+  benchUpPreamble =
+    (benchFlake (_: {
+      frappe-nix = {
+        enable = true;
+        benchName = "example-bench";
+        workspaceRoot = ../fixtures/lock-audit;
+      };
+    })).devenv.shells.default.process.manager.before;
   set123 = portsOf { ports.offset = 123; };
 
   # ports.worktreeSalt's default, read off the module for an app-mode config
@@ -113,12 +126,22 @@ let
       contains "default = 19000 + portOffsetOf config.frappe-nix;" devenvSource
       && contains "default = 20000 + portOffsetOf config.frappe-nix;" devenvSource
       && contains "default = 21000 + portOffsetOf config.frappe-nix;" devenvSource
-      && contains "portOffsetOf = fcfg: ports.effectiveOffset envPortOffset fcfg.ports.offset;" devenvSource
+      && contains (lib.concatStringsSep "\n" [
+        "    if fcfg.app.enable then"
+        "      ports.effectiveOffset envPortOffset fcfg.ports.offset"
+        "    else"
+        "      fcfg.ports.offset;"
+      ]) devenvSource
       && contains "portOffset = portOffsetOf cfg;" devenvSource
     ) "devenv.nix: the Mailpit defaults or the bases no longer derive from the one offset";
     assert lib.assertMsg
       (contains "salt = config.frappe-nix.app.enable && config.frappe-nix.ports.worktreeSalt;" devenvSource)
       "devenv.nix: ports.offset's seed is not salted by app mode and ports.worktreeSalt";
+    # Bench mode and an app that has not opted in start as they did (S35, §5.12).
+    assert lib.assertMsg (
+      contains "portsFreeCheckActive = appMode && (standardsShell.optedIn || cfg.ports.worktreeSalt);" devenvSource
+      && contains "(lib.mkIf portsFreeCheckActive portsFreeCheck)" devenvSource
+    ) "devenv.nix: the bound-port check is not limited to app mode with the worktree salt in play";
     # The values every bench had before this change.
     assert lib.assertMsg (
       ports.offsetFor "example-bench" == 740
@@ -143,6 +166,9 @@ let
         pop3 = 21123;
       }
     ) "ports.offset = 123 does not set every port: ${builtins.toJSON set123}";
+    assert lib.assertMsg (
+      !(contains "already in use" benchUpPreamble)
+    ) "bench mode's devenv up checks for taken ports (§5.12 leaves bench mode unchanged)";
     # [1.2] The salt follows the opt-in (S35, §5.12).
     assert lib.assertMsg (saltDefault optedInApp)
       "ports.worktreeSalt is off for an app with [tool.frappe-nix]";
@@ -246,10 +272,24 @@ let
   # `nix flake check --no-build` cannot build for.
   toolsAll = ./fixtures/app-tools/all/pyproject.toml;
   toolsRuff = ./fixtures/app-tools/ruff/pyproject.toml;
-  appRoot =
-    appTools:
+  # A non-opted-in app's committed lock: a version-15 one (no coverage, no
+  # unittest-xml-reporting) and a version-16 one (both, from frappe's `test`
+  # extra; the dev-group fixture's lock has them the same way).
+  v15Lock = ./fixtures/v15-lock/uv.lock;
+  v16Lock = devGroupFixture + "/uv.lock";
+  appRoot = appTools: appRootWith { inherit appTools; };
+  appRootWith =
+    {
+      appTools ? null,
+      testToolsLock ? null,
+    }:
     (import ../../lib/app-workspace.nix {
-      inherit pkgs lib appTools;
+      inherit
+        pkgs
+        lib
+        appTools
+        testToolsLock
+        ;
       apps = [
         {
           name = "standards_fixture";
@@ -337,6 +377,9 @@ in
     assert lib.assertMsg
       (contains "appTools = if standardsShell.optedIn then cfg.app.src + \"/tools/pyproject.toml\" else null;" devenvSource)
       "devenv.nix: the generated root's appTools is not gated on the opt-in";
+    assert lib.assertMsg
+      (contains "testToolsLock = if standardsShell.optedIn then null else lockPath;" devenvSource)
+      "devenv.nix: the generated root of an app that has not opted in does not keep to its lock's test tools";
     pkgs.runCommand "standards-bench-dev-group-check"
       {
         nativeBuildInputs = [
@@ -365,8 +408,28 @@ in
 
         expect "the template keeps all three and adds coverage and xmlrunner" ${../../templates/bench/pyproject.toml} \
           coverage unittest-xml-reporting ruff pre-commit semgrep
-        expect "an app-mode root that has not opted in" ${appRoot null} \
+        expect "an app-mode root that has not opted in, with no lock yet" ${appRoot null} \
           coverage unittest-xml-reporting ruff pre-commit semgrep
+        expect "an app-mode root that has not opted in, with a version-16 lock" ${
+          appRootWith { testToolsLock = v16Lock; }
+        } \
+          coverage unittest-xml-reporting ruff pre-commit semgrep
+        v15=${appRootWith { testToolsLock = v15Lock; }}
+        expect "an app-mode root that has not opted in, with a version-15 lock" "$v15" \
+          ruff pre-commit semgrep pydantic pytest responses -- coverage unittest-xml-reporting
+        # What lib/lock-audit.nix asks of the root's dev group: every name in the lock.
+        python3 - "$v15" ${v15Lock} <<'PY'
+        import re, sys, tomllib
+        dev = tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"]["dev"]
+        locked = {p["name"] for p in tomllib.load(open(sys.argv[2], "rb"))["package"]}
+        missing = [r for r in dev if re.split(r"[<>=!~ ;\[]", r)[0] not in locked]
+        if missing:
+            sys.exit(f"FAIL the version-15 root needs a relock for {missing}")
+        PY
+        # The root the old template rendered, but for its comment: the same lock resolves it.
+        diff <(grep -v '^#' "$v15") <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' ${appRoot null} | grep -v '^#') \
+          || fail "the version-15 root differs from the template without the two test tools"
+        echo "ok   a version-15 lock covers that root's dev group: no relock after upgrading frappe-nix"
         expect "an opted-in root whose tools/pyproject.toml lists ruff, semgrep and prek" ${appRoot toolsAll} \
           coverage unittest-xml-reporting pydantic -- ruff pre-commit semgrep
         expect "an opted-in root whose tools/pyproject.toml lists only ruff" ${appRoot toolsRuff} \
@@ -459,7 +522,7 @@ in
         stub stubs/mariadb-admin 'exit 0'
         stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"; mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"'
         stub bench/env/bin/bench 'exit 0'
-        stub bench/env/bin/python 'exit 0'
+        stub bench/env/bin/python 'case "$*" in "-c import coverage") [ -z "''${STUB_NO_COVERAGE:-}" ] ;; esac'
 
         git init -q repo
         echo gen/ > repo/.gitignore
@@ -500,6 +563,22 @@ in
         grep -q 'bench --site other.localhost set-config allow_tests true' "$STATE/log" || fail "--site: allow_tests on the wrong site"
         grep -q 'bench --site other.localhost execute fixture.setup' "$STATE/log" || fail "--site: setup on the wrong site"
         echo "ok   --site S provisions S, not \$FRAPPE_SITE, and runs [tool.frappe-nix.tests] setup"
+
+        # A version-15 app that has not opted in: its lock has no coverage.
+        STUB_NO_COVERAGE=1 run 10 "no coverage in the bench's environment" --reuse-site --no-composition
+        grep -q "environment has no coverage" run.log && grep -q -- '--no-coverage' run.log || fail "no message: $(cat run.log)"
+        ! grep -q 'devenv' "$STATE/log" || fail "it started the bench without coverage: $(cat "$STATE/log")"
+        STUB_NO_COVERAGE=1 run 0 "--no-coverage without coverage" --reuse-site --no-composition --no-coverage
+        echo "ok   no coverage module: exit 10 before the bench starts, naming --no-coverage; --no-coverage runs"
+
+        # The dev site exists: without --ci it is never dropped unasked.
+        run 64 "an existing site, neither --reuse-site nor --recreate-site" --no-coverage --no-composition
+        grep -q 'dev.localhost exists: pass --reuse-site' run.log || fail "no hint: $(cat run.log)"
+        ! grep -q 'devenv\|provision-site\|bench ' "$STATE/log" || fail "it started something: $(cat "$STATE/log")"
+        run 64 "--reuse-site with --recreate-site" --reuse-site --recreate-site
+        run 0 "--recreate-site" --no-coverage --no-composition --recreate-site
+        grep -qx 'provision-site created dev.localhost' "$STATE/log" || fail "--recreate-site did not recreate the site: $(cat "$STATE/log")"
+        echo "ok   an existing site needs --reuse-site or --recreate-site outside --ci (exit 64, nothing started); --recreate-site recreates it"
 
         pyproject 'no-such-key = 1'
         run 10 "an invalid [tool.frappe-nix]" --no-coverage --reuse-site

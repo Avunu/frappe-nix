@@ -67,6 +67,14 @@
   # (docs/app-standards/spec.md S1). Null leaves the template's dev group as it
   # is, so an app that has not opted in gets exactly the root it always had.
   appTools ? null,
+  # An app that has not opted in: its committed uv.lock (a path, which need not
+  # exist), else null. The root's dev group then keeps coverage and
+  # unittest-xml-reporting, which the template adds for frappe-test, only where
+  # that lock already resolves them. A version-16 lock does (frappe's `test`
+  # extra); a version-15 one does not, and the lock audit would otherwise
+  # refuse the root until the app relocked. With the lock seeded into `nix run
+  # .#relock`'s workspace too, a relock keeps whatever this decided.
+  testToolsLock ? null,
 }:
 
 let
@@ -131,6 +139,9 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
     cd "$out"
     ${lib.optionalString (appTools != null && builtins.pathExists appTools) ''
       frappe-nix-workspace ensure-root --pyproject pyproject.toml --app-tools ${lib.escapeShellArg "${appTools}"}
+    ''}
+    ${lib.optionalString (testToolsLock != null && builtins.pathExists testToolsLock) ''
+      frappe-nix-workspace ensure-root --pyproject pyproject.toml --test-tools-lock ${lib.escapeShellArg "${testToolsLock}"}
     ''}
     # The same call reconcile_workspace makes (lib/sh/apps.sh): sync-apps keys
     # [tool.uv.sources] on each app's own distribution name. No sites/ here —
