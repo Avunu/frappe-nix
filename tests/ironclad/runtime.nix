@@ -44,13 +44,13 @@ let
         }
         // extra;
       });
-      shell = config.devenv.shells.default;
       mail = config.frappe-nix.devguard.mail;
+      inherit (config.frappe-nix.ports) offset;
     in
     {
-      inherit (config.frappe-nix.ports) offset;
-      web = shell.processes.nginx.ports.main.allocate;
-      db = shell.processes.mysql.ports.main.allocate;
+      inherit offset;
+      # modules/devenv.nix takes both from basesFor (asserted on its source below).
+      inherit (ports.basesFor offset) web db;
       smtp = mail.smtpPort;
       http = mail.httpPort;
       pop3 = mail.pop3.port;
@@ -80,6 +80,11 @@ let
   });
 
   portFacts =
+    assert lib.assertMsg (
+      lib.hasInfix "webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;" devenvSource
+      && lib.hasInfix "dbBase = portBases.db;" devenvSource
+      && lib.hasInfix "portBases = ports.basesFor portOffset;" devenvSource
+    ) "devenv.nix: the web or db base no longer comes from ports.basesFor";
     # The values every bench had before this change: carbon-frappe served on 8691.
     assert lib.assertMsg (
       ports.offsetFor "carbon-frappe" == 691

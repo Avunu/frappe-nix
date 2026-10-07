@@ -2028,45 +2028,12 @@ in
         # renamedApps and replacedApps options). Unchanged when both are empty.
         # lib/scripts.nix's own body exits early on its quiet paths, so it runs
         # as a script of its own between the two steps.
-        reconcileAppsExec =
-          let
-            pairs = attrs: lib.mapAttrsToList (old: new: "${old}=${new}") attrs;
-            base = pkgs.writeShellScript "frappe-nix-reconcile-apps" scripts.reconcile-apps.exec;
-            onSite = body: ''
-              if [ -n "$SITE" ] && [ -d "$FRAPPE_BENCH_ROOT/sites/$SITE" ]; then
-                ${body}
-              fi
-            '';
-          in
-          if cfg.renamedApps == { } && cfg.replacedApps == { } then
-            scripts.reconcile-apps.exec
-          else
-            ''
-              set -euo pipefail
-              export _FRAPPE_BENCH_RAW=1
-              SITE="''${1:-''${FRAPPE_SITE:-}}"
-              ${lib.optionalString (cfg.renamedApps != { }) (onSite ''
-                (cd "$FRAPPE_BENCH_ROOT/sites" \
-                  && ${pythonEnvs.devPythonEnv}/bin/python ${../lib/rename/frappe_rename_app.py} \
-                    --site "$SITE" --yes ${lib.escapeShellArgs (pairs cfg.renamedApps)})
-              '')}
-              ${base} "$@"
-              ${lib.optionalString (cfg.replacedApps != { }) (onSite ''
-                cd "$FRAPPE_BENCH_ROOT"
-                installed="$(${pythonEnvs.devPythonEnv}/bin/bench --site "$SITE" list-apps --format json 2>/dev/null \
-                  | ${pkgs.jq}/bin/jq -r --arg s "$SITE" '.[$s][]? // empty' 2>/dev/null || true)"
-                for pair in ${lib.escapeShellArgs (pairs cfg.replacedApps)}; do
-                  old="''${pair%%=*}" new="''${pair#*=}"
-                  grep -qxF "$old" <<< "$installed" || continue
-                  if ! grep -qxF "$new" <<< "$installed"; then
-                    echo "reconcile-apps: $new replaces $old on $SITE: installing $new"
-                    ${pythonEnvs.devPythonEnv}/bin/bench --site "$SITE" install-app "$new"
-                  fi
-                  echo "reconcile-apps: $new replaces $old on $SITE: uninstalling $old"
-                  ${pythonEnvs.devPythonEnv}/bin/bench --site "$SITE" uninstall-app "$old" --yes --no-backup
-                done
-              '')}
-            '';
+        reconcileAppsExec = import ../lib/rename/reconcile.nix { inherit pkgs lib; } {
+          reconcileExec = scripts.reconcile-apps.exec;
+          pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
+          benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
+          inherit (cfg) renamedApps replacedApps;
+        };
 
         # The object-store half of `bench restore`, kept separate so shellcheck
         # sees it (devenv script bodies are never linted) and so the NixOS-side

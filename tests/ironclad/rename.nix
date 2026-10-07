@@ -103,23 +103,22 @@ let
 
   # --- devenv -----------------------------------------------------------------
 
-  shell =
-    (import ./fixtures/bench-flake.nix { inherit self pkgs; } (
-      { pkgs, ... }:
-      {
-        frappe-nix = {
-          enable = true;
-          python = pkgs.python314;
-          benchName = "rename-check";
-          siteName = "rename.localhost";
-          workspaceRoot = ./fixtures/bench-dev-group;
-          renamedApps.esign = "esign_webforms";
-          replacedApps.jailbreak = "data_steward";
-        };
-      }
-    )).devenv.shells.default;
-  reconcileScript = pkgs.writeText "reconcile-apps" shell.scripts.reconcile-apps.exec;
-  reconcileTask = pkgs.writeText "frappe-apps-reconcile" shell.tasks."frappe:apps-reconcile".exec;
+  # The wrapper modules/devenv.nix builds, over a stub reconcile-apps body.
+  reconcile = import ../../lib/rename/reconcile.nix { inherit pkgs lib; } {
+    reconcileExec = ''echo "reconcile $*" >> "$STATE/log"'';
+    pythonBin = "${stubEnv}/bin/python";
+    benchBin = "${stubEnv}/bin/bench";
+    renamedApps.esign = "esign_webforms";
+    replacedApps.jailbreak = "data_steward";
+  };
+  plain = import ../../lib/rename/reconcile.nix { inherit pkgs lib; } {
+    reconcileExec = "echo plain";
+    pythonBin = "python";
+    benchBin = "bench";
+    renamedApps = { };
+    replacedApps = { };
+  };
+  devenvSource = builtins.readFile ../../modules/devenv.nix;
 in
 {
   ironclad-rename-code =
@@ -256,20 +255,42 @@ in
     cp ${migrateScript} "$out"
   '';
 
-  ironclad-rename-devenv = pkgs.runCommand "ironclad-rename-devenv-check" { } ''
-    set -euo pipefail
-    fail() { echo "FAIL $*" >&2; exit 1; }
-    for f in ${reconcileScript} ${reconcileTask}; do
-      ren="$(grep -n 'frappe_rename_app.py' "$f" | head -1 | cut -d: -f1)"
-      base="$(grep -n 'frappe-nix-reconcile-apps' "$f" | head -1 | cut -d: -f1)"
-      repl="$(grep -n 'uninstall-app "$old" --yes --no-backup' "$f" | head -1 | cut -d: -f1)"
-      [ -n "$ren" ] && [ -n "$base" ] && [ -n "$repl" ] && [ "$ren" -lt "$base" ] && [ "$base" -lt "$repl" ] \
-        || fail "$f: rename at '$ren', reconcile at '$base', replace at '$repl'"
-      grep -q -- "--site \"\$SITE\" --yes 'esign=esign_webforms'" "$f" || fail "$f: the pair"
-      grep -q "for pair in 'jailbreak=data_steward'" "$f" || fail "$f: the replace pair"
-      ${lib.getExe pkgs.bash} -n "$f"
-    done
-    echo "ok   reconcile-apps and the frappe:apps-reconcile task rename first and replace last"
-    touch "$out"
-  '';
+  ironclad-rename-devenv =
+    assert lib.assertMsg (
+      plain == "echo plain"
+    ) "reconcile-apps changes with no renamed or replaced apps";
+    assert lib.assertMsg (
+      lib.hasInfix "reconcile-apps = scripts.reconcile-apps // {\n                  exec = reconcileAppsExec;" devenvSource
+      && lib.hasInfix "\${reconcileAppsExec}" devenvSource
+    ) "devenv.nix: reconcile-apps or the frappe:apps-reconcile task does not use the wrapper";
+    pkgs.runCommand "ironclad-rename-devenv-check" { } ''
+      set -euo pipefail
+      fail() { echo "FAIL $*" >&2; exit 1; }
+      export STATE="$PWD/state" FRAPPE_BENCH_ROOT="$PWD/bench" FRAPPE_SITE=dev.localhost
+      mkdir -p "$STATE" bench/sites/dev.localhost
+      printf '%s\n' frappe esign jailbreak > "$STATE/installed"
+      cp ${pkgs.writeText "reconcile-apps" reconcile} reconcile-apps
+
+      ${lib.getExe pkgs.bash} reconcile-apps
+      cat "$STATE/log"
+      line() { grep -nF -- "$1" "$STATE/log" | head -1 | cut -d: -f1; }
+      ren="$(line 'frappe_rename_app.py --site dev.localhost --yes esign=esign_webforms')"
+      rec="$(line 'reconcile')" inst="$(line 'install-app data_steward')" un="$(line 'uninstall-app jailbreak --yes --no-backup')"
+      for v in ren rec inst un; do [ -n "''${!v}" ] || fail "no $v step"; done
+      [ "$ren" -lt "$rec" ] && [ "$rec" -lt "$inst" ] && [ "$inst" -lt "$un" ] || fail "order: rename $ren, reconcile $rec, install $inst, uninstall $un"
+      grep -q "(in $PWD/bench/sites)" "$STATE/log" || fail "the rename does not run from the bench's sites/"
+      echo "ok   reconcile-apps renames first, reconciles, then installs data_steward and uninstalls jailbreak"
+
+      : > "$STATE/log"
+      ${lib.getExe pkgs.bash} reconcile-apps
+      ! grep -q 'install-app' "$STATE/log" || fail "a second run touched the apps: $(cat "$STATE/log")"
+      echo "ok   a second run installs and uninstalls nothing"
+
+      rm -rf bench/sites/dev.localhost
+      : > "$STATE/log"
+      ${lib.getExe pkgs.bash} reconcile-apps
+      [ "$(cat "$STATE/log")" = "reconcile " ] || fail "with no site, it did more than reconcile: $(cat "$STATE/log")"
+      echo "ok   with no site yet, only reconcile-apps itself runs"
+      touch "$out"
+    '';
 }
