@@ -14,13 +14,26 @@ import tomlkit.items
 
 from ironclad.common import known_apps
 from ironclad.common.report import DRIFT, INVALID
-from ironclad.scaffold import globs, hooks
+from ironclad.scaffold import hooks
 
 FRAPPE_APPS = ("frappe", "erpnext", "hrms", "payments")
 RUFF_SELECT = ["F", "E", "W", "I", "UP", "B", "RUF", "SIM", "C4", "PIE", "PERF", "T20"]
 RUFF_IGNORE = ["E501", "W191"]
 COVERAGE_OMIT = ["*/tests/*", "*/test_*.py", "*/patches/*"]
 VULTURE_EXCLUDE = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
+
+# test_utils' static_analysis resolves every dotted path an app calls (frappe.call, a
+# whitelisted method in hooks.py) against the app and the apps beside it in a bench. Outside
+# one (prek at the repo root, CI's lint job) it has no frappe or sibling sources, so their
+# namespaces are whitelisted; the app may list more ([tool.test_utils.static-analysis]).
+STATIC_ANALYSIS = ("tool", "test_utils", "static-analysis")
+
+
+def static_whitelist(ctx: Any) -> list[str]:
+	"""The ``whitelist`` entries ``[tool.test_utils.static-analysis]`` must hold."""
+	names = ["frappe", *(s.name for s in ctx.siblings if s.name != "frappe")]
+	return [f"{name}.*" for name in dict.fromkeys(names)]
+
 
 _HEADER = re.compile(r"^\s*\[\[?\s*(?P<name>[^\]\[]+?)\s*\]\]?\s*(#.*)?$")
 
@@ -79,6 +92,68 @@ def _plain(value: Any) -> Any:
 	return value.unwrap() if hasattr(value, "unwrap") else value
 
 
+def _hides(codes: object, rules: tuple[str, ...]) -> list[str]:
+	"""The ``rules`` a ruff selector list turns off: an exact code, a prefix of one, or ``ALL``."""
+	if not isinstance(codes, list):
+		return []
+	sel = [c for c in codes if isinstance(c, str)]
+	return [r for r in rules if any(c == "ALL" or (c and r.startswith(c)) for c in sel)]
+
+
+def _ruff_glob(glob: str) -> re.Pattern[str]:
+	"""A ruff ``per-file-ignores`` glob as a regex, with globset's defaults: unlike ``globs``,
+	``*`` and ``?`` cross ``/``; ``[…]`` and ``{a,b}`` are classes and alternations."""
+	out: list[str] = []
+	i, depth = 0, 0
+	while i < len(glob):
+		c = glob[i]
+		if glob.startswith("**/", i):
+			out.append("(?:.*/)?")
+			i += 3
+			continue
+		if c == "*":
+			out.append(".*")
+			i += 2 if glob.startswith("**", i) else 1
+			continue
+		if c == "?":
+			out.append(".")
+		elif c == "[" and (end := glob.find("]", i + 2)) != -1:
+			body = glob[i + 1 : end]
+			if body.startswith("!"):
+				body = "^" + body[1:]
+			out.append("[" + body.replace("\\", "\\\\") + "]")
+			i = end + 1
+			continue
+		elif c == "{":
+			out.append("(?:")
+			depth += 1
+		elif c == "}" and depth:
+			out.append(")")
+			depth -= 1
+		elif c == "," and depth:
+			out.append("|")
+		else:
+			out.append(re.escape(c))
+		i += 1
+	return re.compile("".join(out) + ")" * depth + r"\Z")
+
+
+def _package_wide(glob: str, app: str) -> bool:
+	"""Whether ruff applies a ``per-file-ignores`` entry to every module of the package.
+
+	ruff matches a pattern against the path relative to the project root and also against
+	the file's basename (so ``"*.py"`` is every file), and a leading ``!`` negates it."""
+	negated = glob.startswith("!")
+	pattern = glob.removeprefix("!").removeprefix("./")
+	try:
+		rx = _ruff_glob(pattern)
+	except re.error:
+		return False
+	probes = (f"{app}/ironclad_probe.py", f"{app}/a/b/ironclad_probe.py")
+	hits = [bool(rx.match(p) or rx.match(p.rsplit("/", 1)[-1])) for p in probes]
+	return not any(hits) if negated else all(hits)
+
+
 def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 	"""The app-owned keys that break a rule: exit 1 for what only the app can fix, 2 for the forbidden."""
 	out: list[tuple[int, str]] = []
@@ -99,31 +174,31 @@ def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 		isinstance(fail, bool) or not isinstance(fail, int | float) or not 0 <= fail <= 100
 	):
 		out.append((INVALID, "[tool.coverage.report].fail_under must be a number from 0 to 100"))
+	top = _get(doc, ("tool", "ruff")) or {}
 	lint = _get(doc, ("tool", "ruff", "lint")) or {}
-	for key in ("extend-select", "extend-ignore", "unfixable", "isort"):
-		if key in lint:
-			out.append((INVALID, f"[tool.ruff.lint].{key} is forbidden (the ruff profile is fixed, S27)"))
-	extra = [c for c in (lint.get("ignore") or []) if c not in RUFF_IGNORE]
-	if extra:
-		out.append(
-			(
-				INVALID,
-				f"[tool.ruff.lint].ignore may hold only {', '.join(RUFF_IGNORE)}, not {', '.join(extra)}",
-			)
-		)
-	app = ctx.app
-	for glob, codes in (lint.get("per-file-ignores") or {}).items():
-		broad = globs.match(glob, f"{app}/ironclad_probe.py") and globs.match(
-			glob, f"{app}/a/b/ironclad_probe.py"
-		)
-		bad = [c for c in codes if c in ("F401", "E402")]
-		if broad and bad:
+	# ruff still reads the pre-0.2 spellings at the top of [tool.ruff], so both tables count.
+	for table, keys in (("[tool.ruff]", top), ("[tool.ruff.lint]", lint)):
+		for key in ("extend-select", "extend-ignore", "unfixable", "isort"):
+			if key in keys:
+				out.append((INVALID, f"{table}.{key} is forbidden (the ruff profile is fixed, S27)"))
+		extra = [c for c in (keys.get("ignore") or []) if c not in RUFF_IGNORE]
+		if extra:
 			out.append(
 				(
 					INVALID,
-					f"[tool.ruff.lint.per-file-ignores] {glob!r} may not ignore {', '.join(bad)} package-wide",
+					f"{table}.ignore may hold only {', '.join(RUFF_IGNORE)}, not {', '.join(extra)}",
 				)
 			)
+		for key in ("per-file-ignores", "extend-per-file-ignores"):
+			for glob, codes in (keys.get(key) or {}).items():
+				bad = _hides(codes, ("F401", "E402"))
+				if bad and _package_wide(glob, ctx.app):
+					out.append(
+						(
+							INVALID,
+							f"{table}.{key} {glob!r} may not ignore {', '.join(bad)} package-wide",
+						)
+					)
 	ty = _get(doc, ("tool", "ty")) or {}
 	for rule, level in (ty.get("rules") or {}).items():
 		if level != "error":
@@ -205,6 +280,17 @@ def merge(text: str, ctx: Any, *, seed_fail_under: bool = True) -> str:
 			missing.setdefault(table_path, {})[key] = value
 		elif _plain(table.get(key)) != value:
 			table[key] = value
+	required = static_whitelist(ctx)
+	table = table_at(STATIC_ANALYSIS)
+	if table is None:
+		missing.setdefault(STATIC_ANALYSIS, {})["whitelist"] = required
+	elif not isinstance(table.get("whitelist"), list):
+		table["whitelist"] = required
+	else:
+		have = _plain(table["whitelist"])
+		for entry in required:
+			if entry not in have:
+				table["whitelist"].append(entry)
 	project = table_at(("project",))
 	if project is not None:
 		dynamic = project.get("dynamic")
@@ -226,5 +312,9 @@ def managed_view(doc: dict, ctx: Any) -> dict:
 	"""The managed keys' current values, for the semantic comparison ``--check`` makes."""
 	view = {".".join(path): _get(doc, path) for path, _ in managed(ctx)}
 	view["project.dynamic has version"] = "version" in (_get(doc, ("project", "dynamic")) or [])
+	have = _get(doc, (*STATIC_ANALYSIS, "whitelist"))
+	view["static-analysis whitelist"] = isinstance(have, list) and all(
+		e in have for e in static_whitelist(ctx)
+	)
 	view["fail_under present"] = _get(doc, ("tool", "coverage", "report", "fail_under")) is not None
 	return view

@@ -17,6 +17,9 @@ name: selftest-scaffold
 #              bare `ironclad sync --write` on the main-locked shape, which has
 #              to relock and re-enter through the app's dev shell: --check is
 #              clean right after, and the locks exist.
+#   real-lock  `frappe-init --app` on a bare app with no override: before
+#              release-1 exists it refuses (exit 3) with the tree untouched,
+#              after it locks release-1.
 #   no-nix     `uv tool install` from a clone with no checkout left on disk, then
 #              `ironclad sync --check` on the fixture: the package is
 #              self-contained (S10).
@@ -264,6 +267,53 @@ jobs:
           for f in flake.nix flake.lock yarn.lock tools/uv.lock nix/uv.lock nix/node-locks/frappe/ui/yarn.lock; do
             test -f "$f" || { echo "::error::$f is missing after the bootstrap"; exit 1; }
           done
+
+  real-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Build frappe-init from this checkout
+        run: nix build .#frappe-init --out-link "$RUNNER_TEMP/frappe-init"
+
+      - name: frappe-init --app with no override locks the real release branch
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/bare" && cd "$RUNNER_TEMP/bare"
+          git init -q
+          printf '[project]\nname = "bare_app"\ndynamic = ["version"]\n' > pyproject.toml
+          mkdir bare_app
+          printf '__version__ = "0.0.1"\n' > bare_app/__init__.py
+          printf 'app_title = "Bare App"\n' > bare_app/hooks.py
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm app
+          set +e
+          "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --frappe-version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
+          code="${PIPESTATUS[0]}"
+          set -e
+          if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix release-1 > /dev/null; then
+            [ "$code" = 0 ] || { echo "::error::frappe-init --app exited $code with release-1 present"; exit 1; }
+            grep -q '"ref": "release-1"' flake.lock || { echo "::error::flake.lock is not on release-1"; exit 1; }
+          else
+            # Before v1.0.0 (S32): refused up front, nothing written or staged.
+            [ "$code" = 3 ] || { echo "::error::frappe-init --app exited $code, not 3, without release-1"; exit 1; }
+            grep -q 'has no release-1 branch yet' "$RUNNER_TEMP/app.log"
+            [ -z "$(git status --porcelain)" ] || { echo "::error::the refused run changed the tree"; git status; exit 1; }
+          fi
 
   no-nix:
     runs-on: ubuntu-latest

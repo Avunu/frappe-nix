@@ -115,8 +115,10 @@ repos:
       - id: validate_doctype_python_types
       - id: validate_copyright
         args: [--app, ironclad_fixture]
-        # Never stamp a managed file (its header is line 1) or a generated one (its freshness diff would fail).
-        exclude: ^(docs/|docs-site/|marketplace/shots\.d\.ts$|types/doctypes\.d\.ts$|scripts/ironclad-vite-register\.mjs$|tsconfig[^/]*\.json$)
+        # Never stamp a managed file (its header is line 1) or a generated one (its freshness diff would fail),
+        # nor a script: a stamp above `#!/usr/bin/env node` breaks it (scripts/ and ci/ hold the node tools).
+        exclude: ^(docs/|docs-site/|scripts/|ci/|marketplace/shots\.d\.ts$|types/doctypes\.d\.ts$|tsconfig[^/]*\.json$)
+        exclude_types: [executable]
       # Bench-aware: silent no-ops outside a bench. CI runs them in a mini-bench (`ironclad minibench`).
       - id: validate_customizations
         stages: [manual]

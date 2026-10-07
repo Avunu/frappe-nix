@@ -15,7 +15,8 @@
 #   ironclad-app-template  templates/app holds exactly .envrc and .gitignore,
 #                          both identical to what sync renders, and
 #                          `frappe-init --app` on a bare app writes those two plus
-#                          what `ironclad sync --write` renders, nothing else; and
+#                          what `ironclad sync --write` renders, nothing else;
+#                          `--app --site X` renders site X; and
 #                          a usage error under `frappe-init --check` is exit 2 or 3,
 #                          never 1 (drift).
 {
@@ -142,6 +143,14 @@ in
         done
         echo "ok   frappe-init --app writes .envrc, .gitignore and what ironclad sync renders:"
         comm -13 <(echo "$before") <(echo "$have") | sed 's/^/       /'
+
+        # --site reaches sync: [tool.ironclad] site and the flake's siteName.
+        mkdir ../sited && git archive HEAD | tar -x -C ../sited
+        (cd ../sited && git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm app &&
+          frappe-init --app --frappe-version version-16 --site custom.localhost > /dev/null)
+        grep -qx 'site = "custom.localhost"' ../sited/pyproject.toml || fail "--site is not [tool.ironclad] site"
+        grep -q 'siteName = "custom.localhost";' ../sited/flake.nix || fail "--site is not the flake's siteName"
+        echo "ok   frappe-init --app --site X renders site X"
 
         code_of() {
           set +e

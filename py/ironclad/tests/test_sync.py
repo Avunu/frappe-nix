@@ -4,6 +4,7 @@ import json
 import os
 import tomllib
 import unittest
+from typing import ClassVar
 from unittest import mock
 
 from scaffold_helpers import AppCase, git
@@ -128,6 +129,7 @@ class TestAppOwnedKeys(AppCase):
 		pkg["scripts"]["codegen"] = "node scripts/codegen.ts"
 		pkg["dependencies"] = {"left-pad": "1.3.0"}
 		self.write("package.json", json.dumps(pkg, indent=2) + "\n")
+		self.fake_yarn_lock()
 		code, out = self.check()
 		self.assertEqual(code, 0, out)
 		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
@@ -159,6 +161,62 @@ class TestAppOwnedKeys(AppCase):
 			with self.subTest(extra=extra):
 				self.write("pyproject.toml", base + extra)
 				self.assertEqual(self.check()[0], 2)
+
+	def test_package_wide_ignores_in_any_spelling_are_exit_2(self):
+		"""ruff's globs let ``*`` cross ``/`` and match a bare pattern against the basename,
+		and it reads the pre-0.2 [tool.ruff] spellings and extend-per-file-ignores too."""
+		self.synced()
+		base = self.read("pyproject.toml")
+		for extra in (
+			'\n[tool.ruff.lint.per-file-ignores]\n"demo_app/*" = ["F401"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"*.py" = ["F401"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"**" = ["F"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"!demo_app/tests/*" = ["E402"]\n',
+			'\n[tool.ruff.lint.extend-per-file-ignores]\n"**" = ["F401"]\n',
+			'\n[tool.ruff.per-file-ignores]\n"demo_app/**" = ["E402"]\n',
+			'\n[tool.ruff.extend-per-file-ignores]\n"*" = ["ALL"]\n',
+		):
+			with self.subTest(extra=extra):
+				self.write("pyproject.toml", base + extra)
+				code, out = self.check()
+				self.assertEqual(code, 2, out)
+				self.assertIn("package-wide", out)
+
+	def test_narrow_ignores_are_the_apps(self):
+		self.synced()
+		base = self.read("pyproject.toml")
+		for extra in (
+			'\n[tool.ruff.lint.per-file-ignores]\n"__init__.py" = ["F401"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"demo_app/overrides/*" = ["F401"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"**/tests/**" = ["E402"]\n',
+			'\n[tool.ruff.lint.per-file-ignores]\n"**" = ["F841"]\n',
+		):
+			with self.subTest(extra=extra):
+				self.write("pyproject.toml", base + extra)
+				code, out = self.check()
+				self.assertEqual(code, 0, out)
+
+	def test_locked_oxlint_rules_in_any_spelling_are_exit_2(self):
+		self.synced()
+		base = self.read("pyproject.toml")
+		for rule in (
+			"typescript/no-explicit-any",
+			"@typescript-eslint/no-explicit-any",
+			"typescript-eslint/ban-ts-comment",
+			"no-explicit-any",
+			"consistent-type-imports",
+		):
+			with self.subTest(rule=rule):
+				self.write(
+					"pyproject.toml",
+					base.replace(
+						"[tool.ironclad]\n",
+						f'[tool.ironclad]\noxlint.overrides = [{{ files = ["**/*.ts"], rules = {{ "{rule}" = "off" }} }}]\n',
+					),
+				)
+				code, out = self.check()
+				self.assertEqual(code, 2, out)
+				self.assertIn("may not change", out)
 
 	def test_bench_app_dependency_is_exit_1(self):
 		self.synced()
@@ -228,6 +286,7 @@ class TestFloors(AppCase):
 		url = "https://codeload.github.com/Avunu/x/tar.gz/" + "c" * 40
 		pkg["devDependencies"]["oxfmt"] = url
 		self.write("package.json", json.dumps(pkg))
+		self.fake_yarn_lock()
 		self.assertEqual(self.check()[0], 0)
 
 
@@ -737,6 +796,92 @@ class TestSiteCarried(AppCase):
 		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"]
 		self.assertEqual(cfg["site"], "demo.localhost")
 		self.assertIn('siteName = "demo.localhost"', self.read("flake.nix"))
+
+
+class TestSiteOption(AppCase):
+	def test_site_option_is_recorded_when_the_table_is_created(self):
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.ironclad]")[0])
+		self.commit()
+		code, _, err = self.ironclad(
+			"sync", "--write", "--frappe-version", "version-16", "--site", "custom.localhost"
+		)
+		self.assertEqual(code, 0, err)
+		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"]
+		self.assertEqual(cfg["site"], "custom.localhost")
+		self.assertIn('siteName = "custom.localhost"', self.read("flake.nix"))
+
+	def test_default_site_option_adds_no_key(self):
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.ironclad]")[0])
+		self.commit()
+		code, _, err = self.ironclad(
+			"sync", "--write", "--frappe-version", "version-16", "--site", "demo-app.localhost"
+		)
+		self.assertEqual(code, 0, err)
+		self.assertNotIn("site", tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"])
+
+	def test_bad_site_is_exit_2(self):
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.ironclad]")[0])
+		self.commit()
+		code, _, _ = self.ironclad("sync", "--write", "--frappe-version", "version-16", "--site", "Bad Site")
+		self.assertEqual(code, 2)
+
+	def test_site_option_leaves_an_existing_table_alone(self):
+		self.synced()
+		code, _, err = self.ironclad("sync", "--write", "--site", "custom.localhost")
+		self.assertEqual(code, 0, err)
+		self.assertNotIn("site", tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"])
+
+
+class TestStaticAnalysisWhitelist(AppCase):
+	required: ClassVar[list[str]] = ["erpnext"]
+	extra_pyproject = 'siblings = ["erpnext"]\n'
+
+	def whitelist(self) -> list[str]:
+		doc = tomllib.loads(self.read("pyproject.toml"))
+		return doc["tool"]["test_utils"]["static-analysis"]["whitelist"]
+
+	def test_frappe_and_siblings_are_whitelisted_and_app_entries_kept(self):
+		self.synced()
+		self.assertEqual(self.whitelist(), ["frappe.*", "erpnext.*"])
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace(
+				'whitelist = ["frappe.*", "erpnext.*"]', 'whitelist = ["flow.api.*"]'
+			),
+		)
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertEqual(self.ironclad("sync", "--write")[0], 0)
+		self.assertEqual(self.whitelist(), ["flow.api.*", "frappe.*", "erpnext.*"])
+		self.assertEqual(self.check()[0], 0)
+
+
+class TestStaleYarnLock(AppCase):
+	def test_a_dependency_the_lock_lacks_is_drift(self):
+		"""An earlier (offline) sync changed package.json; yarn.lock must not pass as current."""
+		self.synced()
+		pkg = json.loads(self.read("package.json"))
+		pkg["devDependencies"]["oxlint"] = "^1.99.0"
+		self.write("package.json", json.dumps(pkg, indent="\t") + "\n")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("yarn.lock (seed): does not lock package.json's oxlint@^1.99.0", out)
+		self.fake_yarn_lock()
+		self.assertEqual(self.check()[0], 0)
+
+	def test_lock_keys(self):
+		from ironclad.scaffold import package_json
+
+		v1 = '# yarn lockfile v1\n\n"@a/b@^1.0.0", "@a/b@^1.2.0":\n  version "1.2.0"\n\nc@~2:\n  version "2.0.1"\n'
+		self.assertEqual(package_json.yarn_lock_keys(v1), {"@a/b@^1.0.0", "@a/b@^1.2.0", "c@~2"})
+		berry = '__metadata:\n  version: 8\n\n"@a/b@npm:^1.0.0":\n  version: 1.0.0\n'
+		self.assertEqual(package_json.yarn_lock_keys(berry), {"__metadata", "@a/b@^1.0.0"})
+		pkg = {"dependencies": {"c": "~2", "w": "workspace:*", "l": "link:../l", "mine": "1.0.0"}}
+		self.assertEqual(package_json.yarn_lock_missing(pkg, v1, {"mine"}), [])
+		self.assertEqual(
+			package_json.yarn_lock_missing({"devDependencies": {"c": "^3"}}, v1, set()), ["c@^3"]
+		)
 
 
 class TestLockFollowsFlake(AppCase):

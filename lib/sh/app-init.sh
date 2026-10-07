@@ -40,6 +40,9 @@ cmd_app_init() {
   # prefix. Derived rather than asked for: an app repo has exactly one bench and
   # naming it separately is a question with no interesting answer.
   name="$(normalize_dist "$app_name")"
+  # --site reaches sync, which records it as [tool.ironclad] site when it creates the
+  # table (and only then: an existing table's site is the app's).
+  local site_arg="$site"
   site="${site:-$name.localhost}"
 
   step "Plan for $(pwd -P)"
@@ -61,6 +64,12 @@ cmd_app_init() {
   [ -d .git ] || git rev-parse --git-dir > /dev/null 2>&1 ||
     die "'$(pwd -P)' is not a git repository. A flake's source tree is exactly its tracked files, so frappe-nix cannot see an app that git cannot." 6
 
+  # Before anything is written: the flake sync renders follows frappe-nix's release-<N>
+  # branch, which exists only from v<N>.0.0 on (spec S32).
+  local rc=0
+  ironclad sync --write --phase preflight || rc=$?
+  [ "$rc" = 0 ] || die "frappe-nix's release branch is not available; nothing was changed" "$rc"
+
   # templates/app holds exactly .envrc and .gitignore: install_template copies
   # every file in it, so nothing else may live there (spec §1.2).
   step "Copying the app template"
@@ -78,8 +87,9 @@ cmd_app_init() {
   # untracked flake.nix is one `nix run` away from "does not provide attribute".
   step "Writing the managed files (ironclad sync --write)"
   local -a args=(--write --frappe-version "$frappe_version")
+  if [ -n "$site_arg" ]; then args+=(--site "$site_arg"); fi
   if $SKIP_LOCK; then args+=(--skip-lock); fi
-  local rc=0
+  rc=0
   ironclad sync "${args[@]}" || rc=$?
   if [ "$rc" != 0 ]; then
     die "'ironclad sync --write' exited $rc — fix what it reported above and run 'frappe-init --sync'" "$rc"

@@ -20,6 +20,13 @@ DESK_GLOBALS = ("frappe", "__", "cur_frm", "cur_list", "locals", "$", "jQuery", 
 WEB_GLOBALS = ("frappe", "__", "$", "jQuery")
 
 
+def _bare_rule(name: str) -> str:
+	"""A rule key without its plugin: oxlint takes ``typescript/x``, ``@typescript-eslint/x``,
+	``typescript-eslint/x`` and plain ``x`` as the same rule, so a locked rule is locked in
+	every spelling."""
+	return str(name).rsplit("/", 1)[-1].strip().lower()
+
+
 def _unique(items: list[str]) -> list[str]:
 	out: list[str] = []
 	for item in items:
@@ -32,7 +39,9 @@ def oxlintrc(ctx: Any) -> dict:
 	app, cfg, d = ctx.app, ctx.cfg, ctx.discover
 	ox = cfg.get("oxlint", {})
 	for i, override in enumerate(ox.get("overrides", [])):
-		named = [r for r in LOCKED_RULES if r in override.get("rules", {})]
+		rules = override.get("rules", {})
+		keys = {_bare_rule(k) for k in rules} if isinstance(rules, dict) else set()
+		named = [r for r in LOCKED_RULES if _bare_rule(r) in keys]
 		if named:
 			raise ConfigError(f"[tool.ironclad.oxlint].overrides[{i}] may not change {', '.join(named)}")
 	desk_globals = {g: "readonly" for g in DESK_GLOBALS}

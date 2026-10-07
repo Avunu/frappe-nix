@@ -16,7 +16,7 @@ from unittest import mock
 import ironclad
 from ironclad.common.report import EnvError
 from ironclad.scaffold import bootstrap
-from scaffold_helpers import AppCase, _github, flake_lock
+from scaffold_helpers import AppCase, _github, flake_lock, git
 
 FAKE_NIX = """#!{python}
 import json, os, sys
@@ -74,6 +74,10 @@ class FakeNix(AppCase):
 		os.environ["FAKE_NIX_LOG"] = str(self.log)
 		os.environ["PATH"] = str(self.bin)
 		os.environ["FAKE_NIX_VERSION"] = ironclad.__version__
+		# The release-<N> probe asks GitHub; these tests are offline and say it exists.
+		probe = mock.patch.object(bootstrap, "release_branch_exists", return_value=True)
+		probe.start()
+		self.addCleanup(probe.stop)
 
 	def calls(self) -> list[dict]:
 		if not self.log.is_file():
@@ -320,3 +324,42 @@ class TestBareSyncBootstrap(FakeNix):
 	def synced_offline(self) -> None:
 		with mock.patch.dict(os.environ, {"IRONCLAD_OFFLINE": "1"}):
 			self.synced()
+
+
+class TestReleaseBranchPreflight(FakeNix):
+	"""Before release-<N> exists (S32), a sync that would lock it refuses before writing
+	anything (review: `frappe-init --app` failed in `nix flake lock` with a staged tree)."""
+
+	def absent(self) -> None:
+		probe = mock.patch.object(bootstrap, "release_branch_exists", return_value=False)
+		probe.start()
+		self.addCleanup(probe.stop)
+
+	def test_unbootstrapped_app_is_refused_with_nothing_written(self):
+		self.absent()
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.ironclad]")[0])
+		self.commit()
+		code, _, err = self.ironclad("sync", "--write", "--frappe-version", "version-16")
+		self.assertEqual(code, 3, err)
+		self.assertIn("has no release-1 branch yet", err)
+		self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.assertEqual(self.calls(), [])
+
+	def test_preflight_phase(self):
+		self.absent()
+		code, _, err = self.ironclad("sync", "--write", "--phase", "preflight")
+		self.assertEqual(code, 3, err)
+		self.assertEqual(git(self.root, "status", "--porcelain"), "")
+
+	def test_a_lock_already_on_the_branch_is_not_probed(self):
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		self.assertFalse(bootstrap.release_ref_needed(self.root, 1))
+		self.write("flake.lock", json.dumps(main_locked(["frappe"])))
+		self.assertTrue(bootstrap.release_ref_needed(self.root, 1))
+
+	def test_offline_dry_run_and_unknown_pass(self):
+		self.absent()
+		bootstrap.require_release_branch(bootstrap.Runner(self.root, offline=True), 1)
+		bootstrap.require_release_branch(bootstrap.Runner(self.root, dry_run=True), 1)
+		with mock.patch.object(bootstrap, "release_branch_exists", return_value=None):
+			bootstrap.require_release_branch(self.runner(), 1)

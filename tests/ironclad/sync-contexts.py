@@ -157,7 +157,16 @@ def run(name: str, extra: str, required: list[str], files: dict[str, str], work:
 		f'\n[[package]]\nname = "{p}"\nversion = "{v}"\n' for p, v in manifest.load().floors["uv"].items()
 	)
 	(root / "tools/uv.lock").write_text(uv)
-	(root / "yarn.lock").write_text("# yarn lockfile v1\n")
+	# A yarn.lock that locks what package.json declares, as `yarn install` would leave it.
+	pkg = json.loads((root / "package.json").read_text())
+	(root / "yarn.lock").write_text(
+		"# yarn lockfile v1\n"
+		+ "".join(
+			f'\n"{n}@{v}":\n  version "0.0.0"\n'
+			for field in ("dependencies", "devDependencies", "optionalDependencies")
+			for n, v in sorted((pkg.get(field) or {}).items())
+		)
+	)
 	(root / "flake.lock").write_text(json.dumps(lock(["frappe", *required])))
 	git(root, "add", "-A")
 	before = snapshot(root)

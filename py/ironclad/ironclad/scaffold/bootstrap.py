@@ -154,6 +154,56 @@ def locked_frappe_nix_version(runner: Runner) -> str | None:
 	return out.stdout.strip() or None
 
 
+FRAPPE_NIX_REPO = "https://github.com/Avunu/frappe-nix"
+
+
+def release_ref_needed(root: Path, major: int) -> bool:
+	"""Whether phase A's lock would fetch ``release-<major>``: there is no ``flake.lock``, or
+	its frappe-nix node was not locked from that branch."""
+	path = root / "flake.lock"
+	if not path.is_file():
+		return True
+	try:
+		lock = flakelock.load(path)
+	except EnvError:
+		return True
+	found = flakelock.node_at(lock, ["frappe-nix"])
+	return ((found[1].get("original") or {}).get("ref") if found else None) != f"release-{major}"
+
+
+def release_branch_exists(root: Path, branch: str) -> bool | None:
+	"""Whether frappe-nix has ``branch``: ``None`` when ``git ls-remote`` can't tell (no git,
+	no network); only its "no matching ref" exit (2) is a no."""
+	try:
+		proc = subprocess.run(
+			["git", "ls-remote", "--exit-code", "--heads", FRAPPE_NIX_REPO, branch],
+			cwd=root,
+			env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+			capture_output=True,
+			timeout=120,
+			check=False,
+		)
+	except (FileNotFoundError, subprocess.TimeoutExpired):
+		return None
+	return {0: True, 2: False}.get(proc.returncode)
+
+
+def require_release_branch(runner: Runner, major: int) -> None:
+	"""Refuse, before anything is written, when the ``release-<major>`` branch the rendered
+	flake follows does not exist: it is created when ``v<major>.0.0`` is tagged (S32), and
+	``nix flake lock`` would otherwise fail halfway through (GitHub answers 422). A network
+	failure is left to the lock step to report."""
+	if runner.dry_run or runner.offline or override_url() or not release_ref_needed(runner.root, major):
+		return
+	branch = f"release-{major}"
+	if release_branch_exists(runner.root, branch) is False:
+		raise EnvError(
+			f"{FRAPPE_NIX_REPO} has no {branch} branch yet: the app's flake follows it, and it is"
+			f" created when frappe-nix v{major}.0.0 is tagged (docs/ironclad/spec.md S32). Nothing"
+			" was written; app mode is available from that release on."
+		)
+
+
 def phase_a_lock(runner: Runner, inputs: dict[str, str | None], major: int) -> bool:
 	"""Step 3: lock the flake when needed. Returns whether ``flake.lock`` changed."""
 	before = (runner.root / "flake.lock").read_bytes() if (runner.root / "flake.lock").is_file() else None

@@ -128,10 +128,23 @@ class AppCase(unittest.TestCase):
 		for name, version in sorted(floors.items()):
 			body += f'\n[[package]]\nname = "{name}"\nversion = "{version}"\n'
 		self.write("tools/uv.lock", body)
-		self.write("yarn.lock", "# yarn lockfile v1\n")
+		self.fake_yarn_lock()
 		self.write(
 			"flake.lock", json.dumps(flake_lock(["frappe", *[r.rsplit("/", 1)[-1] for r in self.required]]))
 		)
+		git(self.root, "add", "-A")
+
+	def fake_yarn_lock(self) -> None:
+		"""A yarn.lock (v1) with an entry for each dependency package.json declares."""
+		try:
+			pkg = json.loads(self.read("package.json"))
+		except FileNotFoundError:
+			pkg = {}
+		body = "# yarn lockfile v1\n"
+		for field in ("dependencies", "devDependencies", "optionalDependencies"):
+			for name, spec in sorted((pkg.get(field) or {}).items()):
+				body += f'\n"{name}@{spec}":\n  version "0.0.0"\n'
+		self.write("yarn.lock", body)
 		git(self.root, "add", "-A")
 
 	def synced(self) -> None:

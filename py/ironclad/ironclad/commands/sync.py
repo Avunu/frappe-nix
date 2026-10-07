@@ -26,7 +26,7 @@ from pathlib import Path
 import ironclad
 from ironclad.common import repo
 from ironclad.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, IroncladError, render, worst
-from ironclad.scaffold import bootstrap, engine, tomlmerge
+from ironclad.scaffold import bootstrap, context, engine, tomlmerge
 from ironclad.scaffold.engine import Item
 
 
@@ -52,6 +52,8 @@ def _passthrough(args: argparse.Namespace) -> list[str]:
 		out.append("--init-listing")
 	if args.frappe_version:
 		out += ["--frappe-version", args.frappe_version]
+	if args.site:
+		out += ["--site", args.site]
 	for chunk in args.only or []:
 		out += ["--only", chunk]
 	return out
@@ -73,7 +75,9 @@ def _listing_readme(mode: str) -> tuple[int, str] | None:
 
 
 def check(root: Path, args: argparse.Namespace) -> int:
-	plan = engine.build(root, frappe_version=args.frappe_version, only=_only(args), options=_options(args))
+	plan = engine.build(
+		root, frappe_version=args.frappe_version, site=args.site, only=_only(args), options=_options(args)
+	)
 	items = list(plan.problems)
 	if plan.created_config is not None:
 		items.insert(
@@ -158,8 +162,10 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 	way, since every other file renders from it."""
 	only = _only(args)
 	flake_step = only is None or bool({"flake.nix", ".envrc"} & set(only))
+	if flake_step:
+		bootstrap.require_release_branch(runner, context.frappe_nix_major(ironclad.__version__))
 	app = engine.load_app(root)
-	_cfg, created = engine.config_for(app, args.frappe_version)
+	_cfg, created = engine.config_for(app, args.frappe_version, args.site)
 	if created is not None:
 		text = (root / "pyproject.toml").read_text()
 		new = tomlmerge.add_tool_ironclad(text, created)
@@ -170,7 +176,12 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 			print("ironclad sync: + pyproject.toml [tool.ironclad]", file=sys.stderr)
 			_stage(root, ["pyproject.toml"], runner)
 	plan = engine.build(
-		root, phases=("a",), frappe_version=args.frappe_version, only=only, options=_options(args)
+		root,
+		phases=("a",),
+		frappe_version=args.frappe_version,
+		site=args.site,
+		only=only,
+		options=_options(args),
 	)
 	code = _invalid(plan.items)
 	if code:
@@ -198,7 +209,12 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	bootstrap.ensure_tools(runner, _passthrough(args), lock_changed)
 	only = _only(args)
 	plan = engine.build(
-		root, phases=("b",), frappe_version=args.frappe_version, only=only, options=_options(args)
+		root,
+		phases=("b",),
+		frappe_version=args.frappe_version,
+		site=args.site,
+		only=only,
+		options=_options(args),
 	)
 	code = _invalid(plan.items)
 	if code:
@@ -264,7 +280,9 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	if runner.dry_run:
 		return CLEAN
 	# What sync could not fix: rules on app-owned keys, and (offline) the locks it did not run.
-	after = engine.build(root, frappe_version=args.frappe_version, only=only, options=_options(args))
+	after = engine.build(
+		root, frappe_version=args.frappe_version, site=args.site, only=only, options=_options(args)
+	)
 	left = [i for i in after.problems if not (args.offline and i.command)]
 	for i in left:
 		print(f"ironclad sync: {i.path}: {i.problem}", file=sys.stderr)
@@ -279,6 +297,10 @@ def write(root: Path, args: argparse.Namespace) -> int:
 	runner = bootstrap.Runner(root, dry_run=args.dry_run, offline=args.offline)
 	bootstrap.override_url()
 	lock_changed = False
+	if args.phase == "preflight":
+		# frappe-init --app, before it writes its template files.
+		bootstrap.require_release_branch(runner, context.frappe_nix_major(ironclad.__version__))
+		return CLEAN
 	if args.phase in ("all", "a"):
 		lock_changed = phase_a(root, args, runner)
 	if args.phase == "a":
@@ -340,10 +362,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 		"--frappe-version", metavar="version-<N>", help="the Frappe major when [tool.ironclad] is created"
 	)
 	p.add_argument(
+		"--site",
+		metavar="NAME",
+		help="the dev site when [tool.ironclad] is created and differs from <app-hyphen>.localhost",
+	)
+	p.add_argument(
 		"--format", choices=("text", "json", "github"), default="text", help="--check: report format"
 	)
 	p.add_argument(
 		"--expect-rev", default="", help="--check: the frappe-nix revision this ironclad was installed from"
 	)
-	p.add_argument("--phase", choices=("all", "a", "b"), default="all", help=argparse.SUPPRESS)
+	p.add_argument("--phase", choices=("all", "a", "b", "preflight"), default="all", help=argparse.SUPPRESS)
 	p.set_defaults(func=run)

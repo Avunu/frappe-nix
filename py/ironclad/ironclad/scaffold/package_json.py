@@ -214,3 +214,41 @@ def stylelint_merge(current: dict | None, ctx: Any) -> dict:
 		ignore.append(want)
 	doc["ignoreFiles"] = ignore
 	return doc
+
+
+# Specifiers yarn resolves inside the checkout, which yarn.lock (v1) has no entry for.
+_UNLOCKED = re.compile(r"^(link:|portal:|workspace:)")
+
+
+def yarn_lock_keys(text: str) -> set[str]:
+	"""Every ``name@range`` a ``yarn.lock`` resolves: the comma-separated keys of each
+	top-level entry (berry's ``name@npm:range`` read as ``name@range``)."""
+	berry = re.search(r"^__metadata:", text, re.M) is not None
+	keys: set[str] = set()
+	for line in text.splitlines():
+		if not line or line[0] in " \t#" or not line.endswith(":"):
+			continue
+		for part in line[:-1].split(","):
+			key = part.strip().strip('"')
+			keys.add(key.replace("@npm:", "@", 1) if berry else key)
+	return keys
+
+
+def yarn_lock_missing(package: dict | None, lock: str, local: set[str]) -> list[str]:
+	"""The ``name@range`` of each dependency ``package.json`` declares that ``lock`` has no
+	entry for: yarn.lock is stale, and ``yarn install --frozen-lockfile`` would refuse it.
+	``local`` names the workspace packages, which yarn links rather than locks."""
+	if not isinstance(package, dict):
+		return []
+	keys = yarn_lock_keys(lock)
+	out: set[str] = set()
+	for field in ("dependencies", "devDependencies", "optionalDependencies"):
+		deps = package.get(field)
+		if not isinstance(deps, dict):
+			continue
+		for name, spec in deps.items():
+			if not isinstance(spec, str) or _UNLOCKED.match(spec) or name in local:
+				continue
+			if f"{name}@{spec}" not in keys:
+				out.add(f"{name}@{spec}")
+	return sorted(out)

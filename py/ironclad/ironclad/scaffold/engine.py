@@ -8,6 +8,7 @@ and the problem when the two differ or a rule is broken. A problem sync can fix 
 one it can't (a rule on an app-owned key) carries its own exit code and no new content.
 """
 
+import contextlib
 import difflib
 import json
 import os
@@ -138,8 +139,10 @@ def new_config(
 	frappe_version: str | None,
 	package: dict | None,
 	tracked: list[str],
+	site: str | None = None,
 ) -> dict:
-	"""``[tool.ironclad]`` as sync creates it (§3.3 step 1)."""
+	"""``[tool.ironclad]`` as sync creates it (§3.3 step 1). ``site`` is ``--site``
+	(``frappe-init --app --site``), which wins over the site an existing flake names."""
 	major = None
 	if frappe_version:
 		m = re.fullmatch(r"version-(\d+)", frappe_version)
@@ -160,6 +163,9 @@ def new_config(
 		if name not in siblings and not any(hooks.bare(s) == hooks.bare(name) for s in siblings):
 			siblings.append(name)
 	cfg: dict[str, Any] = {"schema": 1, "frappe-major": major, "siblings": siblings}
+	if site is not None and not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", site):
+		raise ConfigError(f"--site {site!r} is not a site name (lower-case letters, digits, '.' and '-')")
+	flake_site = site or flake_site
 	# The dev site an existing frappe-nix flake already uses: a new name would orphan every
 	# developer's site state (carbon_frappe's is carbon.localhost, not carbon-frappe.localhost).
 	if (
@@ -205,13 +211,15 @@ def load_package(root: Path) -> dict | None:
 	return doc
 
 
-def config_for(app: context.App, frappe_version: str | None) -> tuple[dict, dict | None]:
+def config_for(
+	app: context.App, frappe_version: str | None, site: str | None = None
+) -> tuple[dict, dict | None]:
 	"""The validated configuration, and the raw table when sync has to create it."""
 	raw = pyproject.tool_ironclad(app.pyproject)
 	created = None
 	if raw is None:
 		raw = created = new_config(
-			app.root, app.name, app.hooks, frappe_version, load_package(app.root), app.tracked
+			app.root, app.name, app.hooks, frappe_version, load_package(app.root), app.tracked, site
 		)
 	return validate_config(raw), created
 
@@ -346,6 +354,23 @@ def _spa_problem(path: str) -> str:
 	)
 
 
+def _yarn_lock_missing(plan: Plan, lock: str) -> list[str]:
+	"""``package_json.yarn_lock_missing`` for the ``package.json`` on disk."""
+	try:
+		package = load_package(plan.root)
+	except ConfigError:
+		return []  # reported by the package.json entry
+	local: set[str] = set()
+	if isinstance(package, dict) and package.get("workspaces"):
+		for path in plan.app.tracked:
+			if path != "package.json" and path.endswith("/package.json"):
+				with contextlib.suppress(ConfigError, json.JSONDecodeError):
+					doc = json.loads(read(plan.root, path) or "{}")
+					if isinstance(doc, dict) and isinstance(doc.get("name"), str):
+						local.add(doc["name"])
+	return package_json.yarn_lock_missing(package, lock, local)
+
+
 def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: bool) -> list[Item]:
 	"""The item(s) for one entry whose ``when`` holds."""
 	root, ctx = plan.root, plan.ctx
@@ -421,6 +446,11 @@ def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: boo
 				short = floors.lock_shortfalls(root / path, ctx.floors.get("uv", {}))
 				if short:
 					problem = f"below its floor or missing from the lock: {', '.join(short)}"
+			if current is not None and entry.handler == "yarn-lock":
+				absent = _yarn_lock_missing(plan, current)
+				if absent:
+					more = f" and {len(absent) - 5} more" if len(absent) > 5 else ""
+					problem = f"does not lock package.json's {', '.join(absent[:5])}{more}"
 			if missing or problem:
 				out.append(item(current, problem or "missing", DRIFT, entry.command))
 			else:
@@ -585,13 +615,14 @@ def build(
 	*,
 	rev: str | None = None,
 	frappe_version: str | None = None,
+	site: str | None = None,
 	only: list[str] | None = None,
 	options: dict | None = None,
 	phases: tuple[str, ...] = ("a", "b"),
 ) -> Plan:
 	"""The plan for the app at ``root``."""
 	app = load_app(root)
-	cfg, created = config_for(app, frappe_version)
+	cfg, created = config_for(app, frappe_version, site)
 	check_excludes(app, cfg)
 	if rev is None:
 		rev = locked_rev(root)
