@@ -25,6 +25,7 @@ from rq.timeouts import TimerDeathPenalty
 from rq.worker import StopRequested
 
 from frappe_runtime.journald import setup_logging
+from frappe_runtime.util import enter_sites_dir
 
 logger = logging.getLogger("frappe.runner")
 
@@ -590,10 +591,9 @@ def main() -> None:
 	# the way frappe_runtime.server.serve() already does for the standalone server.
 	# frappe's execute_job() calls frappe.init(site, force=True) with the default
 	# sites_path="." for every job, so from anywhere else each job dies with
-	# "IncorrectSitePath: 404 Not Found: <site> does not exist". Guarded on the
-	# directory, so a re-exec (which keeps the cwd) does not descend twice.
-	if os.path.isdir("sites"):
-		os.chdir("sites")
+	# "IncorrectSitePath: 404 Not Found: <site> does not exist". A re-exec keeps the
+	# cwd, so enter_sites_dir() must give the same cwd when it runs again from sites/.
+	enter_sites_dir()
 	# INFO, not the level services.frappe.logging.level sets: what reaches the root
 	# logger here is mostly the runner's own lifecycle (restarts, drains), which is
 	# what an operator reads the unit's journal for. Frappe's application loggers

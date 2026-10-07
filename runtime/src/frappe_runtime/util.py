@@ -9,6 +9,28 @@ from urllib.parse import urlsplit
 from frappe_runtime.config import RealtimeConfig
 
 
+def enter_sites_dir() -> None:
+	"""chdir into the bench's sites/ directory, and stay there when called again.
+
+	frappe resolves sites_path="." against the cwd (execute_job re-inits with that
+	default), so the process has to run from sites/, the way bench's own worker and
+	scheduler do. It starts from the bench root. A re-exec (a reload, SIGHUP) keeps
+	the cwd, so this runs a second time from sites/ itself, and "there is a sites/
+	here" cannot tell the two apart: a sites/ inside sites/ would take the process
+	one level too deep, where the site directories and assets/assets.json are gone.
+	SITES_PATH names the directory, so use it; without it, a directory that holds
+	apps.txt already is sites/.
+	"""
+	sites_path = os.environ.get("SITES_PATH")
+	if sites_path and os.path.isdir(sites_path):
+		# Absolute, so the re-exec resolves it the same from the new cwd.
+		sites_path = os.path.abspath(sites_path)
+		os.environ["SITES_PATH"] = sites_path
+		os.chdir(sites_path)
+	elif os.path.isdir("sites") and not os.path.isfile("apps.txt"):
+		os.chdir("sites")
+
+
 def read_header(environ: dict, name: str) -> str | None:
 	"""Read an HTTP header from a WSGI environ (HTTP_FOO style)."""
 	return environ.get("HTTP_" + name.upper().replace("-", "_"))
