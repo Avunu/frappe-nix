@@ -36,6 +36,7 @@ from frappe_runtime.bridge import RedisBridge
 from frappe_runtime.config import RealtimeConfig, get_config
 from frappe_runtime.dispatch import wire
 from frappe_runtime.journald import setup_logging
+from frappe_runtime.util import enter_sites_dir
 
 logger = logging.getLogger("frappe.realtime")
 
@@ -178,8 +179,7 @@ class RealtimeServer:
 def serve(config: RealtimeConfig | None = None) -> None:
 	config = config or get_config()
 
-	if os.path.isdir("sites"):
-		os.chdir("sites")
+	enter_sites_dir()
 
 	RealtimeServer(config).run()
 

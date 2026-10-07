@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -58,6 +59,7 @@ from frappe_runtime.config import DEFAULT_WORKER_THREADS, RealtimeConfig, get_co
 from frappe_runtime.context import frappe_context
 from frappe_runtime.registry import Registry
 from frappe_runtime.socket import Socket, SyncSocket
+from frappe_runtime.util import enter_sites_dir
 
 ConnectionRefusedError = auth_mod.ConnectionRefusedError
 
@@ -1177,6 +1179,67 @@ class TestBridgeStaysLocal(unittest.IsolatedAsyncioTestCase):
 class TestConfigSwitch(unittest.TestCase):
 	def test_redis_manager_defaults_off(self):
 		self.assertFalse(make_config().redis_manager)
+
+
+class TestEnterSitesDir(unittest.TestCase):
+	"""The runner re-execs (reload, SIGHUP) with the cwd it has, so the second call
+	runs from sites/ and has to stay there, also when sites/ holds a sites/ of its
+	own. Descending again loses the site directories and assets/assets.json."""
+
+	def setUp(self):
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.bench = os.path.realpath(tmp.name)
+		self.sites = os.path.join(self.bench, "sites")
+		os.makedirs(os.path.join(self.sites, "sites", "site1"))
+		with open(os.path.join(self.sites, "apps.txt"), "w"):
+			pass
+		self.addCleanup(os.chdir, os.getcwd())
+		env = patch.dict(os.environ)
+		env.start()
+		self.addCleanup(env.stop)
+		os.environ.pop("SITES_PATH", None)
+		os.chdir(self.bench)
+
+	def cwd(self) -> str:
+		return os.path.realpath(os.getcwd())
+
+	def test_enters_sites_from_bench_root(self):
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_stays_in_sites_on_reexec(self):
+		enter_sites_dir()
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_sites_path_enters_sites_from_bench_root(self):
+		os.environ["SITES_PATH"] = self.sites
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_sites_path_stays_in_sites_on_reexec(self):
+		os.environ["SITES_PATH"] = self.sites
+		enter_sites_dir()
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_relative_sites_path_is_made_absolute(self):
+		os.environ["SITES_PATH"] = "sites"
+		enter_sites_dir()
+		self.assertEqual(os.environ["SITES_PATH"], self.sites)
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_sites_path_that_is_no_directory_falls_back(self):
+		os.environ["SITES_PATH"] = os.path.join(self.bench, "missing")
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), self.sites)
+
+	def test_no_sites_dir_stays_put(self):
+		os.chdir(os.path.join(self.sites, "sites", "site1"))
+		enter_sites_dir()
+		self.assertEqual(self.cwd(), os.path.join(self.sites, "sites", "site1"))
 
 
 if __name__ == "__main__":
