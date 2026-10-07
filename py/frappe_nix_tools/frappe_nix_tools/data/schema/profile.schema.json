@@ -1,0 +1,1709 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Avunu/frappe-nix/schema/profile.schema.json",
+  "title": "frappe-nix app standards profile",
+  "description": "A built-in or org profile (docs/app-standards/spec.md \u00a78.1). Unknown keys are errors. Module parameters marked x-app-only may be set only in an app's [tool.frappe-nix]. Each default is the value a key gets when no layer sets it (\u00a78.4); they are the recommended values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "The profile schema version. frappe-nix v1 reads schema 1."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "extends": {
+      "type": "string",
+      "pattern": "^(minimal|recommended(@[0-9]+\\.[0-9]+)?)$",
+      "description": "Org profiles only, required there: minimal, recommended or a frozen snapshot recommended@<minor> (S42). Chains are not allowed."
+    },
+    "requires-frappe-nix": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A PEP 440 specifier against frappe_nix_tools.__version__ (\u00a76.4)."
+    },
+    "org": {
+      "$ref": "#/$defs/org"
+    },
+    "known-apps": {
+      "$ref": "#/$defs/known-apps"
+    },
+    "retire": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "contains": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "module": {
+            "enum": [
+              "dev-shell",
+              "editorconfig",
+              "metadata",
+              "python-lint",
+              "ssort",
+              "python-types",
+              "js",
+              "typescript",
+              "stylelint",
+              "tests",
+              "semgrep",
+              "workflow-lint",
+              "shell-lint",
+              "nix-lint",
+              "hygiene",
+              "commits",
+              "releases",
+              "dependabot",
+              "ci",
+              "repo-policy",
+              "vite-register",
+              "pilot-assets",
+              "listing",
+              "readme",
+              "icons",
+              "screenshots",
+              "demo",
+              "test-utils",
+              "docs-site"
+            ]
+          }
+        },
+        "required": [
+          "paths",
+          "module"
+        ]
+      },
+      "default": [],
+      "description": "Retire rules added to the built-in ones (\u00a72.4.1)."
+    },
+    "replace-apps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "default": [],
+      "description": "App pairs frappe-rename-app must replace, not rename (\u00a75.10)."
+    },
+    "extra-files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "template": {
+            "type": "string",
+            "minLength": 1
+          },
+          "strategy": {
+            "enum": [
+              "whole",
+              "seed"
+            ]
+          },
+          "module": {
+            "enum": [
+              "dev-shell",
+              "editorconfig",
+              "metadata",
+              "python-lint",
+              "ssort",
+              "python-types",
+              "js",
+              "typescript",
+              "stylelint",
+              "tests",
+              "semgrep",
+              "workflow-lint",
+              "shell-lint",
+              "nix-lint",
+              "hygiene",
+              "commits",
+              "releases",
+              "dependabot",
+              "ci",
+              "repo-policy",
+              "vite-register",
+              "pilot-assets",
+              "listing",
+              "readme",
+              "icons",
+              "screenshots",
+              "demo",
+              "test-utils",
+              "docs-site"
+            ]
+          },
+          "when": {
+            "type": "string",
+            "minLength": 1
+          },
+          "header": {
+            "enum": [
+              "yaml",
+              "toml",
+              "shell",
+              "ini",
+              "nix",
+              "jsonc",
+              "ts",
+              "none"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "template",
+          "strategy",
+          "module"
+        ]
+      },
+      "default": [],
+      "description": "Files the org adds to every app that uses the profile (\u00a78.1)."
+    },
+    "dev-shell": {
+      "$ref": "#/$defs/modules/dev-shell"
+    },
+    "editorconfig": {
+      "$ref": "#/$defs/modules/editorconfig"
+    },
+    "metadata": {
+      "$ref": "#/$defs/modules/metadata"
+    },
+    "python-lint": {
+      "$ref": "#/$defs/modules/python-lint"
+    },
+    "ssort": {
+      "$ref": "#/$defs/modules/ssort"
+    },
+    "python-types": {
+      "$ref": "#/$defs/modules/python-types"
+    },
+    "js": {
+      "$ref": "#/$defs/modules/js"
+    },
+    "typescript": {
+      "$ref": "#/$defs/modules/typescript"
+    },
+    "stylelint": {
+      "$ref": "#/$defs/modules/stylelint"
+    },
+    "tests": {
+      "$ref": "#/$defs/modules/tests"
+    },
+    "semgrep": {
+      "$ref": "#/$defs/modules/semgrep"
+    },
+    "workflow-lint": {
+      "$ref": "#/$defs/modules/workflow-lint"
+    },
+    "shell-lint": {
+      "$ref": "#/$defs/modules/shell-lint"
+    },
+    "nix-lint": {
+      "$ref": "#/$defs/modules/nix-lint"
+    },
+    "hygiene": {
+      "$ref": "#/$defs/modules/hygiene"
+    },
+    "commits": {
+      "$ref": "#/$defs/modules/commits"
+    },
+    "releases": {
+      "$ref": "#/$defs/modules/releases"
+    },
+    "dependabot": {
+      "$ref": "#/$defs/modules/dependabot"
+    },
+    "ci": {
+      "$ref": "#/$defs/modules/ci"
+    },
+    "repo-policy": {
+      "$ref": "#/$defs/modules/repo-policy"
+    },
+    "vite-register": {
+      "$ref": "#/$defs/modules/vite-register"
+    },
+    "pilot-assets": {
+      "$ref": "#/$defs/modules/pilot-assets"
+    },
+    "listing": {
+      "$ref": "#/$defs/modules/listing"
+    },
+    "readme": {
+      "$ref": "#/$defs/modules/readme"
+    },
+    "icons": {
+      "$ref": "#/$defs/modules/icons"
+    },
+    "screenshots": {
+      "$ref": "#/$defs/modules/screenshots"
+    },
+    "demo": {
+      "$ref": "#/$defs/modules/demo"
+    },
+    "test-utils": {
+      "$ref": "#/$defs/modules/test-utils"
+    },
+    "docs-site": {
+      "$ref": "#/$defs/modules/docs-site"
+    }
+  },
+  "$defs": {
+    "org": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publisher": {
+          "type": "string",
+          "description": "hooks.app_publisher (L2), package.json author (\u00a72.8).",
+          "default": ""
+        },
+        "email": {
+          "type": "string",
+          "description": "hooks.app_email (L2), README support block (\u00a72.19).",
+          "default": ""
+        },
+        "copyright-holder": {
+          "type": "string",
+          "description": "README licence line; \"\" means: use publisher.",
+          "default": ""
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX id: package.json license, hooks.app_license, README licence line.",
+          "default": ""
+        },
+        "github-owner": {
+          "type": "string",
+          "description": "Default owner for repo when origin is unset (\u00a72.2).",
+          "default": ""
+        },
+        "website-url": {
+          "type": "string",
+          "description": "Template with {app}, {app_hyphen}: listing website and L12.",
+          "default": ""
+        },
+        "docs-url": {
+          "type": "string",
+          "description": "Template with {app}, {app_hyphen}: listing documentation and L12.",
+          "default": ""
+        },
+        "dev-docs-url": {
+          "type": "string",
+          "description": "README development link (S26).",
+          "default": "https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards"
+        },
+        "support-url": {
+          "type": "string",
+          "description": "README support link; \"\" means: https://github.com/<repo>/issues.",
+          "default": ""
+        },
+        "repo-url": {
+          "type": "string",
+          "description": "Template with {repo}: the clone URL in README installation (\u00a72.19).",
+          "default": "https://github.com/{repo}"
+        },
+        "brand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tile-color": {
+              "anyOf": [
+                {
+                  "const": ""
+                },
+                {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                }
+              ],
+              "default": "",
+              "description": "The icon tile fill (\u00a75.3); required by icons."
+            },
+            "glyph-color": {
+              "type": "string",
+              "pattern": "^#[0-9A-Fa-f]{6}$",
+              "description": "The icon tile glyph.",
+              "default": "#FFFFFF"
+            },
+            "palette": {
+              "type": "object",
+              "default": {},
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{6}$"
+              }
+            }
+          }
+        },
+        "readme": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "badges": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "image": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "link": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "label",
+                  "image",
+                  "link"
+                ]
+              },
+              "default": [],
+              "description": "Extra README header badges, in order (\u00a72.19)."
+            },
+            "links": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "url": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "label",
+                  "url"
+                ]
+              },
+              "default": [],
+              "description": "Extra links in the README support block."
+            }
+          }
+        }
+      },
+      "description": "Organisation values (S37). Every string defaults to \"\" (unset) except the two links."
+    },
+    "known-app": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flake-url": {
+          "type": "string",
+          "pattern": "^(github:|gitlab:|git\\+https://)"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "range": {
+          "type": "string",
+          "minLength": 1
+        },
+        "desk_global": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "repo"
+      ]
+    },
+    "known-apps": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/$defs/known-app"
+      },
+      "description": "Sibling templates added to or overriding known-apps.json, keyed by app name or <owner>/<repo> (\u00a72.1)."
+    },
+    "modules": {
+      "dev-shell": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "systems": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "x86_64-linux",
+                "aarch64-linux",
+                "aarch64-darwin",
+                "x86_64-darwin"
+              ]
+            },
+            "default": [
+              "x86_64-linux",
+              "aarch64-linux",
+              "aarch64-darwin",
+              "x86_64-darwin"
+            ],
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Flake systems.",
+            "x-app-only": true
+          },
+          "extra-substituters": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Appended to nixConfig.extra-substituters.",
+            "x-app-only": true
+          },
+          "extra-trusted-public-keys": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Appended to nixConfig.extra-trusted-public-keys.",
+            "x-app-only": true
+          },
+          "frappe-nix-url": {
+            "type": "string",
+            "description": "\"\" means github:Avunu/frappe-nix/release-<major>; any flake URL otherwise (a fork, a mirror, a tag or a rev).",
+            "default": "",
+            "x-app-only": true
+          }
+        },
+        "description": "flake.nix, .envrc, the .gitignore block and node-lock seeds (\u00a72.5, \u00a72.6). Required: enable = false is exit 2."
+      },
+      "editorconfig": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "indent": {
+            "enum": [
+              "tab",
+              "space"
+            ],
+            "default": "tab"
+          },
+          "line-length": {
+            "type": "integer",
+            "default": 110,
+            "minimum": 1
+          }
+        },
+        "description": ".editorconfig (\u00a72.7)."
+      },
+      "metadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "build-backend": {
+            "enum": [
+              "flit",
+              "any"
+            ],
+            "default": "flit",
+            "description": "\"any\" leaves [build-system] app-owned."
+          },
+          "package-type": {
+            "enum": [
+              "module",
+              ""
+            ],
+            "default": "module",
+            "description": "\"\" leaves package.json type app-owned."
+          },
+          "package-manager": {
+            "type": "string",
+            "description": "\"\" leaves package.json packageManager app-owned.",
+            "default": "yarn@1.22.22"
+          },
+          "node-engine": {
+            "type": "string",
+            "description": "\"\" leaves package.json engines.node app-owned.",
+            "default": ">=24"
+          }
+        },
+        "description": "pyproject.toml build system, requires-python and frappe-dependencies; package.json base keys; C2\u2013C4, C6; the override allow-list."
+      },
+      "python-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "tool": {
+            "enum": [
+              "ruff",
+              "none"
+            ],
+            "default": "ruff"
+          },
+          "select": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "F",
+              "E",
+              "W",
+              "I",
+              "UP",
+              "B",
+              "RUF",
+              "SIM",
+              "C4",
+              "PIE",
+              "PERF",
+              "T20"
+            ]
+          },
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "E501",
+              "W191"
+            ]
+          },
+          "line-length": {
+            "type": "integer",
+            "default": 110,
+            "minimum": 1
+          },
+          "indent-style": {
+            "enum": [
+              "tab",
+              "space"
+            ],
+            "default": "tab"
+          },
+          "quote-style": {
+            "enum": [
+              "double",
+              "single"
+            ],
+            "default": "double"
+          },
+          "typing-modules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "frappe.types.DF"
+            ]
+          }
+        },
+        "description": "ruff hooks, [tool.ruff*], lint:py (\u00a72.12, \u00a72.14)."
+      },
+      "ssort": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "The ssort hook (S2)."
+      },
+      "python-types": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "tool": {
+            "enum": [
+              "ty",
+              "none"
+            ],
+            "default": "ty"
+          },
+          "error-on-warning": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "description": "ty: [tool.ty*], typecheck:py, frappe-test stage 7, R2."
+      },
+      "js": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "tool": {
+            "enum": [
+              "oxc",
+              "none"
+            ],
+            "default": "oxc"
+          },
+          "locked-rules": {
+            "type": "boolean",
+            "default": true
+          },
+          "format-width": {
+            "type": "integer",
+            "default": 110,
+            "minimum": 1
+          },
+          "format-tabs": {
+            "type": "boolean",
+            "default": true
+          },
+          "oxlint": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "categories": {
+                "type": "object",
+                "additionalProperties": {
+                  "enum": [
+                    "error",
+                    "warn",
+                    "off"
+                  ]
+                },
+                "properties": {
+                  "correctness": {
+                    "enum": [
+                      "error",
+                      "warn",
+                      "off"
+                    ],
+                    "default": "error"
+                  },
+                  "suspicious": {
+                    "enum": [
+                      "error",
+                      "warn",
+                      "off"
+                    ],
+                    "default": "error"
+                  },
+                  "perf": {
+                    "enum": [
+                      "error",
+                      "warn",
+                      "off"
+                    ],
+                    "default": "warn"
+                  },
+                  "pedantic": {
+                    "enum": [
+                      "error",
+                      "warn",
+                      "off"
+                    ],
+                    "default": "off"
+                  }
+                }
+              },
+              "ignore": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "default": [],
+                "description": "Appended to ignorePatterns.",
+                "x-app-only": true
+              },
+              "globals": {
+                "type": "object",
+                "default": {},
+                "description": "Merged into the desk-JS override's globals.",
+                "x-app-only": true
+              },
+              "overrides": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "files": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "rules": {
+                      "type": "object"
+                    },
+                    "globals": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "files"
+                  ]
+                },
+                "default": [],
+                "description": "Appended; each {files, rules, globals}.",
+                "x-app-only": true
+              }
+            }
+          },
+          "oxfmt": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ignore": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "default": [],
+                "description": "Appended to ignorePatterns.",
+                "x-app-only": true
+              }
+            }
+          }
+        },
+        "description": "oxlint and oxfmt: configs, hooks, format/lint scripts, devDependencies (\u00a72.10)."
+      },
+      "typescript": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "preset": {
+            "enum": [
+              "frappe-types",
+              "inline"
+            ],
+            "default": "frappe-types"
+          },
+          "strict-extras": {
+            "type": "boolean",
+            "default": true
+          },
+          "check-js": {
+            "type": "boolean",
+            "default": false
+          },
+          "audit-consumer": {
+            "type": "boolean",
+            "default": false,
+            "description": "typecheck runs `frappe-types audit-consumer --strict`."
+          },
+          "browser": {
+            "type": "boolean",
+            "default": true,
+            "description": "false: no tsconfig.browser.json even when public/**/*.ts is tracked.",
+            "x-app-only": true
+          },
+          "browser-include": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Replaces the default browser include (\u00a72.9).",
+            "x-app-only": true
+          },
+          "web-include": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Globs of JS under the package that run on web pages, not the desk.",
+            "x-app-only": true
+          },
+          "paths": {
+            "type": "object",
+            "default": {},
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "compilerOptions.paths, in tsconfig.base.json.",
+            "x-app-only": true
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Appended to every project's exclude. Only non-source paths.",
+            "x-app-only": true
+          },
+          "spa": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "root": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "include": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "tsconfig": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "check": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "root",
+                "include",
+                "tsconfig",
+                "check"
+              ]
+            },
+            "default": [],
+            "description": "Vue/Vite SPAs without a package.json of their own.",
+            "x-app-only": true
+          }
+        },
+        "description": "tsconfig*.json, the typecheck script and job, C7, C9 (\u00a72.9)."
+      },
+      "stylelint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "globs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Default: the discovered <app>/public/**/*.scss when any exist.",
+            "x-app-only": true
+          }
+        },
+        "description": ".stylelintrc.json, its hook and the lint:css script, when SCSS exists (\u00a72.11)."
+      },
+      "tests": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enable": {
+                "type": "boolean",
+                "default": true
+              },
+              "target": {
+                "type": "number",
+                "default": 80,
+                "minimum": 0,
+                "maximum": 100
+              },
+              "raise-margin": {
+                "type": "number",
+                "default": 2.0,
+                "minimum": 0,
+                "description": "0 turns the upward ratchet off."
+              },
+              "initial-floor": {
+                "type": "number",
+                "default": 0,
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "testmap": {
+            "type": "boolean",
+            "default": true
+          },
+          "composition": {
+            "type": "boolean",
+            "default": true
+          },
+          "js-unit": {
+            "type": "boolean",
+            "default": true
+          },
+          "js-coverage-min": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 0,
+            "maximum": 100,
+            "description": "node:test line-coverage minimum; used only when test/unit/ exists."
+          },
+          "setup": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(module|execute):[A-Za-z_][A-Za-z0-9_.]*$"
+            },
+            "default": [],
+            "description": "Steps before the app's tests: \"module:<dotted test module>\" or \"execute:<dotted callable>\".",
+            "x-app-only": true
+          }
+        },
+        "description": "The frappe-test gate (ci / test), coverage tables, testmap, composition, JS unit tests, R1/R4/R7 (\u00a75.1)."
+      },
+      "semgrep": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "frappe-rules": {
+            "type": "boolean",
+            "default": true
+          },
+          "test-correctness": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "description": "The semgrep scans in lint (\u00a74.2); CI only."
+      },
+      "workflow-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "zizmor and actionlint hooks, .github/zizmor.yml."
+      },
+      "shell-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "The shellcheck hook."
+      },
+      "nix-lint": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "frappe-test stage 8; nixfmt, statix and deadnix in the shell."
+      },
+      "hygiene": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "max-file-kb": {
+            "type": "integer",
+            "default": 1024,
+            "minimum": 1
+          }
+        },
+        "description": "pre-commit-hooks basics, .git-blame-ignore-revs (\u00a72.20)."
+      },
+      "commits": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "tool": {
+            "enum": [
+              "committed"
+            ],
+            "default": "committed"
+          },
+          "allowed-types": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [
+              "build",
+              "chore",
+              "ci",
+              "docs",
+              "feat",
+              "fix",
+              "perf",
+              "refactor",
+              "revert",
+              "style",
+              "test",
+              "deprecate"
+            ],
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "subject-length": {
+            "type": "integer",
+            "default": 100,
+            "minimum": 1
+          },
+          "allow-stacked": {
+            "type": "boolean",
+            "default": true
+          },
+          "pr-allowed-bases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Globs of extra base branches a PR may target (\u00a75.9)."
+          }
+        },
+        "description": "committed.toml, the commit-msg hooks, pr-policy (\u00a72.15, \u00a74.3)."
+      },
+      "releases": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "tool": {
+            "enum": [
+              "release-please",
+              "none"
+            ],
+            "default": "release-please"
+          },
+          "branching": {
+            "enum": [
+              "develop+version",
+              "main+tags"
+            ],
+            "default": "develop+version"
+          },
+          "version-scheme": {
+            "enum": [
+              "semver",
+              "frappe-major"
+            ],
+            "default": "semver"
+          },
+          "tag-prefix": {
+            "enum": [
+              "v",
+              ""
+            ],
+            "default": "v"
+          },
+          "bootstrap-sha": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{7,40}$",
+            "description": "Rendered into release-please-config.json.",
+            "x-app-only": true
+          }
+        },
+        "description": "release-please config and manifest, the version block, release.yml, C1, C5 (\u00a72.13, \u00a72.16, \u00a74.4). Needs commits."
+      },
+      "dependabot": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "cadence": {
+            "enum": [
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "default": "weekly"
+          },
+          "cadence-overrides": {
+            "type": "object",
+            "default": {},
+            "propertyNames": {
+              "enum": [
+                "github-actions",
+                "npm",
+                "uv",
+                "pre-commit",
+                "nix",
+                "gitsubmodule"
+              ]
+            },
+            "additionalProperties": {
+              "enum": [
+                "daily",
+                "weekly",
+                "monthly"
+              ]
+            }
+          },
+          "cooldown-days": {
+            "type": "integer",
+            "default": 3,
+            "minimum": 0
+          },
+          "auto-merge": {
+            "type": "boolean",
+            "default": true,
+            "description": "Acts only where required checks protect the integration branch (\u00a74.5)."
+          },
+          "ecosystems": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "github-actions": {
+                "type": "boolean",
+                "default": true
+              },
+              "npm": {
+                "type": "boolean",
+                "default": true
+              },
+              "uv": {
+                "type": "boolean",
+                "default": true
+              },
+              "pre-commit": {
+                "type": "boolean",
+                "default": true
+              },
+              "nix": {
+                "type": "boolean",
+                "default": true
+              },
+              "gitsubmodule": {
+                "type": "boolean",
+                "default": true
+              }
+            }
+          }
+        },
+        "description": ".github/dependabot.yml, deps.yml (\u00a72.17, \u00a74.5)."
+      },
+      "ci": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "provider": {
+            "enum": [
+              "github"
+            ],
+            "default": "github",
+            "description": "Other values are reserved."
+          },
+          "nightly": {
+            "type": "boolean",
+            "default": true
+          },
+          "test-timeout-minutes": {
+            "type": "integer",
+            "default": 75,
+            "minimum": 1
+          },
+          "schedules": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ci": {
+                "type": "string",
+                "description": "A cron expression; \"\" means none.",
+                "default": "0 6 * * *"
+              },
+              "release": {
+                "type": "string",
+                "description": "A cron expression; \"\" means none.",
+                "default": "30 5 * * *"
+              },
+              "deps-sweep": {
+                "type": "string",
+                "description": "A cron expression; \"\" means none.",
+                "default": "0 9 * * *"
+              },
+              "deps-relock": {
+                "type": "string",
+                "description": "A cron expression; \"\" means none.",
+                "default": "0 8 * * 1"
+              },
+              "nightly": {
+                "type": "string",
+                "description": "A cron expression; \"\" means none.",
+                "default": "0 7 * * *"
+              }
+            }
+          }
+        },
+        "description": "The caller workflows (\u00a74.7) and so every gate job."
+      },
+      "repo-policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "required-approvals": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 0
+          },
+          "require-code-owner-review": {
+            "type": "boolean",
+            "default": false
+          },
+          "required-checks": {
+            "anyOf": [
+              {
+                "const": "gates"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "pr-policy",
+                    "lint",
+                    "typecheck",
+                    "test",
+                    "marketplace"
+                  ]
+                },
+                "uniqueItems": true
+              }
+            ],
+            "default": "gates"
+          },
+          "release-bypass": {
+            "type": "string",
+            "pattern": "^(github-actions|user:[0-9]+)$",
+            "default": "github-actions"
+          },
+          "secret-scanning": {
+            "type": "boolean",
+            "default": true
+          },
+          "merge-methods": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "squash",
+                "merge",
+                "rebase"
+              ]
+            },
+            "default": [
+              "squash"
+            ],
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "require-thread-resolution": {
+            "type": "boolean",
+            "default": true
+          },
+          "delete-branch-on-merge": {
+            "type": "boolean",
+            "default": true
+          },
+          "manage-default-branch": {
+            "type": "boolean",
+            "default": true
+          },
+          "manage-features": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "description": "Rulesets and repo settings applied by frappe-nix repo apply; audit A1, A3 (\u00a74.8, \u00a74.9)."
+      },
+      "vite-register": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "scripts/vite-register.mjs and C8, when Vite exists (\u00a75.11)."
+      },
+      "pilot-assets": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "assets.yml and its dispatch. Needs ci and releases."
+      },
+      "listing": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "publish": {
+            "type": "boolean",
+            "default": false
+          },
+          "registry-upstream": {
+            "type": "string",
+            "minLength": 1,
+            "default": "frappe/marketplace"
+          },
+          "registry-fork": {
+            "type": "string",
+            "description": "Required when publish is on.",
+            "default": ""
+          },
+          "getapp-check": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "description": "Registry readiness: marketplace files, ci / marketplace, L1\u2013L12, R3; registry publishing when publish is on (\u00a72.21, \u00a75.2). Needs metadata."
+      },
+      "readme": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "install-ref": {
+            "type": "string",
+            "description": "\"\" means automatic.",
+            "default": ""
+          }
+        },
+        "description": "README generated blocks (\u00a72.19). Needs listing."
+      },
+      "icons": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          }
+        },
+        "description": "Icon checks and the desktop-icon fixture (\u00a75.3); reads org.brand."
+      },
+      "screenshots": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "default": "America/New_York"
+          },
+          "locale": {
+            "type": "string",
+            "minLength": 1,
+            "default": "en-US"
+          }
+        },
+        "description": "marketplace/shots.d.ts, frappe-shots, nightly shots (\u00a75.5). Needs demo."
+      },
+      "demo": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "company-name": {
+            "type": "string",
+            "minLength": 1,
+            "default": "Demo Company"
+          },
+          "company-abbr": {
+            "type": "string",
+            "minLength": 1,
+            "default": "DC"
+          },
+          "country": {
+            "type": "string",
+            "minLength": 1,
+            "default": "United States"
+          },
+          "currency": {
+            "type": "string",
+            "minLength": 1,
+            "default": "USD"
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "default": "America/New_York"
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "default": "English"
+          },
+          "date": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "default": "2026-01-15"
+          },
+          "seed": {
+            "type": "integer",
+            "default": 1
+          },
+          "erpnext-demo": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "description": "frappe-demo (\u00a75.4)."
+      },
+      "test-utils": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "validate_frappe_project",
+                "validate_patches",
+                "static_analysis",
+                "validate_doctype_python_types",
+                "validate_copyright",
+                "validate_customizations",
+                "clean_customized_doctypes",
+                "check_code_duplication"
+              ]
+            },
+            "default": [
+              "validate_frappe_project",
+              "validate_patches",
+              "static_analysis",
+              "validate_doctype_python_types",
+              "validate_copyright",
+              "validate_customizations",
+              "clean_customized_doctypes",
+              "check_code_duplication"
+            ],
+            "uniqueItems": true
+          },
+          "track-overrides": {
+            "type": "boolean",
+            "default": false,
+            "description": "The test_utils track_overrides hook (needs HASH:/REPO: annotations)."
+          }
+        },
+        "description": "The agritheory/test_utils hooks (S19), minibench customizations, nightly duplication."
+      },
+      "docs-site": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enable": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "action-patterns": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "cooldown-exclude-actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          },
+          "package-names": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": []
+          }
+        },
+        "description": "Dependabot entries and groups for a docs site (\u00a72.17), and the docs-site node-target exclusion (\u00a75.11). Needs dependabot."
+      }
+    }
+  }
+}

@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Avunu/frappe-nix/schema/tool-frappe-nix.schema.json",
+  "title": "[tool.frappe-nix]",
+  "description": "An app's frappe-nix app standards parameters, in its pyproject.toml (docs/app-standards/spec.md \u00a72.1). App-owned: sync creates the table once and never rewrites it. Unknown keys are errors. The module tables have the profile's shape (profile.schema.json) and are the last layer of the merge (\u00a78.4).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "frappe-major"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "The [tool.frappe-nix] schema version. frappe-nix v1 reads schema 1."
+    },
+    "profile": {
+      "type": "string",
+      "pattern": "^(minimal|recommended(@[0-9]+\\.[0-9]+)?|github:.+|gitlab:.+|git\\+https://.+|\\./[^/].*)$",
+      "description": "A built-in name (minimal, recommended, or a snapshot recommended@<minor>), an org profile flake URL (github:, gitlab:, git+https://) or an in-repo profile ./<dir> (\u00a78.3). Absent means minimal.",
+      "default": "minimal"
+    },
+    "frappe-major": {
+      "type": "integer",
+      "minimum": 15,
+      "description": "The Frappe major. Drives every version-<major> string, range and branch."
+    },
+    "siblings": {
+      "type": "array",
+      "default": [],
+      "uniqueItems": true,
+      "items": {
+        "anyOf": [
+          {
+            "type": "string",
+            "pattern": "^([a-z][a-z0-9_]*|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "repo": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$"
+              },
+              "flake-url": {
+                "type": "string",
+                "pattern": "^(github:|gitlab:|git\\+https://)"
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "range": {
+                "type": "string",
+                "minLength": 1
+              },
+              "desk_global": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "description": "Bench apps besides frappe, in install order: a known-apps key, \"<owner>/<repo>\", or an object (\u00a72.1)."
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$",
+      "description": "<owner>/<repo>, or <host>/<group>/\u2026/<repo> off GitHub. Default: from origin (\u00a72.2)."
+    },
+    "integration-branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+$",
+      "description": "Any branch name. Default: develop under releases.branching = develop+version, main under main+tags (S41)."
+    },
+    "retire-keep": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Paths exempt from every retire rule (\u00a72.4.1)."
+    },
+    "site": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9.-]*$",
+      "description": "The dev site name; default <App-hyphen>.localhost."
+    },
+    "nightly-suites": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Shell commands nightly runs inside the dev shell with the site up (\u00a74.6)."
+    },
+    "generated": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Globs of tracked generated files, excluded from formatting, linting and validate_copyright."
+    },
+    "build": {
+      "type": "boolean",
+      "default": false,
+      "description": "The app's build script is a real build step even with no Vite config, nested frontend or SPA."
+    },
+    "shell-checks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": [],
+      "description": "Commands that need the dev shell and leave the tree git-clean; run by frappe-test --ci."
+    },
+    "frappe-node-modules": {
+      "type": "boolean",
+      "default": false,
+      "description": "typecheck installs frappe's node_modules under FRAPPE_PATH (\u00a74.2)."
+    },
+    "untested": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        },
+        "required": [
+          "target",
+          "reason"
+        ]
+      },
+      "default": [],
+      "description": "Module tests: testmap exemptions; shrink-only (S24)."
+    },
+    "coverage-omit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "glob": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        },
+        "required": [
+          "glob",
+          "reason"
+        ]
+      },
+      "default": [],
+      "description": "Module tests: extra coverage omit globs; shrink-only."
+    },
+    "unchecked-js": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "\\.js$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Why; at least 10 characters."
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ]
+      },
+      "default": [],
+      "description": "Module typescript (check-js on): desk/web JS files excluded from strict checkJs; shrink-only."
+    },
+    "override-doctype-class": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "doctype": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 20,
+            "description": "Why; at least 20 characters."
+          }
+        },
+        "required": [
+          "doctype",
+          "reason"
+        ]
+      },
+      "default": [],
+      "description": "Module metadata: the A.3 allow-list, one entry per override_doctype_class hook."
+    },
+    "org": {
+      "$ref": "profile.schema.json#/$defs/org"
+    },
+    "known-apps": {
+      "$ref": "profile.schema.json#/$defs/known-apps"
+    },
+    "dev-shell": {
+      "$ref": "profile.schema.json#/$defs/modules/dev-shell"
+    },
+    "editorconfig": {
+      "$ref": "profile.schema.json#/$defs/modules/editorconfig"
+    },
+    "metadata": {
+      "$ref": "profile.schema.json#/$defs/modules/metadata"
+    },
+    "python-lint": {
+      "$ref": "profile.schema.json#/$defs/modules/python-lint"
+    },
+    "ssort": {
+      "$ref": "profile.schema.json#/$defs/modules/ssort"
+    },
+    "python-types": {
+      "$ref": "profile.schema.json#/$defs/modules/python-types"
+    },
+    "js": {
+      "$ref": "profile.schema.json#/$defs/modules/js"
+    },
+    "typescript": {
+      "$ref": "profile.schema.json#/$defs/modules/typescript"
+    },
+    "stylelint": {
+      "$ref": "profile.schema.json#/$defs/modules/stylelint"
+    },
+    "tests": {
+      "$ref": "profile.schema.json#/$defs/modules/tests"
+    },
+    "semgrep": {
+      "$ref": "profile.schema.json#/$defs/modules/semgrep"
+    },
+    "workflow-lint": {
+      "$ref": "profile.schema.json#/$defs/modules/workflow-lint"
+    },
+    "shell-lint": {
+      "$ref": "profile.schema.json#/$defs/modules/shell-lint"
+    },
+    "nix-lint": {
+      "$ref": "profile.schema.json#/$defs/modules/nix-lint"
+    },
+    "hygiene": {
+      "$ref": "profile.schema.json#/$defs/modules/hygiene"
+    },
+    "commits": {
+      "$ref": "profile.schema.json#/$defs/modules/commits"
+    },
+    "releases": {
+      "$ref": "profile.schema.json#/$defs/modules/releases"
+    },
+    "dependabot": {
+      "$ref": "profile.schema.json#/$defs/modules/dependabot"
+    },
+    "ci": {
+      "$ref": "profile.schema.json#/$defs/modules/ci"
+    },
+    "repo-policy": {
+      "$ref": "profile.schema.json#/$defs/modules/repo-policy"
+    },
+    "vite-register": {
+      "$ref": "profile.schema.json#/$defs/modules/vite-register"
+    },
+    "pilot-assets": {
+      "$ref": "profile.schema.json#/$defs/modules/pilot-assets"
+    },
+    "listing": {
+      "$ref": "profile.schema.json#/$defs/modules/listing"
+    },
+    "readme": {
+      "$ref": "profile.schema.json#/$defs/modules/readme"
+    },
+    "icons": {
+      "$ref": "profile.schema.json#/$defs/modules/icons"
+    },
+    "screenshots": {
+      "$ref": "profile.schema.json#/$defs/modules/screenshots"
+    },
+    "demo": {
+      "$ref": "profile.schema.json#/$defs/modules/demo"
+    },
+    "test-utils": {
+      "$ref": "profile.schema.json#/$defs/modules/test-utils"
+    },
+    "docs-site": {
+      "$ref": "profile.schema.json#/$defs/modules/docs-site"
+    }
+  }
+}

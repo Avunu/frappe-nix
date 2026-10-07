@@ -1,0 +1,70 @@
+# frappe-nix built-in profile `minimal` (docs/app-standards/spec.md §8.5, S35).
+# Frozen for all of frappe-nix v1: it never turns a module on. The body below is
+# byte-identical to the spec; the `standards-profiles` flake check compares them.
+
+schema = 1
+name = "minimal"
+description = "The frappe-nix dev shell only: flake.nix, .envrc and the .gitignore block."
+
+[org]
+dev-docs-url = "https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards"
+
+[dev-shell]
+enable = true
+
+[editorconfig]
+enable = false
+[metadata]
+enable = false
+[python-lint]
+enable = false
+[ssort]
+enable = false
+[python-types]
+enable = false
+[js]
+enable = false
+[typescript]
+enable = false
+[stylelint]
+enable = false
+[tests]
+enable = false
+[semgrep]
+enable = false
+[workflow-lint]
+enable = false
+[shell-lint]
+enable = false
+[nix-lint]
+enable = false
+[hygiene]
+enable = false
+[commits]
+enable = false
+[releases]
+enable = false
+[dependabot]
+enable = false
+[ci]
+enable = false
+[repo-policy]
+enable = false
+[vite-register]
+enable = false
+[pilot-assets]
+enable = false
+[listing]
+enable = false
+[readme]
+enable = false
+[icons]
+enable = false
+[screenshots]
+enable = false
+[demo]
+enable = false
+[test-utils]
+enable = false
+[docs-site]
+enable = false
