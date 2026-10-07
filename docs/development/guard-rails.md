@@ -42,7 +42,7 @@ FRAPPE_DEVGUARD_ENABLED=0 bench console                # all of them
 
 Values the Nix configuration bakes in are likewise overridable at runtime, without a rebuild. Each setting has an environment variable named `FRAPPE_DEVGUARD_<GUARD>_<SETTING>`, such as `FRAPPE_DEVGUARD_MAIL_HOST`, `FRAPPE_DEVGUARD_MAIL_PORT` and `FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS`.
 
-Settings resolve in this order, highest first: the `FRAPPE_DEVGUARD_*` environment variables, then a runtime file that `devenv up` writes to `$DEVENV_RUNTIME/devguard-runtime.json` (Mailpit's ports go through devenv's allocator, which walks forward if a port is taken, so the port Nix baked in can differ from the one Mailpit bound), then the values Nix baked in at build time, then the built-in defaults. Because the baked values are there, the guards still hold when the devenv environment is absent, such as an editor terminal or a stray `sudo -u`. Settings are read when a guard runs, which is why a guard can be turned off for a single command.
+Settings resolve in this order, highest first: the `FRAPPE_DEVGUARD_*` environment variables, then a runtime file that `devenv up` writes to `$DEVENV_RUNTIME/devguard-runtime.json` (it records the ports Mailpit was started on; these are fixed at evaluation from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets) and nothing moves them at run time, so they match the baked values), then the values Nix baked in at build time, then the built-in defaults. Because the baked values are there, the guards still hold when the devenv environment is absent, such as an editor terminal or a stray `sudo -u`. Settings are read when a guard runs, which is why a guard can be turned off for a single command.
 
 ## Pushing attachments to production
 

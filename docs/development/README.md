@@ -4,7 +4,7 @@ description: What devenv up runs, how several benches share one machine over uni
 nav_title: Development
 order: 4
 tags: [devenv, development, ports, sockets]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 `devenv up` runs the full stack through process-compose. **Several benches can run at once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which devenv gives each project uniquely, and the ports that remain are per bench.
@@ -33,10 +33,12 @@ With `runtime.enable = false` the dev shell runs the split `web`, `socketio`, `w
 
 Because sockets and hashed ports are per bench, you can run several benches at the same time without collisions.
 
-The ports are hashed from `benchName` and not from the project path, so every clone of a bench derives the same number and the committed `common_site_config.json` never conflicts. The offset is between 0 and 899. devenv's port allocator still walks forward if something is genuinely in the way, and `devenv up` writes the value it settled on back into the config.
+The ports are hashed from `benchName` and not from the project path, so every clone of a bench derives the same number and the committed `common_site_config.json` never conflicts. The offset, [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets), is between 0 and 899, and nginx, MariaDB's unbound port and the three Mailpit ports all derive from it. Nothing moves a port at run time: devenv's port allocator does nothing under its flake integration, so a port that is already taken stays taken. `devenv up` checks nginx's and Mailpit's before it starts anything, and stops with the port's name if one is in use.
 
-- Override the base with [`ports.base`](../reference/dev-shell-options.md#ports-and-sockets).
-- Set `sockets.enable = false` to put everything back on TCP. Ports are still allocated dynamically in that mode, so benches still do not collide, but they use more ports and there is no nginx. Socket mode needs Frappe 15.46 or newer.
+- **Two checkouts of one app.** In app mode, with [`ports.worktreeSalt`](../reference/dev-shell-options.md#ports-and-sockets) on, a linked worktree (`git worktree add`, whose `.git` is a file) hashes `benchName@<its path>` instead, so a second worktree of the same app gets its own ports and both can run at once. The primary checkout keeps the bench-name hash. App mode's bench is generated, so nothing committed changes. `ports.worktreeSalt` is on by default for an app that opted in to the [app standards](../app-standards/README.md) and off otherwise, so the worktrees of any other app keep the ports they had; set it to `true` to turn it on.
+- **Pick an offset by hand** with `FRAPPE_NIX_PORT_OFFSET=<0-899>`, read when the shell is evaluated (`FRAPPE_NIX_PORT_OFFSET=123 nix develop --no-pure-eval`, or exported before `direnv reload`). It wins over `ports.offset`: web 8123, Mailpit 19123, 20123 and 21123.
+- Override the web port alone with [`ports.base`](../reference/dev-shell-options.md#ports-and-sockets).
+- Set `sockets.enable = false` to put everything back on TCP. There is no nginx in that mode and more ports are used. They all derive from the same offset, so benches whose offsets differ still do not collide, but two whose offsets collide do: `devenv up`'s check covers only the web and Mailpit ports, so a clash on any other port (socketio's, for one) shows up as that process failing to bind. Socket mode needs Frappe 15.46 or newer.
 
 ### MariaDB and TCP clients
 
@@ -45,7 +47,7 @@ With `sockets.enable` (the default) MariaDB runs with `skip-networking`: it list
 That second case is real: Insights' "Site DB" data source is one such app, because ibis rewrites host `localhost` back to `127.0.0.1`, so libmysqlclient's socket shortcut does not save it. With `sockets.enable = false`, MariaDB binds `127.0.0.1` on its own per-bench port instead.
 
 > [!NOTE]
-> If you use the **wiki** app: its frontend does `import { socketio_port } from 'sites/common_site_config.json'`, so the port is baked into its bundle at build time. If the allocator ever moves your port, run `bench build --app wiki` again. `frappe-ui`'s vendored `socketio.js` similarly defaults to a hardcoded 9000 unless the call site passes `port: window.frappe?.boot?.socketio_port`.
+> If you use the **wiki** app: its frontend does `import { socketio_port } from 'sites/common_site_config.json'`, so the port is baked into its bundle at build time. If your port changes (a new `ports.offset`, `FRAPPE_NIX_PORT_OFFSET`), run `bench build --app wiki` again. `frappe-ui`'s vendored `socketio.js` similarly defaults to a hardcoded 9000 unless the call site passes `port: window.frappe?.boot?.socketio_port`.
 
 ## Editable installs
 
