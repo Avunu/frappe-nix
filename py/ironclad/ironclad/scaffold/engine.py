@@ -39,9 +39,11 @@ from ironclad.scaffold import schema as schema_check
 # The version of an app that names none anywhere (§2.8: "<__version__ or 0.1.0>").
 DEFAULT_VERSION = "0.1.0"
 BLAME_LINE = re.compile(r"^[0-9a-f]{40}  # \S.*$")
-_FLAKE_INPUT = re.compile(
-	r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)(?:\.url\s*=|\.follows\s*=|\s*=\s*\{)", re.M
+_FLAKE_INPUT = re.compile(r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)\s*=\s*\{")
+_FLAKE_ATTR = re.compile(
+	r'^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_\'-]*)\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";'
 )
+_FLAKE_INNER = re.compile(r'^\s{6}(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 _SKEW = re.compile(
 	r"Avunu/frappe-nix/\.github/workflows/app-[A-Za-z0-9_-]+\.ya?ml@(?P<sha>[0-9a-f]{40})(?:[ \t]+#[ \t]*v?(?P<ver>\S+))?"
 )
@@ -336,6 +338,14 @@ def _spa_config(ctx: context.NS, path: str, current: str | None) -> bool:
 	return rendering.BASE not in current.split("\n", 1)[0]
 
 
+def _spa_problem(path: str) -> str:
+	return (
+		f"{path} is the app's own TypeScript config (it has no ironclad:managed header) and"
+		" the app has a Vite config: declare it in [[tool.ironclad.typescript.spa]]"
+		f' (tsconfig = "{path}"), or delete it to let sync manage {path}'
+	)
+
+
 def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: bool) -> list[Item]:
 	"""The item(s) for one entry whose ``when`` holds."""
 	root, ctx = plan.root, plan.ctx
@@ -355,15 +365,7 @@ def _entry_item(plan: Plan, entry: manifest.Entry, path: str, seed_manifest: boo
 	if strategy == "whole" and _spa_config(ctx, path, current):
 		# §2.9: sync never writes over an SPA's config. A Vite app's own tsconfig that no
 		# [[tool.ironclad.typescript.spa]] names yet is one sync would otherwise replace.
-		out.append(
-			item(
-				current,
-				f"{path} is the app's own TypeScript config (it has no ironclad:managed header) and"
-				" the app has a Vite config: declare it in [[tool.ironclad.typescript.spa]]"
-				f' (tsconfig = "{path}"), or delete it to let sync manage {path}',
-				INVALID,
-			)
-		)
+		out.append(item(current, _spa_problem(path), INVALID))
 	elif strategy == "whole":
 		out.append(item(_whole(plan, entry, path, current)))
 	elif strategy == "blocks" and entry.handler == "gitignore":
@@ -505,6 +507,10 @@ def _absent(plan: Plan, entry: manifest.Entry, path: str) -> Item | None:
 	current = read(plan.root, path)
 	if current is None:
 		return None
+	if entry.strategy == "whole" and _spa_config(plan.ctx, path, current):
+		# A Vite app's own tsconfig where sync renders none (no browser, desk or scripts
+		# project): the same §2.9 case as the one _entry_item reports, never sync's to delete.
+		return Item(path, entry.strategy, current, current, _spa_problem(path), INVALID)
 	would = None
 	if entry.strategy == "whole":
 		try:
@@ -536,7 +542,13 @@ def _absent(plan: Plan, entry: manifest.Entry, path: str) -> Item | None:
 			DRIFT,
 		)
 	return Item(
-		path, entry.strategy, current, current, "file should not exist, and it is not what sync wrote", DRIFT
+		path,
+		entry.strategy,
+		current,
+		current,
+		"file should not exist, and it is not what sync wrote (no managed header, or edited), so"
+		f" sync leaves it: delete {path} if the app no longer needs it",
+		DRIFT,
 	)
 
 
@@ -612,14 +624,80 @@ def build(
 	return plan
 
 
-def flake_inputs(text: str) -> list[str]:
-	"""The input names a rendered ``flake.nix`` declares (top level of ``inputs = { … };``)."""
+def input_spec(attr: str, value: str) -> str:
+	"""A flake input reference in one comparable form: ``follows:<a>/<b>``, or the URL with a
+	forge's owner and repository lower-cased (Nix matches them case-insensitively)."""
+	if attr == "follows":
+		return f"follows:{value}"
+	forge = re.fullmatch(r"(github|gitlab|sourcehut):([^/?]+)/([^/?]+)(?:/([^?]+))?", value)
+	if not forge:
+		return value
+	kind, owner, repo_name, ref = forge.groups()
+	return f"{kind}:{owner.lower()}/{repo_name.lower()}" + (f"/{ref}" if ref else "")
+
+
+def flake_input_specs(text: str) -> dict[str, str | None]:
+	"""Each input a rendered ``flake.nix`` declares (top level of ``inputs = { … };``), with
+	its ``url`` or ``follows:<path>`` normalised by ``input_spec``; ``None`` when it shows neither."""
 	m = re.search(r"\n  inputs = \{\n(?P<body>.*?)\n  \};\n", text, re.S)
-	return sorted({x["name"] for x in _FLAKE_INPUT.finditer(m["body"])}) if m else []
+	specs: dict[str, str | None] = {}
+	block = None
+	for line in m["body"].splitlines() if m else []:
+		if (one := _FLAKE_ATTR.match(line)) and not block:
+			specs[one["name"]] = input_spec(one["attr"], one["value"])
+		elif (opened := _FLAKE_INPUT.match(line)) and not block:
+			block = opened["name"]
+			specs.setdefault(block, None)
+		elif block and re.match(r"^\s{4}\};", line):
+			block = None
+		elif block and (inner := _FLAKE_INNER.match(line)):
+			specs[block] = input_spec(inner["attr"], inner["value"])
+	return dict(sorted(specs.items()))
+
+
+def flake_inputs(text: str) -> list[str]:
+	"""The input names a rendered ``flake.nix`` declares."""
+	return list(flake_input_specs(text))
+
+
+def locked_spec(lock: dict, ref: object) -> str | None:
+	"""What a root input of ``flake.lock`` was locked from, in ``input_spec``'s form; ``None``
+	when the lock records it in a form this can't compare (not a forge, not a ``follows``)."""
+	if isinstance(ref, list):
+		return "follows:" + "/".join(str(step) for step in ref)
+	node = lock["nodes"].get(ref) if isinstance(ref, str) else None
+	original = node.get("original") if isinstance(node, dict) else None
+	if not isinstance(original, dict) or original.get("type") not in ("github", "gitlab", "sourcehut"):
+		return None
+	tail = original.get("ref") or original.get("rev")
+	return input_spec(
+		"url",
+		f"{original['type']}:{original.get('owner')}/{original.get('repo')}" + (f"/{tail}" if tail else ""),
+	)
+
+
+def stale_inputs(lock: dict, wanted: dict[str, str | None], skip: tuple[str, ...] = ()) -> list[str]:
+	"""The inputs ``flake.nix`` declares that ``flake.lock`` has no node for, or locked from
+	another URL or ``follows`` (a frappe-major bump moves ``frappe`` to ``version-<N+1>``)."""
+	root_inputs = lock["nodes"].get(lock["root"], {}).get("inputs", {})
+	out = []
+	for name, spec in wanted.items():
+		if name in skip:
+			continue
+		if name not in root_inputs:
+			out.append(f"{name} (no node)")
+			continue
+		have = locked_spec(lock, root_inputs[name])
+		if spec is not None and have is not None and have != spec:
+			out.append(
+				f"{name} (locked from {have.removeprefix('follows:')}, flake.nix has {spec.removeprefix('follows:')})"
+			)
+	return out
 
 
 def lock_problems(plan: Plan) -> list[Item]:
-	"""``flake.lock`` must hold a node for every input ``flake.nix`` declares (§3.3)."""
+	"""``flake.lock`` must hold a node for every input ``flake.nix`` declares, locked from the
+	URL (or ``follows``) ``flake.nix`` gives it (§3.3)."""
 	text = read(plan.root, "flake.nix")
 	if text is None:
 		return []
@@ -630,10 +708,20 @@ def lock_problems(plan: Plan) -> list[Item]:
 		lock = flakelock.load(lock_path)
 	except EnvError as e:
 		return [Item("flake.lock", "lock", None, None, str(e), ENVIRONMENT)]
-	root_inputs = lock["nodes"].get(lock["root"], {}).get("inputs", {})
-	missing = [name for name in flake_inputs(text) if name not in root_inputs]
-	if missing:
-		return [Item("flake.lock", "lock", None, None, f"no node for input(s) {', '.join(missing)}", DRIFT)]
+	# frappe-nix's self-tests lock the checkout under test in its place (IRONCLAD_FRAPPE_NIX_URL).
+	skip = ("frappe-nix",) if os.environ.get("IRONCLAD_ALLOW_SKEW") == "1" else ()
+	stale = stale_inputs(lock, flake_input_specs(text), skip)
+	if stale:
+		return [
+			Item(
+				"flake.lock",
+				"lock",
+				None,
+				None,
+				f"does not follow flake.nix: {'; '.join(stale)}: run `frappe-init --sync`",
+				DRIFT,
+			)
+		]
 	return []
 
 

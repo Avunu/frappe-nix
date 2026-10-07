@@ -25,7 +25,7 @@ from pathlib import Path
 
 import ironclad
 from ironclad.common import repo
-from ironclad.common.report import CLEAN, DRIFT, INVALID, render, worst
+from ironclad.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, IroncladError, render, worst
 from ironclad.scaffold import bootstrap, engine, tomlmerge
 from ironclad.scaffold.engine import Item
 
@@ -178,7 +178,9 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 	touched = _apply(root, plan.items, runner)
 	# A flake sees only tracked files: stage them before `nix flake lock` reads the flake.
 	_stage(root, touched, runner)
-	inputs = engine.flake_inputs((root / "flake.nix").read_text()) if (root / "flake.nix").is_file() else []
+	inputs = (
+		engine.flake_input_specs((root / "flake.nix").read_text()) if (root / "flake.nix").is_file() else {}
+	)
 	changed = False
 	if flake_step and not args.offline and not runner.dry_run:
 		changed = bootstrap.phase_a_lock(runner, inputs, plan.ctx.frappe_nix.major)
@@ -284,7 +286,7 @@ def write(root: Path, args: argparse.Namespace) -> int:
 	return phase_b(root, args, runner, lock_changed)
 
 
-def run(args: argparse.Namespace) -> int:
+def _run(args: argparse.Namespace) -> int:
 	root = Path.cwd()
 	repo.toplevel(root)
 	if os.environ.get("IRONCLAD_OFFLINE") == "1":
@@ -294,7 +296,19 @@ def run(args: argparse.Namespace) -> int:
 	try:
 		return write(root, args)
 	except SystemExit as e:
-		return e.code if isinstance(e.code, int) else 1
+		if isinstance(e.code, int):
+			return e.code
+		return CLEAN if e.code is None else ENVIRONMENT
+
+
+def run(args: argparse.Namespace) -> int:
+	try:
+		code = _run(args)
+	except IroncladError as e:
+		bootstrap.report_result(e.code)
+		raise
+	bootstrap.report_result(code)
+	return code
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:

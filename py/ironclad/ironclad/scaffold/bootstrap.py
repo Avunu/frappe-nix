@@ -9,21 +9,38 @@ Every external command goes through ``Runner``, which prints it, and which ``--d
 and ``--offline`` turn into a report of what would run.
 """
 
+import contextlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NoReturn
 
 import ironclad
 from ironclad.common import data_path, flakelock
 from ironclad.common.report import ConfigError, EnvError
+from ironclad.scaffold import engine
 
 # Set on a re-exec or a dev-shell re-entry when phase A changed flake.lock, so the phase B
 # that runs there still relocks the bench (step 11): it sees an unchanged lock itself.
 LOCK_CHANGED = "IRONCLAD_SYNC_LOCK_CHANGED"
+
+
+# The file a handed-over sync (re-exec or dev-shell re-entry) writes its exit code to, so
+# the parent can tell the child's result from a failure of `nix run`/`nix develop` itself.
+RESULT = "IRONCLAD_SYNC_RESULT"
+
+
+def report_result(code: int) -> None:
+	"""In a handed-over sync: record its exit code for the sync that started it."""
+	path = os.environ.get(RESULT)
+	if path:
+		with contextlib.suppress(OSError):
+			Path(path).write_text(f"{code}\n")
 
 
 def lock_changed_env(changed: bool) -> dict[str, str]:
@@ -86,8 +103,14 @@ def nix_args() -> list[str]:
 	return ["--override-input", "frappe-nix", url] if url else []
 
 
-def lock_reasons(root: Path, inputs: list[str], major: int) -> tuple[bool, bool]:
-	"""Whether ``flake.lock`` must be (re)locked, and whether frappe-nix must move to ``release-<major>``."""
+def lock_reasons(root: Path, inputs: dict[str, str | None], major: int) -> tuple[bool, bool]:
+	"""Whether ``flake.lock`` must be (re)locked, and whether frappe-nix must move to ``release-<major>``.
+
+	``inputs`` is ``engine.flake_input_specs`` of the rendered ``flake.nix``. The lock is stale
+	when its input set differs, or when an input is locked from another URL or ``follows``
+	than ``flake.nix`` now gives it: a frappe-major bump keeps the input names and changes
+	``frappe``'s (and every sibling's) branch, which ``nix flake lock`` then relocks.
+	frappe-nix itself is the second reason (``nix flake update frappe-nix``)."""
 	path = root / "flake.lock"
 	if not path.is_file():
 		return True, False
@@ -96,7 +119,7 @@ def lock_reasons(root: Path, inputs: list[str], major: int) -> tuple[bool, bool]
 	except EnvError:
 		return True, False
 	have = set(lock["nodes"].get(lock["root"], {}).get("inputs", {}))
-	relock = have != set(inputs)
+	relock = have != set(inputs) or bool(engine.stale_inputs(lock, inputs, skip=("frappe-nix",)))
 	found = flakelock.node_at(lock, ["frappe-nix"])
 	ref = (found[1].get("original") or {}).get("ref") if found else None
 	return relock, ref != f"release-{major}"
@@ -131,7 +154,7 @@ def locked_frappe_nix_version(runner: Runner) -> str | None:
 	return out.stdout.strip() or None
 
 
-def phase_a_lock(runner: Runner, inputs: list[str], major: int) -> bool:
+def phase_a_lock(runner: Runner, inputs: dict[str, str | None], major: int) -> bool:
 	"""Step 3: lock the flake when needed. Returns whether ``flake.lock`` changed."""
 	before = (runner.root / "flake.lock").read_bytes() if (runner.root / "flake.lock").is_file() else None
 	relock, move = lock_reasons(runner.root, inputs, major)
@@ -148,6 +171,26 @@ def phase_a_lock(runner: Runner, inputs: list[str], major: int) -> bool:
 	return before != after
 
 
+def handover(runner: Runner, argv: list[str], env: dict[str, str]) -> NoReturn:
+	"""Run a sync somewhere else (steps 4 and the phase-B re-entry) and exit with its code.
+
+	Nix exits 1 on any evaluation, fetch or build failure, and 1 means drift (§3.3), so the
+	child's own code comes back through ``IRONCLAD_SYNC_RESULT``; when the child never got
+	to write it, a non-zero exit is ``nix``'s and is an environment error (3)."""
+	fd, path = tempfile.mkstemp(prefix="ironclad-sync-result-")
+	os.close(fd)
+	try:
+		code = runner.run(argv, env={**env, RESULT: path}, check=False)
+		recorded = Path(path).read_text().strip()
+	finally:
+		Path(path).unlink(missing_ok=True)
+	if recorded.isdigit():
+		raise SystemExit(int(recorded))
+	if code == 0:
+		raise SystemExit(0)
+	raise EnvError(f"`{' '.join(argv)}` exited {code} before the sync it runs reported a result")
+
+
 def maybe_reexec(runner: Runner, argv: list[str], lock_changed: bool = False) -> None:
 	"""Step 4: phase B renders with the ironclad the lock pins, so a bootstrap from another
 	release hands over to it (once)."""
@@ -159,12 +202,11 @@ def maybe_reexec(runner: Runner, argv: list[str], lock_changed: bool = False) ->
 	runner.say(
 		f"ironclad sync: flake.lock pins frappe-nix {pinned}; this is {ironclad.__version__}: re-running from the lock"
 	)
-	code = runner.run(
+	handover(
+		runner,
 		["nix", "run", "--no-pure-eval", ".#frappe-init", "--", "--sync", *argv],
-		env={"IRONCLAD_SYNC_REEXEC": "1", **lock_changed_env(lock_changed)},
-		check=False,
+		{"IRONCLAD_SYNC_REEXEC": "1", **lock_changed_env(lock_changed)},
 	)
-	raise SystemExit(code)
 
 
 def ensure_tools(runner: Runner, argv: list[str], lock_changed: bool = False) -> None:
@@ -176,7 +218,8 @@ def ensure_tools(runner: Runner, argv: list[str], lock_changed: bool = False) ->
 	if not (runner.root / "nix" / "uv.lock").is_file():
 		# The dev shell evaluates the bench workspace, which needs nix/uv.lock first.
 		runner.run(["nix", "run", "--no-pure-eval", *nix_args(), ".#relock"])
-	code = runner.run(
+	handover(
+		runner,
 		[
 			"nix",
 			"develop",
@@ -190,10 +233,8 @@ def ensure_tools(runner: Runner, argv: list[str], lock_changed: bool = False) ->
 			"b",
 			*argv,
 		],
-		env={"FRAPPE_NIX_CI": "1", "IRONCLAD_SYNC_REENTERED": "1", **lock_changed_env(lock_changed)},
-		check=False,
+		{"FRAPPE_NIX_CI": "1", "IRONCLAD_SYNC_REENTERED": "1", **lock_changed_env(lock_changed)},
 	)
-	raise SystemExit(code)
 
 
 def seed_node_locks(root: Path, major: int, siblings: list[str], *, dry_run: bool) -> list[str]:

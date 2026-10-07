@@ -679,6 +679,23 @@ class TestSpaGuard(AppCase):
 		self.assertEqual(code, 2, err)
 		self.assertEqual(self.read("tsconfig.json"), own)
 
+	def test_an_spa_tsconfig_where_sync_renders_none_says_so(self):
+		"""No browser, desk or scripts project (frappe_editor, timeclock): the tsconfig.json
+		entry's ``when`` is false, and the app's own file is still the §2.9 exit 2, with the remedy."""
+		own = '{"compilerOptions": {"strict": true}, "include": ["src/**"]}\n'
+		self.write("tsconfig.json", own)
+		self.write("vite.config.ts", "export default {};\n")
+		self.write("src/main.ts", "export {};\n")
+		self.write("package.json", '{"name": "demo-app", "scripts": {"build": "vite build"}}\n')
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("tsconfig.json is the app's own TypeScript config", out)
+		self.assertIn("[[tool.ironclad.typescript.spa]]", out)
+		code, _, err = self.ironclad("sync", "--write")
+		self.assertEqual(code, 2, err)
+		self.assertEqual(self.read("tsconfig.json"), own)
+
 
 class TestPatchesHook(AppCase):
 	def test_validate_patches_needs_a_patches_dir(self):
@@ -720,6 +737,33 @@ class TestSiteCarried(AppCase):
 		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["ironclad"]
 		self.assertEqual(cfg["site"], "demo.localhost")
 		self.assertIn('siteName = "demo.localhost"', self.read("flake.nix"))
+
+
+class TestLockFollowsFlake(AppCase):
+	"""A lock whose inputs carry the right names but another URL is drift (review: a
+	frappe-major bump left flake.lock on version-16 and --check stayed clean)."""
+
+	def stale(self, node: str, ref: str) -> None:
+		lock = json.loads(self.read("flake.lock"))
+		lock["nodes"][node]["original"]["ref"] = ref
+		self.write("flake.lock", json.dumps(lock))
+		self.commit()
+
+	def test_frappe_on_another_branch_is_drift(self):
+		self.synced()
+		self.stale("frappe", "version-15")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("frappe (locked from github:frappe/frappe/version-15, flake.nix has", out)
+
+	def test_frappe_nix_on_another_branch_is_drift_unless_overridden(self):
+		self.synced()
+		self.stale("frappe-nix", "main")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		with mock.patch.dict(os.environ, {"IRONCLAD_ALLOW_SKEW": "1"}):
+			code, out = self.check()
+		self.assertEqual(code, 0, out)
 
 
 if __name__ == "__main__":

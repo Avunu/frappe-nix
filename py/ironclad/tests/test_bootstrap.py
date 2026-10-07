@@ -32,7 +32,10 @@ if key in locks:
         json.dump(locks[key], f)
 if argv[:1] == ["eval"]:
     sys.stdout.write(os.environ.get("FAKE_NIX_VERSION", ""))
-sys.exit(int(os.environ.get("FAKE_NIX_CODE", "0")))
+if "FAKE_CHILD_RESULT" in os.environ and argv[:1] in (["run"], ["develop"]) and "IRONCLAD_SYNC_RESULT" in os.environ:
+    with open(os.environ["IRONCLAD_SYNC_RESULT"], "w") as f:
+        f.write(os.environ["FAKE_CHILD_RESULT"])
+sys.exit(0 if argv[:1] == ["eval"] else int(os.environ.get("FAKE_NIX_CODE", "0")))
 """
 
 
@@ -49,7 +52,14 @@ class FakeNix(AppCase):
 	def setUp(self) -> None:
 		super().setUp()
 		os.environ.pop("IRONCLAD_OFFLINE", None)
-		for key in ("IRONCLAD_SYNC_REEXEC", "IRONCLAD_SYNC_REENTERED", bootstrap.LOCK_CHANGED):
+		for key in (
+			"IRONCLAD_SYNC_REEXEC",
+			"IRONCLAD_SYNC_REENTERED",
+			bootstrap.LOCK_CHANGED,
+			bootstrap.RESULT,
+			"FAKE_CHILD_RESULT",
+			"FAKE_NIX_CODE",
+		):
 			os.environ.pop(key, None)
 		self.bin = Path(self._tmp.name + "-bin")
 		self.bin.mkdir()
@@ -77,29 +87,54 @@ class FakeNix(AppCase):
 		return bootstrap.Runner(self.root)
 
 
+def specs(*names: str, frappe: str = "version-16") -> dict[str, str | None]:
+	"""``engine.flake_input_specs`` of a rendered flake.nix with these inputs."""
+	known = {
+		"frappe-nix": "github:avunu/frappe-nix/release-1",
+		"nixpkgs": "follows:frappe-nix/nixpkgs",
+		"frappe": f"github:frappe/frappe/{frappe}",
+	}
+	return {name: known.get(name, f"github:frappe/{name}/{frappe}") for name in sorted(names)}
+
+
 class TestLockReasons(FakeNix):
 	def test_missing_lock(self):
-		self.assertEqual(bootstrap.lock_reasons(self.root, ["frappe", "frappe-nix"], 1), (True, False))
+		self.assertEqual(bootstrap.lock_reasons(self.root, specs("frappe", "frappe-nix"), 1), (True, False))
 
 	def test_input_set_changed(self):
 		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
 		self.assertEqual(
-			bootstrap.lock_reasons(self.root, ["frappe", "frappe-nix", "nixpkgs"], 1), (False, False)
+			bootstrap.lock_reasons(self.root, specs("frappe", "frappe-nix", "nixpkgs"), 1), (False, False)
 		)
 		self.assertEqual(
-			bootstrap.lock_reasons(self.root, ["erpnext", "frappe", "frappe-nix", "nixpkgs"], 1),
+			bootstrap.lock_reasons(self.root, specs("erpnext", "frappe", "frappe-nix", "nixpkgs"), 1),
 			(True, False),
 		)
+
+	def test_frappe_major_bump_relocks(self):
+		"""Same input names, another branch: the lock is stale (review: --sync left it on version-16)."""
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		self.assertEqual(
+			bootstrap.lock_reasons(
+				self.root, specs("frappe", "frappe-nix", "nixpkgs", frappe="version-17"), 1
+			),
+			(True, False),
+		)
+
+	def test_follows_changed_relocks(self):
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		wanted = specs("frappe", "frappe-nix", "nixpkgs") | {"nixpkgs": "github:nixos/nixpkgs/nixos-unstable"}
+		self.assertEqual(bootstrap.lock_reasons(self.root, wanted, 1), (True, False))
 
 	def test_main_locked(self):
 		self.write("flake.lock", json.dumps(main_locked(["frappe"])))
 		self.assertEqual(
-			bootstrap.lock_reasons(self.root, ["frappe", "frappe-nix", "nixpkgs"], 1), (False, True)
+			bootstrap.lock_reasons(self.root, specs("frappe", "frappe-nix", "nixpkgs"), 1), (False, True)
 		)
 
 
 class TestPhaseALock(FakeNix):
-	inputs: ClassVar[list[str]] = ["frappe", "frappe-nix", "nixpkgs"]
+	inputs: ClassVar[dict[str, str | None]] = specs("frappe", "frappe-nix", "nixpkgs")
 
 	def test_no_lock_locks_once(self):
 		os.environ["FAKE_NIX_LOCKS"] = json.dumps({"flake lock": flake_lock(["frappe"])})
@@ -118,6 +153,15 @@ class TestPhaseALock(FakeNix):
 		)
 		self.assertTrue(bootstrap.phase_a_lock(self.runner(), self.inputs, 1))
 		self.assertEqual(self.argvs(), ["flake lock", "flake update frappe-nix"])
+
+	def test_frappe_major_bump_locks(self):
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		bumped = flake_lock(["frappe"])
+		bumped["nodes"]["frappe"]["original"]["ref"] = "version-17"
+		os.environ["FAKE_NIX_LOCKS"] = json.dumps({"flake lock": bumped})
+		wanted = specs("frappe", "frappe-nix", "nixpkgs", frappe="version-17")
+		self.assertTrue(bootstrap.phase_a_lock(self.runner(), wanted, 1))
+		self.assertEqual(self.argvs(), ["flake lock"])
 
 	def test_current_lock_runs_nothing(self):
 		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
@@ -196,6 +240,52 @@ class TestReentry(FakeNix):
 			(self.bin / tool).symlink_to(self.bin / "nix")
 		bootstrap.ensure_tools(self.runner(), [])
 		self.assertEqual(self.calls(), [])
+
+
+class TestHandoverResult(FakeNix):
+	"""A failed ``nix develop``/``nix run`` is exit 3, never 1 (drift); the child sync's own
+	code comes back through IRONCLAD_SYNC_RESULT (review: nix's exit 1 read as drift)."""
+
+	def reenter(self) -> tuple[int, str]:
+		self.synced_offline()
+		self.write("nix/uv.lock", "version = 1\n")
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		self.commit()
+		code, _, err = self.ironclad("sync", "--write")
+		return code, err
+
+	def test_failed_nix_develop_is_an_environment_error(self):
+		os.environ["FAKE_NIX_CODE"] = "1"
+		code, err = self.reenter()
+		self.assertEqual(code, 3, err)
+		self.assertIn("nix develop", err)
+
+	def test_child_code_is_passed_through(self):
+		os.environ["FAKE_NIX_CODE"] = "1"
+		os.environ["FAKE_CHILD_RESULT"] = "2"
+		code, err = self.reenter()
+		self.assertEqual(code, 2, err)
+
+	def test_failed_reexec_is_an_environment_error(self):
+		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
+		os.environ["FAKE_NIX_VERSION"] = "9.9.9"
+		os.environ["FAKE_NIX_CODE"] = "1"
+		with self.assertRaises(EnvError):
+			bootstrap.maybe_reexec(self.runner(), [])
+		os.environ["FAKE_CHILD_RESULT"] = "0"
+		with self.assertRaises(SystemExit) as caught:
+			bootstrap.maybe_reexec(self.runner(), [])
+		self.assertEqual(caught.exception.code, 0)
+
+	def test_child_records_its_result(self):
+		result = self.bin / "result"
+		with mock.patch.dict(os.environ, {"IRONCLAD_OFFLINE": "1", bootstrap.RESULT: str(result)}):
+			code, _, err = self.ironclad("sync", "--write")
+		self.assertEqual(result.read_text().strip(), str(code), err)
+
+	def synced_offline(self) -> None:
+		with mock.patch.dict(os.environ, {"IRONCLAD_OFFLINE": "1"}):
+			self.synced()
 
 
 class TestBareSyncBootstrap(FakeNix):
