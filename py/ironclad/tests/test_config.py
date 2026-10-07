@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,6 +63,20 @@ class TestConfig(unittest.TestCase):
 	def test_missing_pyproject_exits_3(self):
 		self.path.unlink()
 		self.assertEqual(self.config("site")[0], 3)
+
+	def test_default_is_the_nearest_pyproject_in_the_work_tree(self):
+		outer = Path(self.tmp.name)
+		subprocess.run(["git", "-C", str(outer), "init", "-q"], check=True)
+		app = outer / "tests" / "fixtures" / "app"
+		(app / "pkg").mkdir(parents=True)
+		self.path.rename(app / "pyproject.toml")
+		for cwd in (app, app / "pkg"):
+			self.assertEqual(run_cli("config", "frappe-major", cwd=cwd), (0, "16\n", ""))
+		# Nothing at or above tests/ up to the root: the root's, which does not exist.
+		self.assertEqual(run_cli("config", "frappe-major", cwd=outer / "tests")[0], 3)
+
+	def test_unreadable_pyproject_exits_3(self):
+		self.assertEqual(run_cli("config", "site", "--pyproject", self.tmp.name)[0], 3)
 
 	def test_lines(self):
 		self.assertEqual(lines(None), [])

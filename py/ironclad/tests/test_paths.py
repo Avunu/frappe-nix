@@ -68,6 +68,25 @@ class TestPinPathCommand(unittest.TestCase):
 			Path(out.strip()), (self.app / ".dev-dist" / "pins" / f"semgrep-rules-{REV}").resolve()
 		)
 
+	def test_an_app_in_a_subdirectory_reads_its_own_lock(self):
+		# frappe-nix's layout: the app (tests/fixtures/ironclad-app) inside a larger
+		# repository whose root has a flake.lock of its own without the input.
+		outer = Path(self.tmp.name) / "outer"
+		app = outer / "tests" / "fixtures" / "app"
+		(app / "pkg").mkdir(parents=True)
+		subprocess.run(["git", "-C", str(outer), "init", "-q"], check=True)
+		(outer / "flake.lock").write_text(json.dumps({"version": 7, "root": "root", "nodes": {"root": {}}}))
+		(app / "flake.lock").write_text((self.app / "flake.lock").read_text())
+		pin = (app / ".dev-dist" / "pins" / f"semgrep-rules-{REV}").resolve()
+		for cwd in (app, app / "pkg"):
+			code, out, err = run_cli("pin-path", "frappe-semgrep-rules", cwd=cwd)
+			self.assertEqual(code, 0, err)
+			self.assertEqual(Path(out.strip()), pin)
+		self.assertFalse((outer / ".dev-dist").exists())
+		# Above the app, the repository's own lock answers.
+		code, _, err = run_cli("pin-path", "frappe-semgrep-rules", cwd=outer / "tests")
+		self.assertEqual(code, 2, err)
+
 	def test_unknown_input(self):
 		code, _, err = run_cli("pin-path", "pilot", "--lock", str(self.app / "flake.lock"))
 		self.assertEqual(code, 2)

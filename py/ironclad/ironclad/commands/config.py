@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ironclad.common import pyproject, repo
-from ironclad.common.report import CLEAN, EnvError
+from ironclad.common.report import CLEAN
 
 
 def _line(value: Any) -> str:
@@ -32,13 +32,7 @@ def lines(value: Any) -> list[str]:
 
 
 def run(args: argparse.Namespace) -> int:
-	if args.pyproject:
-		path = Path(args.pyproject)
-	else:
-		try:
-			path = repo.toplevel() / "pyproject.toml"
-		except EnvError:
-			path = Path.cwd() / "pyproject.toml"
+	path = Path(args.pyproject) if args.pyproject else repo.find_up("pyproject.toml")
 	cfg = pyproject.config(pyproject.load(path))
 	for line in lines(pyproject.get(cfg, args.key)):
 		print(line)
@@ -53,5 +47,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)
 	p.add_argument("key", help="a [tool.ironclad] key, dotted for nested tables (test.setup)")
-	p.add_argument("--pyproject", help="the pyproject.toml to read (default: the git root's)")
+	p.add_argument(
+		"--pyproject",
+		help="the pyproject.toml to read (default: the nearest pyproject.toml at or above the current directory, within the git work tree)",
+	)
 	p.set_defaults(func=run)

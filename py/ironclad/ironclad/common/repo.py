@@ -35,6 +35,27 @@ def toplevel(start: Path | None = None) -> Path:
 	return Path(git(start or Path.cwd(), "rev-parse", "--show-toplevel").strip())
 
 
+def find_up(name: str, start: Path | None = None) -> Path:
+	"""The app's ``name`` (``flake.lock``, ``pyproject.toml``): the nearest one at or above ``start``.
+
+	``start`` defaults to the current directory. The search stops at the git work tree's root,
+	so an app in a subdirectory of a larger repository (frappe-nix's own fixture app) reads
+	its own file, not the repository's. When no directory up to the root has one, the
+	answer is the root's (or, outside git, ``start``'s), and reading it reports it missing.
+	"""
+	here = (start or Path.cwd()).resolve()
+	try:
+		top = toplevel(here).resolve()
+	except EnvError:
+		return here / name
+	for directory in (here, *here.parents):
+		if (directory / name).is_file():
+			return directory / name
+		if directory == top:
+			break
+	return top / name
+
+
 def ls_files(root: Path, *pathspecs: str) -> list[str]:
 	"""The tracked paths under ``root``, sorted, optionally narrowed by git pathspecs."""
 	out = git(root, "ls-files", "-z", "--", *pathspecs)
@@ -47,7 +68,7 @@ def app_name(root: Path) -> str:
 		doc = tomllib.loads((root / "pyproject.toml").read_text())
 	except FileNotFoundError as e:
 		raise EnvError(f"not an app: {root}/pyproject.toml does not exist") from e
-	except tomllib.TOMLDecodeError as e:
+	except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
 		raise EnvError(f"not an app: {root}/pyproject.toml: {e}") from e
 	name = doc.get("project", {}).get("name")
 	if not isinstance(name, str) or not name:

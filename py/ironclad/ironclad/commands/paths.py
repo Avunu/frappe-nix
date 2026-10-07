@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ironclad.common import data_path, repo
 from ironclad.common.pins import pin_path
-from ironclad.common.report import CLEAN, EnvError
+from ironclad.common.report import CLEAN
 
 
 def run_data_path(args: argparse.Namespace) -> int:
@@ -13,16 +13,8 @@ def run_data_path(args: argparse.Namespace) -> int:
 	return CLEAN
 
 
-def _default_lock() -> Path:
-	try:
-		root = repo.toplevel()
-	except EnvError:
-		root = Path.cwd()
-	return root / "flake.lock"
-
-
 def run_pin_path(args: argparse.Namespace) -> int:
-	lock = Path(args.lock) if args.lock else _default_lock()
+	lock = Path(args.lock) if args.lock else repo.find_up("flake.lock")
 	print(pin_path(args.input, lock.resolve()))
 	return CLEAN
 
@@ -47,5 +39,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 		),
 	)
 	p.add_argument("input", help="the flake input name")
-	p.add_argument("--lock", help="the flake.lock to read (default: the git root's flake.lock)")
+	p.add_argument(
+		"--lock",
+		help="the flake.lock to read (default: the nearest flake.lock at or above the current directory, within the git work tree)",
+	)
 	p.set_defaults(func=run_pin_path)
