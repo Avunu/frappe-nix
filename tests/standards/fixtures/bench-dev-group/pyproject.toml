@@ -1,0 +1,23 @@
+# The generated bench root's dev group, alone: tests/standards/runtime.nix
+# asserts this list equals templates/bench/pyproject.toml's and builds the dev
+# virtualenv lib/python.nix makes from it, to show `coverage` imports there.
+# Re-lock after changing the template's dev group:
+#
+#   uv lock --project tests/standards/fixtures/bench-dev-group
+[project]
+name = "standards-dev-group"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "coverage>=7.10",
+    "pydantic>=2.12.5",
+    "pytest>=9.0.2",
+    "responses",
+    "unittest-xml-reporting>=3.2",
+]
+
+[tool.uv]
+package = false
