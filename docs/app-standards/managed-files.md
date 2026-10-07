@@ -101,7 +101,7 @@ Every file and key above belongs to a module, so turning a module off in `[tool.
 
 That answer comes from the git history of `pyproject.toml`, `flake.lock` and the in-repo profile. A shallow clone that holds a file or key a module that is off now could have written, without the commits that would say whether it was ever on, exits 3 ("fetch-depth: 0") rather than give a verdict a full clone would contradict; so does an old locked profile tree that can't be fetched (`FRAPPE_NIX_FETCH_TOKEN` for a private one). A clone with nothing of the kind left to ask about checks as usual.
 
-Where the repository is hosted is not in git. When `origin` is off GitHub and no `repo` names the host, the GitHub-only modules resolve off; if the repository has a `.github/` directory (at `HEAD` or in the commit), each committed configuration is also read as hosted on GitHub, so what `releases` left behind (its `release-please-config.json`, the version block's markers) is retracted after a move.
+Where the repository is hosted is not in git. When `origin` is off GitHub and no `repo` names the host, the GitHub-only modules resolve off; if the repository has a `.github/` directory or `release-please-config.json` (at `HEAD` or in the commit), each committed configuration is also read as hosted on GitHub, so what `releases` left behind (its `release-please-config.json`, the version block's markers) is retracted after a move.
 
 Turning the module back on restores the files, byte for byte where sync laid them out.
 

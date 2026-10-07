@@ -342,6 +342,20 @@ class TestOriginMove(ProfileSideCase):
 		self.assertNotIn("x-release-please", self.read("demo_app/__init__.py"))
 		self.assertTrue((self.root / ".github/workflows/custom.yml").exists())
 
+	def test_origin_moving_off_github_without_a_github_dir(self):
+		"""With N3 alone no profile renders .github/: release-please-config.json, which only
+		releases (GitHub-only) renders, marks the state as on GitHub just the same."""
+		self.assertFalse((self.root / ".github").exists())
+		git(self.root, "remote", "add", "origin", "https://github.com/example/demo_app.git")
+		self.assertEqual(self.check()[0], 0)
+		git(self.root, "remote", "set-url", "origin", "https://gitlab.com/example/demo_app.git")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("release-please-config.json (", out)
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.assertFalse((self.root / "release-please-config.json").exists())
+
 
 class TestInRepoProfileToggle(ProfileSideCase):
 	"""The app opts in with an in-repo profile, which a later commit edits to turn js and

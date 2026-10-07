@@ -557,10 +557,17 @@ def _profile_at(
 		return config.read_profile_dir(profile_dir, name), f"path:{profile_dir}"
 
 
+# What only a repository set up for GitHub holds: its .github/ directory, or a file only a
+# GitHub-only module renders (releases' release-please files; dependabot's file is in .github/).
+GITHUB_MARKS = (".github", "release-please-config.json", ".release-please-manifest.json")
+
+
 def _has_github_dir(root: Path, sha: str) -> bool:
-	"""Whether commit ``sha`` has a ``.github/`` directory: a repository set up for GitHub."""
+	"""Whether commit ``sha`` was set up for GitHub: it has a ``.github/`` directory, or a file
+	only a GitHub-only module renders (``GITHUB_MARKS``), so an app on a profile that renders
+	no ``.github/`` (``releases`` on, ``ci`` off) still counts."""
 	try:
-		return bool(repo.git(root, "ls-tree", "-d", sha, "--", ".github").strip())
+		return bool(repo.git(root, "ls-tree", sha, "--", *GITHUB_MARKS).strip())
 	except EnvError:
 		return False
 
