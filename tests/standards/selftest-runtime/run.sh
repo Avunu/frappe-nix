@@ -219,15 +219,17 @@ PY
   reset
   ok "tests.coverage.target = $target: fail_under $((target - 5)) is asked to rise to $target, and $target passes with coverage at $total"
 
-  # python-types off: stage 7 is skipped without even looking for tools/ (the
-  # fixture has no tools/pyproject.toml, so with it on ty is skipped with a warning).
-  grep -q 'no tools/pyproject.toml, so no ty' "$WORK/variant-coverage-at-target.log" || fail "python-types on: ty was not attempted"
+  # python-types on (recommended): stage 7 runs ty from the fixture's
+  # tools/pyproject.toml (sync renders it). Off: stage 7 is skipped without
+  # running it.
+  [ "$(json "$out/frappe-test-report.json" "d['stages']['ty']")" = ok ] || fail "python-types on: stage 7 did not run ty"
+  grep -qxE '(::group::|── )ty( ──)?' "$WORK/variant-coverage-at-target.log" || fail "python-types on: no ty group in the log"
   printf '\n[tool.frappe-nix.python-types]\nenable = false\n' >> pyproject.toml
   ft 0 python-types-off
-  ! grep -q 'no tools/pyproject.toml, so no ty' "$WORK/variant-python-types-off.log" || fail "python-types off: ty was still attempted"
+  ! grep -qxE '(::group::|── )ty( ──)?' "$WORK/variant-python-types-off.log" || fail "python-types off: ty still ran"
   [ "$(json "$out/frappe-test-report.json" "d['stages']['ty']")" = skipped ] || fail "python-types off: stage 7 is not skipped"
   reset
-  ok "python-types off: stage 7 skipped"
+  ok "python-types on: stage 7 ran ty; off: skipped"
 
   sed -i '/^\[tool.frappe-nix\]$/a shell-checks = ["touch stray.txt"]' pyproject.toml
   ft 7 shell-checks
