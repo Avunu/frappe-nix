@@ -290,6 +290,7 @@ const makeBench = (name) => {
     `${b}/apps/frappe/frappe/public/dist/.vite/manifest.json`,
     manifest({ "x.ts": { file: "js/frappe_vite.bundle.FRAPPE2.js", isEntry: true } })
   );
+  vwrite(`${b}/apps/frappe/frappe/public/dist/js/frappe_vite.bundle.FRAPPE2.js`, "frappe();\n");
   vwrite(`${b}/apps/frappe/scripts/other.js`, viteDriver);
   // spa: Vite 5's .vite/manifest.json (an entry, its stylesheet, a chunk that is
   // no bundle), Vite 4's manifest.json in a nested outDir, and a manifest that
@@ -316,6 +317,7 @@ const makeBench = (name) => {
     `${b}/apps/spa/spa/public/dist/legacy/manifest.json`,
     manifest({ "old.ts": { file: "js/old.bundle.Qwerty1.js", isEntry: true } })
   );
+  vwrite(`${b}/apps/spa/spa/public/dist/legacy/js/old.bundle.Qwerty1.js`, "old();\n");
   vwrite(`${b}/apps/spa/spa/public/dist/broken/manifest.json`, "{");
   vwrite(`${b}/apps/spa/spa/public/portal/.vite/manifest.json`, manifest({ "index.html": { file: "assets/index-PoRt12.js", isEntry: true } }));
   vwrite(`${b}/apps/spa/spa/public/portal/assets/index-PoRt12.js`, "portal();\n");
@@ -329,6 +331,7 @@ const makeBench = (name) => {
     `${b}/apps/zfail/zfail/public/dist/.vite/manifest.json`,
     manifest({ "z.ts": { file: "js/z.bundle.ZzZzZz.js", isEntry: true } })
   );
+  vwrite(`${b}/apps/zfail/zfail/public/dist/js/z.bundle.ZzZzZz.js`, "z();\n");
   vwrite(`${b}/sites/apps.txt`, "frappe\nspa\nlinked\nzfail\n");
   vwrite(`${b}/sites/assets/assets.json`, JSON.stringify(ESBUILD_KEYS, null, 4));
   vwrite(`${b}/sites/assets/assets-rtl.json`, RTL);
@@ -338,6 +341,7 @@ const makeBench = (name) => {
     `${b}-src/linked/linked/public/dist/.vite/manifest.json`,
     manifest({ "l.ts": { file: "js/linked.bundle.LnK123.js", isEntry: true } })
   );
+  vwrite(`${b}-src/linked/linked/public/dist/js/linked.bundle.LnK123.js`, "linked();\n");
   fs.symlinkSync(path.join(viteRoot, `${b}-src/linked`), path.join(viteRoot, `${b}/apps/linked`));
   return path.join(viteRoot, b);
 };
@@ -460,6 +464,46 @@ check(
   [0, true, "{ not json"],
   [brokenRun.status, brokenRun.stderr.includes("vite-register: spa:"), fs.readFileSync(path.join(broken, "sites/assets/assets.json"), "utf8")]
 );
+
+// A manifest outlives its files: public/dist survives between builds, and
+// frappe's build cleanup deletes an app's old dist/js/<name>.bundle.* but never
+// the Vite manifest that named one. Such an entry registers nothing.
+const stale = makeBench("bench-stale");
+const staleDist = path.join(stale, "apps/spa/spa/public/dist");
+fs.writeFileSync(path.join(staleDist, "js/foo.bundle.ESBLD1.js"), "esbuild();\n");
+fs.rmSync(path.join(staleDist, "js/foo.bundle.AbC123.js"));
+const staleRun = viteRun(stale, { apps: ["spa"] });
+check(
+  "an entry whose file is gone keeps esbuild's key, is logged as skipped, and its stylesheet that exists still registers",
+  [0, ESBUILD_KEYS["foo.bundle.js"], true, expected["foo.bundle.css"]],
+  [
+    staleRun.status,
+    keysOf(stale)["foo.bundle.js"],
+    staleRun.stdout.includes("vite-register: spa: skipping js/foo.bundle.AbC123.js: not on disk"),
+    keysOf(stale)["foo.bundle.css"],
+  ]
+);
+
+// A Vite file still on disk but older than the one esbuild just built under
+// the same name (a Vite outDir that frappe's cleanup does not reach) is stale
+// too; a Vite file newer than esbuild's wins, as a fresh `yarn build` is.
+const aged = (name, viteTime, esbuildTime) => {
+  const bench = makeBench(name);
+  const dist = path.join(bench, "apps/spa/spa/public/dist");
+  fs.symlinkSync(path.join(bench, "apps/spa/spa/public"), path.join(bench, "sites/assets/spa"));
+  fs.writeFileSync(path.join(dist, "js/foo.bundle.ESBLD1.js"), "esbuild();\n");
+  fs.utimesSync(path.join(dist, "js/foo.bundle.AbC123.js"), viteTime, viteTime);
+  fs.utimesSync(path.join(dist, "js/foo.bundle.ESBLD1.js"), esbuildTime, esbuildTime);
+  return [bench, viteRun(bench, { apps: ["spa"] })];
+};
+const [older, olderRun] = aged("bench-older", new Date("2020-01-01"), new Date("2021-01-01"));
+check(
+  "a Vite file older than esbuild's file under the same key leaves esbuild's key, and says so",
+  [ESBUILD_KEYS["foo.bundle.js"], true],
+  [keysOf(older)["foo.bundle.js"], olderRun.stdout.includes("vite-register: spa: foo.bundle.js kept: /assets/spa/dist/js/foo.bundle.AbC123.js is older")]
+);
+const [newer] = aged("bench-newer", new Date("2021-01-01"), new Date("2020-01-01"));
+check("a Vite file newer than esbuild's takes the key", expected["foo.bundle.js"], keysOf(newer)["foo.bundle.js"]);
 
 // lib/js/vite-register.cjs's own entry points.
 const vr = require(path.join(path.dirname(preload), "vite-register.cjs"));

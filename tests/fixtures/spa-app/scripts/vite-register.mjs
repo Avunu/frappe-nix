@@ -78,6 +78,13 @@ const bundleKeys = ({ appDir, app, log }) => {
 				if (!match || rel.startsWith("..")) {
 					continue;
 				}
+				// A manifest outlives its files: public/dist survives between
+				// builds, and frappe's build cleanup deletes an old bundle but
+				// never the manifest that named it.
+				if (!fs.existsSync(path.join(dist, rel))) {
+					log(`vite-register: ${app}: skipping ${rel}: not on disk`);
+					continue;
+				}
 				const { name, ext } = match.groups;
 				const url = rel.split(path.sep).join("/");
 				keys[`${name}.bundle.${ext}`] = `/assets/${app}/dist/${url}`;
@@ -170,6 +177,33 @@ const copyOutputs = ({ appDir, app, sitesDir }) => {
 	return dirs;
 };
 
+const mtimeOf = (file) => {
+	try {
+		return fs.statSync(file).mtimeMs;
+	} catch {
+		return null;
+	}
+};
+
+// The file an assets.json value names, under sites/assets/.
+const servedFile = (sitesDir, url) => {
+	if (typeof url !== "string" || !url.startsWith("/assets/")) {
+		return null;
+	}
+	return path.join(sitesDir, url);
+};
+
+// Whether the file a key names now is newer than the Vite bundle: esbuild
+// built that name after Vite last did, so the Vite file is stale.
+const keptNewer = ({ appDir, app, sitesDir, current, value }) => {
+	const now = servedFile(sitesDir, current);
+	const prefix = `/assets/${app}/dist/`;
+	const dist = path.join(appDir, app, "public", "dist");
+	const vite = path.join(dist, value.slice(prefix.length));
+	const [a, b] = [now && mtimeOf(now), mtimeOf(vite)];
+	return a !== null && b !== null && a > b;
+};
+
 const register = ({ appDir, app, sitesDir, log = console.log }) => {
 	const keys = bundleKeys({ appDir, app, log });
 	const file = path.join(sitesDir, "assets", "assets.json");
@@ -177,11 +211,17 @@ const register = ({ appDir, app, sitesDir, log = console.log }) => {
 	if (Object.keys(keys).length > 0) {
 		const assets = readJson(file);
 		for (const [key, value] of Object.entries(keys)) {
-			if (assets[key] !== value) {
-				assets[key] = value;
-				changed.push(key);
-				log(`vite-register: ${app}: ${key} -> ${value} (vite)`);
+			const current = assets[key];
+			if (current === value) {
+				continue;
 			}
+			if (keptNewer({ appDir, app, sitesDir, current, value })) {
+				log(`vite-register: ${app}: ${key} kept: ${value} is older`);
+				continue;
+			}
+			assets[key] = value;
+			changed.push(key);
+			log(`vite-register: ${app}: ${key} -> ${value} (vite)`);
 		}
 		if (changed.length > 0) {
 			fs.mkdirSync(path.dirname(file), { recursive: true });
