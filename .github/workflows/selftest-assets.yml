@@ -10,7 +10,10 @@ name: selftest-assets
 #               app's own scripts/vite-register.mjs registers spa.bundle.js and
 #               spa.bundle.css; a second build under frappe-nix's preload
 #               changes no byte of assets.json, and the preload alone registers
-#               them; --hard-link copies the hashed bundles into sites/assets
+#               them; --hard-link copies the hashed bundles into sites/assets.
+#               Two legs: frappe as dev/pyproject.toml pins it, and frappe
+#               develop's tip, whose esbuild.js runs each app's build with
+#               spawn instead of execSync (the preload wraps both)
 #   builtbench  the fixture locked against this checkout, `nix build
 #               .#builtBench`: its assets.json maps the bundles; and again
 #               with no registration step of the app's own (Q7: the preload
@@ -52,8 +55,13 @@ concurrency:
 
 jobs:
   stock:
+    name: stock (${{ matrix.frappe }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        frappe: [pinned, develop]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -79,12 +87,14 @@ jobs:
           git config --global user.email selftest@localhost
 
       - name: Run stock
+        env:
+          FRAPPE_REF: ${{ matrix.frappe == 'develop' && 'develop' || '' }}
         run: PYTHON="$(uv python find 3.14)" tests/standards/selftest-assets/run.sh stock
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: selftest-assets-stock
+          name: selftest-assets-stock-${{ matrix.frappe }}
           path: |
             ${{ runner.temp }}/standards-n2/*.log
             ${{ runner.temp }}/standards-n2/*.json

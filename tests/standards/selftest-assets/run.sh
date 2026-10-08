@@ -22,7 +22,9 @@
 #
 # Both work on copies of tests/fixtures/spa-app under $WORK (default
 # $RUNNER_TEMP/standards-n2), with frappe at the revision frappe-nix's own dev
-# env pins (dev/pyproject.toml). `stock` needs git, jq, node (24), yarn, a
+# env pins (dev/pyproject.toml). `stock` takes FRAPPE_REF=<branch> to use that
+# branch's tip instead: the workflow's develop leg, whose esbuild.js runs each
+# app's build with spawn rather than execSync. `stock` needs git, jq, node (24), yarn, a
 # Python 3.14 (`PYTHON`, default python3.14), the `bench` CLI and what
 # mysqlclient builds against; `builtbench` needs nix, git and jq. Both need
 # the network.
@@ -37,6 +39,7 @@ FRAPPE_REV="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$F
   echo "::error::no frappe revision in dev/pyproject.toml" >&2
   exit 1
 }
+FRAPPE_REF="${FRAPPE_REF:-$FRAPPE_REV}"
 
 fail() {
   echo "::error::$*" >&2
@@ -82,11 +85,12 @@ cmd_stock() {
   local assets public sitepkg
   unset NODE_OPTIONS FRAPPE_NIX_ESBUILD_PRELOAD FRAPPE_BENCH_ROOT
 
-  group "bench init (frappe $FRAPPE_REV)"
+  group "bench init (frappe $FRAPPE_REF)"
   rm -rf "$bench" "$frappe"
   mkdir -p "$WORK/src"
   git init -q "$frappe"
-  git -C "$frappe" fetch -q --depth 1 https://github.com/frappe/frappe "$FRAPPE_REV"
+  git -C "$frappe" fetch -q --depth 1 https://github.com/frappe/frappe "$FRAPPE_REF"
+  echo "frappe $FRAPPE_REF is $(git -C "$frappe" rev-parse FETCH_HEAD)"
   git -C "$frappe" checkout -q -b pinned FETCH_HEAD
   (cd "$WORK" && bench init --frappe-path "$frappe" --frappe-branch pinned --python "$(command -v "$python")" \
     --skip-redis-config-generation --skip-assets --no-procfile --no-backups bench)
@@ -96,7 +100,8 @@ cmd_stock() {
   prepare "$app"
   (cd "$bench" && bench get-app --skip-assets "$app")
   [ -d "$bench/apps/spa_app" ] || fail "bench get-app did not create apps/spa_app"
-  (cd "$bench" && bench build --app spa_app) 2>&1 | tee "$WORK/build-stock.log"
+  # --verbose: develop's esbuild.js shows an app's own build output only then.
+  (cd "$bench" && bench build --app spa_app --verbose) 2>&1 | tee "$WORK/build-stock.log"
   endgroup
   assets="$bench/sites/assets/assets.json"
   public="$bench/apps/spa_app/spa_app/public"
