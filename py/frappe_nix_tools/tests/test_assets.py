@@ -4,8 +4,9 @@ and that it registers bundles when run, are nix checks (tests/standards/assets.n
 
 import json
 import re
+import unittest
 
-from frappe_nix_tools.scaffold import manifest
+from frappe_nix_tools.scaffold import manifest, package_json
 from scaffold_helpers import AppCase
 
 BEGIN = "// vite-register:begin\n"
@@ -87,6 +88,91 @@ class TestShipped(ViteApp):
 		code, out = self.check()
 		self.assertEqual(code, 1, out)
 		self.assertIn("scripts/vite-register.mjs (whole)", out)
+
+
+class TestBuildThatChangesDirectory(unittest.TestCase):
+	"""C8's step runs from the package's own directory: in sh a `cd` holds for the rest of an
+	`&&` chain, so a build that changes directory goes in a subshell."""
+
+	def test_what_changes_directory(self):
+		for script in ("cd frontend && yarn build", "yarn x; cd a", "pushd a && b", "a || cd b", "cd"):
+			self.assertTrue(package_json.changes_dir(script), script)
+		for script in (
+			"vite build",
+			"yarn --cwd frontend build",
+			"(cd frontend && yarn build)",
+			'echo "cd x" && vite build',
+			"echo 'a && cd b'",
+			"abcd x && vite build",
+			"node build.mjs",
+		):
+			self.assertFalse(package_json.changes_dir(script), script)
+
+	def test_registered_and_unregistered(self):
+		step = package_json.VITE_REGISTER
+		cases = {
+			"vite build": f"vite build && {step}",
+			"cd frontend && yarn build": f"(cd frontend && yarn build) && {step}",
+			f"cd frontend && yarn build && {step}": f"(cd frontend && yarn build) && {step}",
+			f"(cd frontend && yarn build) && {step}": f"(cd frontend && yarn build) && {step}",
+			f"vite build && {step}": f"vite build && {step}",
+		}
+		for build, want in cases.items():
+			self.assertEqual(package_json.registered_build(build), want, build)
+			self.assertEqual(package_json.registered_build(want), want, want)
+		self.assertEqual(
+			package_json.unregistered_build(f"(cd frontend && yarn build) && {step}"),
+			"cd frontend && yarn build",
+		)
+		self.assertEqual(package_json.unregistered_build(f"(vite build) && {step}"), "(vite build)")
+		self.assertEqual(package_json.unregistered_build(f"(cd a) && (cd b) && {step}"), "(cd a) && (cd b)")
+
+
+class TestNestedFrontend(ViteApp):
+	"""The erpnext/hrms shape: a Vite config in frontend/ and a root build that changes into it."""
+
+	BUILD = "(cd frontend && yarn build) && node scripts/vite-register.mjs"
+
+	def nested_app(self, build: str = "cd frontend && yarn build") -> None:
+		self.write("frontend/vite.config.ts", "export default {};\n")
+		self.write(
+			"frontend/package.json", json.dumps({"name": "frontend", "scripts": {"build": "vite build"}})
+		)
+		self.write("package.json", json.dumps({"name": "demo-app", "scripts": {"build": build}}))
+		self.commit()
+
+	def test_the_build_runs_in_a_subshell(self):
+		self.nested_app()
+		self.synced()
+		self.assertTrue((self.root / "scripts/vite-register.mjs").is_file())
+		self.assertEqual(self.build_script(), self.BUILD)
+		self.assertEqual(self.check()[0], 0)
+		self.assertEqual(self.fn("compat")[0], 0)
+
+	def test_a_step_after_a_cd_is_c8_and_sync_repairs_it(self):
+		self.nested_app()
+		self.synced()
+		pkg = json.loads(self.read("package.json"))
+		pkg["scripts"]["build"] = "cd frontend && yarn build && node scripts/vite-register.mjs"
+		self.write("package.json", json.dumps(pkg, indent="\t") + "\n")
+		self.commit()
+		code, out, _ = self.fn("compat")
+		self.assertEqual(code, 1, out)
+		self.assertIn("C8 package.json: scripts.build changes directory", out)
+		self.assertEqual(self.check()[0], 1)
+		self.assertEqual(self.fn("sync", "--write")[0], 0)
+		self.assertEqual(self.build_script(), self.BUILD)
+
+	def test_module_off_restores_the_build(self):
+		self.nested_app()
+		self.synced()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml") + "\n[tool.frappe-nix.vite-register]\nenable = false\n",
+		)
+		self.commit()
+		self.assertEqual(self.fn("sync", "--write")[0], 0)
+		self.assertEqual(self.build_script(), "cd frontend && yarn build")
 
 
 class TestNotLive(ViteApp):
