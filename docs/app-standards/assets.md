@@ -38,8 +38,8 @@ When `sites/assets/<app>` is a real directory rather than the usual link to the 
 - **Name the outputs `<name>.bundle.[hash]`, under `public/dist/`, with a manifest.** The build writes `public/dist/js/<name>.bundle.[hash].js` and `public/dist/css/<name>.bundle.[hash].css`, with `build.manifest: true`.
 - **Never name a Vite source `*.bundle.*` under `public/`.** Frappe's esbuild compiles every `public/**/*.bundle.*` it finds, so it would build the same entry a second time with the wrong toolchain. Keep sources as `*.entry.ts` (or under `src/`).
 - **Refer to bundles by name.** `hooks.py` lists `"<name>.bundle.js"`, and `www` templates use `{{ bundled_asset('<name>.bundle.js') }}`, never a fixed `/assets/<app>/dist/...` path: production serves `/assets` with a one-year cache, so a path without the hash keeps serving the old file after a release.
-- **An SPA that builds into its own directory under `public/`** (`public/portal/`, with its HTML under `www/`) sets `build.manifest: true` too, so a `--hard-link` bench gets its files.
-- **The `build` script ends with `node scripts/vite-register.mjs`.** `frappe-init --sync` appends it when it is missing, and `frappe-nix compat` (rule C8) fails the commit and the `lint` gate without it.
+- **An SPA that builds into its own directory under `public/`** (`public/portal/`, with its HTML under `www/`) sets `build.manifest: true` too, so a `--hard-link` bench gets its files. The registration copies each top-level directory of `public/` that holds a `.vite/` directory (Vite 5) or a `manifest*.json` (Vite 4).
+- **The `build` script ends with `node scripts/vite-register.mjs`.** `frappe-init --sync` appends it when it is missing, and `frappe-nix compat` (rule C8) fails the commit and the `lint` gate without it. The step runs from the app's own directory, so a build that changes directory first runs in a subshell: sync turns `cd frontend && yarn build` into `(cd frontend && yarn build) && node scripts/vite-register.mjs`, and C8 fails a `cd` that the step would run after.
 
 A root `vite.config.ts` for a desk bundle:
 
@@ -81,13 +81,14 @@ The file is rendered when the `vite-register` module is on and the app tracks a 
 
 - finds the bench's `sites/`: `$FRAPPE_BENCH_ROOT/sites` when that is set, else `../../sites` from the logical working directory (`apps/<app>` may be a link), else from the physical one, taking the first that holds `apps.txt`;
 - finds the app as the one directory beside it with a `hooks.py` and a `modules.txt`;
-- prints `vite-register: no bench found; skipped` and exits 0 outside a bench, so `yarn build` in a bare checkout still works.
+- prints `vite-register: no bench found; skipped` and exits 0 outside a bench, so `yarn build` in a bare checkout still works;
+- turns a registration that fails (an `assets.json` that does not parse, a copy it may not write) into a warning naming the app, and exits 0, as the preload does: the app's `yarn build` never fails for it.
 
 It is in oxfmt's output form under the managed `.oxfmtrc.jsonc`: tabs by default, two spaces when `js.format-tabs = false`, and any `js.format-width` from 80 up. An app with `js.tool = "none"` that formats with its own tool adds `scripts/vite-register.mjs` to that tool's ignore list.
 
 `update-assets.mjs`, the per-app script some apps carried for the same job, is retired: sync deletes it while `vite-register` is on, and drops its steps from the `package.json` scripts.
 
-Turning the module off (`[tool.frappe-nix.vite-register] enable = false`) deletes `scripts/vite-register.mjs` and drops the ` && node scripts/vite-register.mjs` step from the end of `build`; the rest of the script is the app's and stays.
+Turning the module off (`[tool.frappe-nix.vite-register] enable = false`) deletes `scripts/vite-register.mjs` and drops the ` && node scripts/vite-register.mjs` step from the end of `build` (and the subshell sync put a directory-changing build in); the rest of the script is the app's and stays.
 
 ## The preload on Nix benches
 
