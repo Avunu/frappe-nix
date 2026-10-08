@@ -1187,6 +1187,10 @@ def _retired(plan: Plan, managed_paths: set[str], only: set[str] | None) -> list
 			continue
 		if path in keep or globs.match_any(keep, path):
 			continue
+		if unmanaged_dir(path) is not None:
+			# Sync never reads or writes there, so nothing there is a legacy file it retires (a
+			# force-added node_modules/x/requirements.txt would otherwise stop the whole run).
+			continue
 		link = (plan.root / path).is_symlink()
 		if not link and not (plan.root / path).is_file():
 			continue

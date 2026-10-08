@@ -72,6 +72,83 @@ def drop_retired_steps(script: str) -> str | None:
 	return " && ".join(kept) if kept else None
 
 
+# The registration step at the end of a script, after `&&`.
+_REGISTER_STEP = re.compile(r"\s*&&\s*" + re.escape(VITE_REGISTER) + r"$")
+# A `cd` or `pushd` that starts a command of the shell itself (not of a subshell).
+_DIR_CHANGE = re.compile(r"(?:^|&&|\|\||;|\|)\s*(?:cd|pushd)(?:\s|$)")
+
+
+def _depths(script: str) -> list[int]:
+	"""For each character of ``script``: how many ``( … )`` groups it is inside (a parenthesis
+	counts as inside its own group), or -1 when it is quoted or escaped."""
+	out: list[int] = []
+	depth, quote, escaped = 0, "", False
+	for ch in script:
+		if escaped or quote:
+			escaped = False
+			quote = "" if ch == quote else quote
+			out.append(-1)
+		elif ch == "\\":
+			escaped = True
+			out.append(-1)
+		elif ch in "'\"":
+			quote = ch
+			out.append(-1)
+		elif ch == "(":
+			depth += 1
+			out.append(depth)
+		elif ch == ")":
+			out.append(depth)
+			depth = max(depth - 1, 0)
+		else:
+			out.append(depth)
+	return out
+
+
+def _top_level(script: str) -> str:
+	"""``script`` with every quoted string and parenthesised group blanked out: what the shell
+	that runs it executes itself."""
+	return "".join(ch if d == 0 else " " for ch, d in zip(script, _depths(script), strict=True))
+
+
+def changes_dir(script: str) -> bool:
+	"""Whether ``script`` changes the directory its later ``&&`` steps run in."""
+	return bool(_DIR_CHANGE.search(_top_level(script)))
+
+
+def _one_group(script: str) -> bool:
+	"""Whether ``script`` is a single ``( … )`` subshell."""
+	depths = _depths(script)
+	return script.startswith("(") and script.endswith(")") and 0 not in depths and depths[-1] == 1
+
+
+def registered_build(build: str) -> str:
+	"""C8's ``build`` (S30): ``build`` ending with ``&& node scripts/vite-register.mjs``, which
+	runs in the package's own directory. A build that changes directory first
+	(``cd frontend && yarn build``) runs in a subshell, ``(cd frontend && yarn build) && …``,
+	or the step would look for ``frontend/scripts/vite-register.mjs``. A build that already
+	meets both is returned as it is."""
+	text = build.rstrip()
+	step = _REGISTER_STEP.search(text)
+	if step:
+		base = text[: step.start()]
+		return f"({base}) && {VITE_REGISTER}" if changes_dir(base) else build
+	if text.endswith(VITE_REGISTER):
+		return build
+	return f"({text}) && {VITE_REGISTER}" if changes_dir(text) else f"{text} && {VITE_REGISTER}"
+
+
+def unregistered_build(build: str) -> str:
+	"""``build`` without the step ``registered_build`` added, and without the subshell it put a
+	directory-changing build in."""
+	text = build.rstrip()
+	step = _REGISTER_STEP.search(text)
+	base = text[: step.start()] if step else text
+	if _one_group(base) and changes_dir(base[1:-1]):
+		return base[1:-1]
+	return base
+
+
 def created(ctx: Any, version: str | None = None) -> dict:
 	"""The ``package.json`` sync writes when there is none (§2.8): ``license`` and ``author``
 	only when the profile sets ``org.license`` and ``org.publisher``."""
@@ -324,15 +401,15 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 					else:
 						sc[key] = kept
 		build = sc.get("build")
-		if c8_live(ctx) and isinstance(build, str) and not build.rstrip().endswith(VITE_REGISTER):
-			sc["build"] = f"{build.rstrip()} && {VITE_REGISTER}"
+		if c8_live(ctx) and isinstance(build, str):
+			sc["build"] = registered_build(build)
 		elif (
 			not modules.get("vite-register")
 			and isinstance(build, str)
 			and build.rstrip().endswith(f" && {VITE_REGISTER}")
 			and _was_on(ctx, "vite-register")
 		):
-			sc["build"] = build.rstrip()[: -len(f" && {VITE_REGISTER}")]
+			sc["build"] = unregistered_build(build)
 		# check belongs to js (oxc); with js off it is the app's.
 		check = check_script(sc)
 		if js_on:

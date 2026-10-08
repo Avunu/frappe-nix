@@ -16,7 +16,8 @@ from frappe_nix_tools.scaffold import manifest
 from helpers import run_cli
 from scaffold_helpers import AppCase, git
 
-# N2 packages scripts/vite-register.mjs (manifest.d/assets.json); these cases run as if it did.
+# N2 packages scripts/vite-register.mjs (manifest.d/assets.json); these cases also hold with
+# nothing else shipped.
 with_vite_register = mock.patch.object(manifest, "ships", lambda path: path == manifest.VITE_REGISTER)
 # N4's CI callers, which the workflow retire rules wait for.
 CI_CALLERS = (".github/workflows/release.yml", ".github/workflows/deps.yml")
@@ -524,8 +525,9 @@ class TestDiscovery(AppCase):
 			pkg["scripts"]["typecheck"],
 			"tsc --build tsconfig.solution.json && vue-tsc --noEmit -p tsconfig.json",
 		)
-		# C8's append waits for N2's scripts/vite-register.mjs (TestUpdateAssetsBeforeN2).
-		self.assertEqual(pkg["scripts"]["build"], "vite build")
+		# C8: a Vite app's build ends with the managed registration (N2, test_assets.py).
+		self.assertEqual(pkg["scripts"]["build"], "vite build && node scripts/vite-register.mjs")
+		self.assertTrue((self.root / "scripts/vite-register.mjs").is_file())
 		browser = json.loads(_strip(self.read("tsconfig.browser.json")))
 		self.assertIn("demo_app/public/js/app/**", browser["exclude"])
 
@@ -1145,43 +1147,6 @@ class TestRetireGuards(AppCase):
 		code, out = self.check()
 		self.assertEqual(code, 2, out)
 		self.assertIn("scripts.watch runs update-assets.mjs", out)
-
-
-class TestUpdateAssetsBeforeN2(AppCase):
-	"""Until the package renders scripts/vite-register.mjs (N2), a Vite app keeps its own
-	registration: no build step names the missing file, and C8 does not ask for one."""
-
-	def vite_app(self) -> None:
-		self.write("vite.config.ts", "export default {};\n")
-		self.write("update-assets.mjs", "\n")
-		self.write(
-			"package.json",
-			json.dumps({"name": "demo-app", "scripts": {"build": "vite build && node update-assets.mjs"}}),
-		)
-		self.commit()
-
-	def test_a_vite_app_keeps_update_assets(self):
-		self.vite_app()
-		self.synced()
-		self.assertTrue((self.root / "update-assets.mjs").exists())
-		build = json.loads(self.read("package.json"))["scripts"]["build"]
-		self.assertEqual(build, "vite build && node update-assets.mjs")
-		self.assertEqual(self.fn("compat")[0], 0)
-
-	@with_vite_register
-	def test_with_the_registration_shipped_c8_applies(self):
-		self.vite_app()
-		self.synced()
-		self.assertFalse((self.root / "update-assets.mjs").exists())
-		build = json.loads(self.read("package.json"))["scripts"]["build"]
-		self.assertEqual(build, "vite build && node scripts/vite-register.mjs")
-		pkg = json.loads(self.read("package.json"))
-		pkg["scripts"]["build"] = "vite build"
-		self.write("package.json", json.dumps(pkg))
-		self.commit()
-		code, out, _ = self.fn("compat")
-		self.assertEqual(code, 1, out)
-		self.assertIn("C8", out)
 
 
 class TestSpaGuard(AppCase):

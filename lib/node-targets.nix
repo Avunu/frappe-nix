@@ -10,13 +10,21 @@
 #
 # Not a target: node_modules itself; a subdirectory the app tracks as a git
 # submodule (hrms/frappe-ui is a whole other project nothing in the bench
-# builds); anything the consumer excludes by "app/subdir" key.
+# builds); anything the consumer excludes by "app/subdir" key — including,
+# in app mode, each of `frappe-nix.app.excludeNodeTargets` (appExcludes).
 #
 # Mirrored by lib/node-locks.nix's shell discovery — the dev-shell tool must
 # find a new app before the shell has re-evaluated — and both are checked
 # against the same fixture tree (tests/node-targets.nix, tests/node-locks.sh).
 { lib }:
 {
+  # frappe-nix.app.excludeNodeTargets as "app/subdir" keys: top-level
+  # directories of the app under development that are never node targets
+  # (docs-site, while an opted-in app's docs-site module is on; spec §5.11).
+  # The same keys reach the node-locks tool as --exclude flags, so both
+  # discoveries leave them out.
+  appExcludes = { app, dirs }: map (dir: "${app}/${dir}") dirs;
+
   # names:    ordered app directory names
   # appSrcOf: app -> path to that app's bytes
   # excludes: "app/subdir" keys to leave out

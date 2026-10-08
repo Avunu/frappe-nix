@@ -1,7 +1,7 @@
 ---
 title: Renaming an app
 description: "frappe-rename-app: renaming an app's package in the code and on existing sites."
-order: 10
+order: 11
 tags: [app-standards, rename, migration, frappe-rename-app]
 updated: 2026-10-07
 ---
