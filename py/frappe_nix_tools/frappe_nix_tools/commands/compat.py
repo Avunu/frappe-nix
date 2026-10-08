@@ -14,7 +14,8 @@ C6  ``hooks.required_apps`` ⊆ siblings; frappe is not in ``required_apps``
 C7  no hand-written frappe globals (augmentations only in ``types/<app>.augment.d.ts``,
     each member ``// app-owned: <reason>``); ``.git-blame-ignore-revs`` is valid
 C8  with a Vite config, ``scripts.build`` ends with ``node scripts/vite-register.mjs`` (once
-    the package renders that file: N2's ``manifest.d/assets.json``)
+    the package renders that file: N2's ``manifest.d/assets.json``), run from the package's
+    own directory (a ``cd`` before it is inside a subshell)
 C9  every unchecked-js path and coverage-omit glob matches a tracked file; reasons ≥ 10 characters
 
 Each rule runs only while its module is on (§5.9): C2, C3, C4 and C6 with ``metadata``;
@@ -229,6 +230,12 @@ def violations(root: Path) -> list[str]:
 		build = (pkg.get("scripts") or {}).get("build", "")
 		if vite and not str(build).rstrip().endswith(package_json.VITE_REGISTER):
 			out.append(f"C8 package.json: scripts.build must end with `{package_json.VITE_REGISTER}` (S30)")
+		elif vite and package_json.registered_build(str(build)) != str(build):
+			out.append(
+				"C8 package.json: scripts.build changes directory before"
+				f" `{package_json.VITE_REGISTER}`, which then misses the file: run the build in a"
+				" subshell, `(cd … && …) && node scripts/vite-register.mjs` (S30)"
+			)
 
 	# C9
 	tracked = set(app.tracked)

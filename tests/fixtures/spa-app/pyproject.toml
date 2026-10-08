@@ -1,0 +1,41 @@
+[project]
+name = "spa_app"
+authors = [{ name = "Example Org", email = "apps@example.org" }]
+description = "The app frappe-nix's asset self-tests build: Vite bundles at the root and in portal/"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.14"
+dynamic = ["version"]
+dependencies = []
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
+
+# The smallest opt-in that ships scripts/vite-register.mjs: minimal plus the
+# vite-register module (docs/app-standards/assets.md).
+[tool.frappe-nix]
+schema = 1
+profile = "minimal"
+frappe-major = 16
+siblings = []
+
+[tool.frappe-nix.vite-register]
+enable = true
+
+# The two SPA layouts of docs/app-standards/spec.md §2.1, for the typescript
+# module (off under minimal, so these are not read until it is turned on).
+[[tool.frappe-nix.typescript.spa]]
+root = "."
+include = ["spa_app/public/js/spa/**"]
+tsconfig = "tsconfig.json"
+check = "vue-tsc --noEmit -p tsconfig.json"
+
+[[tool.frappe-nix.typescript.spa]]
+root = "portal"
+include = ["portal/src/**"]
+tsconfig = "portal/tsconfig.json"
+check = "vue-tsc --noEmit -p portal/tsconfig.json"

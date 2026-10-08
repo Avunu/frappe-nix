@@ -1,0 +1,14 @@
+{
+	"$comment": "N2's managed files (docs/app-standards/spec.md §2.4, §5.11, S30); the format is in frappe_nix_tools/scaffold/manifest.py.",
+	"entries": [
+		{
+			"path": "scripts/vite-register.mjs",
+			"template": "scripts/vite-register.mjs",
+			"strategy": "whole",
+			"module": "vite-register",
+			"when": "discover.vite",
+			"uses": ["js.format-tabs"],
+			"header": "ts"
+		}
+	]
+}

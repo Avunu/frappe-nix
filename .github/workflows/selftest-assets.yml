@@ -1,0 +1,125 @@
+name: selftest-assets
+
+# N2's self-test (docs/app-standards/spec.md §7, "N2: assets"): Vite manifest
+# registration (S30, §5.11) on real benches, with the spa-app fixture
+# (tests/fixtures/spa-app). The network-free halves are flake checks
+# (tests/standards/assets.nix, in check.yml's standards-all). Each job is
+# tests/standards/selftest-assets/run.sh, which runs the same way by hand.
+#
+#   stock       a plain `bench init` bench, no Nix and no NODE_OPTIONS: the
+#               app's own scripts/vite-register.mjs registers spa.bundle.js and
+#               spa.bundle.css; a second build under frappe-nix's preload
+#               changes no byte of assets.json, and the preload alone registers
+#               them; --hard-link copies the hashed bundles into sites/assets
+#   builtbench  the fixture locked against this checkout, `nix build
+#               .#builtBench`: its assets.json maps the bundles; and again
+#               with no registration step of the app's own (Q7: the preload
+#               is the only registrar for an app that has not opted in)
+
+# The registration's code, the preload and how Nix hands it to frappe's build,
+# the fixture, and the pins. Also on main and weekly, so a change that slips
+# past the paths (or a moved input) still shows up.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/selftest-assets.yml
+      - dev/pyproject.toml
+      - flake.lock
+      - flake.nix
+      - lib/bench.nix
+      - lib/js/**
+      - lib/nodebuild/**
+      - lib/python.nix
+      - modules/devenv.nix
+      - py/frappe_nix_tools/frappe_nix_tools/data/manifest.d/assets.json
+      - py/frappe_nix_tools/frappe_nix_tools/data/templates/scripts/**
+      - tests/fixtures/spa-app/**
+      - tests/standards/selftest-assets/**
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a PR replaces its run; main's pushes and the weekly run
+# always finish, each in a group of its own.
+concurrency:
+  group: selftest-assets-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # frappe's Python dependencies include mysqlclient, built against these.
+      - name: Install the MariaDB client headers
+        run: sudo apt-get update -q && sudo apt-get install -y -q libmariadb-dev pkg-config
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # frappe 16 wants node >= 24; its build runs yarn classic.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      - name: Install Python 3.14, the bench CLI and yarn
+        run: |
+          uv python install 3.14
+          uv tool install frappe-bench
+          npm install -g yarn@1.22.22
+          git config --global user.name selftest
+          git config --global user.email selftest@localhost
+
+      - name: Run stock
+        run: PYTHON="$(uv python find 3.14)" tests/standards/selftest-assets/run.sh stock
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: selftest-assets-stock
+          path: |
+            ${{ runner.temp }}/standards-n2/*.log
+            ${{ runner.temp }}/standards-n2/*.json
+            ${{ runner.temp }}/standards-n2/bench/sites/assets/assets.json
+          if-no-files-found: ignore
+
+  builtbench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          # run.sh dates the PyPI resolution by the last change to the pins.
+          fetch-depth: 0
+
+      # A Frappe bench is more than the hosted runner's free disk.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      - name: Run builtbench
+        run: tests/standards/selftest-assets/run.sh builtbench
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: selftest-assets-builtbench
+          path: ${{ runner.temp }}/standards-n2/*.log
+          if-no-files-found: ignore
