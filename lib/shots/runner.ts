@@ -1,7 +1,7 @@
 // frappe-shots' engine (docs/app-standards/spec.md §5.5): repeatable screenshots of a demo
 // site, driven over the Chrome DevTools Protocol (./cdp.ts) and compared with the committed
-// ones (./diff.ts). lib/sh/frappe-shots.sh brings the bench up under libfaketime and runs
-// frappe-demo first; this file only drives the browser:
+// ones (./diff.ts). lib/sh/frappe-shots.sh brings the bench up and runs frappe-demo first,
+// with the demo script under libfaketime (./clock.ts); this file only drives the browser:
 //
 //   node runner.ts --spec <screenshots.ts> --base <url> --mode update|check
 //     [--only a,b] [--theme light|dark] [--out docs/screenshots] [--masters .dev-dist/shots]
@@ -24,6 +24,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { launch, login, newPage } from "./cdp.ts";
+import { clockShim, zonedTime } from "./clock.ts";
 import type { Page } from "./cdp.ts";
 import { compare, readPng, readWebp, writePng, writeWebp } from "./diff.ts";
 import type { Action, Shot, ShotSpec, Theme, Viewport } from "./shots.d.ts";
@@ -186,23 +187,6 @@ export function validate(spec: unknown): ShotSpec {
 }
 
 // ── the page ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * A clock shim for every document: the page's `Date` starts at the demo day, noon in the
- * spec's timezone, and advances with real time. The bench runs under libfaketime from the
- * same day, so "3 days ago" and "today" read the same in every run, whatever today is.
- */
-function clockShim(start: number): string {
-	return `(() => {
-		const RealDate = Date;
-		const offset = ${start} - RealDate.now();
-		class ShotDate extends RealDate {
-			constructor(...args) { if (args.length === 0) super(RealDate.now() + offset); else super(...args); }
-			static now() { return RealDate.now() + offset; }
-		}
-		globalThis.Date = ShotDate;
-	})();`;
-}
 
 async function networkIdle(page: Page, quietMs = 500, timeoutMs = 30000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
@@ -395,6 +379,18 @@ async function main(): Promise<number> {
 	const shots = spec.shots.filter((s) => !opts.only.length || opts.only.includes(s.name));
 	const unknown = opts.only.filter((n) => !spec.shots.some((s) => s.name === n));
 	if (unknown.length) throw new ExitError(SPEC_ERROR, `--only names no shot: ${unknown.join(", ")}`);
+	// The page's clock: noon on the demo day where the screenshots are set. The demo data is
+	// from 09:00 in the same zone (frappe-shots.sh, ./clock.ts), so the gap between a record
+	// and the page's "now" is the same on every machine.
+	const clock = opts.clock || spec.demo?.date || "";
+	let start: number | null = null;
+	if (clock) {
+		try {
+			start = zonedTime(clock, "12:00:00", spec.timezone ?? opts.timezone);
+		} catch (e) {
+			throw new ExitError(SPEC_ERROR, `no demo clock: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
 
 	let browser;
 	try {
@@ -419,11 +415,7 @@ async function main(): Promise<number> {
 	let changed = 0;
 	let differing = 0;
 	try {
-		const clock = opts.clock || spec.demo?.date || "";
-		if (clock) {
-			const start = Date.parse(`${clock}T12:00:00Z`);
-			await page.send("Page.addScriptToEvaluateOnNewDocument", { source: clockShim(start) });
-		}
+		if (start !== null) await page.send("Page.addScriptToEvaluateOnNewDocument", { source: clockShim(start) });
 		await login(page, opts.base, user, opts.password);
 		const manifestPath = path.join(opts.out, "manifest.json");
 		const previous: ManifestEntry[] = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, "utf8")) : [];

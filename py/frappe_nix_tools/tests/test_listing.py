@@ -10,6 +10,7 @@ real in .github/workflows/selftest-product.yml.
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -307,6 +308,28 @@ class TestBaseline(ListingCase):
 		hits = [*self.hits(1, "frappe.db.commit()"), *self.hits(1, "    frappe.db.commit()   ")]
 		self.assertFalse(self.errors(self.run_check(hits), "L7"))
 
+	def test_the_semgrep_shim_quotes_the_checkout_path(self):
+		odd = self.root.parent / f'{self.root.name}-a "b" $(touch pwned) `c`'
+		(odd / "tools").mkdir(parents=True)
+		(odd / "tools" / "pyproject.toml").write_text('[project]\ndependencies = ["semgrep"]\n')
+		bin_dir = odd / "bin"
+		bin_dir.mkdir()
+		fake_uv = bin_dir / "uv"
+		fake_uv.write_text(f"#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n")
+		fake_uv.chmod(0o755)
+		which = {"semgrep": None, "uv": str(fake_uv)}
+		with mock.patch.object(baseline.shutil, "which", side_effect=lambda name: which.get(name)):
+			env = baseline._semgrep_on_path(odd, odd / "shim", "1.0.0")
+		env["PATH"] = f"{odd / 'shim'}{os.pathsep}{bin_dir}{os.pathsep}{env['PATH']}"
+		out = subprocess.run(
+			["semgrep", "--version"], env=env, capture_output=True, text=True, check=True, cwd=odd
+		)
+		self.assertEqual(
+			json.loads(out.stdout),
+			["run", "--frozen", "--project", str(odd / "tools"), "semgrep", "--version"],
+		)
+		self.assertFalse((odd / "pwned").exists())
+
 	def test_malformed_baseline_is_invalid(self):
 		self.write(baseline.PATH, '{"schema": 1, "findings": [{"rule": "x", "count": 0}]}')
 		self.commit()
@@ -403,6 +426,216 @@ class TestRegistry(ListingCase):
 		code, out = self.registry("--dry-run", "--no-check")
 		self.assertEqual(code, 2, out)
 		self.assertIn("needs listing.publish", out)
+
+
+GH_STUB = """import json, os, sys
+with open(os.environ["GH_LOG"], "a") as log:
+	log.write(json.dumps({"argv": sys.argv[1:], "token": os.environ.get("GH_TOKEN", "")}) + "\\n")
+if sys.argv[1:3] == ["pr", "list"]:
+	if os.environ.get("GH_LIST_FAILS"):
+		sys.exit("gh: HTTP 502")
+	print(os.environ.get("GH_LIST", "[]"))
+elif sys.argv[1:3] == ["pr", "create"]:
+	print("https://github.com/example/marketplace/pull/7")
+"""
+
+TOKEN = "ghp_not-a-real-token-0123456789"
+
+
+class TestRegistryPublish(TestRegistry):
+	"""The live path: the release gate, the push to the fork, ``gh pr create``/``edit``, and
+	``--refresh``, against local bare repositories and a stub ``gh`` on PATH."""
+
+	def setUp(self) -> None:
+		super().setUp()
+		# The fork: a copy of upstream (its branch example-org/demo_app does not exist yet).
+		self.fork = self.remotes / "Example-Org" / "marketplace"
+		self.fork.parent.mkdir(parents=True)
+		subprocess.run(
+			["git", "clone", "-q", "--bare", str(self.remotes / "example" / "marketplace"), str(self.fork)],
+			check=True,
+		)
+		bin_dir = self.remotes / "bin"
+		bin_dir.mkdir()
+		stub = bin_dir / "gh"
+		stub.write_text(f"#!{sys.executable}\n{GH_STUB}")
+		stub.chmod(0o755)
+		self.gh_log = self.remotes / "gh.log"
+		env = mock.patch.dict(
+			os.environ,
+			{
+				"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+				"GH_LOG": str(self.gh_log),
+				"GH_TOKEN": TOKEN,
+			},
+		)
+		env.start()
+		self.addCleanup(env.stop)
+
+	def passing(self, warnings: int = 0) -> check.Outcome:
+		results = [rules.Result("L12", "warning", "marketplace/listing.toml", "w") for _ in range(warnings)]
+		return check.Outcome(results=results, marketplace_rev="d" * 40, advisory=[])
+
+	def gh_calls(self) -> list[dict]:
+		if not self.gh_log.exists():
+			return []
+		return [json.loads(line) for line in self.gh_log.read_text().splitlines()]
+
+	def live(self, *argv: str, outcome: check.Outcome | None = None) -> tuple[int, str, list[list[str]]]:
+		"""``registry --yes`` with the gate's ``check.run`` answering ``outcome``; every argv run."""
+		real = subprocess.run
+		argvs: list[list[str]] = []
+		envs: list[dict] = []
+
+		def spy(argv, *args, **kwargs):
+			argvs.append([str(a) for a in argv])
+			envs.append(kwargs.get("env") or {})
+			return real(argv, *args, **kwargs)
+
+		self.envs = envs
+		with (
+			mock.patch.object(check, "run", return_value=outcome or self.passing()),
+			mock.patch("frappe_nix_tools.listing.registry.subprocess.run", side_effect=spy),
+		):
+			code, out = self.registry("--yes", "--onboard", "--upstream", "example/marketplace", *argv)
+		return code, out, argvs
+
+	def test_publish_pushes_the_fork_branch_and_creates_the_pr(self):
+		code, out, argvs = self.live(outcome=self.passing(warnings=2))
+		self.assertEqual(code, 0, out)
+		self.assertIn("https://github.com/example/marketplace/pull/7", out)
+		# The fork branch holds one commit on upstream main, with the release.
+		log = git(self.fork, "log", "--format=%s", "example-org/demo_app")
+		self.assertEqual(log.splitlines(), ["demo_app: onboard and 16.0.0", "registry"])
+		listed = json.loads(git(self.fork, "show", "example-org/demo_app:apps/demo_app.json"))
+		self.assertEqual([r["version"] for r in listed["releases"]], ["16.0.0"])
+		calls = self.gh_calls()
+		self.assertEqual([c["argv"][:2] for c in calls], [["pr", "list"], ["pr", "create"]])
+		create = calls[1]["argv"]
+		self.assertEqual(create[create.index("--head") + 1], "Example-Org:example-org/demo_app")
+		self.assertEqual(create[create.index("--title") + 1], "demo_app: onboard and 16.0.0")
+		body = create[create.index("--body") + 1]
+		sha = git(self.root, "rev-parse", "v16.0.0").strip()
+		self.assertIn(f"- 16.0.0 at `{sha[:12]}` on `version-16`", body)
+		self.assertIn(
+			f"`frappe-listing check --release --tag v16.0.0` passed on `{sha[:12]}` (0 errors, 2 warnings)",
+			body,
+		)
+		self.assertIn("Semgrep baseline: 0 entries", body)
+		self.assertIn("frappe/marketplace@`dddddddddddd`", body)
+		# The token reaches git as a header in the environment and gh as GH_TOKEN, never an argument.
+		self.assertFalse([a for a in argvs if any(TOKEN in part for part in a)])
+		push = next(i for i, a in enumerate(argvs) if "push" in a)
+		self.assertEqual(self.envs[push]["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
+		self.assertIn("AUTHORIZATION: basic ", self.envs[push]["GIT_CONFIG_VALUE_0"])
+		self.assertNotIn(TOKEN, self.envs[push]["GIT_CONFIG_VALUE_0"])  # base64, x-access-token:<token>
+		self.assertTrue(all(c["token"] == TOKEN for c in calls))
+
+	def test_an_open_pr_is_edited_not_created(self):
+		with mock.patch.dict(
+			os.environ, {"GH_LIST": '[{"url": "https://github.com/example/marketplace/pull/3"}]'}
+		):
+			code, out, _ = self.live()
+		self.assertEqual(code, 0, out)
+		self.assertIn("https://github.com/example/marketplace/pull/3", out)
+		calls = self.gh_calls()
+		self.assertEqual(
+			[c["argv"][:3] for c in calls],
+			[["pr", "list", "--repo"], ["pr", "edit", "https://github.com/example/marketplace/pull/3"]],
+		)
+
+	def test_gh_pr_list_failing_opens_nothing(self):
+		with mock.patch.dict(os.environ, {"GH_LIST_FAILS": "1"}):
+			code, out, _ = self.live()
+		self.assertEqual(code, 3, out)
+		self.assertIn("gh pr list", out)
+		self.assertEqual([c["argv"][:2] for c in self.gh_calls()], [["pr", "list"]])
+
+	def test_a_failing_gate_pushes_nothing(self):
+		failing = check.Outcome(
+			results=[rules.Result("L4", "error", "demo_app/__init__.py", "version mismatch")]
+		)
+		code, out, argvs = self.live(outcome=failing)
+		self.assertEqual(code, 1, out)
+		self.assertIn("check --release --tag v16.0.0 fails", out)
+		self.assertFalse([a for a in argvs if "push" in a])
+		self.assertEqual(self.gh_calls(), [])
+		self.assertEqual(git(self.fork, "branch", "--list", "example-org/demo_app"), "")
+
+	def test_gate_runs_check_release_on_a_worktree_of_the_commit(self):
+		from frappe_nix_tools.listing import registry
+
+		sha = git(self.root, "rev-parse", "v16.0.0").strip()
+		seen = {}
+
+		def fake_run(t, options):
+			seen["root"], seen["options"] = t.root, options
+			self.assertTrue((t.root / ".git").is_file())  # a worktree, not the checkout
+			return self.passing()
+
+		with mock.patch.object(check, "run", side_effect=fake_run):
+			gate = registry.gate(target.load(self.root), sha, "v16.0.0")
+		self.assertEqual((gate.tag, gate.sha), ("v16.0.0", sha))
+		self.assertNotEqual(seen["root"], self.root)
+		self.assertEqual((seen["options"].release, seen["options"].tag), (True, "v16.0.0"))
+		self.assertFalse(seen["root"].exists())
+		self.assertEqual(len(git(self.root, "worktree", "list").splitlines()), 1)
+
+	def push_fork_branch(self, *, behind: bool) -> str:
+		"""The fork branch with the release of v16.0.0 on it, on an older upstream main when ``behind``."""
+		code, out, _ = self.live()
+		self.assertEqual(code, 0, out)
+		if behind:
+			work = self.remotes / "upstream-work"
+			subprocess.run(
+				["git", "clone", "-q", str(self.remotes / "example" / "marketplace"), str(work)], check=True
+			)
+			(work / "apps" / "other.json").write_text('{"name": "other", "releases": [], "moved": true}\n')
+			git(work, "commit", "-q", "-am", "upstream moves on")
+			git(work, "push", "-q", "origin", "HEAD:main")
+		self.gh_log.unlink()
+		return out
+
+	def test_refresh_does_nothing_when_the_fork_branch_is_current(self):
+		self.push_fork_branch(behind=False)
+		code, out = self.registry("--refresh", "--dry-run", "--upstream", "example/marketplace")
+		self.assertEqual(code, 0, out)
+		self.assertIn("is up to date with example/marketplace main; nothing to do", out)
+
+	def test_refresh_rebuilds_a_behind_branch_and_says_no_gate_ran(self):
+		self.push_fork_branch(behind=True)
+		with mock.patch.object(check, "run") as gate_run:
+			code, out = self.registry("--refresh", "--dry-run", "--upstream", "example/marketplace")
+		self.assertEqual(code, 0, out)
+		gate_run.assert_not_called()
+		sha = git(self.root, "rev-parse", "v16.0.0").strip()
+		# Upstream still does not list the app, so the rebuilt branch onboards it again.
+		self.assertIn("title: demo_app: onboard and 16.0.0", out)
+		self.assertIn(f"- 16.0.0 at `{sha[:12]}` on `version-16`", out)
+		self.assertIn("Release gate: none ran in this update (--refresh rebuilds the branch", out)
+		self.assertIn("Semgrep baseline: not checked in this update.", out)
+		self.assertNotIn("passed", out)
+
+	def test_behind(self):
+		from frappe_nix_tools.listing import registry
+
+		clone = self.remotes / "clone"
+		registry.fresh_clone(clone, "example/marketplace", "example-org/demo_app")
+		self.assertFalse(
+			registry.behind(clone, "Example-Org/marketplace", "example-org/demo_app")
+		)  # no branch
+		self.push_fork_branch(behind=True)
+		self.assertFalse(
+			registry.behind(clone, "Example-Org/marketplace", "example-org/demo_app")
+		)  # clone predates
+		fresh = self.remotes / "clone-2"
+		registry.fresh_clone(fresh, "example/marketplace", "example-org/demo_app")
+		self.assertTrue(registry.behind(fresh, "Example-Org/marketplace", "example-org/demo_app"))
+
+	def test_dry_run_body_says_the_gate_was_skipped(self):
+		code, out = self.registry("--dry-run", "--onboard", "--no-check", "--upstream", "example/marketplace")
+		self.assertEqual(code, 0, out)
+		self.assertIn("Release gate: none ran in this update (--no-check).", out)
 
 
 class TestReadme(ListingCase):
@@ -509,6 +742,14 @@ class TestReadme(ListingCase):
 			"Write to apps@example.org (https://github.com/example-org/demo_app/issues).",
 			self.read("README.md"),
 		)
+
+	def test_strip_leaves_the_apps_own_blank_lines(self):
+		text = (
+			"# App\n\n<!-- frappe-nix:begin header -->\nx\n<!-- frappe-nix:end header -->\n\n"
+			"Intro\n\n```python\na = 1\n\n\n\nb = 2\n```\n\n\n"
+			"<!-- frappe-nix:begin support -->\ny\n<!-- frappe-nix:end support -->\n\nEnd.\n"
+		)
+		self.assertEqual(readme.strip(text), "# App\n\nIntro\n\n```python\na = 1\n\n\n\nb = 2\n```\n\nEnd.\n")
 
 	def test_readme_off_removes_the_blocks(self):
 		self.write(

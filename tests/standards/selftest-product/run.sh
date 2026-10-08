@@ -5,11 +5,17 @@
 #   run.sh listing        no Nix: frappe-nix-tools from this checkout (uv tool install), then
 #                         `frappe-nix listing check` on the fixture with the example-org profile,
 #                         L9 (pinned pilot, dependency apps on the bench) included and timed
-#                         (a cold run under 25 minutes); a planted manual commit fails L7; and
+#                         (a cold run under 25 minutes: no uv cache, and an import the bench
+#                         lacks, so ImportCheck installs frappe from source); a planted manual
+#                         commit fails L7; and
 #                         `registry --dry-run --onboard` writes the apps/<app>.json entry that
-#                         the pinned tools/add_release.py writes, byte for byte
+#                         the pinned tools/add_release.py writes, byte for byte; and under
+#                         main+tags, release-please's generic updater bumps __version__ and
+#                         README.md together and `listing readme --check` still passes
 #   run.sh shots          frappe-demo twice on one site leaves every record count unchanged;
-#                         frappe-shots from two fresh sites is pixel-identical (maxDiffRatio 0);
+#                         outside CI neither drops that site unasked (exit 64);
+#                         frappe-shots from two fresh sites is pixel-identical (maxDiffRatio 0),
+#                         the second made on a host in another timezone (TZ=Asia/Tokyo);
 #                         --check against the fixture's committed shots exits 0; a 1-pixel CSS
 #                         change exits 1 and writes a diff PNG
 #   run.sh demo-erpnext   frappe-demo with erpnext installed: the company is demo.company-name
@@ -17,8 +23,8 @@
 # Each works on a copy of tests/fixtures/standards-app under $WORK (default
 # $RUNNER_TEMP/standards-n5) on the example-org profile (in-repo, every module on). The Nix
 # suites lock it against this checkout (`--override-input frappe-nix path:<checkout>`), as
-# selftest-runtime does. Needs git, jq, curl and python3, uv for `listing`, nix for the others,
-# and the network.
+# selftest-runtime does. Needs git, jq, curl and python3, uv and node (npm) for `listing`, nix
+# for the others, and the network.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +32,8 @@ FN="$(git -C "$HERE" rev-parse --show-toplevel)"
 WORK="${WORK:-${RUNNER_TEMP:-/tmp}/standards-n5}"
 SITE=standards-fixture.localhost
 NIXFLAGS=(--no-pure-eval --override-input frappe-nix "path:$FN")
+# The release-please whose generic updater the listing suite runs, fixed so a run is repeatable.
+RELEASE_PLEASE=17.11.2
 
 fail() {
   echo "::error::$*" >&2
@@ -76,6 +84,13 @@ cmd_listing() {
   prepare "$app"
   (cd "$app" && FRAPPE_NIX_OFFLINE=1 frappe-nix sync --write > /dev/null)
   commit "$app" synced
+  # A dependency of the app's own, which the validation bench lacks: pilot's ImportCheck then
+  # installs frappe from source and the app into a throwaway venv (mysqlclient is built
+  # there), the expensive path the 25-minute budget and the job's apt packages are for.
+  sed -i 's/^dependencies = \[\]$/dependencies = ["pyfiglet"]/' "$app/pyproject.toml"
+  grep -q '^dependencies = \["pyfiglet"\]$' "$app/pyproject.toml" || fail "the fixture's [project] dependencies did not take pyfiglet"
+  printf '%s\n' '"""A third-party import the bench lacks (selftest-product)."""' '' 'import pyfiglet' '' 'BANNER = pyfiglet.figlet_format' > "$app/standards_fixture/banner.py"
+  commit "$app" "a dependency the bench lacks"
   endgroup
 
   group "frappe-nix listing check (L9 with the pinned pilot)"
@@ -120,6 +135,25 @@ cmd_listing() {
     fail "registry --dry-run --onboard's apps/standards_fixture.json differs from add_release.py's: $(diff "$WORK/ours/apps/standards_fixture.json" "$WORK/direct/apps/standards_fixture.json")"
   endgroup
   ok "registry --dry-run --onboard writes the apps/<app>.json entry the pinned add_release.py writes, byte for byte"
+
+  group "release-please's generic updater on README.md under main+tags, then readme --check"
+  # What a release PR does to the extra files (release-please's own updater, not a stand-in):
+  # __version__ and the README's install line move together, and the blocks still check.
+  local rp="$WORK/rp-app"
+  prepare "$rp"
+  sed -i 's/^\[releases\]$/[releases]\nbranching = "main+tags"/' "$rp/.standards-profile/profile.toml"
+  grep -q '^branching = "main+tags"$' "$rp/.standards-profile/profile.toml" || fail "the profile copy did not take main+tags"
+  (cd "$rp" && FRAPPE_NIX_OFFLINE=1 frappe-nix sync --write > /dev/null)
+  commit "$rp" synced
+  grep -q -- '--branch v16.0.0' "$rp/README.md" || fail "the synced README names no --branch v16.0.0"
+  rm -rf "$WORK/release-please"
+  npm install --silent --no-audit --no-fund --prefix "$WORK/release-please" "release-please@$RELEASE_PLEASE"
+  node "$HERE/release-please-bump.cjs" "$WORK/release-please/node_modules/release-please" "$rp" 16.1.0 | tee "$WORK/release-please.log"
+  grep -q '^__version__ = "16.1.0"$' "$rp/standards_fixture/__init__.py" || fail "release-please did not bump __version__"
+  grep -q -- '--branch v16.1.0' "$rp/README.md" || fail "release-please did not bump the README's install line"
+  expect 0 "$WORK/readme-after-release.log" bash -c "cd '$rp' && frappe-nix listing readme --check"
+  endgroup
+  ok "after release-please's generic updater bumps __version__ and README.md together, readme --check passes"
 }
 
 # ── the Nix suites ───────────────────────────────────────────────────────────────────
@@ -148,6 +182,22 @@ dev() {
   local dir="$1"
   shift
   (cd "$dir" && nix develop "${NIXFLAGS[@]}" -c "$@")
+}
+
+# dev, as a desk runs it: no CI, and no terminal to answer a prompt.
+off_ci() {
+  (
+    unset CI
+    dev "$@" < /dev/null
+  )
+}
+
+# dev, on a host in another timezone than the runner's UTC.
+in_tokyo() {
+  (
+    export TZ=Asia/Tokyo TZDIR=/usr/share/zoneinfo
+    dev "$@"
+  )
 }
 
 # Record counts per doctype on the site, as JSON: what a second frappe-demo must not change.
@@ -195,6 +245,16 @@ cmd_shots() {
   [ -f "$app/.frappe-nix/bench/sites/$SITE/demo.json" ] || fail "frappe-demo wrote no sites/$SITE/demo.json"
   ok "frappe-demo twice on one site leaves every record count unchanged"
 
+  group "outside CI, neither drops the existing site unasked"
+  expect 64 "$WORK/guard-demo.log" off_ci "$app" frappe-demo --fresh --site "$SITE"
+  grep -q 'pass --recreate-site' "$WORK/guard-demo.log" || fail "frappe-demo --fresh's refusal does not name --recreate-site: $(cat "$WORK/guard-demo.log")"
+  expect 64 "$WORK/guard-shots.log" off_ci "$app" frappe-shots --check
+  grep -q 'pass --reuse-site' "$WORK/guard-shots.log" || fail "frappe-shots' refusal does not name --reuse-site: $(cat "$WORK/guard-shots.log")"
+  counts "$app" | tail -n 1 > "$WORK/counts-3.json"
+  cmp "$WORK/counts-1.json" "$WORK/counts-3.json" || fail "a refused run changed the site"
+  endgroup
+  ok "outside CI, frappe-demo --fresh and frappe-shots refuse to drop an existing site (exit 64)"
+
   # A spec that tolerates no differing pixel, and one with a 1-pixel layout change.
   sed 's/readme: "hero",/readme: "hero",\n\t\t\tmaxDiffRatio: 0,/' "$app/marketplace/screenshots.ts" > "$app/marketplace/screenshots-strict.ts"
   sed 's/^\tdemo: /\tcss: ".page-head { margin-top: 1px !important; }",\n\tdemo: /' "$app/marketplace/screenshots.ts" > "$app/marketplace/screenshots-moved.ts"
@@ -210,10 +270,12 @@ cmd_shots() {
   done
   ok "frappe-shots --update writes both themes and the manifest"
 
-  group "frappe-shots from a second fresh site, against the first, with maxDiffRatio 0"
-  expect 0 "$WORK/shots-2.log" dev "$app" frappe-shots --check --spec marketplace/screenshots-strict.ts --out "$WORK/shots-1"
+  # The second on a host nine hours east of the first: the demo's clock is fixed in the
+  # screenshots' timezone, not the host's (TZDIR, so Nix's glibc finds the zone at all).
+  group "frappe-shots from a second fresh site in another host timezone, against the first, with maxDiffRatio 0"
+  expect 0 "$WORK/shots-2.log" in_tokyo "$app" frappe-shots --check --spec marketplace/screenshots-strict.ts --out "$WORK/shots-1"
   endgroup
-  ok "two runs from two fresh sites are pixel-identical (maxDiffRatio 0)"
+  ok "two runs from two fresh sites, on hosts in different timezones, are pixel-identical (maxDiffRatio 0)"
 
   group "--check against the fixture's committed shots"
   if [ -f "$app/docs/screenshots/manifest.json" ]; then

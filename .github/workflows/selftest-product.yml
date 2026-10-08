@@ -9,12 +9,15 @@ name: selftest-product
 # check.yml's standards-all.
 #
 #   listing       no Nix, as an app's `ci / marketplace` job runs: frappe-nix listing check
-#                 with L9 on the pinned pilot (the job's apt packages only), timed against
-#                 25 minutes; a planted finding fails L7; registry --dry-run --onboard
-#                 matches the pinned tools/add_release.py byte for byte
-#   shots         frappe-demo twice leaves every count unchanged; frappe-shots from two fresh
-#                 sites is pixel-identical; --check against the committed shots exits 0; a
-#                 1-pixel CSS change exits 1 with a diff PNG
+#                 with L9 on the pinned pilot (the job's apt packages only), cold (no uv
+#                 cache) with an import the bench lacks, so frappe is installed from source,
+#                 timed against 25 minutes; a planted finding fails L7; registry --dry-run
+#                 --onboard matches the pinned tools/add_release.py byte for byte;
+#                 release-please's generic updater keeps `listing readme --check` green
+#   shots         frappe-demo twice leaves every count unchanged; outside CI neither drops
+#                 the site unasked; frappe-shots from two fresh sites (the second in another
+#                 host timezone) is pixel-identical; --check against the committed shots
+#                 exits 0; a 1-pixel CSS change exits 1 with a diff PNG
 #   demo-erpnext  frappe-demo with erpnext installed makes demo.company-name's company
 #
 # Nothing here opens a registry pull request: `frappe-listing registry` runs only as a dry
@@ -24,12 +27,15 @@ on:
   pull_request:
     paths:
       - .github/workflows/selftest-product.yml
+      # What frappe-demo and frappe-shots stand on: the dev shell (modules/, lib/scripts.nix's
+      # provision-site, lib/standards/'s shell and outputs), the flake, and the pins run.sh
+      # reads (dev/pyproject.toml, templates/bench/), as selftest-runtime filters.
+      - flake.nix
       - flake.lock
-      - lib/demo/**
-      - lib/sh/frappe-demo.sh
-      - lib/sh/frappe-shots.sh
-      - lib/shots/**
-      - lib/standards/tools/**
+      - dev/pyproject.toml
+      - templates/bench/**
+      - lib/**
+      - modules/**
       - py/frappe_nix_tools/**
       - tests/fixtures/profiles/example-org/**
       - tests/fixtures/standards-app/**
@@ -56,7 +62,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # No cache: L9's timing is of a cold run, the one a new release meets.
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
 
       # What the `marketplace` gate job installs (§4.2): mysqlclient has no Linux wheel, and
       # L9 installs frappe from source when the app imports what the bench lacks.

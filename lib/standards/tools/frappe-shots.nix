@@ -15,8 +15,8 @@ let
   frappeNix = import ./frappe-nix.nix { inherit pkgs lib frappeNixTools; };
   frappeDemo = import ./frappe-demo.nix { inherit pkgs lib frappeNixTools; };
 
-  # The engine: runner.ts, cdp.ts, diff.ts and shots.d.ts, with node_modules built offline
-  # from yarn.lock. Node 24 strips the types, so nothing is compiled.
+  # The engine: runner.ts, cdp.ts, clock.ts, diff.ts and shots.d.ts, with node_modules built
+  # offline from yarn.lock. Node 24 strips the types, so nothing is compiled.
   engine = pkgs.stdenv.mkDerivation {
     pname = "frappe-nix-shots";
     inherit (lib.importJSON ../../shots/package.json) version;
@@ -36,7 +36,7 @@ let
     installPhase = ''
       runHook preInstall
       mkdir -p "$out"
-      cp -r runner.ts cdp.ts diff.ts shots.d.ts package.json node_modules "$out/"
+      cp -r runner.ts cdp.ts clock.ts diff.ts shots.d.ts package.json node_modules "$out/"
       runHook postInstall
     '';
   };

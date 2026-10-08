@@ -1,7 +1,7 @@
 # frappe-demo: a repeatable demo site for the app (docs/app-standards/spec.md §5.4).
 #
-#   frappe-demo [--site S] [--fresh] [--erpnext-demo | --no-erpnext-demo] [--date YYYY-MM-DD]
-#               [--seed N] [--no-up]
+#   frappe-demo [--site S] [--fresh] [--recreate-site] [--erpnext-demo | --no-erpnext-demo]
+#               [--date YYYY-MM-DD] [--seed N] [--no-up]
 #
 # Built by lib/standards/tools/frappe-demo.nix (writeShellApplication, so shellcheck runs
 # over it), and run inside an opted-in app's dev shell, which supplies devenv,
@@ -9,16 +9,20 @@
 # of marketplace/screenshots.ts when the app has one, else the demo module's parameters.
 #
 #   1. bring the bench up as frappe-test's stage 1 does (unless --no-up), and with --fresh,
-#      or when the site is missing, provision it;
+#      or when the site is missing, provision it. --fresh on a site that exists drops its
+#      database: outside CI (CI=true) that needs --recreate-site or a yes at the prompt, as
+#      frappe-test's does;
 #   2-5. lib/demo/frappe_demo.py with the bench's interpreter: the setup wizard with fixed
 #      arguments, erpnext's demo data (when asked for and installed), the app's
 #      <app>.demo.setup(ctx), one commit, sites/<site>/demo.json.
 #
 # The bench is left up (frappe-test --down, or process-compose down, stops it). Under
-# frappe-shots (§5.5), FRAPPE_NIX_SHOTS_PRELOAD and FRAPPE_NIX_SHOTS_FAKETIME put the demo
-# script on libfaketime's clock, so what it makes is dated on the demo day.
+# frappe-shots (§5.5), FRAPPE_NIX_SHOTS_PRELOAD and FRAPPE_NIX_SHOTS_FAKETIME (a UTC time;
+# the script runs with TZ=UTC) put the demo script on libfaketime's clock, so what it makes
+# is dated on the demo day.
 #
-# Exit codes: 0 ok; 1 the demo hook raised; 10 an environment error.
+# Exit codes: 0 ok; 1 the demo hook raised; 10 an environment error; 64 an existing site
+# that was not to be dropped.
 
 DEMO_PY="@FRAPPE_DEMO_PY@"
 
@@ -29,6 +33,7 @@ fail_env() {
 
 SITE="${FRAPPE_SITE:-}"
 FRESH=0
+RECREATE=0
 ERPNEXT=""
 DATE=""
 SEED=""
@@ -42,6 +47,11 @@ while [ $# -gt 0 ]; do
       ;;
     --fresh)
       FRESH=1
+      shift
+      ;;
+    --recreate-site)
+      FRESH=1
+      RECREATE=1
       shift
       ;;
     --erpnext-demo)
@@ -67,8 +77,11 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h | --help)
-      echo "usage: frappe-demo [--site S] [--fresh] [--erpnext-demo | --no-erpnext-demo] [--date YYYY-MM-DD] [--seed N] [--no-up]"
+      echo "usage: frappe-demo [--site S] [--fresh] [--recreate-site] [--erpnext-demo | --no-erpnext-demo]"
+      echo "                   [--date YYYY-MM-DD] [--seed N] [--no-up]"
       echo "A repeatable demo site (docs/app-standards/screenshots.md)."
+      echo "--fresh on a site that exists DROPS ITS DATABASE: outside CI it needs --recreate-site"
+      echo "(which implies --fresh) or a yes at the prompt."
       exit 0
       ;;
     *) fail_env "unknown argument $1 (see --help)" ;;
@@ -82,7 +95,10 @@ BENCH="$FRAPPE_BENCH_ROOT"
 APP="$("$BENCH/env/bin/python" -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["project"]["name"])' \
   "$REPO/pyproject.toml")" || fail_env "cannot read [project].name from pyproject.toml"
 
-if [ "$(cd "$REPO" && frappe-nix config modules.demo)" != true ]; then
+# Read on its own line: a failure inside the test's command substitution would not stop
+# the script, and a broken configuration would pass as a module that is off.
+enabled="$(cd "$REPO" && frappe-nix config modules.demo)" || fail_env "cannot read the configuration (frappe-nix config modules.demo)"
+if [ "$enabled" != true ]; then
   echo "frappe-demo: notice: the demo module is off for this app; nothing to do" >&2
   exit 0
 fi
@@ -109,16 +125,38 @@ esac
 case "$SEED" in
   '' | *[!0-9]*) fail_env "--seed must be a whole number, not $SEED" ;;
 esac
+# --fresh drops the site's database, and the default site is the dev shell's own. In CI
+# that is the point; at a desk it is somebody's work, so an existing site is only dropped
+# when asked (frappe-test's rule).
+if [ "$FRESH" = 1 ] && [ "$RECREATE" = 0 ] && [ "${CI:-}" != true ] && [ -d "$BENCH/sites/$SITE" ]; then
+  if [ -t 0 ] && [ -t 2 ]; then
+    printf 'frappe-demo: %s exists. --fresh drops its database and resets Administrator'"'"'s password.
+  Recreate it? [y/N] ' "$SITE" >&2
+    answer=""
+    read -r answer || true
+    case "$answer" in
+      y | Y | yes | YES) RECREATE=1 ;;
+      *)
+        echo "frappe-demo: kept $SITE; drop --fresh to add the demo to it, or pass --recreate-site" >&2
+        exit 64
+        ;;
+    esac
+  else
+    echo "frappe-demo: $SITE exists: drop --fresh to add the demo to it, or pass --recreate-site to drop its database and make it again" >&2
+    exit 64
+  fi
+fi
 echo "frappe-demo: $SITE, date $DATE, seed $SEED, erpnext demo $([ "$ERPNEXT" = 1 ] && echo on || echo off)"
 
 pc() { process-compose -U -u "${PC_SOCKET_PATH:?}" "$@"; }
 
 # <command…> on frappe-shots' fake clock when it set one, else as it is. Without libfaketime's
-# shared-memory clock, whose process-shared semaphore can deadlock a process.
+# shared-memory clock, whose process-shared semaphore can deadlock a process. libfaketime
+# reads FAKETIME in the process's zone, so TZ=UTC makes it the same instant on every host.
 faked() {
   if [ -n "${FRAPPE_NIX_SHOTS_FAKETIME:-}" ]; then
     LD_PRELOAD="$FRAPPE_NIX_SHOTS_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}" FAKETIME="$FRAPPE_NIX_SHOTS_FAKETIME" \
-      FAKETIME_DONT_FAKE_MONOTONIC=1 FAKETIME_DISABLE_SHM=1 "$@"
+      FAKETIME_DONT_FAKE_MONOTONIC=1 FAKETIME_DISABLE_SHM=1 TZ=UTC "$@"
   else
     "$@"
   fi
@@ -132,7 +170,7 @@ if [ "$UP" = 1 ]; then
     echo "frappe-demo: starting the bench (devenv up -D)"
     (cd "$REPO" && DEVENV_IN_DIRENV_SHELL=true PC_TUI_ENABLED=0 devenv up -D) || fail_env "devenv up -D failed"
   fi
-  # Counted, not timed: under frappe-shots this shell runs on libfaketime's clock.
+  # Counted, not timed, as frappe-shots waits for the web server.
   tries=150
   until mariadb-admin --socket="${FRAPPE_DB_SOCKET:-}" --connect-timeout=3 ping > /dev/null 2>&1; do
     tries=$((tries - 1))

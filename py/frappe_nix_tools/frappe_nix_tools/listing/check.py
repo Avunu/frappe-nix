@@ -43,6 +43,7 @@ class Outcome:
 	marketplace_rev: str = ""
 	blocking: list[baseline.Hit] = field(default_factory=list)
 	advisory: list[baseline.Hit] = field(default_factory=list)
+	baseline_entries: int = 0
 
 	@property
 	def code(self) -> int:
@@ -66,6 +67,7 @@ def l7(t: Target, outcome: Outcome, *, release: bool) -> None:
 	outcome.semgrep_log = log
 	outcome.blocking, outcome.advisory = blocking, advisory
 	entries = baseline.load(t.root)
+	outcome.baseline_entries = len(entries)
 	outcome.results += [Result("L7", "error", path, p) for path, p in baseline.compare(blocking, entries)]
 	if release and entries:
 		outcome.results.append(

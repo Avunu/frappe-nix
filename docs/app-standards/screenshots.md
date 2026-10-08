@@ -27,7 +27,7 @@ locale = "en-US"
 
 ```bash
 frappe-demo                       # bring the bench up, provision the site if it is missing, then the demo
-frappe-demo --fresh               # a new site first
+frappe-demo --fresh               # a new site first: drops the site's database (see below)
 frappe-demo --date 2026-03-01 --seed 7 --erpnext-demo
 frappe-demo --no-up               # the bench is up already
 ```
@@ -83,11 +83,14 @@ frappe-shots                      # update docs/screenshots (the default, --upda
 frappe-shots --check              # compare only; diffs in .dev-dist/shots/diff/, exit 1 when any
 frappe-shots --only board --theme dark
 frappe-shots --reuse-site         # the bench and site as they are, no fresh demo
+frappe-shots --recreate-site      # drop $FRAPPE_SITE and make the demo on it, without asking
 frappe-shots --video tour         # record one of the spec's videos to .dev-dist/shots/tour.mp4
 ```
 
-Unless `--reuse-site`, it runs `frappe-demo --fresh` with the demo script on libfaketime's clock from the demo day, 09:00 (it then advances), so every demo record is dated on that day, then `bench build`; a bench it had to start is stopped again at the end. Then it drives chromium over the Chrome DevTools Protocol: for each theme and shot it sets the desk theme and `prefers-color-scheme`, the timezone, locale and viewport, opens the route, turns off animations, transitions and the caret, waits for web fonts, a quiet network and `waitFor`, runs the actions, hides and masks, and captures. The page's clock starts at the demo day too, so "3 days ago" reads the same in every run.
+Unless `--reuse-site`, it runs `frappe-demo --fresh` on `$FRAPPE_SITE`, the dev shell's own site, with the demo script on libfaketime's clock from 09:00 on the demo day in the screenshots' timezone (it then advances), so every demo record is dated on that day, then `bench build`; a bench it had to start is stopped again at the end. Then it drives chromium over the Chrome DevTools Protocol: for each theme and shot it sets the desk theme and `prefers-color-scheme`, the timezone, locale and viewport, opens the route, turns off animations, transitions and the caret, waits for web fonts, a quiet network and `waitFor`, runs the actions, hides and masks, and captures. The page's clock starts at noon on the demo day in the same timezone, so "3 days ago" reads the same in every run, on any machine.
+
+Recreating a site drops its database and resets Administrator's password. In CI (`CI=true`) that is what happens; at a desk, `frappe-shots` and `frappe-demo --fresh` only drop a site that already exists when you pass `--recreate-site` or answer yes at the prompt, and without a terminal they stop with exit 64. Use `frappe-shots --reuse-site` to photograph the site as it is.
 
 Chromium, libwebp, ffmpeg, libfaketime, Node and a fixed set of fonts (Inter, IBM Plex, Noto) come from frappe-nix's own nixpkgs, so a run on a laptop and a run in CI give the same pixels. The masters are PNGs in `.dev-dist/shots/`; the committed copies are lossless WebP in `docs/screenshots/`, with `manifest.json` listing each one's name, theme, alt text, size and hash for the README and any website. A screenshot changes only when more than `maxDiffRatio` (0.1 % by default) of its pixels differ.
 
-The nightly workflow runs `frappe-shots --update` and opens a pull request with the changes, labelled `screenshots`; it is never merged automatically. Exit codes: 0 no differences, or updated; 1 differences under `--check`; 2 a spec error; 3 the environment; 4 a capture error (navigation, a timeout or a page error).
+The nightly workflow runs `frappe-shots --update` and opens a pull request with the changes, labelled `screenshots`; it is never merged automatically. Exit codes: 0 no differences, or updated; 1 differences under `--check`; 2 a spec or configuration error; 3 the environment; 4 a capture error (navigation, a timeout or a page error); 64 an existing site kept.

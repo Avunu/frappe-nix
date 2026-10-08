@@ -94,6 +94,10 @@ def run_registry(args: argparse.Namespace) -> int:
 	if args.no_check and live:
 		raise ConfigError("--no-check is for dry runs: a registry pull request needs check --release to pass")
 	sha, version = "", t.ctx.version or ""
+	checked: registry.Gate | None = None
+	why = (
+		"--refresh rebuilds the branch on upstream main with no new release" if args.refresh else "--no-check"
+	)
 	if not args.refresh:
 		sha, tag = registry.resolve_commit(t, args.tag, args.ref, release_branch)
 		version = (tag or "").removeprefix(
@@ -101,7 +105,7 @@ def run_registry(args: argparse.Namespace) -> int:
 		) or version
 		if not args.no_check:
 			try:
-				registry.gate(t, sha, tag)
+				checked = registry.gate(t, sha, tag)
 			except registry.GateFailed as e:
 				print(f"frappe-listing registry: {e}", file=sys.stderr)
 				return DRIFT
@@ -123,6 +127,8 @@ def run_registry(args: argparse.Namespace) -> int:
 			commit=sha or None,
 			version=version,
 			onboarding=args.onboard,
+			checked=checked,
+			why=why,
 		)
 		print(f"registry: {upstream} main ← {fork}:{plan.branch}")
 		print(f"title: {plan.title}")
@@ -131,6 +137,8 @@ def run_registry(args: argparse.Namespace) -> int:
 			return CLEAN
 		sys.stdout.write(plan.diff)
 		if not live:
+			print("body:")
+			print("\n".join(f"  {line}".rstrip() for line in plan.body.splitlines()))
 			print(
 				"frappe-listing registry: dry run; nothing was pushed (pass --yes to push and open the pull request)"
 			)

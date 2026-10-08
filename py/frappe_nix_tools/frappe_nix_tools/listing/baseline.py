@@ -27,6 +27,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -194,9 +195,9 @@ def _semgrep_on_path(root: Path, shim: Path, floor: str) -> dict[str, str]:
 		return env
 	tools = root / "tools" / "pyproject.toml"
 	if tools.is_file() and "semgrep" in tools.read_text() and shutil.which("uv"):
-		command = f'exec uv run --frozen --project "{root / "tools"}" semgrep "$@"'
+		command = f'exec uv run --frozen --project {shlex.quote(str(root / "tools"))} semgrep "$@"'
 	elif shutil.which("uvx"):
-		command = f'exec uvx --from "semgrep=={floor}" semgrep "$@"'
+		command = f'exec uvx --from {shlex.quote(f"semgrep=={floor}")} semgrep "$@"'
 	else:
 		raise EnvError(
 			"L7 needs semgrep: it is not on PATH, and neither the app's tools/ project nor uvx can run it"

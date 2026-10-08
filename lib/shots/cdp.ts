@@ -247,14 +247,29 @@ export async function launch({
 	// slot 2 is "pipe", so the drain below has something to attach to.
 	const proc = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
 	proc.stderr.on("data", () => {});
-	for (let i = 0; i < 100; i++) {
+	// A missing binary is an 'error' event, which would otherwise end the process with an
+	// unhandled exception; it, an early exit, or no answer within 20 s rejects the launch.
+	let failed: Error | null = null;
+	proc.once("error", (e) => {
+		failed = e;
+	});
+	proc.once("exit", (code, signal) => {
+		failed ??= new Error(`${binary} exited (${signal ?? code}) before it answered on port ${port}`);
+	});
+	let ready = false;
+	for (let i = 0; i < 100 && !ready && !failed; i++) {
 		try {
 			const r = await fetch(`http://127.0.0.1:${port}/json/version`);
-			if (r.ok) break;
+			ready = r.ok;
 		} catch {
 			/* not up yet */
 		}
-		await new Promise((r) => setTimeout(r, 200));
+		if (!ready) await new Promise((r) => setTimeout(r, 200));
+	}
+	if (!ready) {
+		proc.kill();
+		if (!userDataDir) fs.rmSync(dir, { recursive: true, force: true });
+		throw failed ?? new Error(`${binary} did not answer on port ${port} within 20 s`);
 	}
 	// Best-effort teardown for the normal path. `proc.kill()` is asynchronous, so
 	// the profile is often still held when the suite's own process exits — hence

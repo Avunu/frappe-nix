@@ -86,19 +86,38 @@ def blocks(text: str, path: str = "README.md") -> list[tuple[str, int, int]]:
 
 
 def strip(text: str) -> str:
-	"""``text`` without the managed blocks and their markers (``readme`` turned off)."""
-	lines = text.split("\n")
+	"""``text`` without the managed blocks and their markers (``readme`` turned off).
+
+	Only the seams change: a run of blank lines where a block stood keeps one blank line (a
+	block usually stood in a paragraph of its own). Every other line is the app's, blank
+	lines in its own code blocks included.
+	"""
 	out: list[str] = []
+	seams: set[int] = set()
 	inside = False
-	for line in lines:
+	for line in text.split("\n"):
 		m = _MARKER.match(line)
 		if m and m["name"] in BLOCKS:
 			inside = m["kind"] == "begin"
+			seams.add(len(out))
 			continue
 		if not inside:
 			out.append(line)
-	# A block usually stood in a paragraph of its own: keep at most one blank line where it was.
-	return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+	kept: list[str] = []
+	i = 0
+	while i < len(out):
+		if out[i].strip():
+			kept.append(out[i])
+			i += 1
+			continue
+		end = i
+		while end < len(out) and not out[end].strip():
+			end += 1
+		run = out[i:end]
+		touches = any(i <= seam <= end for seam in seams)
+		kept += run[:1] if touches else run
+		i = end
+	return "\n".join(kept)
 
 
 def has_markers(text: str) -> bool:

@@ -16,7 +16,9 @@ are the resolved configuration's (S37), never constants.
 6. ``--onboard``, or an app upstream doesn't list, adds the ``apps.json`` index entry and an
    empty ``apps/<app>.json`` first.
 7. One commit, ``<app>: <version>`` (``<app>: onboard and <version>``), force-pushed to the
-   fork branch; 8. ``gh pr create`` (or ``gh pr edit``); 9. the PR's URL.
+   fork branch; 8. ``gh pr create`` (or ``gh pr edit``), with a body that lists the pending
+   versions, the gate's summary and the semgrep baseline's state (or that no gate ran, under
+   ``--refresh``); 9. the PR's URL.
 
 Nothing leaves the machine without ``--yes``: without it (or with ``--dry-run``) the run stops
 before the push and prints the diff, the fork, the branch and the title. ``--refresh`` rebuilds
@@ -34,8 +36,10 @@ import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 from frappe_nix_tools.common import repo
 from frappe_nix_tools.common.report import ConfigError, EnvError
@@ -63,6 +67,17 @@ class Plan:
 	diff: str
 	pending: list[str]
 	body: str
+	# (version, commit) of each pending entry, as the registry file lists them.
+	versions: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class Gate:
+	"""What the release gate found: ``check --release --tag <tag>`` on ``sha``."""
+
+	tag: str
+	sha: str
+	outcome: check.Outcome
 
 
 def repo_url(slug: str) -> str:
@@ -158,8 +173,8 @@ def resolve_commit(t: Target, tag: str | None, ref: str | None, branch: str) -> 
 	return sha, tag
 
 
-def gate(t: Target, sha: str, tag: str) -> None:
-	"""``check --release --tag`` on a worktree of the release commit."""
+def gate(t: Target, sha: str, tag: str) -> Gate:
+	"""``check --release --tag`` on a worktree of the release commit; ``GateFailed`` on an error."""
 	with tempfile.TemporaryDirectory(prefix="frappe-listing-release-") as tmp:
 		tree = Path(tmp) / t.name
 		repo.git(t.root, "worktree", "add", "--detach", str(tree), sha)
@@ -173,6 +188,7 @@ def gate(t: Target, sha: str, tag: str) -> None:
 	if failed:
 		lines = "\n".join(f"  {r.rule} {r.path}: {r.message}" for r in failed)
 		raise GateFailed(f"check --release --tag {tag} fails on {sha[:12]}:\n{lines}")
+	return Gate(tag, sha, outcome)
 
 
 def index_entry(t: Target, branch: str) -> dict:
@@ -236,12 +252,58 @@ def add_release(t: Target, marketplace: Path, clone: Path, branch: str, commit: 
 		)
 
 
-def _released(path: Path) -> set[str]:
+def _releases(path: Path) -> list[dict]:
 	try:
 		doc = json.loads(path.read_text())
 	except (FileNotFoundError, json.JSONDecodeError):
-		return set()
-	return {r.get("commit") for r in doc.get("releases", []) if isinstance(r, dict)}
+		return []
+	return [r for r in doc.get("releases", []) if isinstance(r, dict)]
+
+
+def _released(path: Path) -> set[str]:
+	return {str(r["commit"]) for r in _releases(path) if r.get("commit")}
+
+
+def _newest(versions: list[str], fallback: str) -> str:
+	def key(v: str) -> tuple[int, Version | str]:
+		try:
+			return (1, Version(v))
+		except InvalidVersion:
+			return (0, v)
+
+	return max(versions, key=key) if versions else fallback
+
+
+def body(
+	t: Target, versions: list[tuple[str, str]], release_branch: str, checked: Gate | None, why: str
+) -> str:
+	"""The pull request's body: the pending versions, the gate's summary, the baseline's state.
+
+	``checked`` is the gate this run passed, or ``None`` with ``why`` saying why none ran.
+	"""
+	listed = ", ".join(v for v, _ in versions) or "no new version"
+	lines = [f"Lists {t.name} {listed} from https://github.com/{t.ctx.repo}.", "", "Pending versions:", ""]
+	lines += [f"- {v} at `{c[:12]}` on `{release_branch}`" for v, c in versions] or ["- none"]
+	lines.append("")
+	if checked is None:
+		lines += [
+			f"Release gate: none ran in this update ({why}).",
+			"",
+			"Semgrep baseline: not checked in this update.",
+		]
+	else:
+		o = checked.outcome
+		warnings = sum(1 for r in o.results if r.level == "warning")
+		lines += [
+			f"Release gate: `frappe-listing check --release --tag {checked.tag}` passed on `{checked.sha[:12]}`"
+			f" (0 errors, {warnings} warning{'s' * (warnings != 1)}).",
+			"",
+			f"Semgrep baseline: {o.baseline_entries} entr{'y' if o.baseline_entries == 1 else 'ies'}"
+			f" (a release needs none); the registry's semgrep check at frappe/marketplace@`{o.marketplace_rev[:12]}`"
+			f" found {len(o.blocking)} blocking and {len(o.advisory)} advisory finding{'s' * (len(o.advisory) != 1)}.",
+		]
+	lines += ["", "Opened by `frappe-listing registry`."]
+	return "\n".join(lines)
 
 
 def prepare(
@@ -254,8 +316,13 @@ def prepare(
 	commit: str | None,
 	version: str,
 	onboarding: bool,
+	checked: Gate | None = None,
+	why: str = "--no-check",
 ) -> Plan:
-	"""Steps 4 to 6 in ``clone`` (``fresh_clone``'s); nothing is pushed."""
+	"""Steps 4 to 6 in ``clone`` (``fresh_clone``'s); nothing is pushed.
+
+	``checked`` is the release gate this run passed (``None``, with ``why``, when none ran).
+	"""
 	marketplace, _ = check.marketplace_tree(t)
 	branch = fork_branch(fork, t.name)
 	upstream_released = _released(clone / "apps" / f"{t.name}.json")
@@ -287,12 +354,15 @@ def prepare(
 		add_release(t, marketplace, clone, release_branch, sha)
 	_git(clone, "add", "-A")
 	diff = _git(clone, "diff", "--cached")
+	by_commit = {
+		r.get("commit"): str(r.get("version", "")) for r in _releases(clone / "apps" / f"{t.name}.json")
+	}
+	versions = [(by_commit.get(sha) or "?", sha) for sha in pending]
+	if not commit:
+		# --refresh: no new release, so the newest pending one names the pull request.
+		version = _newest([v for v, _ in versions if v != "?"], version)
 	title = f"{t.name}: {'onboard and ' if onboarded else ''}{version}"
-	body = (
-		f"Lists {t.name} {version} ({', '.join(c[:12] for c in pending) or 'no new commit'}) from"
-		f" https://github.com/{t.ctx.repo}.\n\nPending versions: {len(pending)}. `frappe-listing check --release`"
-		" passed on the release commit, with an empty semgrep baseline.\n\nOpened by `frappe-listing registry`."
-	)
+	text = body(t, versions, release_branch, checked, why)
 	return Plan(
 		t.name,
 		upstream,
@@ -305,7 +375,8 @@ def prepare(
 		title,
 		diff,
 		pending,
-		body,
+		text,
+		versions,
 	)
 
 
@@ -349,7 +420,10 @@ def publish(plan: Plan, clone: Path) -> str:
 		env=env,
 		check=False,
 	)
-	urls = [p["url"] for p in json.loads(existing.stdout or "[]")] if existing.returncode == 0 else []
+	if existing.returncode != 0:
+		# Not knowing whether one is open is not a reason to open a second one.
+		raise EnvError(f"gh pr list: {existing.stderr.strip()}")
+	urls = [p["url"] for p in json.loads(existing.stdout or "[]")]
 	if urls:
 		argv = ["gh", "pr", "edit", urls[0], "--title", plan.title, "--body", plan.body]
 	else:
