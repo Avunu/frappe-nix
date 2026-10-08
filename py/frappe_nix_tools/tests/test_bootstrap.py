@@ -397,6 +397,65 @@ class TestReleaseBranchPreflight(FakeNix):
 		self.assertEqual(code, 3, err)
 		self.assertEqual(git(self.root, "status", "--porcelain"), "")
 
+	def test_preflight_refuses_what_phase_a_would(self):
+		"""frappe-init --app runs the preflight before it writes templates/app's files: an
+		invalid configuration is exit 2 there, with nothing written or probed."""
+		for argv, needle in (
+			(("--standards", "minimal"), "already names profile 'recommended'"),
+			(("--frappe-version", "version-15"), "has frappe-major = 16"),
+		):
+			with self.subTest(argv=argv):
+				code, _, err = self.fn("sync", "--write", "--phase", "preflight", *argv)
+				self.assertEqual(code, 2, err)
+				self.assertIn(needle, err)
+				self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.frappe-nix]")[0])
+		self.commit()
+		code, _, err = self.fn(
+			"sync",
+			"--write",
+			"--phase",
+			"preflight",
+			"--standards",
+			"./nope",
+			"--frappe-version",
+			"version-16",
+		)
+		self.assertEqual(code, 2, err)
+		self.assertEqual(git(self.root, "status", "--porcelain"), "")
+		self.assertEqual(self.calls(), [])
+
+	def test_preflight_follows_the_apps_own_frappe_nix_url(self):
+		"""dev-shell.frappe-nix-url is the app's choice: the preflight checks the URL phase A
+		would lock (the pre-release escape hatch), not release-1."""
+		self.absent()
+		self.table('dev-shell.frappe-nix-url = "github:Avunu/frappe-nix"\n')
+		self.commit()
+		code, _, err = self.fn("sync", "--write", "--phase", "preflight")
+		self.assertEqual(code, 0, err)
+
+	def test_a_dry_run_renders_against_the_rev_the_lock_would_take(self):
+		"""§3.3: a dry run on an unbootstrapped app renders phase B against release-1's head,
+		as `git ls-remote` reports it, not an empty rev."""
+		from frappe_nix_tools.scaffold import engine
+
+		revs = []
+		real = engine.build
+
+		def build(*a, **kw):
+			plan = real(*a, **kw)
+			revs.append((kw.get("phases"), plan.ctx.frappe_nix.rev))
+			return plan
+
+		with (
+			mock.patch.object(bootstrap, "release_branch_rev", return_value="c" * 40),
+			mock.patch.object(engine, "build", build),
+		):
+			code, _, err = self.fn("sync", "--write", "--dry-run")
+		self.assertEqual(code, 0, err)
+		self.assertIn((("b",), "c" * 40), revs, revs)
+		self.assertEqual(self.calls(), [])
+
 	def test_a_lock_already_on_the_branch_is_not_probed(self):
 		self.write("flake.lock", json.dumps(flake_lock(["frappe"])))
 		self.assertFalse(bootstrap.release_ref_needed(self.root, URL))

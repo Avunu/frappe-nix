@@ -53,11 +53,14 @@ from frappe_nix_tools.scaffold import render as rendering
 # The version of an app that names none anywhere (§2.8: "<__version__ or 0.1.0>").
 DEFAULT_VERSION = "0.1.0"
 BLAME_LINE = re.compile(r"^[0-9a-f]{40}  # \S.*$")
-_FLAKE_INPUT = re.compile(r"^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)\s*=\s*\{")
-_FLAKE_ATTR = re.compile(
-	r'^\s{4}(?P<name>[A-Za-z_][A-Za-z0-9_\'-]*)\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";'
-)
+# An input's name: a Nix identifier, or a quoted one (render.nix_attr) such as "my.app".
+_FLAKE_NAME = r"""(?:(?P<name>[A-Za-z_][A-Za-z0-9_'-]*)|"(?P<quoted>[^"\\$]*)")"""
+_FLAKE_INPUT = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{")
+_FLAKE_ATTR = re.compile(rf'^\s{{4}}{_FLAKE_NAME}\.(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 _FLAKE_INNER = re.compile(r'^\s{6}(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
+# An input written on one line: `erpnext = { url = "github:…"; flake = false; };`.
+_FLAKE_INLINE = re.compile(rf"^\s{{4}}{_FLAKE_NAME}\s*=\s*\{{(?P<body>.*)\}};\s*$")
+_FLAKE_INLINE_ATTR = re.compile(r'(?:^|[;{\s])(?P<attr>url|follows)\s*=\s*"(?P<value>[^"]*)";')
 # The inputs flake.nix manages; a local `inputs` region may not define one (§2.5).
 MANAGED_INPUTS = ("frappe-nix", "nixpkgs", "frappe", flakelock.PROFILE_INPUT)
 # The files frappe-init --app's templates/app gives an app that has not opted in (S35).
@@ -130,12 +133,33 @@ class Plan:
 		return max((i.code for i in self.items), default=CLEAN)
 
 
+# Directories sync never manages, refused as any component of a managed path. A rendered path
+# is data a pull request can set (an in-repo profile's [[extra-files]]): one into .git/ would
+# print .git/config (a persisted checkout token) under --check, and under --write replace it
+# with config the following ``git add`` obeys (core.fsmonitor, core.hooksPath). Compared
+# case-folded and without trailing dots and spaces, as case-insensitive (macOS) and Windows
+# file systems resolve them.
+UNMANAGED_DIRS = frozenset({".git", ".direnv", ".frappe-nix", ".venv", "node_modules"})
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def unmanaged_dir(path: str) -> str | None:
+	"""The component of ``path`` that names a directory sync never writes into, if any."""
+	for part in PurePosixPath(path).parts:
+		if part.rstrip(". ").casefold() in UNMANAGED_DIRS:
+			return part
+	return None
+
+
 def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
 	"""``root / path``, once ``path`` is known to stay inside the app with no link on the way.
 
 	``path`` is a rendered managed path (an entry's, an ``[[extra-files]]`` one, a node-lock
 	seed): it must be relative, with no ``..``, and no existing component of it may be a
-	symlink (the last one may, with ``link_ok``, for a retired link sync deletes unread).
+	symlink (the last one may, with ``link_ok``, for a retired link sync deletes unread), and
+	none may be one of ``UNMANAGED_DIRS`` (``.git`` above all).
 	``--check`` runs on untrusted pull requests: a committed link (``tools`` pointing outside
 	the checkout) would otherwise print the file it reaches in the diff, and ``--write`` would
 	write through it. Exit 2."""
@@ -143,6 +167,14 @@ def inside(root: Path, path: str, *, link_ok: bool = False) -> Path:
 	if not parts or PurePosixPath(path).is_absolute() or ".." in parts:
 		raise ConfigError(
 			f"{path!r} is not a path inside the app: a managed path must be relative, without .."
+		)
+	if _CONTROL.search(path):
+		# A newline in a path would start a line of its own in every message that names it
+		# (a workflow command in a CI log, a forged finding).
+		raise ConfigError(f"{path!r} is not a path sync may manage: it holds a control character")
+	if (part := unmanaged_dir(path)) is not None:
+		raise ConfigError(
+			f"{path!r} is not a path sync may manage: it is inside {part}/, which sync never reads or writes"
 		)
 	cur = root
 	for i, part in enumerate(parts):
@@ -177,6 +209,10 @@ def read(root: Path, path: str) -> str | None:
 
 
 _NIX_COMMENT = re.compile(r'"(?:\\.|[^"\\])*"|#[^\n]*')
+
+
+def _input_name(m: re.Match[str]) -> str:
+	return m["name"] if m["name"] is not None else m["quoted"]
 
 
 def strip_nix_comments(text: str) -> str:
@@ -232,9 +268,13 @@ def flake_input_urls(text: str) -> dict[str, str]:
 	for line in m["body"].splitlines() if m else []:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
 			if one["attr"] == "url":
-				out[one["name"]] = one["value"]
+				out[_input_name(one)] = one["value"]
+		elif (inline := _FLAKE_INLINE.match(line)) and not block:
+			for attr in _FLAKE_INLINE_ATTR.finditer(inline["body"]):
+				if attr["attr"] == "url":
+					out[_input_name(inline)] = attr["value"]
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
-			block = opened["name"]
+			block = _input_name(opened)
 		elif block and re.match(r"^\s{4}\};", line):
 			block = None
 		elif block and (inner := _FLAKE_INNER.match(line)) and inner["attr"] == "url":
@@ -517,10 +557,17 @@ def _profile_at(
 		return config.read_profile_dir(profile_dir, name), f"path:{profile_dir}"
 
 
+# What only a repository set up for GitHub holds: its .github/ directory, or a file only a
+# GitHub-only module renders (releases' release-please files; dependabot's file is in .github/).
+GITHUB_MARKS = (".github", "release-please-config.json", ".release-please-manifest.json")
+
+
 def _has_github_dir(root: Path, sha: str) -> bool:
-	"""Whether commit ``sha`` has a ``.github/`` directory: a repository set up for GitHub."""
+	"""Whether commit ``sha`` was set up for GitHub: it has a ``.github/`` directory, or a file
+	only a GitHub-only module renders (``GITHUB_MARKS``), so an app on a profile that renders
+	no ``.github/`` (``releases`` on, ``ci`` off) still counts."""
 	try:
-		return bool(repo.git(root, "ls-tree", "-d", sha, "--", ".github").strip())
+		return bool(repo.git(root, "ls-tree", sha, "--", *GITHUB_MARKS).strip())
 	except EnvError:
 		return False
 
@@ -702,6 +749,20 @@ def check_uses(ctx: context.NS, entry: manifest.Entry, path: str) -> None:
 			raise ConfigError(
 				f"{path} needs {key}, which is empty: set it in the profile's [org] or [tool.frappe-nix.org]"
 			)
+
+
+_GITHUB_FLAKE_URL = re.compile(r"^(github:|(git\+)?https://github\.com/)", re.I)
+
+
+def check_frappe_nix_url(cfg: dict, modules: dict) -> None:
+	"""§2.5: a ``dev-shell.frappe-nix-url`` off GitHub (``git+https://git.example.org/…``) works
+	for the dev shell and sync, but a GitHub ``uses:`` can't name it: exit 2 while ``ci`` is on."""
+	url = (cfg.get("dev-shell") or {}).get("frappe-nix-url")
+	if url and modules.get("ci") and not _GITHUB_FLAKE_URL.match(url):
+		raise ConfigError(
+			f"dev-shell.frappe-nix-url = {url!r} is not on GitHub, and ci is on: the caller workflows'"
+			" `uses:` can name only a GitHub repository (use a github: URL, or turn ci off)"
+		)
 
 
 def check_preset(app: context.App, cfg: dict, modules: dict) -> None:
@@ -1319,10 +1380,14 @@ def entries_for(cfg: dict) -> list[manifest.Entry]:
 	extra = manifest.extra_entries(cfg)
 	taken = {e.path for e in man.entries}
 	for e in extra:
+		if _CONTROL.search(e.path):
+			raise ConfigError(f"[[extra-files]] {e.path!r} holds a control character")
 		if e.path in taken or e.path in {"pyproject.toml", "package.json"}:
 			raise ConfigError(f"[[extra-files]] {e.path} is a path frappe-nix manages")
 		if PurePosixPath(e.path).is_absolute() or ".." in PurePosixPath(e.path).parts:
 			raise ConfigError(f"[[extra-files]] {e.path} must stay inside the app")
+		if (part := unmanaged_dir(e.path)) is not None:
+			raise ConfigError(f"[[extra-files]] {e.path} is inside {part}/, which sync never writes")
 	return [*man.entries, *extra]
 
 
@@ -1336,12 +1401,16 @@ def build(
 	phases: tuple[str, ...] = ("a", "b"),
 	profile_dir: Path | None = None,
 	standards: str | None = None,
+	frappe_nix_lock: dict | None = None,
 ) -> Plan:
 	"""The plan for the app at ``root``.
 
 	``standards`` is ``--standards <profile>``: it creates ``[tool.frappe-nix]`` when there is
 	none, and must name the table's profile when there is one. Without either, the app has
 	not opted in (exit 2, S35).
+
+	``frappe_nix_lock`` stands in for ``flake.lock``'s frappe-nix node: a dry run on an app
+	whose lock phase A would (re)lock renders against the rev that lock would take (§3.3).
 	"""
 	app = load_app(root)
 	table = pyproject.tool_frappe_nix(app.pyproject)
@@ -1364,6 +1433,13 @@ def build(
 			f"[tool.frappe-nix] already names profile {table.get('profile', 'minimal')!r}: edit profile there"
 			f" instead of passing --standards {standards}"
 		)
+	elif frappe_version and frappe_version != f"version-{table.get('frappe-major')}":
+		# The table's frappe-major is what renders; a --frappe-version it contradicts would be
+		# shown to the user (frappe-init's plan) and then silently ignored.
+		raise ConfigError(
+			f"[tool.frappe-nix] has frappe-major = {table.get('frappe-major')}: edit frappe-major there"
+			f" instead of passing --frappe-version {frappe_version}"
+		)
 	resolved = resolve(app, created=created, profile_dir=profile_dir, bootstrap=phases == ("a",))
 	if created is not None:
 		created = with_integration_branch(root, created, resolved)
@@ -1371,8 +1447,10 @@ def build(
 	cfg = resolved.cfg
 	check_excludes(app, cfg)
 	check_preset(app, cfg, resolved.modules)
+	check_frappe_nix_url(cfg, resolved.modules)
 	man = manifest.load()
-	ctx = context.build(app, resolved, lock=locked_frappe_nix(root), floors=man.floors, options=options)
+	lock = frappe_nix_lock if frappe_nix_lock is not None else locked_frappe_nix(root)
+	ctx = context.build(app, resolved, lock=lock, floors=man.floors, options=options)
 	ctx["previous"] = previous(root, profile_dir)
 	ctx["history"] = history(root, profile_dir)
 	plan = Plan(root, app, resolved, ctx, created_config=created, notices=list(resolved.notices))
@@ -1426,9 +1504,13 @@ def flake_input_specs(text: str) -> dict[str, str | None]:
 	block = None
 	for line in m["body"].splitlines() if m else []:
 		if (one := _FLAKE_ATTR.match(line)) and not block:
-			specs[one["name"]] = input_spec(one["attr"], one["value"])
+			specs[_input_name(one)] = input_spec(one["attr"], one["value"])
+		elif (inline := _FLAKE_INLINE.match(line)) and not block:
+			specs.setdefault(_input_name(inline), None)
+			for attr in _FLAKE_INLINE_ATTR.finditer(inline["body"]):
+				specs[_input_name(inline)] = input_spec(attr["attr"], attr["value"])
 		elif (opened := _FLAKE_INPUT.match(line)) and not block:
-			block = opened["name"]
+			block = _input_name(opened)
 			specs.setdefault(block, None)
 		elif block and re.match(r"^\s{4}\};", line):
 			block = None

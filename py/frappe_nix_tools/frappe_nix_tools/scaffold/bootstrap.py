@@ -12,6 +12,7 @@ and ``--offline`` turn into a report of what would run.
 import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -197,6 +198,28 @@ def release_branch_exists(root: Path, branch: str) -> bool | None:
 	except (FileNotFoundError, subprocess.TimeoutExpired):
 		return None
 	return {0: True, 2: False}.get(proc.returncode)
+
+
+def release_branch_rev(root: Path, branch: str) -> str | None:
+	"""The commit frappe-nix's ``branch`` points at (``git ls-remote``); ``None`` when there is
+	no such branch or ``git`` can't tell."""
+	try:
+		proc = subprocess.run(
+			["git", "ls-remote", "--heads", FRAPPE_NIX_REPO, branch],
+			cwd=root,
+			env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+			capture_output=True,
+			text=True,
+			timeout=120,
+			check=False,
+		)
+	except (FileNotFoundError, subprocess.TimeoutExpired):
+		return None
+	for line in proc.stdout.splitlines() if proc.returncode == 0 else []:
+		sha, _, ref = line.partition("\t")
+		if ref == f"refs/heads/{branch}" and re.fullmatch(r"[0-9a-f]{40}", sha):
+			return sha
+	return None
 
 
 def require_release_branch(runner: Runner, url: str) -> None:

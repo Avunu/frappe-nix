@@ -25,6 +25,7 @@ import importlib.util
 import io
 import os
 import re
+import secrets
 import shutil
 import sys
 import traceback
@@ -120,12 +121,26 @@ def _build(root: Path, args: argparse.Namespace, phases: tuple[str, ...] = ("a",
 		profile_dir=args.profile_dir,
 		standards=getattr(args, "standards", None),
 		phases=phases,
+		frappe_nix_lock=getattr(args, "dry_run_lock", None),
 	)
 
 
-def _notices(plan: engine.Plan) -> None:
-	for notice in plan.notices:
-		print(f"frappe-nix sync: notice: {notice}", file=sys.stderr)
+def _stderr(lines: list[str], fmt: str = "text") -> None:
+	"""Diagnostics on stderr. Under ``--format github`` they are PR data the runner would parse
+	for workflow commands as well, so they go inside a ``::stop-commands::`` block of their own,
+	closed before the report reaches stdout (§3.3)."""
+	if not lines:
+		return
+	if fmt == "github":
+		token = secrets.token_hex(16)
+		lines = [f"::stop-commands::{token}", *lines, f"::{token}::"]
+	for line in lines:
+		print(line, file=sys.stderr)
+	sys.stderr.flush()
+
+
+def _notices(plan: engine.Plan, fmt: str = "text") -> None:
+	_stderr([f"frappe-nix sync: notice: {notice}" for notice in plan.notices], fmt)
 
 
 def _report(findings: list[Finding], fmt: str, code: int, plan: engine.Plan | None) -> str:
@@ -148,7 +163,7 @@ def check(root: Path, args: argparse.Namespace) -> int:
 	if args.profile_dir is not None and os.environ.get("CI"):
 		raise EnvError("--profile-path is for profile authors: --check in CI reads the locked profile")
 	plan = _build(root, args)
-	_notices(plan)
+	_notices(plan, args.format)
 	items = list(plan.problems)
 	if plan.created_config is not None:
 		items.insert(
@@ -217,7 +232,7 @@ def check_reported(root: Path, args: argparse.Namespace) -> int:
 		if os.environ.get("FRAPPE_NIX_DEBUG"):
 			traceback.print_exc()
 		code, problem, path = ENVIRONMENT, f"internal error: {type(e).__name__}: {e}", "."
-	print(f"frappe-nix sync: {problem}", file=sys.stderr)
+	_stderr([f"frappe-nix sync: {problem}"], args.format)
 	rev = ""
 	with contextlib.suppress(Exception):
 		rev = engine.locked_rev(root) or ""
@@ -328,7 +343,36 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 		print(
 			"would run: nix flake lock (when flake.lock is missing or stale, or frappe-nix is not locked from flake.nix's URL)"
 		)
+		# §3.3: phase B of a dry run renders against the rev that lock would take.
+		url = plan.ctx.frappe_nix.url
+		if not runner.offline and not bootstrap.override_url() and bootstrap.release_ref_needed(root, url):
+			rev = bootstrap.release_branch_rev(root, f"release-{plan.ctx.frappe_nix.major}")
+			if rev:
+				args.dry_run_lock = {
+					"rev": rev,
+					"owner": plan.ctx.frappe_nix.owner,
+					"repo": plan.ctx.frappe_nix.name,
+				}
 	return changed
+
+
+def _repo_settings(ns: dict | None) -> list[str]:
+	"""The modules of ``ns`` (a plan's context or ``previous``) on that need a repository
+	setting (§3.3 step 5): ``releases``, and ``dependabot`` with ``auto-merge``."""
+	if ns is None:
+		return []
+	modules, cfg = ns["modules"], ns["cfg"]
+	out = ["releases"] if modules.get("releases") else []
+	if modules.get("dependabot") and (cfg.get("dependabot") or {}).get("auto-merge", True):
+		out.append("dependabot (auto-merge)")
+	return out
+
+
+def needs_repo_settings(plan: engine.Plan) -> list[str]:
+	"""What this sync turns on that needs a repository setting: on now, and off at ``HEAD``
+	(or no table there yet)."""
+	before = set(_repo_settings(plan.ctx.get("previous")))
+	return [m for m in _repo_settings(plan.ctx) if m not in before]
 
 
 def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock_changed: bool) -> int:
@@ -342,6 +386,12 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 	code = _invalid(plan.items)
 	if code:
 		return code
+	for module in needs_repo_settings(plan):
+		print(
+			f"frappe-nix sync: notice: {module} is on now and needs a repository setting:"
+			" run `frappe-nix repo doctor` (spec §5.6)",
+			file=sys.stderr,
+		)
 	touched = _apply(root, plan.items, runner)
 	# Staged now as well as at step 13, so a lock or formatter step that fails below leaves
 	# what sync wrote staged rather than half-applied in the work tree.
@@ -431,8 +481,16 @@ def write(root: Path, args: argparse.Namespace) -> int:
 	bootstrap.override_url()
 	lock_changed = False
 	if args.phase == "preflight":
-		# frappe-init --app, before it writes its template files.
-		bootstrap.require_release_branch(runner, bootstrap.context.default_frappe_nix_url())
+		# frappe-init --app, before it writes its template files: what phase A would refuse
+		# (an invalid table, a --standards or --frappe-version it contradicts, an unknown
+		# profile, a missing release branch) is refused now, with nothing written.
+		plan = _build(root, args, phases=("a",))
+		code = _invalid(plan.items)
+		if code:
+			return code
+		only = _only(args)
+		if only is None or {"flake.nix", ".envrc"} & set(only):
+			bootstrap.require_release_branch(runner, plan.ctx.frappe_nix.url)
 		return CLEAN
 	if args.phase in ("all", "a"):
 		lock_changed = phase_a(root, args, runner)

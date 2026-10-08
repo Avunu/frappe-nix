@@ -129,7 +129,7 @@ repos:
         entry: uv run --frozen --project tools committed --commit-file
         stages: [commit-msg]
 {% endif %}
-{% if major_rule %}
+{% if major_rule and policy_shipped %}
       - id: frappe-nix-commit-msg
         name: no major bump through a commit message
         language: system

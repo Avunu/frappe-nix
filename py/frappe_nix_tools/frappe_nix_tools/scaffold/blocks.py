@@ -41,8 +41,8 @@ def gitignore(current: str | None, body: str, path: str = ".gitignore") -> str:
 def init_py(current: str | None, default_version: str = "0.1.0") -> tuple[str, list[str]]:
 	"""``<app>/__init__.py`` in block form, and the lines that break the side-effect rule.
 
-	Every form of the version line becomes the block, keeping the value: carbon_frappe's
-	trailing ``# x-release-please-version``, a bare ``__version__ = "…"``, or an existing
+	Every form of the version line becomes the block, keeping the value: a line with a
+	trailing ``# x-release-please-version`` marker, a bare ``__version__ = "…"``, or an existing
 	block. Outside the block only comments and blank lines may remain (§2.13); anything else
 	is reported, never removed.
 	"""

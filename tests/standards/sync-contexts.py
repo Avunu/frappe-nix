@@ -24,6 +24,7 @@ from typing import Any
 from frappe_nix_tools import cli
 from frappe_nix_tools.common import config, schema
 from frappe_nix_tools.scaffold import engine, manifest
+from frappe_nix_tools.scaffold.fixtures import CONTEXTS
 
 BASE = """[project]
 name = "ctx_app"
@@ -45,64 +46,6 @@ profile = "{profile}"
 frappe-major = 16
 """
 
-SPA_ROOT = (
-	'typescript.spa = [{ root = ".", include = ["ctx_app/public/js/app/**"], tsconfig = "tsconfig.json",'
-	' check = "vue-tsc --noEmit -p tsconfig.json" }]\n'
-)
-SPA_PORTAL = (
-	'typescript.spa = [{ root = "portal", include = ["portal/src/**"], tsconfig = "portal/tsconfig.json",'
-	' check = "vue-tsc --noEmit -p portal/tsconfig.json" }]\n'
-)
-
-# name: (extra [tool.frappe-nix] lines, required_apps, files)
-CONTEXTS = {
-	"plain": ("", [], {}),
-	"erpnext+hrms": ('siblings = ["erpnext", "hrms"]\n', ["erpnext", "hrms"], {}),
-	"scss": ("", [], {"ctx_app/public/scss/a.scss": "a { color: red; }\n"}),
-	"nested-frontend": (
-		"",
-		[],
-		{
-			"frontend/package.json": '{"name": "fe"}\n',
-			"frontend/vite.config.ts": "export default {};\n",
-			"package.json": '{"name": "ctx-app", "scripts": {"build": "cd frontend && yarn build"}}\n',
-		},
-	),
-	"spa-root": (
-		SPA_ROOT,
-		[],
-		{
-			"tsconfig.json": "{}\n",
-			"vite.config.ts": "export default {};\n",
-			"ctx_app/public/js/app/main.ts": "export {};\n",
-			"package.json": '{"name": "ctx-app", "scripts": {"build": "vite build"}}\n',
-		},
-	),
-	"spa-portal": (
-		SPA_PORTAL,
-		[],
-		{
-			"portal/tsconfig.json": "{}\n",
-			"portal/src/main.ts": "export {};\n",
-			"package.json": '{"name": "ctx-app", "scripts": {"build": "vite build --config portal/vite.config.ts"}}\n',
-		},
-	),
-	"docs-site": ("", [], {"docs-site/package.json": '{"name": "docs"}\n'}),
-	"pilot-assets": ("pilot-assets.enable = true\n", [], {}),
-	"vite": (
-		"",
-		[],
-		{
-			"vite.config.ts": "export default {};\n",
-			"ctx_app/public/js/x.bundle.ts": "export {};\n",
-			"ctx_app/ctx_app/doctype/a/a.js": "frappe.ui.form.on('A', {});\n",
-			"ctx_app/www/p.js": "frappe.ready(() => {});\n",
-			# test_ts and unit_tests: tsconfig.test.json and the test:unit script.
-			"test/unit/a.test.ts": "export {};\n",
-			"package.json": '{"name": "ctx-app", "scripts": {"build": "vite build"}}\n',
-		},
-	),
-}
 PROFILES = ("minimal", "recommended", "example-org")
 # pilot-assets needs ci and releases, which minimal has off: that combination is exit 2 by design.
 SKIP = {("pilot-assets", "minimal")}

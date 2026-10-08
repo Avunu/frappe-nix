@@ -32,7 +32,14 @@
 #                       siteName is kept, as under --sync; a usage error under `frappe-init --check`
 #                       is exit 2 or 3, never 1; without --sync/--check the new
 #                       flags are refused where nothing reads them, as main
-#                       refuses an unknown flag (exit 1, nothing written).
+#                       refuses an unknown flag (exit 1, nothing written). On
+#                       an app that opted in, `frappe-init --app` leaves the
+#                       .gitignore block to sync: --only package.json and a
+#                       failing sync both leave it as committed. What sync
+#                       would refuse (a contradicted --frappe-version or
+#                       --standards, an unknown profile) is refused before
+#                       --app writes anything; an opted-in app's major is its
+#                       table's.
 {
   pkgs,
   frappeNixTools,
@@ -281,6 +288,47 @@ in
           --frappe-version version-16 --skip-lock > /dev/null 2>&1 || fail "frappe-init --app --profile-path failed"
         grep -q '"author": "Example Org"' package.json || fail "--profile-path did not reach frappe-nix sync"
         echo "ok   frappe-init --app --standards passes --profile-path to frappe-nix sync"
+
+        # On an app that opted in, the .gitignore block is sync's: --app does not put main's
+        # back first, so --only without .gitignore, or a sync that fails, leaves it as it was.
+        cd "$TMPDIR"
+        cp -r ${fixture} optedin
+        chmod -R u+w optedin
+        cd optedin
+        git init -q
+        git add -A
+        git -c user.name=t -c user.email=t@t commit -qm fixture
+        frappe-init --app --frappe-version version-16 --only package.json --skip-lock > /dev/null 2>&1 ||
+          fail "frappe-init --app --only package.json failed on the opted-in fixture"
+        git diff --quiet HEAD -- .gitignore || fail "frappe-init --app --only package.json rewrote .gitignore: $(git diff HEAD -- .gitignore)"
+        frappe-nix sync --check > /dev/null || fail "--check after frappe-init --app --only package.json is not clean"
+        sed -i 's/^\[tool\.frappe-nix\]$/&\nci.enable = "yes"/' pyproject.toml
+        grep -qx 'ci.enable = "yes"' pyproject.toml || fail "the test could not break the table"
+        code="$(code_of frappe-init --app --frappe-version version-16 --skip-lock)"
+        [ "$code" = 2 ] || fail "frappe-init --app with an invalid table exited $code, not 2"
+        git diff --quiet HEAD -- .gitignore || fail "a failed sync under frappe-init --app left .gitignore changed: $(git diff HEAD -- .gitignore)"
+        echo "ok   frappe-init --app on an app that opted in leaves the .gitignore block to sync"
+
+        # What sync would refuse is refused before --app writes anything (the preflight builds
+        # phase A's plan): a --frappe-version or --standards the table contradicts, an unknown
+        # profile. Without --frappe-version, an app that opted in takes its table's major.
+        git checkout -q -- pyproject.toml
+        for argv in "--frappe-version version-15" "--standards minimal --frappe-version version-16" \
+          "--frappe-version version-15 --dry-run"; do
+          # shellcheck disable=SC2086 # word-split on purpose
+          code="$(code_of frappe-init --app $argv --skip-lock)"
+          [ "$code" = 2 ] || fail "frappe-init --app $argv on the opted-in fixture exited $code, not 2"
+          [ -z "$(git status --porcelain)" ] || fail "frappe-init --app $argv wrote $(git status --porcelain)"
+        done
+        frappe-init --app --only package.json --skip-lock < /dev/null > "$TMPDIR/out" 2>&1 ||
+          fail "frappe-init --app without --frappe-version did not take the table's: $(cat "$TMPDIR/out")"
+        grep -q 'frappe version : version-16' "$TMPDIR/out" || fail "frappe-init --app did not plan the table's major"
+        grep -q "list it in \[tool.frappe-nix\] siblings" "$TMPDIR/out" || fail "frappe-init --app printed the plain next steps"
+        cd ../flags
+        code="$(code_of frappe-init --app --standards ./nope --frappe-version version-16 --skip-lock)"
+        [ "$code" = 2 ] || fail "frappe-init --app --standards ./nope exited $code, not 2"
+        [ -z "$(git status --porcelain)" ] || fail "frappe-init --app --standards ./nope wrote $(git status --porcelain)"
+        echo "ok   frappe-init --app refuses what sync would before writing, and takes an opted-in app's major"
         touch "$out"
       '';
 }

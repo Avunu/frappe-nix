@@ -3,6 +3,8 @@ on throwaway apps opted in with ``recommended``. The 1.2 cases are in test_stand
 
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -16,6 +18,9 @@ from scaffold_helpers import AppCase, git
 
 # N2 packages scripts/vite-register.mjs (manifest.d/assets.json); these cases run as if it did.
 with_vite_register = mock.patch.object(manifest, "ships", lambda path: path == manifest.VITE_REGISTER)
+# N4's CI callers, which the workflow retire rules wait for.
+CI_CALLERS = (".github/workflows/release.yml", ".github/workflows/deps.yml")
+with_ci_callers = mock.patch.object(manifest, "ships", lambda path: path in CI_CALLERS)
 
 
 class TestRoundTrip(AppCase):
@@ -576,6 +581,28 @@ class TestDiscovery(AppCase):
 
 
 class TestRetire(AppCase):
+	def test_workflows_stay_until_the_callers_ship(self):
+		"""The app's own release-please and auto-merge workflows are retired only once this
+		package renders the callers that replace them (N4's release.yml and deps.yml)."""
+		self.synced()
+		self.write(
+			".github/workflows/old.yml",
+			"jobs: { r: { steps: [ { uses: googleapis/release-please-action@v4 } ] } }\n",
+		)
+		self.write(
+			".github/workflows/merge.yml",
+			"jobs: { m: { steps: [ { uses: dependabot/fetch-metadata@v2 } ] } }\n",
+		)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 0, out)
+		with with_ci_callers:
+			code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn(".github/workflows/old.yml (retire): legacy file", out)
+		self.assertIn(".github/workflows/merge.yml (retire): legacy file", out)
+
+	@with_ci_callers
 	def test_legacy_files_are_reported_then_deleted(self):
 		self.synced()
 		self.write(
@@ -642,6 +669,31 @@ class TestConfigCreation(AppCase):
 		self.assertEqual(cfg["siblings"], [{"repo": "example/shared_lib", "branch": "main"}])
 		self.assertIn('url = "github:example/shared_lib/main";', self.read("flake.nix"))
 
+	def test_a_one_line_input_keeps_its_fork_and_branch(self):
+		"""templates/app's comment suggests `erpnext = { url = "…"; flake = false; };`: a sibling
+		written that way keeps its fork and branch, and an unknown one its repo."""
+		self.drop_table()
+		self.write("demo_app/hooks.py", 'required_apps = ["erpnext"]\n')
+		self.write(
+			"flake.nix",
+			'{\n  inputs = {\n    erpnext = { url = "github:myfork/erpnext/custom-16"; flake = false; };\n'
+			'    shared_lib = { url = "github:example/shared_lib/main"; flake = false; };\n  };\n'
+			'  frappeVersion = "version-16";\n'
+			'  siblings = [ { name = "erpnext"; } { name = "shared_lib"; } ];\n}\n',
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write", "--standards", "minimal", "--force")
+		self.assertEqual(code, 0, err)
+		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["frappe-nix"]
+		self.assertEqual(
+			cfg["siblings"],
+			[
+				{"repo": "myfork/erpnext", "branch": "custom-16"},
+				{"repo": "example/shared_lib", "branch": "main"},
+			],
+		)
+		self.assertIn('url = "github:myfork/erpnext/custom-16";', self.read("flake.nix"))
+
 	def test_no_major_anywhere_is_exit_2(self):
 		self.drop_table()
 		self.commit()
@@ -670,6 +722,39 @@ class TestNodeLocks(AppCase):
 			self.assertTrue((self.root / "nix/node-locks" / key / "source.json").is_file(), key)
 		self.assertEqual(self.read("nix/node-locks/hrms/roster/yarn.lock"), "mine\n")
 		self.assertFalse((self.root / "nix/node-locks/hrms/roster/source.json").exists())
+
+
+class TestOddSiblingNames(AppCase):
+	"""A sibling repository's name is its flake input's: one that is not a Nix identifier
+	(``my.app``, ``1st-app``, a keyword) is quoted, so flake.nix stays valid Nix."""
+
+	required: ClassVar[list[str]] = ["acme/my.app", "acme/1st-app", "acme/or"]
+	extra_pyproject = 'siblings = ["acme/my.app", "acme/1st-app", "acme/or"]\n'
+
+	def test_quoted_inputs(self):
+		from frappe_nix_tools.scaffold import engine
+
+		self.synced()
+		flake = self.read("flake.nix")
+		for name in ("my.app", "1st-app", "or"):
+			self.assertIn(f'    "{name}" = {{', flake)
+			self.assertIn(f'src = inputs."{name}";', flake)
+		self.assertIn("my.app", engine.flake_inputs(flake))
+		self.assertIn("1st-app", engine.flake_inputs(flake))
+		if shutil.which("nix-instantiate"):
+			parsed = subprocess.run(
+				["nix-instantiate", "--parse", str(self.root / "flake.nix")], capture_output=True, text=True
+			)
+			self.assertEqual(parsed.returncode, 0, parsed.stderr)
+		# A stale node is still found under a quoted name.
+		lock = json.loads(self.read("flake.lock"))
+		del lock["nodes"]["my.app"]
+		del lock["nodes"]["root"]["inputs"]["my.app"]
+		self.write("flake.lock", json.dumps(lock))
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("my.app (no node)", out)
 
 
 class TestNodeLockLinks(AppCase):
@@ -762,10 +847,7 @@ class TestShallowHistory(AppCase):
 			bool(shallow == full)
 
 
-class TestShallowRetraction(AppCase):
-	"""Retraction asks the history whether a module that is off now was ever on: a shallow
-	clone that can't tell fails (exit 3) instead of disagreeing with a full clone."""
-
+class ShallowCase(AppCase):
 	def _clone(self) -> Path:
 		clone = self.root.parent / (self.root.name + "-shallow")
 		__import__("shutil").rmtree(clone, ignore_errors=True)
@@ -776,6 +858,11 @@ class TestShallowRetraction(AppCase):
 	def _check(self, root: Path) -> tuple[int, str]:
 		code, out, err = run_cli("sync", "--check", cwd=root)
 		return code, out + err
+
+
+class TestShallowRetraction(ShallowCase):
+	"""Retraction asks the history whether a module that is off now was ever on: a shallow
+	clone that can't tell fails (exit 3) instead of disagreeing with a full clone."""
 
 	def test_a_module_turned_off_needs_the_history(self):
 		self.synced()
@@ -806,6 +893,120 @@ class TestShallowRetraction(AppCase):
 		git(self.root, "commit", "-q", "--allow-empty", "-m", "later")
 		code, out = self._check(self._clone())
 		self.assertEqual(code, 0, out)
+
+
+# What bench new-app (version-16) writes into pyproject.toml, past [project].
+BENCH_NEW_APP_16 = """
+[tool.bench.frappe-dependencies]
+frappe = ">=16.0.0,<17.0.0"
+
+[tool.ruff]
+line-length = 110
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "UP", "B", "RUF"]
+ignore = ["B017", "B018", "B023", "B904", "E101", "E402", "E501", "E741", "F401", "F403", "F405", "F722", "W191", "UP030", "UP031", "UP032", "UP037", "UP040"]
+typing-modules = ["frappe.types.DF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "tab"
+docstring-code-format = true
+"""
+
+
+class TestShallowBenchApp(ShallowCase):
+	"""A bench new-app pyproject on ``minimal`` (every module off): its flit [build-system],
+	requires-python, ruff settings and frappe-dependencies equal what the off modules render,
+	yet they are the app's baseline, so no history is asked and a depth-1 clone checks
+	like a full one."""
+
+	profile = "minimal"
+	extra_pyproject = BENCH_NEW_APP_16
+
+	def test_a_depth_one_clone_checks_clean(self):
+		self.write("demo_app/__init__.py", '__version__ = "0.0.1"\n')  # bench's, no release-please block
+		self.commit()
+		self.synced()
+		git(self.root, "commit", "-q", "--allow-empty", "-m", "later")
+		before = self.read("pyproject.toml")
+		self.assertEqual(self.check()[0], 0)
+		code, out = self._check(self._clone())
+		self.assertEqual(code, 0, out)
+		self.assertNotIn("fetch-depth", out)
+
+		# Turning metadata and python-lint on and off again leaves the baseline in place.
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml")
+			+ "\n[tool.frappe-nix.metadata]\nenable = true\n\n[tool.frappe-nix.python-lint]\nenable = true\n",
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.commit()
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace("enable = true", "enable = false"),
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		doc = __import__("tomllib").loads(self.read("pyproject.toml"))
+		self.assertEqual(doc["build-system"]["build-backend"], "flit_core.buildapi")
+		self.assertEqual(doc["project"]["requires-python"], ">=3.14")
+		self.assertEqual(doc["tool"]["ruff"]["line-length"], 110)
+		self.assertEqual(doc["tool"]["bench"]["frappe-dependencies"], {"frappe": ">=16.0.0,<17.0.0"})
+		self.assertNotIn("select", doc["tool"]["ruff"]["lint"], "what only sync wrote goes")
+		self.assertIn("frappe-dependencies", before)
+
+
+class TestCommitMsgPolicyHook(AppCase):
+	"""The frappe-major commit-msg hook runs `frappe-nix policy` (N4): it is rendered only when
+	this package has that command, or every commit of such an app would be refused."""
+
+	extra_pyproject = '\n[tool.frappe-nix.releases]\nversion-scheme = "frappe-major"\n'
+
+	def test_rendered_only_with_policy(self):
+		import importlib.util
+
+		self.synced()
+		self.assertNotIn("frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
+		real = importlib.util.find_spec
+		shipped = mock.patch.object(
+			importlib.util,
+			"find_spec",
+			lambda name, *a: object() if name == "frappe_nix_tools.commands.policy" else real(name, *a),
+		)
+		with shipped:
+			code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn("id: frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
+
+
+class TestRepoDoctorNotice(AppCase):
+	"""§3.3 step 5: a sync that turns on a module needing a repository setting (releases,
+	dependabot with auto-merge) says to run `frappe-nix repo doctor`, once."""
+
+	profile = "minimal"
+
+	def test_once_when_turned_on(self):
+		self.synced()
+		# Like the retraction notices, it is said on the run whose HEAD has the module off.
+		self.write(
+			"pyproject.toml",
+			self.read("pyproject.toml").replace('profile = "minimal"', 'profile = "recommended"'),
+		)
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn("releases is on now and needs a repository setting: run `frappe-nix repo doctor`", err)
+		self.assertIn("dependabot (auto-merge) is on now", err)
+		self.fake_locks()
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertNotIn("repo doctor", err)
 
 
 class TestVersionSeed(AppCase):
@@ -900,6 +1101,20 @@ class TestRetireGuards(AppCase):
 		self.assertEqual(self.check()[0], 1)
 		self.assertEqual(self.fn("sync", "--write")[0], 0)
 		self.assertFalse((self.root / "requirements.txt").exists())
+
+	def test_the_docs_tools_requirements_are_left_alone(self):
+		"""§2.4: docs/ and docs-site/ are the docs tool's; a ReadTheDocs docs/requirements.txt
+		names the docs build's packages, not the app's dependencies."""
+		self.synced()
+		self.write("docs/requirements.txt", "sphinx\n")
+		self.write("docs-site/requirements.txt", "mkdocs\n")
+		self.write("frontend/requirements.txt", "requests\n")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("frontend/requirements.txt", out)
+		self.assertNotIn("docs/requirements.txt", out)
+		self.assertNotIn("docs-site/requirements.txt", out)
 
 	@with_vite_register
 	def test_update_assets_steps_go_with_the_file(self):

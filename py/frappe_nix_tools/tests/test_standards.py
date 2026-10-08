@@ -194,7 +194,14 @@ class TestToggleOff(ToggleCase):
 		self.assertEqual(code, 0, out)
 		doc = tomllib.loads(self.read("pyproject.toml"))
 		self.assertEqual(doc["tool"]["ruff"]["line-length"], 120)
-		self.assertNotIn("lint", doc["tool"]["ruff"], "the unedited keys go")
+		self.assertNotIn("select", doc["tool"]["ruff"]["lint"], "the unedited keys go")
+		self.assertNotIn("ignore", doc["tool"]["ruff"]["lint"], "the unedited keys go")
+		# ...except what bench new-app writes, which is the app's baseline.
+		self.assertEqual(doc["tool"]["ruff"]["lint"]["typing-modules"], ["frappe.types.DF"])
+		self.assertEqual(
+			doc["tool"]["ruff"]["format"],
+			{"quote-style": "double", "indent-style": "tab", "docstring-code-format": True},
+		)
 		self.assertIn("tool.ruff.line-length is the app's now", out)
 		self.assertEqual(self.check()[0], 0)
 
@@ -334,6 +341,20 @@ class TestOriginMove(ProfileSideCase):
 		self.assertFalse((self.root / "release-please-config.json").exists())
 		self.assertNotIn("x-release-please", self.read("demo_app/__init__.py"))
 		self.assertTrue((self.root / ".github/workflows/custom.yml").exists())
+
+	def test_origin_moving_off_github_without_a_github_dir(self):
+		"""With N3 alone no profile renders .github/: release-please-config.json, which only
+		releases (GitHub-only) renders, marks the state as on GitHub just the same."""
+		self.assertFalse((self.root / ".github").exists())
+		git(self.root, "remote", "add", "origin", "https://github.com/example/demo_app.git")
+		self.assertEqual(self.check()[0], 0)
+		git(self.root, "remote", "set-url", "origin", "https://gitlab.com/example/demo_app.git")
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("release-please-config.json (", out)
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.assertFalse((self.root / "release-please-config.json").exists())
 
 
 class TestInRepoProfileToggle(ProfileSideCase):
@@ -601,7 +622,7 @@ class TestRetireByFunction(AppCase):
 	RELEASE = "jobs: { r: { steps: [ { uses: googleapis/release-please-action@v4 } ] } }\n"
 	MERGE = "jobs: { m: { steps: [ { uses: dependabot/fetch-metadata@v2 } ] } }\n"
 
-	def test_rules_follow_their_module(self):
+	def _rules_follow_their_module(self):
 		self.synced()
 		self.write(".github/workflows/release.yml", self.RELEASE)
 		self.write(".github/workflows/automerge.yml", self.MERGE)
@@ -615,6 +636,14 @@ class TestRetireByFunction(AppCase):
 		self.table("releases.enable = false\ndependabot.enable = false\n")
 		code, out = self.check()
 		self.assertNotIn("(retire)", out)
+
+	def test_rules_follow_their_module(self):
+		with mock.patch.object(
+			manifest,
+			"ships",
+			lambda path: path in (".github/workflows/release.yml", ".github/workflows/deps.yml"),
+		):
+			self._rules_follow_their_module()
 
 	def test_retire_keep(self):
 		self.synced()
@@ -679,6 +708,24 @@ class TestTheAppsFlake(AppCase):
 		self.assertIn('"https://cache.example.org"', flake)
 		self.assertIn('"cache.example.org-1:abc="', flake)
 		self.assertIn('frappe-nix.url = "github:Avunu/frappe-nix/v1.0.0";', flake)
+
+	def test_a_frappe_nix_url_off_github_needs_ci_off(self):
+		"""§2.5: a mirror off GitHub works for the dev shell and sync, but not with ci on."""
+		mirror = 'dev-shell.frappe-nix-url = "git+https://git.example.org/mirror/frappe-nix?ref=v1.0.0"\n'
+		self.table(mirror)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("is not on GitHub, and ci is on", out)
+		self.assertEqual(self.fn("sync", "--write")[0], 2)
+		self.table("ci.enable = false\n")
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn(
+			'frappe-nix.url = "git+https://git.example.org/mirror/frappe-nix?ref=v1.0.0";',
+			self.read("flake.nix"),
+		)
 
 
 class TestFirstOptIn(OptOutCase):
@@ -864,6 +911,147 @@ class TestOrgProfile(ProfileCase):
 		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
 		self.assertEqual(code, 2, out + err)
 
+	def test_a_broken_profile_template_or_retire_regex_is_exit_2(self):
+		"""An org profile's template error or bad [[retire]] regex is the profile's (exit 2 from
+		sync and from profile validate), never an internal error (exit 3)."""
+		profile = self.read(".standards-profile/profile.toml")
+		template = self.read(".standards-profile/templates/SECURITY.md.j2")
+		cases = (
+			("{{ undefined_name }}", "", "UndefinedError"),
+			("{{ org.nope }}", "", "UndefinedError"),
+			("{% if %}", "", "TemplateSyntaxError"),
+			(
+				template,
+				'\n[[retire]]\npaths = ["x.txt"]\nmodule = "hygiene"\ncontains = ["("]\n',
+				"regular expression",
+			),
+		)
+		for text, extra, needle in cases:
+			with self.subTest(text=text, extra=extra):
+				self.write(".standards-profile/templates/SECURITY.md.j2", text)
+				self.write(".standards-profile/profile.toml", profile + extra)
+				self.commit()
+				for argv in (
+					("sync", "--check"),
+					("sync", "--check", "--format", "json"),
+					("sync", "--write"),
+				):
+					code, out, err = self.fn(*argv)
+					self.assertEqual(code, 2, out + err)
+					self.assertIn(needle, out + err)
+					self.assertNotIn("internal error", out + err)
+				code, out, err = self.fn(
+					"profile", "validate", str(self.root / ".standards-profile/profile.toml")
+				)
+				self.assertEqual(code, 2, out + err)
+				self.assertIn(needle, out + err)
+
+	def test_no_workflow_command_from_pr_data_under_format_github(self):
+		"""--check --format github runs on pull requests: a path holding a newline is exit 2,
+		and nothing the PR controls reaches stdout or stderr as a line the runner would obey."""
+		profile = self.read(".standards-profile/profile.toml")
+		for path in (
+			"SEC\\n::warning title=injected::spoofed",
+			"{{ 'SEC\\n::warning title=injected::spoofed' }}",
+		):
+			with self.subTest(path=path):
+				self.write(
+					".standards-profile/profile.toml",
+					profile
+					+ f'\n[[extra-files]]\npath = "{path}"\ntemplate = "SECURITY.md.j2"\n'
+					+ 'strategy = "whole"\nmodule = "hygiene"\nheader = "none"\n',
+				)
+				self.commit()
+				code, out, err = self.fn("sync", "--check", "--format", "github")
+				self.assertEqual(code, 2, out + err)
+				self.assertIn("control character", out + err)
+				self.assertNotIn("\n::warning", "\n" + out + "\n" + err)
+
+	def test_stderr_is_inert_under_format_github(self):
+		self.write("x.txt", "x\n")
+		self.write(
+			".standards-profile/profile.toml",
+			self.read(".standards-profile/profile.toml")
+			+ '\n[[retire]]\npaths = ["x.txt"]\nmodule = "hygiene"\ncontains = ["("]\n',
+		)
+		self.commit()
+		code, out, err = self.fn("sync", "--check", "--format", "github")
+		self.assertEqual(code, 2, out + err)
+		lines = err.splitlines()
+		self.assertTrue(lines[0].startswith("::stop-commands::"), err)
+		self.assertEqual(lines[-1], "::" + lines[0].removeprefix("::stop-commands::") + "::", err)
+
+	def test_profile_validate_renders_every_fixture_context(self):
+		"""§5.13: a template that breaks only for one §7 N3 context (here an app with SCSS) fails
+		validate, not the first sync of such an app."""
+		self.write(
+			".standards-profile/templates/SECURITY.md.j2",
+			"# Security\n{% if discover.scss %}{{ org.brand.nope }}{% endif %}\n",
+		)
+		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))
+		self.assertEqual(code, 2, out + err)
+		self.assertIn("the scss app", out + err)
+
+	def _refused_unread(self, needle: str) -> None:
+		"""--check and --write are exit 2, never print the link's target and write nothing."""
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn(needle, out)
+		self.assertNotIn("hunter2", out)
+		for fmt in ("json", "github"):
+			code, out, err = self.fn("sync", "--check", "--format", fmt)
+			self.assertEqual(code, 2, out + err)
+			self.assertNotIn("hunter2", out + err)
+		before = self.snapshot()
+		code, out, err = self.fn("sync", "--write")
+		self.assertEqual(code, 2, out + err)
+		self.assertNotIn("hunter2", out + err)
+		self.assertEqual(self.snapshot(), before)
+
+	def test_an_extra_file_into_git_or_an_unmanaged_directory_is_refused(self):
+		"""An in-repo profile is pull-request data: an [[extra-files]] path into .git/ would print
+		.git/config (a persisted checkout token) under --check and replace it under --write."""
+		git(self.root, "config", "http.https://github.com/.extraheader", "AUTHORIZATION: basic hunter2")
+		config_before = (self.root / ".git/config").read_bytes()
+		profile = self.read(".standards-profile/profile.toml")
+		for path, part in (
+			(".git/config", ".git"),
+			(".GIT/config", ".GIT"),
+			("sub/.git./hooks/pre-commit", ".git."),
+			("node_modules/x.js", "node_modules"),
+			(".frappe-nix/x", ".frappe-nix"),
+		):
+			with self.subTest(path=path):
+				self.write(
+					".standards-profile/profile.toml",
+					profile
+					+ f'\n[[extra-files]]\npath = "{path}"\ntemplate = "SECURITY.md.j2"\n'
+					+ 'strategy = "whole"\nmodule = "hygiene"\nheader = "none"\n',
+				)
+				self.commit()
+				self._refused_unread(f"is inside {part}/")
+				self.assertEqual((self.root / ".git/config").read_bytes(), config_before)
+				code, out, err = self.fn(
+					"profile", "validate", str(self.root / ".standards-profile/profile.toml")
+				)
+				self.assertEqual(code, 2, out + err)
+				self.assertIn(f"is inside {part}/", out + err)
+
+	def test_a_rendered_path_into_git_is_refused(self):
+		"""The rendered path is what is checked: a template expression cannot reach .git/ either."""
+		with self.assertRaisesRegex(engine.ConfigError, "inside .git/"):
+			engine.inside(self.root, ".git/config")
+		with self.assertRaisesRegex(engine.ConfigError, "inside .Git/"):
+			engine.inside(self.root, "a/.Git/hooks/post-checkout")
+		with self.assertRaisesRegex(engine.ConfigError, "control character"):
+			engine.inside(self.root, "SEC\n::warning::x")
+		self.assertEqual(
+			engine.inside(self.root, ".git-blame-ignore-revs"), self.root / ".git-blame-ignore-revs"
+		)
+		self.assertEqual(
+			engine.inside(self.root, ".github/workflows/ci.yml"), self.root / ".github/workflows/ci.yml"
+		)
+
 	def test_profile_validate_ignores_the_users_git_config(self):
 		"""Commit signing and a global hooks path must not reach the throwaway repositories."""
 		hooks = self.root.parent / (self.root.name + "-hooks")
@@ -885,22 +1073,6 @@ class TestOrgProfile(ProfileCase):
 		outside.write_text(text)
 		self.addCleanup(outside.unlink)
 		return outside
-
-	def _refused_unread(self, needle: str) -> None:
-		"""--check and --write are exit 2, never print the link's target and write nothing."""
-		code, out = self.check()
-		self.assertEqual(code, 2, out)
-		self.assertIn(needle, out)
-		self.assertNotIn("hunter2", out)
-		for fmt in ("json", "github"):
-			code, out, err = self.fn("sync", "--check", "--format", fmt)
-			self.assertEqual(code, 2, out + err)
-			self.assertNotIn("hunter2", out + err)
-		before = self.snapshot()
-		code, out, err = self.fn("sync", "--write")
-		self.assertEqual(code, 2, out + err)
-		self.assertNotIn("hunter2", out + err)
-		self.assertEqual(self.snapshot(), before)
 
 	def test_a_symlinked_template_is_refused_unread(self):
 		template = self.root / ".standards-profile/templates/SECURITY.md.j2"
@@ -974,8 +1146,18 @@ class TestOrgProfile(ProfileCase):
 		self.assertIn('org.publisher = "Example Org"  # org:./.standards-profile', out)
 		self.assertIn("ssort.enable = true  # org:./.standards-profile", out)
 		self.assertIn('js.tool = "oxc"  # builtin:recommended@1.0', out)
+		# Valid TOML, tables and all (an [[untested]] entry is an inline table).
+		doc = tomllib.loads(out)
+		self.assertEqual(doc["config"]["org"]["publisher"], "Example Org")
+		self.assertTrue(doc["modules"]["ssort"])
+		self.assertTrue(doc["profile"])
 		code, out, _ = self.fn("profile", "show", "--format", "json")
 		self.assertTrue(json.loads(out)["modules"]["ssort"])
+		code, out, _ = self.fn("profile", "show", "--explain", "--format", "json")
+		doc = json.loads(out)
+		self.assertEqual(doc["sources"]["org.publisher"], "org:./.standards-profile")
+		self.assertEqual(doc["config"]["org"]["publisher"], "Example Org")
+		self.assertTrue(doc["modules"]["ssort"])
 
 
 class TestUntrustedProfile(ProfileCase):

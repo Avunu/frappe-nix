@@ -23,7 +23,19 @@ looks_like_frappe_app() {
   [ -n "$n" ] && [ -f "$n/hooks.py" ]
 }
 
+require_git_repo() {
+  [ -d .git ] || git rev-parse --git-dir > /dev/null 2>&1 ||
+    die "'$(pwd -P)' is not a git repository. A flake's source tree is exactly its tracked files, so frappe-nix cannot see an app that git cannot." 6
+}
+
 cmd_app_init() {
+  if [ -z "$frappe_version" ] && app_opted_in; then
+    # An app that opted in names its Frappe major in [tool.frappe-nix] frappe-major, which
+    # is what sync renders: no question to ask (a --frappe-version that disagrees is exit 2).
+    local major
+    major="$(frappe-nix config frappe-major 2> /dev/null)" || major=""
+    if [ -n "$major" ]; then frappe_version="version-$major"; fi
+  fi
   if [ -z "$frappe_version" ]; then
     if has_tty; then
       frappe_version="$(choose_frappe_version)"
@@ -68,26 +80,35 @@ cmd_app_init() {
     die "unknown flag: $APP_FLAG (it applies to an app that opted in to the app standards: add --standards <profile>)"
   fi
 
+  if $standards; then
+    require_git_repo
+    # Before anything is written (and under --dry-run too): the configuration sync will
+    # render must resolve (an unknown profile, a --standards or --frappe-version the table
+    # contradicts, an invalid table), and the flake it renders follows frappe-nix's
+    # release-<N> branch, which exists only from v<N>.0.0 on (spec S32).
+    sync_write_args
+    frappe-nix sync "${SYNC_WRITE[@]}" --phase preflight || rc=$?
+    [ "$rc" = 0 ] || die "nothing was changed: fix what frappe-nix sync reported above" "$rc"
+  fi
+
   if $DRY_RUN; then
     printf -- '--dry-run: nothing was changed.\n'
     return 0
   fi
 
-  [ -d .git ] || git rev-parse --git-dir > /dev/null 2>&1 ||
-    die "'$(pwd -P)' is not a git repository. A flake's source tree is exactly its tracked files, so frappe-nix cannot see an app that git cannot." 6
-
-  if $standards; then
-    # Before anything is written: the flake sync renders follows frappe-nix's
-    # release-<N> branch, which exists only from v<N>.0.0 on (spec S32).
-    frappe-nix sync --write --phase preflight || rc=$?
-    [ "$rc" = 0 ] || die "frappe-nix's release branch is not available; nothing was changed" "$rc"
-  fi
+  require_git_repo
 
   step "Writing the flake"
   TEMPLATE="$APP_TEMPLATE"
   render_template
   install_template keep
-  install_gitignore_block
+  if $standards && [ -f .gitignore ] && grep -qxF "$GITIGNORE_BEGIN" .gitignore; then
+    # frappe-nix sync owns the block from here (§2.6): writing templates/app's body first
+    # would put main's back, and leave it staged when sync fails or --only skips .gitignore.
+    info ". .gitignore's frappe-nix block is left to frappe-nix sync"
+  else
+    install_gitignore_block
+  fi
 
   # Staged, not just written: a flake's source tree is only its tracked files, so
   # an untracked flake.nix is one `nix run` away from "does not provide attribute".
@@ -132,8 +153,18 @@ Next steps:
   devenv up                    # MariaDB, Redis, web, scheduler, worker, …
   provision-site               # (in another shell) create $site + install $app_name
 
+EOF
+  if $standards; then
+    cat <<EOF
+To add a sibling app (erpnext, hrms, …), list it in [tool.frappe-nix] siblings and in
+hooks.py's required_apps, then run 'frappe-init --sync'.
+Commit nix/ — a flake's source tree is only its tracked files.
+EOF
+  else
+    cat <<EOF
 To add a sibling app (erpnext, hrms, …), declare it as a flake input and list it
 under frappe-nix.app.siblings in flake.nix, then re-run 'nix run .#relock'.
 Commit nix/ — a flake's source tree is only its tracked files.
 EOF
+  fi
 }

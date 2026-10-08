@@ -9,8 +9,10 @@ profile schema, an ``extends`` that names a built-in, no app-only key, every mod
 met under the profile's own switches, a ``requires-frappe-nix`` that admits this
 frappe-nix-tools, ``[[extra-files]]`` paths that frappe-nix doesn't manage, and every file
 in its ``templates/`` (or ``--templates``): each replaces an overridable template or is an
-``[[extra-files]]`` template, and renders for a plain app and one with erpnext and hrms
-without an undefined variable.
+``[[extra-files]]`` template, and renders for each fixture context of §7 N3 (plain,
+erpnext+hrms, scss, a nested frontend, an SPA at the root and in portal/, a docs site,
+pilot-assets, Vite; ``scaffold/fixtures.py``) without an undefined variable, and every
+``[[retire]]`` ``contains`` is a regular expression.
 
 ``list`` prints ``minimal`` and every ``recommended@<minor>`` snapshot with its description,
 marking the one plain ``recommended`` means (S42).
@@ -34,11 +36,10 @@ import tomlkit
 
 from frappe_nix_tools.common import config, repo
 from frappe_nix_tools.common.report import CLEAN, ConfigError, EnvError
-from frappe_nix_tools.scaffold import engine
+from frappe_nix_tools.scaffold import engine, fixtures
 from frappe_nix_tools.scaffold import render as rendering
 
 # The throwaway apps a profile's templates must render for (§7 N3's fixture contexts).
-CONTEXTS = {"plain": [], "erpnext+hrms": ["erpnext", "hrms"]}
 
 
 def _plain(value: Any) -> Any:
@@ -50,13 +51,55 @@ def _plain(value: Any) -> Any:
 	return value
 
 
-def _flat(value: Any, prefix: str = "") -> dict[str, Any]:
+def _flat(value: Any, prefix: tuple[str, ...] = ()) -> dict[tuple[str, ...], Any]:
 	if isinstance(value, dict) and value:
-		out: dict[str, Any] = {}
+		out: dict[tuple[str, ...], Any] = {}
 		for key, item in value.items():
-			out.update(_flat(item, f"{prefix}.{key}" if prefix else key))
+			out.update(_flat(item, (*prefix, str(key))))
 		return out
 	return {prefix: value}
+
+
+def _toml_key(path: tuple[str, ...]) -> str:
+	return ".".join(tomlkit.key(part).as_string() for part in path)
+
+
+def _toml_inline(value: Any) -> str:
+	"""``value`` on one line: tables inline, as TOML spells them."""
+	if isinstance(value, dict):
+		inner = ", ".join(f"{tomlkit.key(k).as_string()} = {_toml_inline(v)}" for k, v in value.items())
+		return "{ " + inner + " }" if inner else "{}"
+	if isinstance(value, list):
+		return "[" + ", ".join(_toml_inline(v) for v in value) + "]"
+	return tomlkit.item(value).as_string()
+
+
+def _explained(resolved: config.Resolved, fmt: str) -> str:
+	"""``show --explain``: what ``show`` prints, with the layer that set each value, in
+	``fmt``. TOML gives each ``[config]`` value as a dotted key with the layer as its comment
+	(no ``None``: TOML has no null); JSON adds a ``sources`` table, keyed by the dotted name."""
+	flat = _flat(resolved.cfg)
+	if fmt == "json":
+		doc = {
+			"profile": resolved.profile,
+			"modules": resolved.modules,
+			"config": resolved.cfg,
+			"sources": {".".join(k): resolved.source(".".join(k)) for k in flat},
+		}
+		return json.dumps(doc, indent=2) + "\n"
+	lines = ["[profile]"]
+	for key, value in _flat(dict(resolved.profile)).items():
+		if value is not None:
+			lines.append(f"{_toml_key(key)} = {_toml_inline(_plain(value))}")
+	lines += ["", "[modules]"]
+	for module, on in resolved.modules.items():
+		lines.append(f"{tomlkit.key(module).as_string()} = {'true' if on else 'false'}")
+	lines += ["", "[config]"]
+	for key, value in flat.items():
+		if value is not None:
+			line = f"{_toml_key(key)} = {_toml_inline(_plain(value))}"
+			lines.append(f"{line}  # {resolved.source('.'.join(key))}")
+	return "\n".join(lines) + "\n"
 
 
 def show(args: argparse.Namespace) -> int:
@@ -70,10 +113,7 @@ def show(args: argparse.Namespace) -> int:
 		print(f"notice: {notice}", file=sys.stderr)
 	doc = {"profile": resolved.profile, "modules": resolved.modules, "config": resolved.cfg}
 	if args.explain:
-		for key, value in _flat(resolved.cfg).items():
-			print(f"{key} = {json.dumps(value, sort_keys=True)}  # {resolved.source(key)}")
-		for module, on in resolved.modules.items():
-			print(f"modules.{module} = {'true' if on else 'false'}")
+		sys.stdout.write(_explained(resolved, args.format))
 		return CLEAN
 	if args.format == "json":
 		print(json.dumps(doc, indent=2, sort_keys=False))
@@ -82,19 +122,22 @@ def show(args: argparse.Namespace) -> int:
 	return CLEAN
 
 
-def _throwaway(root: Path, profile: Path, siblings: list[str]) -> Path:
-	"""An app in a git repository under ``root`` that uses the profile in ``profile`` in-repo."""
+def _throwaway(root: Path, profile: Path, extra: str, required: list[str], files: dict[str, str]) -> Path:
+	"""An app in a git repository under ``root`` that uses the profile in ``profile`` in-repo,
+	shaped as one fixture context (``extra`` table lines, ``required`` apps, ``files``)."""
 	app = root / f"app-{len(list(root.iterdir()))}"
-	(app / "profile_check").mkdir(parents=True)
+	name = fixtures.APP
+	(app / name).mkdir(parents=True)
 	shutil.copytree(profile, app / ".standards-profile")
 	(app / "pyproject.toml").write_text(
-		'[project]\nname = "profile_check"\ndynamic = ["version"]\n\n'
-		f'[tool.frappe-nix]\nschema = 1\nprofile = "./.standards-profile"\nfrappe-major = 16\nsiblings = {json.dumps(siblings)}\n'
+		f'[project]\nname = "{name}"\ndynamic = ["version"]\n\n'
+		'[tool.frappe-nix]\nschema = 1\nprofile = "./.standards-profile"\nfrappe-major = 16\n' + extra
 	)
-	(app / "profile_check" / "__init__.py").write_text('__version__ = "16.0.0"\n')
-	(app / "profile_check" / "hooks.py").write_text(
-		f'app_title = "Profile Check"\nrequired_apps = {json.dumps(siblings)}\n'
-	)
+	(app / name / "__init__.py").write_text('__version__ = "16.0.0"\n')
+	(app / name / "hooks.py").write_text(f'app_title = "Ctx App"\nrequired_apps = {json.dumps(required)}\n')
+	for rel, text in files.items():
+		(app / rel).parent.mkdir(parents=True, exist_ok=True)
+		(app / rel).write_text(text)
 	# A repository of its own: none of the user's git configuration (commit signing, a global
 	# core.hooksPath, init templates) applies to it, and no hook runs.
 	env = {
@@ -152,11 +195,20 @@ def validate(args: argparse.Namespace) -> int:
 			# A link in it is refused here, as sync refuses it, rather than copied as its target.
 			rendering.template_files(templates)
 			shutil.copytree(templates, profile / "templates", symlinks=True)
-		for name, siblings in CONTEXTS.items():
-			app = _throwaway(Path(tmp), profile, siblings)
+		plain: engine.Plan | None = None
+		for name, (extra, required, files) in fixtures.CONTEXTS.items():
+			if name == "pilot-assets" and plain is not None:
+				# pilot-assets needs ci and releases: with one off, turning it on is exit 2 by design.
+				if not all(plain.resolved.modules.get(m) for m in config.NEEDS["pilot-assets"]):
+					continue
+			app = _throwaway(Path(tmp), profile, extra, required, files)
 			# Resolution checks the needs under the profile's own switches (the app sets none),
-			# and the plan checks [[extra-files]] and every override's place.
-			plan = engine.build(app, options={"init_listing": False})
+			# and the plan checks [[extra-files]], every override's place and every [[retire]].
+			try:
+				plan = engine.build(app, options={"init_listing": False})
+			except ConfigError as e:
+				raise ConfigError(f"the {name} app: {e}") from e
+			plain = plain or plan
 			for file in (
 				rendering.template_files(profile / "templates") if (profile / "templates").is_dir() else []
 			):
