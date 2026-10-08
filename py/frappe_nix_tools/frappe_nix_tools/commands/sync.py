@@ -356,7 +356,7 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 	return changed
 
 
-def _repo_settings(ns: object | None) -> list[str]:
+def _repo_settings(ns: dict | None) -> list[str]:
 	"""The modules of ``ns`` (a plan's context or ``previous``) on that need a repository
 	setting (§3.3 step 5): ``releases``, and ``dependabot`` with ``auto-merge``."""
 	if ns is None:

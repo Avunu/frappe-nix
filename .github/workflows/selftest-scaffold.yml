@@ -195,6 +195,7 @@ jobs:
             work="$RUNNER_TEMP/ts-$preset"
             cp -r "$RUNNER_TEMP/app" "$work"
             cd "$work"
+            mkdir -p standards_fixture/public/js
             printf 'export const answer: number = 42;\n' > standards_fixture/public/js/answer.ts
             if [ "$preset" = inline ]; then
               sed -i 's/^\[tool\.frappe-nix\]$/&\ntypescript.preset = "inline"/' pyproject.toml
@@ -203,8 +204,8 @@ jobs:
             git -c user.name=ci -c user.email=ci@example.com commit -qm "browser project, $preset"
             frappe-init --sync --skip-lock
             test -f tsconfig.browser.json || { echo "::error::no tsconfig.browser.json under $preset"; exit 1; }
-            if [ "$preset" = inline ] && grep -q frappe-types tsconfig.browser.json package.json; then
-              echo "::error::the inline preset still names frappe-types"
+            if [ "$preset" = inline ] && grep -q frappe-types tsconfig.base.json tsconfig.browser.json; then
+              echo "::error::the inline preset's tsconfig still names frappe-types"
               exit 1
             fi
             yarn install --frozen-lockfile --non-interactive
