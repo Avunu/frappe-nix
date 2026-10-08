@@ -967,7 +967,12 @@ let
       # user — node in particular can resolve to a directory it cannot execute,
       # which is the EACCES from website_theme), so put both on the front
       # rather than relying on the caller's PATH.
-      export PATH="${lib.makeBinPath [ pkgs.file (pkgNodejs pkg) ]}:$PATH"
+      export PATH="${
+        lib.makeBinPath [
+          pkgs.file
+          (pkgNodejs pkg)
+        ]
+      }:$PATH"
 
       ${optionalString (singleSite != null) ''
         export FRAPPE_SITE=''${FRAPPE_SITE:-${singleSite}}

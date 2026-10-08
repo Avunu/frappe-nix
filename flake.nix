@@ -503,5 +503,18 @@
           modules = [ ./dev/devenv.nix ];
         };
       });
+
+      # Configure the formatter for nix fmt
+      formatter = forAllSystems (
+        pkgs:
+        pkgs.writeShellScriptBin "nixfmt" ''
+          # Files or flags passed by the nix driver: forward them directly
+          [ "$#" -gt 0 ] && exec ${pkgs.lib.getExe pkgs.nixfmt-rs} "$@"
+          # Bare 'nix fmt': skip templates/, whose @PLACEHOLDER@ files don't parse
+          exec ${pkgs.findutils}/bin/find . \
+            \( -path ./templates -o -path ./.git -o -path ./.direnv \) -prune -o \
+            -name '*.nix' -exec ${pkgs.lib.getExe pkgs.nixfmt-rs} {} +
+        ''
+      );
     };
 }
