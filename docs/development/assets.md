@@ -3,7 +3,7 @@ title: Asset builds
 description: How frappe-nix makes Frappe's esbuild pipeline resolve packages the way apps assume, which target it compiles for, and how it heals a stale assets.json.
 order: 8
 tags: [esbuild, assets, bench-build, watch]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 Frappe's esbuild pipeline compiles each app's JavaScript and CSS bundles. frappe-nix runs it in the dev shell (`bench build` and `watch`) and in `builtBench`, and corrects three things that break apps that work on a stock bench.
@@ -34,6 +34,10 @@ The preload also changes what happens when an app's own build fails. Frappe ends
 ```bash
 env -u FRAPPE_NIX_KEEP_GOING bench build
 ```
+
+## Vite bundles, registered
+
+Frappe's esbuild writes `sites/assets/assets.json` from what esbuild built, then runs every app's `yarn build`. A bundle an app builds with Vite (`public/dist/js/<name>.bundle.<hash>.js`) gets no key, so `app_include_js = ["<name>.bundle.js"]` or `bundled_asset("<name>.bundle.js")` asks for a file that is not there. After each app's `yarn build` that succeeds, the preload reads the app's Vite manifests and adds a `<name>.bundle.js` / `.css` key for every entry, as Frappe's own `--using-cached` path names the same files. It is the code an app that opted in to the app standards ships as `scripts/vite-register.mjs` for stock benches, and running both changes nothing the second time. It is always on, for every app in app mode, and a registration that fails is a warning, never a failed build. [App assets](../app-standards/assets.md) has the details and the naming conventions.
 
 ## Asset-shadow staleness
 

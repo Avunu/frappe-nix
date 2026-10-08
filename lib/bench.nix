@@ -449,7 +449,8 @@ let
       export ESBUILD_TARGET=${lib.escapeShellArg esbuildTarget}
       # Read by frappe_nodebuild, which prodPythonEnv carries: frappe's build
       # replaces NODE_OPTIONS, so exporting --require here would not reach it.
-      export FRAPPE_NIX_ESBUILD_PRELOAD=${./js/esbuild-preload.js}
+      # The whole directory: the preload requires its neighbour, vite-register.cjs.
+      export FRAPPE_NIX_ESBUILD_PRELOAD=${./js}/esbuild-preload.js
       export FRAPPE_BENCH_ROOT=$TMPDIR/bench
       export SITES_PATH=$TMPDIR/bench/sites
       export PYTHONPATH=${appsPath "$TMPDIR/bench"}

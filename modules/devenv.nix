@@ -254,6 +254,26 @@ in
             '';
           };
 
+          excludeNodeTargets = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = ''
+              Top-level directories of the app that are never node targets, even
+              with a package.json: no node_modules is built for them, no fallback
+              lock is generated, and the bench never builds them. The same as
+              listing "<app.name>/<dir>" in nodeNestedFrontendExcludes, and
+              honoured by both discoveries (lib/node-targets.nix and the
+              node-locks tool).
+
+              Empty by default, so a nested frontend named docs-site is built as
+              it always was. An app that opted in to the app standards gets
+              `[ "docs-site" ]` from its managed flake.nix while the docs-site
+              module is on: a docs tool's site is built and published by its own
+              workflow, never by the bench (docs/app-standards/spec.md §5.11).
+            '';
+            example = [ "docs-site" ];
+          };
+
           lockDir = mkOption {
             type = types.str;
             default = "nix";
@@ -1404,6 +1424,17 @@ in
 
         appMode = cfg.app.enable;
 
+        # nodeNestedFrontendExcludes plus the app's own excludeNodeTargets, as
+        # "app/subdir" keys: what every node-target discovery leaves out.
+        nodeExcludes =
+          cfg.nodeNestedFrontendExcludes
+          ++ lib.optionals appMode (
+            (import ../lib/node-targets.nix { inherit lib; }).appExcludes {
+              app = cfg.app.name;
+              dirs = cfg.app.excludeNodeTargets;
+            }
+          );
+
         # frappe first (bench installs it first and every other app imports it),
         # then the declared siblings in declaration order, then the app under
         # development. This list *is* sites/apps.txt, so the order is the
@@ -1917,7 +1948,7 @@ in
           )
           ++ lib.optional (!cfg.watch.rtl) "--skip-rtl"
           ++ lib.optional cfg.watch.nativeSass "--sass=${sassEmbedded}/${sassEmbedded.module}"
-          ++ lib.optional (!cfg.watch.rtl || cfg.watch.nativeSass) "--preload=${../lib/js/esbuild-preload.js}"
+          ++ lib.optional (!cfg.watch.rtl || cfg.watch.nativeSass) "--preload=${../lib/js}/esbuild-preload.js"
         );
         sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
 
@@ -1987,11 +2018,11 @@ in
             inherit pkgs lib;
             inherit (cfg)
               nodejs
-              nodeNestedFrontendExcludes
               nodeOverrides
               extraPackages
               esbuildTarget
               ;
+            nodeNestedFrontendExcludes = nodeExcludes;
             inherit (pythonEnvs) prodPythonEnv rootPyproject;
             workspaceRoot = effectiveWorkspaceRoot;
             # The fallback locks: the app repository's in app mode (the assembled
@@ -2080,7 +2111,7 @@ in
           nodeVerifyBin = "${nodeVerifyTool}/bin/frappe-nix-node-verify";
           pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
           nodeLocksBin = "${nodeLocksTool}/bin/frappe-nix-node-locks";
-          inherit (cfg) nodeNestedFrontendExcludes;
+          nodeNestedFrontendExcludes = nodeExcludes;
           inherit appMode;
           lockDir = cfg.app.lockDir;
         };
@@ -2156,9 +2187,7 @@ in
         nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
 
         # The nested frontends the lock generator must leave alone, as flags.
-        nodeLocksExcludeFlags = lib.escapeShellArgs (
-          map (k: "--exclude=${k}") cfg.nodeNestedFrontendExcludes
-        );
+        nodeLocksExcludeFlags = lib.escapeShellArgs (map (k: "--exclude=${k}") nodeExcludes);
 
         relockTool = pkgs.writeShellApplication {
           name = "frappe-nix-relock";
@@ -2600,7 +2629,7 @@ in
               ESBUILD_TARGET = cfg.esbuildTarget;
               # frappe_nodebuild hands it to every `bench build` and `bench
               # watch`, as builtBench's build phase does. See lib/nodebuild.
-              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js/esbuild-preload.js}";
+              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js}/esbuild-preload.js";
               # Frappe ends a build by running every app's `yarn build` in turn
               # and stops at the first that fails, leaving the apps after it
               # unbuilt. The preload carries on, builds the rest and still exits

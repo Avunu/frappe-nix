@@ -302,7 +302,7 @@
               ''
                 {
                   python3 ${./tests/bench-watch.py} ${./lib/bench-watch.py}
-                  node ${./tests/esbuild-preload.js} ${./lib/js/esbuild-preload.js}
+                  node ${./tests/esbuild-preload.js} ${./lib/js}/esbuild-preload.js
                 } 2>&1 | tee "$out"
               '';
 

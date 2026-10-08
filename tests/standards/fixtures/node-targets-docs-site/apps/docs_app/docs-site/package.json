@@ -1,0 +1,1 @@
+{ "name": "docs-app-site", "private": true, "scripts": { "build": "vite build" } }
