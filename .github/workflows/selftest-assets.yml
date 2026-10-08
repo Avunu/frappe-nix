@@ -12,7 +12,9 @@ name: selftest-assets
 #               changes no byte of assets.json, and the preload alone registers
 #               them; --hard-link copies the hashed bundles into sites/assets
 #   builtbench  the fixture locked against this checkout, `nix build
-#               .#builtBench`: its assets.json maps the bundles
+#               .#builtBench`: its assets.json maps the bundles; and again
+#               with no registration step of the app's own (Q7: the preload
+#               is the only registrar for an app that has not opted in)
 
 # The registration's code, the preload and how Nix hands it to frappe's build,
 # the fixture, and the pins. Also on main and weekly, so a change that slips

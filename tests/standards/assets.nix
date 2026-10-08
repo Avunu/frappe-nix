@@ -30,7 +30,11 @@
 #                                  spa.bundle.css to the hashed files, the
 #                                  preload's pass after it changes no byte, a
 #                                  real sites/assets/spa_app gets the bundles,
-#                                  and outside a bench the script skips.
+#                                  an assets.json that does not parse is a
+#                                  warning (exit 0), a build that changes
+#                                  directory is run in a subshell and still
+#                                  registers, and outside a bench the script
+#                                  skips.
 {
   pkgs,
   lib,
@@ -116,7 +120,7 @@ let
           "docs_app/frontend"
         ]
       )
-      "node targets: without excludeNodeTargets, docs-site is not a target as on main: ${builtins.toJSON (docsKeys [ ])}";
+      "node targets: without excludeNodeTargets, docs-site must be a target as on main, got ${builtins.toJSON (docsKeys [ ])}";
     assert lib.assertMsg
       (
         docsKeys [ "docs-site" ] == [
@@ -319,6 +323,37 @@ in
         [ -f "hard/sites/assets/spa_app/dist/''${js#/assets/spa_app/dist/}" ] || fail "the hashed bundle was not copied into sites/assets/spa_app/dist"
         [ -f hard/sites/assets/spa_app/portal/index.html ] || fail "portal/ was not copied into sites/assets/spa_app"
         echo "ok   with a real sites/assets/spa_app, dist/ and portal/ are copied in"
+
+        # An assets.json the app's build cannot parse (esbuild rewrites it in
+        # place, so a concurrent `bench watch` can leave it torn): a warning, and
+        # the build still succeeds with the file as it was.
+        bench torn
+        printf '{ not json' > torn/sites/assets/assets.json
+        build torn > torn.log 2> torn.err || fail "the app's build failed on an assets.json that does not parse: $(cat torn.err)"
+        [ "$(cat torn/sites/assets/assets.json)" = "{ not json" ] || fail "the unparsable assets.json was rewritten"
+        grep -q '^vite-register: spa_app: .*its Vite bundles are not registered$' torn.err || fail "no warning naming the app: $(cat torn.err)"
+        echo "ok   an assets.json that does not parse is a warning; the build exits 0 and leaves it as it was"
+
+        # A build that changes directory (`cd frontend && yarn build`, erpnext's
+        # shape): sync runs it in a subshell, so the step still runs from the
+        # app's own directory and registers.
+        (
+          cd app
+          jq -j --tab '.scripts.build = "node build.mjs && cd portal && true"' package.json > p.json
+          printf '\n' >> p.json
+          mv p.json package.json
+          commit nested
+          frappe-nix sync --write > /dev/null
+          [ "$(jq -r .scripts.build package.json)" = "(node build.mjs && cd portal && true) && node scripts/vite-register.mjs" ] \
+            || fail "sync wrote scripts.build = $(jq -r .scripts.build package.json)"
+          commit synced
+          frappe-nix compat || fail "compat fails on the subshell build"
+        )
+        bench nested
+        cp app/package.json nested/apps/spa_app/package.json
+        build nested > nested.log
+        case "$(key nested spa.bundle.js)" in /assets/spa_app/dist/js/spa.bundle.*.js) ;; *) fail "after a cd, spa.bundle.js maps to $(key nested spa.bundle.js)" ;; esac
+        echo "ok   a build that changes directory runs in a subshell and still registers"
 
         # Outside a bench.
         cp -r ${spaApp} lone

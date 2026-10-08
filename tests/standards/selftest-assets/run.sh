@@ -16,7 +16,9 @@
 #                                                      checkout and built as a builtBench
 #                                                      (`nix build .#builtBench`): its
 #                                                      assets.json maps spa.bundle.js to the
-#                                                      hashed file
+#                                                      hashed file; built again with no
+#                                                      registration step of the app's own,
+#                                                      the preload alone maps them
 #
 # Both work on copies of tests/fixtures/spa-app under $WORK (default
 # $RUNNER_TEMP/standards-n2), with frappe at the revision frappe-nix's own dev
@@ -146,7 +148,7 @@ cmd_stock() {
 # ── builtbench ────────────────────────────────────────────────────────────────
 
 cmd_builtbench() {
-  local app="$WORK/spa-app-nix" out="$WORK/built" assets
+  local app="$WORK/spa-app-nix" alone="$WORK/spa-app-nix-alone" out="$WORK/built" assets
   local nixflags=(--no-pure-eval --override-input frappe-nix "path:$FN")
 
   # PyPI as of the last change to what pins the resolution, as selftest-runtime does.
@@ -175,6 +177,28 @@ cmd_builtbench() {
   [ -f "$assets" ] || fail "the builtBench has no sites/assets/assets.json"
   expect_bundles "$assets" "$out/bench/apps/spa_app/spa_app/public"
   ok "the spa-app builtBench maps spa.bundle.js and spa.bundle.css to the hashed files"
+
+  # The Q7 path: an app-mode app that has not opted in has no registration
+  # step of its own, so the preload (lib/js/esbuild-preload.js, from the store,
+  # inside the Nix build) is the only registrar. Same locks; only the build
+  # script and the managed file differ.
+  group "nix build .#builtBench, the preload alone"
+  rm -rf "$alone"
+  cp -r "$app" "$alone"
+  chmod -R u+w "$alone"
+  jq -j --tab '.scripts.build = "node build.mjs"' "$alone/package.json" > "$WORK/package.alone.json"
+  printf '\n' >> "$WORK/package.alone.json"
+  mv "$WORK/package.alone.json" "$alone/package.json"
+  rm "$alone/scripts/vite-register.mjs"
+  commit "$alone" "the preload alone"
+  (cd "$alone" && nix build "${nixflags[@]}" -L .#builtBench -o "$out-alone") 2>&1 | tee "$WORK/builtbench-alone.log"
+  endgroup
+  grep -q 'node scripts/vite-register.mjs' "$alone/package.json" && fail "the variant still runs the app's own step"
+  assets="$out-alone/bench/sites/assets/assets.json"
+  [ -f "$assets" ] || fail "the preload-alone builtBench has no sites/assets/assets.json"
+  expect_bundles "$assets" "$out-alone/bench/apps/spa_app/spa_app/public"
+  grep -q 'vite-register: spa_app: spa.bundle.js -> ' "$WORK/builtbench-alone.log" || fail "the preload did not log its registration in the Nix build"
+  ok "with no step of the app's own, the preload registers them inside the Nix build"
 }
 
 case "${1:-}" in
