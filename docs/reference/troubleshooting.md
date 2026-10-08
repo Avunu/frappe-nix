@@ -95,7 +95,7 @@ The virtualenv's own `bench` ran, not the wrapper, because something put `env/bi
 
 ### `bench build` fails in one app, and the log ends with `✗ N app build(s) failed`
 
-Frappe ends a build by running `yarn build` in every app that has one, and stops at the first that fails, so every app after it is left unbuilt. In the dev shell frappe-nix carries on: each failure is named where it happens, the other apps are built, and `bench build` still exits 1. Fix the error from the app named, then rebuild it with `bench build --app <APP>`. `builtBench` does not carry on; an image build stops at the first failure. See [Resolution the way apps assume](../development/assets.md#resolution-the-way-apps-assume).
+Frappe ends a build by running `yarn build` in every app that has one, and stops at the first that fails, so every app after it is left unbuilt. In the dev shell frappe-nix carries on: each failure is named where it happens, the other apps are built, and `bench build` still exits 1. Fix the error from the app named, then rebuild it with `bench build --app <APP>`. `builtBench` does not carry on; an image build stops at the first failure. On the `develop` preset Frappe's own build no longer runs the apps one after another, and its failure output differs: the builds already running finish, none is started after the failure, and each failure is listed as `yarn build failed for <app>`. See [Resolution the way apps assume](../development/assets.md#resolution-the-way-apps-assume).
 
 ### `provision-site` asks for the MariaDB root password
 

@@ -31,9 +31,10 @@ These are the names frappe's own `bench build --using-cached` gives the same fil
 vite-register: my_app: timer.bundle.js -> /assets/my_app/dist/js/timer.bundle.4KQ2LZ7M.js (vite)
 ```
 
-`public/dist/` survives between builds, and frappe's build cleanup deletes an old `dist/js/<name>.bundle.*` but never the Vite manifest that named it, so a manifest can be stale. Two rules keep a stale one from pointing a key at the wrong file:
+`public/dist/` survives between builds, and frappe's build cleanup deletes an old `dist/js/<name>.bundle.*` but never the Vite manifest that named it, so a manifest can be stale. Three rules keep a stale one from pointing a key at the wrong file:
 
 - An entry whose file is not on disk registers nothing (`vite-register: my_app: skipping js/timer.bundle.4KQ2LZ7M.js: not on disk`).
+- When two manifests name the same key (a Vite 4 `public/dist/manifest.json` left beside Vite 5's `public/dist/.vite/manifest.json`, or an old outDir under `public/dist/`), the newer file takes it, whichever manifest is read first (`vite-register: my_app: skipping js/timer.bundle.OLD123.js: js/timer.bundle.4KQ2LZ7M.js is newer`).
 - A key whose current file (under `sites/assets/`) is newer than the Vite file stays as it is (`vite-register: my_app: timer.bundle.js kept: … is older`). The app's `yarn build` runs after esbuild, so a bundle Vite just built is always the newer one.
 
 When `sites/assets/<app>` is a real directory rather than the usual link to the app's `public/` (after `bench build --hard-link`, or in an image that copied `public/` before the app's build ran), the registration also copies `public/dist/` into it, and every other directory directly under `public/` that a Vite build wrote with a manifest (`public/portal/` for a portal SPA). Files already hard-linked there are left alone.
@@ -97,7 +98,7 @@ Turning the module off (`[tool.frappe-nix.vite-register] enable = false`) delete
 
 ## The preload on Nix benches
 
-The preload ([`lib/js/esbuild-preload.js`](../../lib/js/esbuild-preload.js), described in [Asset builds](../development/assets.md)) wraps the `execSync` frappe's `esbuild.js` uses. After a command that matches `yarn build` or `yarn run build` succeeds in `apps/<app>` (any app but `frappe`), it registers that app's Vite bundles in `$FRAPPE_BENCH_ROOT/sites` (or the bench `esbuild.js` lives in). A registration that fails, an `assets.json` that does not parse for instance, is a warning in the build log, never a failed build. Under `FRAPPE_NIX_KEEP_GOING` (the dev shell) an app whose build failed is not registered.
+The preload ([`lib/js/esbuild-preload.js`](../../lib/js/esbuild-preload.js), described in [Asset builds](../development/assets.md)) wraps the `child_process` calls frappe's `esbuild.js` runs each app's build with: `execSync` up to version-16, and `spawn` on `develop`, which builds several apps at once. After a command that matches `yarn build` or `yarn run build` succeeds in `apps/<app>` (any app but `frappe`), whichever way it ran, it registers that app's Vite bundles in `$FRAPPE_BENCH_ROOT/sites` (or the bench `esbuild.js` lives in). A registration that fails, an `assets.json` that does not parse for instance, is a warning in the build log, never a failed build. An app whose build failed is not registered.
 
 To build exactly as a stock bench does, without any of the preload's corrections:
 
@@ -140,6 +141,6 @@ frappe-nix.app = {
 | `vite-register: no bench found; skipped` | `yarn build` ran outside a bench. | Nothing to do; under `bench build` it registers. |
 | `vite-register: no Frappe app package in <dir>` | The repository has no single directory with a `hooks.py` and a `modules.txt`. | Run the build from the app's repository root. |
 | `vite-register: skipping <manifest>: …` | A `manifest*.json` under `public/dist/` that is not JSON. | Remove it, or name it otherwise. |
-| `vite-register: <app>: skipping <file>: not on disk`, or `<key> kept: … is older` | A Vite manifest under `public/dist/` left from an earlier build: the bundle it names is gone, or esbuild now builds that name. | Delete the stale manifest (or the whole `public/dist/`) and rebuild. |
+| `vite-register: <app>: skipping <file>: not on disk`, `skipping <file>: <other file> is newer`, or `<key> kept: … is older` | A Vite manifest under `public/dist/` left from an earlier build: the bundle it names is gone, a newer manifest names the same bundle, or esbuild now builds that name. | Delete the stale manifest (or the whole `public/dist/`) and rebuild. |
 | A bundle is built twice, once broken | A Vite source is named `*.bundle.*` under `public/`. | Rename the source to `*.entry.ts`. |
 | `frappe-nix compat` reports C8 | `build` no longer ends with the registration. | Run `frappe-init --sync`, or append ` && node scripts/vite-register.mjs`. |

@@ -2,7 +2,8 @@
 // frappe's node_modules first and object rest/spread lowered, the right-to-left
 // stylesheet build is skipped when asked, a failed per-app build command is carried past
 // when asked, each app's Vite bundles are registered after its `yarn build`
-// (lib/js/vite-register.cjs, always), and nothing else about the module —
+// (lib/js/vite-register.cjs, always; run with execSync as up to version-16, or
+// with spawn as on develop), and nothing else about the module —
 // or about any other caller's build — changes. A stand-in esbuild exports its API as getters, the
 // way the real one does — which is why the preload cannot patch it in place.
 //
@@ -265,16 +266,52 @@ esac
 `
 );
 fs.chmodSync(path.join(viteRoot, "bin/yarn"), 0o755);
+// VITE_SHAPE=spawn is develop's esbuild.js (frappe 6bd4ebc8ea): every app's
+// command at once with spawn(command, { cwd, shell: true }), each counted as
+// built on its child's "close" with code 0, a failure failing the run once the
+// others have finished. Its own
+// "close" listener notes whether the app's keys were already in assets.json.
 const viteDriver = `const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execSync, spawn } = require("child_process");
 const bench = process.env.FRAPPE_BENCH_ROOT || path.resolve(__dirname, "..", "..", "..");
-for (const app of JSON.parse(process.env.VITE_APPS)) {
-  process.chdir(path.join(bench, "apps", app));
-  execSync(process.env.VITE_COMMAND || "yarn build", { encoding: "utf8", stdio: "inherit" });
+const command = process.env.VITE_COMMAND || "yarn build";
+const apps = JSON.parse(process.env.VITE_APPS);
+if (process.env.VITE_SHAPE === "spawn") {
+  const assets = path.join(bench, "sites", "assets", "assets.json");
+  const run = (app) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(command, { cwd: path.join(bench, "apps", app), shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      child.stdout.on("data", () => {});
+      child.stderr.on("data", () => {});
+      child.on("close", (code) => {
+        if (code !== 0) {
+          reject(new Error(app + " exited " + code));
+          return;
+        }
+        console.log("SEEN " + app + " " + fs.readFileSync(assets, "utf8").includes("/assets/" + app + "/dist/js/"));
+        resolve();
+      });
+    });
+  // As run_with_concurrency() does: the builds already running finish.
+  Promise.allSettled(apps.map(run)).then((results) => {
+    const failed = results.filter((result) => result.status === "rejected");
+    for (const result of failed) {
+      console.error(result.reason.message);
+    }
+    if (failed.length === 0) {
+      console.log("DONE");
+    }
+    process.exit(failed.length ? 1 : 0);
+  });
+} else {
+  for (const app of apps) {
+    process.chdir(path.join(bench, "apps", app));
+    execSync(command, { encoding: "utf8", stdio: "inherit" });
+  }
+  console.log("DONE");
+  process.exit(0);
 }
-console.log("DONE");
-process.exit(0);
 `;
 const manifest = (entries) => JSON.stringify(entries, null, 2);
 const ESBUILD_KEYS = {
@@ -346,7 +383,7 @@ const makeBench = (name) => {
   return path.join(viteRoot, b);
 };
 
-const viteRun = (bench, { apps, keep = false, command = "", script = "apps/frappe/esbuild/esbuild.js", env = {} }) => {
+const viteRun = (bench, { apps, keep = false, command = "", shape = "", script = "apps/frappe/esbuild/esbuild.js", env = {} }) => {
   const result = spawnSync(process.execPath, ["--require", preload, path.join(bench, script)], {
     cwd: bench,
     env: {
@@ -356,6 +393,7 @@ const viteRun = (bench, { apps, keep = false, command = "", script = "apps/frapp
       FRAPPE_NIX_KEEP_GOING: keep ? "1" : "",
       VITE_APPS: JSON.stringify(apps),
       VITE_COMMAND: command,
+      VITE_SHAPE: shape,
       ...env,
     },
     encoding: "utf8",
@@ -421,6 +459,37 @@ check(
 const stockFail = makeBench("bench-stockfail");
 const stopped = viteRun(stockFail, { apps: ["zfail", "spa"] });
 check("without it, a failed build still ends the run, unregistered", [true, undefined], [stopped.status !== 0, keysOf(stockFail)["foo.bundle.js"] === expected["foo.bundle.js"] ? "registered" : undefined]);
+
+// develop's esbuild.js: the same registration from spawned builds.
+const spawned = makeBench("bench-spawn");
+const spawnRun = viteRun(spawned, { apps: ["frappe", "spa", "linked"], shape: "spawn" });
+check("with develop's spawn-shaped esbuild.js, the build runs to the end", [0, true], [spawnRun.status, spawnRun.stdout.includes("DONE")]);
+// The builds finish in any order, and so do the keys they add.
+const sorted = (keys) => Object.fromEntries(Object.entries(keys).sort(([a], [b]) => a.localeCompare(b)));
+check("each app's Vite entries are registered, as with execSync", sorted(expected), sorted(keysOf(spawned)));
+check(
+  "an app's keys are in assets.json before esbuild.js's own close listener counts it built",
+  [true, true],
+  [spawnRun.stdout.includes("SEEN spa true"), spawnRun.stdout.includes("SEEN linked true")]
+);
+const spawnArgv = makeBench("bench-spawn-argv");
+const argvDriver = path.join(spawnArgv, "apps/frappe/esbuild/esbuild.js");
+fs.writeFileSync(argvDriver, fs.readFileSync(argvDriver, "utf8").replace("spawn(command, {", 'spawn("yarn", ["build"], {'));
+viteRun(spawnArgv, { apps: ["spa"], shape: "spawn" });
+check("spawn(\"yarn\", [\"build\"], { cwd }) counts as the build too", expected["foo.bundle.js"], keysOf(spawnArgv)["foo.bundle.js"]);
+const spawnInstall = makeBench("bench-spawn-install");
+viteRun(spawnInstall, { apps: ["spa"], shape: "spawn", command: "yarn install --frozen-lockfile" });
+check("a spawned command other than the build registers nothing", JSON.stringify(ESBUILD_KEYS, null, 4), assetsOf(spawnInstall));
+const spawnFail = makeBench("bench-spawn-fail");
+const spawnFailed = viteRun(spawnFail, { apps: ["zfail", "spa"], shape: "spawn" });
+check(
+  "a spawned build that fails registers nothing, its sibling that succeeds still does, and the run fails as esbuild.js makes it",
+  [undefined, expected["foo.bundle.js"], 1],
+  [keysOf(spawnFail)["z.bundle.js"], keysOf(spawnFail)["foo.bundle.js"], spawnFailed.status]
+);
+const spawnOther = makeBench("bench-spawn-other");
+viteRun(spawnOther, { apps: ["spa"], shape: "spawn", script: "apps/frappe/scripts/other.js" });
+check("another script's spawn is left alone", JSON.stringify(ESBUILD_KEYS, null, 4), assetsOf(spawnOther));
 
 // FRAPPE_BENCH_ROOT names the bench, as it does for esbuild.js itself.
 const home = makeBench("bench-home");
@@ -504,6 +573,49 @@ check(
 );
 const [newer] = aged("bench-newer", new Date("2021-01-01"), new Date("2020-01-01"));
 check("a Vite file newer than esbuild's takes the key", expected["foo.bundle.js"], keysOf(newer)["foo.bundle.js"]);
+
+// Two manifests naming the same key: Vite 4's dist/manifest.json left beside
+// Vite 5's dist/.vite/manifest.json (an emptyOutDir: false build keeps both).
+// The newer file wins, whichever manifest is read last; the other is skipped.
+const twoManifests = (name, oldTime, newTime) => {
+  const bench = makeBench(name);
+  const dist = path.join(bench, "apps/spa/spa/public/dist");
+  vwrite(
+    `${name}/apps/spa/spa/public/dist/manifest.json`,
+    manifest({ "src/foo.entry.ts": { file: "js/foo.bundle.V4old1.js", isEntry: true, css: ["css/foo.bundle.V4css1.css"] } })
+  );
+  vwrite(`${name}/apps/spa/spa/public/dist/js/foo.bundle.V4old1.js`, "v4();\n");
+  vwrite(`${name}/apps/spa/spa/public/dist/css/foo.bundle.V4css1.css`, ".v4{}\n");
+  for (const file of ["js/foo.bundle.V4old1.js", "css/foo.bundle.V4css1.css"]) {
+    fs.utimesSync(path.join(dist, file), oldTime, oldTime);
+  }
+  for (const file of ["js/foo.bundle.AbC123.js", "css/foo.bundle.XyZ789.css"]) {
+    fs.utimesSync(path.join(dist, file), newTime, newTime);
+  }
+  return [bench, viteRun(bench, { apps: ["spa"] })];
+};
+const [v5wins, v5run] = twoManifests("bench-two-v5", new Date("2020-01-01"), new Date("2021-01-01"));
+check(
+  "a stale dist/manifest.json does not beat a newer dist/.vite/manifest.json for the same key, and is logged as skipped",
+  [0, expected["foo.bundle.js"], expected["foo.bundle.css"], true, true],
+  [
+    v5run.status,
+    keysOf(v5wins)["foo.bundle.js"],
+    keysOf(v5wins)["foo.bundle.css"],
+    v5run.stdout.includes("vite-register: spa: skipping js/foo.bundle.V4old1.js: js/foo.bundle.AbC123.js is newer"),
+    v5run.stdout.includes("vite-register: spa: skipping css/foo.bundle.V4css1.css: css/foo.bundle.XyZ789.css is newer"),
+  ]
+);
+const [v4wins, v4run] = twoManifests("bench-two-v4", new Date("2021-01-01"), new Date("2020-01-01"));
+check(
+  "the read order does not decide: when dist/manifest.json names the newer file, it takes the key",
+  ["/assets/spa/dist/js/foo.bundle.V4old1.js", "/assets/spa/dist/css/foo.bundle.V4css1.css", true],
+  [
+    keysOf(v4wins)["foo.bundle.js"],
+    keysOf(v4wins)["foo.bundle.css"],
+    v4run.stdout.includes("vite-register: spa: skipping js/foo.bundle.AbC123.js: js/foo.bundle.V4old1.js is newer"),
+  ]
+);
 
 // lib/js/vite-register.cjs's own entry points.
 const vr = require(path.join(path.dirname(preload), "vite-register.cjs"));
