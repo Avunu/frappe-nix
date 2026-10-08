@@ -15,7 +15,8 @@
 #      <app>.demo.setup(ctx), one commit, sites/<site>/demo.json.
 #
 # The bench is left up (frappe-test --down, or process-compose down, stops it). Under
-# frappe-shots the whole bench runs under libfaketime (§5.5), which this script inherits.
+# frappe-shots (§5.5), FRAPPE_NIX_SHOTS_PRELOAD and FRAPPE_NIX_SHOTS_FAKETIME put the demo
+# script on libfaketime's clock, so what it makes is dated on the demo day.
 #
 # Exit codes: 0 ok; 1 the demo hook raised; 10 an environment error.
 
@@ -112,6 +113,17 @@ echo "frappe-demo: $SITE, date $DATE, seed $SEED, erpnext demo $([ "$ERPNEXT" = 
 
 pc() { process-compose -U -u "${PC_SOCKET_PATH:?}" "$@"; }
 
+# <command…> on frappe-shots' fake clock when it set one, else as it is. Without libfaketime's
+# shared-memory clock, whose process-shared semaphore can deadlock a process.
+faked() {
+  if [ -n "${FRAPPE_NIX_SHOTS_FAKETIME:-}" ]; then
+    LD_PRELOAD="$FRAPPE_NIX_SHOTS_PRELOAD${LD_PRELOAD:+:$LD_PRELOAD}" FAKETIME="$FRAPPE_NIX_SHOTS_FAKETIME" \
+      FAKETIME_DONT_FAKE_MONOTONIC=1 FAKETIME_DISABLE_SHM=1 "$@"
+  else
+    "$@"
+  fi
+}
+
 # ── 1. up, and the site ────────────────────────────────────────────────────────
 if [ "$UP" = 1 ]; then
   if [ -n "${PC_SOCKET_PATH:-}" ] && pc process list > /dev/null 2>&1; then
@@ -120,9 +132,20 @@ if [ "$UP" = 1 ]; then
     echo "frappe-demo: starting the bench (devenv up -D)"
     (cd "$REPO" && DEVENV_IN_DIRENV_SHELL=true PC_TUI_ENABLED=0 devenv up -D) || fail_env "devenv up -D failed"
   fi
-  deadline=$((SECONDS + 300))
+  # Counted, not timed: under frappe-shots this shell runs on libfaketime's clock.
+  tries=150
   until mariadb-admin --socket="${FRAPPE_DB_SOCKET:-}" --connect-timeout=3 ping > /dev/null 2>&1; do
-    [ "$SECONDS" -lt "$deadline" ] || fail_env "the database did not come up within 300 s"
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] || fail_env "the database did not come up within 300 s"
+    sleep 2
+  done
+  # And the web server, as frappe-test waits for it: a process stopped while it is still
+  # pending (provisioning stops them) is not started again.
+  port=""
+  until port="$(jq -r '.webserver_port // empty' "$BENCH/sites/common_site_config.json" 2> /dev/null)" \
+    && [ -n "$port" ] && curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$port/"; do
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] || fail_env "the web server did not answer within 300 s"
     sleep 2
   done
 fi
@@ -152,5 +175,5 @@ fi
 flags=()
 [ "$ERPNEXT" = 1 ] && flags+=(--erpnext-demo)
 cd "$BENCH/sites" || fail_env "no $BENCH/sites"
-"$BENCH/env/bin/python" "$DEMO_PY" --site "$SITE" --sites-path "$BENCH/sites" --app "$APP" \
+faked "$BENCH/env/bin/python" "$DEMO_PY" --site "$SITE" --sites-path "$BENCH/sites" --app "$APP" \
   --date "$DATE" --seed "$SEED" --demo "$DEMO_CFG" --password "${FRAPPE_TEST_ADMIN_PASSWORD:-admin}" "${flags[@]}"

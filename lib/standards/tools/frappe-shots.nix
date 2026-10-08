@@ -41,15 +41,27 @@ let
     '';
   };
 
-  # libfaketime for Nix-built processes only. LD_PRELOAD reaches every process the bench
-  # starts, host binaries too (a `#!/usr/bin/env` shebang on a CI runner), and this
-  # libfaketime needs Nix's glibc: loaded into the host's, it fails the process. So the
-  # preload names `<dir>/$LIB/libfaketime.so.1`: Nix's ld.so expands $LIB to `lib` and finds
-  # it, a multiarch host's to `lib/x86_64-linux-gnu`, where there is nothing, and it only
-  # warns that the object cannot be preloaded.
-  faketime = pkgs.runCommand "frappe-shots-faketime" { } ''
+  # libfaketime for every Nix-built process the bench starts, whichever glibc it has.
+  # LD_PRELOAD reaches them all, and they do not share one glibc: devenv's own tools come
+  # from devenv's nixpkgs, the bench from frappe-nix's. As built, libfaketime needs its own
+  # glibc's libdl, librt and libpthread, which fail in a process on another glibc (a
+  # GLIBC_PRIVATE symbol). Since glibc 2.34 those are empty stubs, so this copy drops them
+  # and its runpath, and takes libc and libm from the process it is loaded into.
+  #
+  # Host binaries (a `#!/usr/bin/env` shebang on a CI runner) are older glibcs still, so
+  # the preload names `<dir>/$LIB/libfaketime.so.1`: Nix's ld.so expands $LIB to `lib` and
+  # finds it, a multiarch host's to `lib/x86_64-linux-gnu`, where there is nothing, and it
+  # only warns that the object cannot be preloaded.
+  faketime = pkgs.runCommand "frappe-shots-faketime" { nativeBuildInputs = [ pkgs.patchelf ]; } ''
     mkdir -p "$out/lib"
-    ln -s ${pkgs.libfaketime}/lib/libfaketime.so.1 "$out/lib/libfaketime.so.1"
+    cp ${pkgs.libfaketime}/lib/libfaketime.so.1 "$out/lib/libfaketime.so.1"
+    chmod u+w "$out/lib/libfaketime.so.1"
+    patchelf \
+      --remove-needed libdl.so.2 \
+      --remove-needed librt.so.1 \
+      --remove-needed libpthread.so.0 \
+      --remove-rpath \
+      "$out/lib/libfaketime.so.1"
   '';
 
   fonts = pkgs.makeFontsConf {

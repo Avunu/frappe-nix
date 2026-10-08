@@ -7,11 +7,10 @@
 # over it), with chromium, libwebp, ffmpeg, Node 24, the fixed fonts and lib/shots/ (its
 # node_modules built by Nix) on hand, and run inside an opted-in app's dev shell.
 #
-# Unless --reuse-site: the bench is restarted with libfaketime preloaded and FAKETIME set to
-# the demo day at 09:00 (a start time: the clock advances, so timeouts still fire), and
-# FAKETIME_DONT_RESET, so every process the bench starts shares that clock; frappe-demo
-# --fresh then builds the demo site, and `bench build` runs outside the fake clock. The bench
-# is stopped again at the end, so the dev shell is never left on a faked clock.
+# Unless --reuse-site: frappe-demo --fresh builds the demo site (bringing the bench up when
+# it is down), with its demo script on libfaketime's clock from the demo day at 09:00 (a
+# start time: the clock advances, so timeouts still fire), then `bench build`. A bench this
+# run started is stopped again at the end.
 #
 # Then lib/shots/runner.ts drives chromium over the site: --update (the default) writes the
 # lossless WebPs and docs/screenshots/manifest.json; --check writes diff PNGs under
@@ -103,33 +102,31 @@ up() { [ -n "${PC_SOCKET_PATH:-}" ] && pc process list > /dev/null 2>&1; }
 
 STARTED=0
 if [ "$REUSE" = 0 ]; then
-  if up; then
-    echo "frappe-shots: stopping the bench, to start it again on the demo day's clock"
-    pc down > /dev/null 2>&1 || true
-    for _ in $(seq 60); do
-      up || break
-      sleep 1
-    done
-  fi
-  export LD_PRELOAD="$FAKETIME_LIB${LD_PRELOAD:+:$LD_PRELOAD}"
-  export FAKETIME="@$DATE 09:00:00" FAKETIME_DONT_RESET=1 FAKETIME_DONT_FAKE_MONOTONIC=1
-  echo "frappe-shots: the bench runs from $FAKETIME (libfaketime)"
+  # frappe-demo's demo script runs on libfaketime's clock, from the demo day at 09:00 (it
+  # reads these two), so every record it makes is dated on that day. The bench's own
+  # processes stay on the real clock: libfaketime deadlocks redis (jemalloc) and, through
+  # its process-shared semaphore, the bench's CLI.
+  export FRAPPE_NIX_SHOTS_PRELOAD="$FAKETIME_LIB" FRAPPE_NIX_SHOTS_FAKETIME="@$DATE 09:00:00"
+  echo "frappe-shots: the demo data is made on $FRAPPE_NIX_SHOTS_FAKETIME (libfaketime)"
   demo_flags=(--fresh --site "$SITE" --date "$DATE" --seed "$SEED")
   if [ "$ERPNEXT" = true ]; then demo_flags+=(--erpnext-demo); else demo_flags+=(--no-erpnext-demo); fi
-  STARTED=1
-  trap 'up && pc down > /dev/null 2>&1 || true' EXIT
+  up || STARTED=1
+  if [ "$STARTED" = 1 ]; then
+    trap 'up && pc down > /dev/null 2>&1 || true' EXIT
+  fi
   frappe-demo "${demo_flags[@]}" || fail 3 "frappe-demo failed"
-  (cd "$BENCH" && env -u LD_PRELOAD -u FAKETIME bench build) || fail 3 "bench build failed"
-  unset LD_PRELOAD FAKETIME FAKETIME_DONT_RESET FAKETIME_DONT_FAKE_MONOTONIC
+  unset FRAPPE_NIX_SHOTS_PRELOAD FRAPPE_NIX_SHOTS_FAKETIME
+  (cd "$BENCH" && bench build) || fail 3 "bench build failed"
 elif ! up; then
   fail 3 "--reuse-site, but the bench is not up (frappe-demo brings it up)"
 fi
 
 port="$(jq -r '.webserver_port // empty' "$BENCH/sites/common_site_config.json")"
 [ -n "$port" ] || fail 3 "no webserver_port in $BENCH/sites/common_site_config.json"
-deadline=$((SECONDS + 300))
+tries=150
 until curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$port/"; do
-  [ "$SECONDS" -lt "$deadline" ] || fail 3 "the web server did not answer on port $port within 300 s"
+  tries=$((tries - 1))
+  [ "$tries" -gt 0 ] || fail 3 "the web server did not answer on port $port within 300 s"
   sleep 2
 done
 
