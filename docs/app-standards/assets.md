@@ -97,7 +97,7 @@ Turning the module off (`[tool.frappe-nix.vite-register] enable = false`) delete
 
 ## The preload on Nix benches
 
-The preload ([`lib/js/esbuild-preload.js`](../../lib/js/esbuild-preload.js), described in [Asset builds](../development/assets.md)) wraps the `execSync` frappe's `esbuild.js` uses. After a command that matches `yarn build` or `yarn run build` succeeds in `apps/<app>` (any app but `frappe`), it registers that app's Vite bundles in `$FRAPPE_BENCH_ROOT/sites` (or the bench `esbuild.js` lives in). A registration that fails, an `assets.json` that does not parse for instance, is a warning in the build log, never a failed build. Under `FRAPPE_NIX_KEEP_GOING` (the dev shell) an app whose build failed is not registered.
+The preload ([`lib/js/esbuild-preload.js`](../../lib/js/esbuild-preload.js), described in [Asset builds](../development/assets.md)) wraps the `child_process` calls frappe's `esbuild.js` runs each app's build with: `execSync` up to version-16, and `spawn` on `develop`, which builds several apps at once. After a command that matches `yarn build` or `yarn run build` succeeds in `apps/<app>` (any app but `frappe`), whichever way it ran, it registers that app's Vite bundles in `$FRAPPE_BENCH_ROOT/sites` (or the bench `esbuild.js` lives in). A registration that fails, an `assets.json` that does not parse for instance, is a warning in the build log, never a failed build. An app whose build failed is not registered.
 
 To build exactly as a stock bench does, without any of the preload's corrections:
 

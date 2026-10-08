@@ -7,8 +7,10 @@
 #                                  directory copy of lib/js: the preload's old
 #                                  checks, and the registration after each
 #                                  app's `yarn build` (always on, keep-going or
-#                                  not; frappe's own keys untouched; idempotent;
-#                                  the hard-link copy).
+#                                  not; run with execSync, as up to version-16,
+#                                  or with spawn, as on develop; frappe's own
+#                                  keys untouched; idempotent; the hard-link
+#                                  copy).
 #   standards-vite-register-copy   lib/js/vite-register.cjs and the packaged
 #                                  scripts/vite-register.mjs template hold the
 #                                  same region between the markers, and so does
