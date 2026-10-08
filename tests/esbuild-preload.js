@@ -319,6 +319,9 @@ const makeBench = (name) => {
   vwrite(`${b}/apps/spa/spa/public/dist/broken/manifest.json`, "{");
   vwrite(`${b}/apps/spa/spa/public/portal/.vite/manifest.json`, manifest({ "index.html": { file: "assets/index-PoRt12.js", isEntry: true } }));
   vwrite(`${b}/apps/spa/spa/public/portal/assets/index-PoRt12.js`, "portal();\n");
+  // kiosk: a second SPA built by Vite 4, its manifest.json at the outDir's top.
+  vwrite(`${b}/apps/spa/spa/public/kiosk/manifest.json`, manifest({ "index.html": { file: "assets/index-KiOsK1.js", isEntry: true } }));
+  vwrite(`${b}/apps/spa/spa/public/kiosk/assets/index-KiOsK1.js`, "kiosk();\n");
   vwrite(`${b}/apps/spa/spa/public/images/logo.svg`, "<svg/>\n");
   // zfail: its build fails.
   vwrite(`${b}/apps/zfail/build.sh`, "exit 3\n");
@@ -433,12 +436,13 @@ fs.mkdirSync(path.join(hardAssets, "dist/js"), { recursive: true });
 fs.linkSync(path.join(hard, "apps/spa/spa/public/dist/js/index-AbC.js"), path.join(hardAssets, "dist/js/index-AbC.js"));
 viteRun(hard, { apps: ["spa"] });
 check(
-  "with a real sites/assets/<app>, public/dist and each Vite outDir with a manifest (portal/) are copied in",
-  [true, true, true, false],
+  "with a real sites/assets/<app>, public/dist and each Vite outDir with a manifest (portal/'s .vite/, kiosk/'s top-level manifest.json) are copied in",
+  [true, true, true, true, false],
   [
     fs.existsSync(path.join(hardAssets, "dist/js/foo.bundle.AbC123.js")),
     fs.existsSync(path.join(hardAssets, "dist/.vite/manifest.json")),
     fs.existsSync(path.join(hardAssets, "portal/assets/index-PoRt12.js")),
+    fs.existsSync(path.join(hardAssets, "kiosk/assets/index-KiOsK1.js")),
     fs.existsSync(path.join(hardAssets, "images")),
   ]
 );

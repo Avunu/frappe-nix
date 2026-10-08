@@ -127,13 +127,22 @@ const copyTree = (src, dest) => {
 	}
 };
 
-// public/dist, and each other directory under public/ a Vite build wrote
-// with `build.manifest` on (taskview's public/portal/).
+// Whether a Vite build with `build.manifest` on wrote dir: it holds a .vite/
+// directory (Vite 5) or a manifest*.json at its top (Vite 4).
+const hasManifest = (dir) => {
+	if (isDir(path.join(dir, ".vite"))) {
+		return true;
+	}
+	return fs.readdirSync(dir).some(isManifest);
+};
+
+// public/dist, and each other directory under public/ that a Vite build wrote
+// (a second SPA's outDir, such as public/portal/).
 const viteOutDirs = (publicDir) => {
 	const out = ["dist"];
 	for (const entry of fs.readdirSync(publicDir, { withFileTypes: true })) {
-		const vite = path.join(publicDir, entry.name, ".vite");
-		if (entry.isDirectory() && entry.name !== "dist" && isDir(vite)) {
+		const dir = path.join(publicDir, entry.name);
+		if (entry.isDirectory() && entry.name !== "dist" && hasManifest(dir)) {
 			out.push(entry.name);
 		}
 	}
@@ -232,6 +241,12 @@ if (sitesDir === null) {
 	console.error(`vite-register: no Frappe app package in ${appDir}`);
 	process.exitCode = 1;
 } else {
-	register({ appDir, app, sitesDir });
+	// Like the preload's pass, a failure here never fails the app's build.
+	try {
+		register({ appDir, app, sitesDir });
+	} catch (error) {
+		const why = `${error.message}; its Vite bundles are not registered`;
+		console.error(`vite-register: ${app}: ${why}`);
+	}
 }
 {% endfilter %}
