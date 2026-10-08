@@ -1,0 +1,21 @@
+# A version-16 app-mode app that has not opted in, cut down to what matters to
+# standards-relock-main-lock: like frappe 16, it names coverage and
+# unittest-xml-reporting under a `test` extra, which uv locks although nothing
+# installs it. Its uv.lock (tests/standards/fixtures/main-v16-lock) is what
+# `uv lock` resolves over the root frappe-nix main (e97d588) generated for it.
+[project]
+name = "lock_check_app"
+version = "0.1.0"
+description = "The app the relock check locks"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "coverage~=7.10",
+    "unittest-xml-reporting~=3.2",
+]
+
+[build-system]
+requires = ["flit_core >=3.4,<4"]
+build-backend = "flit_core.buildapi"

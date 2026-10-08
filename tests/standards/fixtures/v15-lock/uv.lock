@@ -1,0 +1,57 @@
+# A version-15 app-mode app's committed nix/uv.lock, cut down to the bench
+# root and its dev group as frappe-nix main shipped it: no coverage and no
+# unittest-xml-reporting, in the root's dev group or anywhere else (frappe 15
+# has no `test` extra). Read only for that (standards-bench-dev-group).
+version = 1
+revision = 3
+requires-python = ">=3.10, <3.13"
+
+[[package]]
+name = "frappe"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "jwt-auth-bench"
+version = "0.1.0"
+source = { virtual = "." }
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "responses" },
+    { name = "ruff", specifier = ">=0.15.0" },
+    { name = "semgrep" },
+]
+
+[[package]]
+name = "pre-commit"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "pydantic"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "pytest"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "responses"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "ruff"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "semgrep"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }

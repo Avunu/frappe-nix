@@ -1,0 +1,7 @@
+{
+  "name": "esign",
+  "private": true,
+  "scripts": {
+    "build": "vite build --outDir esign/public/dist"
+  }
+}

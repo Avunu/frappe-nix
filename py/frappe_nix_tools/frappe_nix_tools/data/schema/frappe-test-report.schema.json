@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Avunu/frappe-nix/schema/frappe-test-report.schema.json",
+  "title": "frappe-test-report.json",
+  "description": "What `frappe-test` writes to <out>/frappe-test-report.json (docs/app-standards/spec.md §5.1): one test run's verdicts. A section is null when its stage did not run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "app", "frappe_nix", "git_sha", "tests", "coverage", "testmap", "composition", "ty", "nix_lint", "stages", "exit"],
+  "$defs": {
+    "verdict": { "enum": ["ok", "failed", "skipped", "error"] },
+    "percent": { "type": "number", "minimum": 0, "maximum": 100 }
+  },
+  "properties": {
+    "schema": { "const": 1 },
+    "app": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "frappe_nix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rev", "version"],
+      "properties": {
+        "rev": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "version": { "type": "string" }
+      }
+    },
+    "git_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "tests": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["ran", "failures", "errors", "skipped"],
+      "properties": {
+        "ran": { "type": "integer", "minimum": 0 },
+        "failures": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coverage": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["percent", "fail_under", "modules"],
+      "properties": {
+        "percent": { "$ref": "#/$defs/percent" },
+        "fail_under": { "oneOf": [{ "$ref": "#/$defs/percent" }, { "type": "null" }] },
+        "modules": {
+          "type": "object",
+          "propertyNames": { "not": { "pattern": "/\\.frappe-nix/" } },
+          "additionalProperties": { "$ref": "#/$defs/percent" }
+        }
+      }
+    },
+    "testmap": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["targets", "untested", "exempt", "stale_exemptions"],
+      "properties": {
+        "targets": { "type": "integer", "minimum": 0 },
+        "untested": { "type": "array", "items": { "type": "string" } },
+        "exempt": { "type": "integer", "minimum": 0 },
+        "stale_exemptions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "composition": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["ok", "doctypes"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "doctypes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["layers", "real_ok", "app_first_ok"],
+            "properties": {
+              "layers": { "type": "array", "items": { "type": "string" } },
+              "real_ok": { "type": "boolean" },
+              "app_first_ok": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "ty": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["diagnostics", "ignores"],
+      "properties": {
+        "diagnostics": { "type": "integer", "minimum": 0 },
+        "ignores": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "nix_lint": { "enum": ["ok", "failed", "skipped"] },
+    "stages": {
+      "type": "object",
+      "propertyNames": { "enum": ["up", "site", "tests", "coverage", "testmap", "composition", "ty", "nix-lint", "shell-checks"] },
+      "additionalProperties": { "$ref": "#/$defs/verdict" }
+    },
+    "exit": { "enum": [0, 1, 2, 3, 4, 5, 6, 7, 10] }
+  }
+}

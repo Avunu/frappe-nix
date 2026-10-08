@@ -9,7 +9,9 @@
 #   packages    every lib/standards/tools/*.nix tool (`frappe-nix`, and the
 #               frappe-listing, frappe-icon, … wrappers as they land) plus
 #               `frappe-init`, so `frappe-init --sync` runs the frappe-nix the
-#               app's flake.lock pins;
+#               app's flake.lock pins; and nixfmt, statix and deadnix, what
+#               `frappe-test --nix-lint` runs over the app's flake.nix and
+#               nix/*.nix (spec §5.1 stage 8), for interactive use;
 #   apps        the same tools as `nix run .#<tool>`, and `.#frappe-init`.
 #               (Before opting in, `nix run github:Avunu/frappe-nix#frappe-init
 #               -- --sync --standards <profile>` or adding the table by hand
@@ -60,7 +62,17 @@ let
     };
   };
 
-  packages = lib.optionals optedIn (builtins.attrValues outputs.tools ++ [ frappeInit ]);
+  packages = lib.optionals optedIn (
+    builtins.attrValues outputs.tools
+    ++ [ frappeInit ]
+    # Pinned by frappe-nix's nixpkgs; frappe-test carries its own copies
+    # (lib/scripts.d/frappe-test.nix), so its stage 8 needs none of these.
+    ++ [
+      pkgs.nixfmt
+      pkgs.statix
+      pkgs.deadnix
+    ]
+  );
 
   # Runs from the repository root. `git blame` skips the mass reformats
   # .git-blame-ignore-revs lists (spec §2.20); set only when it differs, so a

@@ -1356,6 +1356,10 @@ secretScripts
     while IFS= read -r app; do
       [ -z "$app" ] && continue
       [ "$app" = "frappe" ] && continue
+      # An app frappe-nix.replacedApps is replacing: still on the bench until
+      # every site has dropped it, but never to be installed again
+      # (lib/rename/reconcile.nix sets this; unset, nothing is skipped).
+      case " ''${FRAPPE_NIX_RECONCILE_SKIP:-} " in *" $app "*) continue ;; esac
       grep -qxF "$app" <<<"$installed" || MISSING="$MISSING $app"
     done < sites/apps.txt
 

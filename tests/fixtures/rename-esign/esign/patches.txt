@@ -1,0 +1,3 @@
+[pre_model_sync]
+esign.patches.v1.fix_signatures
+execute:frappe.db.set_value("Web Form", "esign-demo", "client_script", "esign.check()")

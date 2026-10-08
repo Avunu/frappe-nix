@@ -43,6 +43,19 @@ let
     optionalString
     ;
 
+  # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
+  # the values; the names go into the migrate and reconcile scripts too.
+  appPairs =
+    let
+      appName = "[a-z][a-z0-9_]*";
+    in
+    types.addCheck (types.attrsOf (types.strMatching appName)) (
+      pairs: lib.all (old: builtins.match appName old != null) (lib.attrNames pairs)
+    )
+    // {
+      description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
+    };
+
   cfg = config.services.frappe;
 
   enabledSites = filterAttrs (_: s: s.enable) cfg.sites;
@@ -461,6 +474,7 @@ let
       offlineMigrateTool = import ../lib/offline-migrate.nix { inherit pkgs; };
 
       dbName = siteCfg.database.name;
+      renamedList = concatStringsSep ", " (mapAttrsToList (o: n: "${o} -> ${n}") siteCfg.renamedApps);
       # Connection flags shared by mysqldump (snapshot) and mysql (rollback).
       # Password comes from MYSQL_PWD (exported below) to keep it out of argv.
       # Connect the same way Frappe does: over the unix socket when one is
@@ -476,6 +490,7 @@ let
       mysql = "${cfg.database.package}/bin/mysql";
       mysqldump = "${cfg.database.package}/bin/mysqldump";
       jq = "${pkgs.jq}/bin/jq";
+      grep = "${pkgs.gnugrep}/bin/grep";
       gzip = "${pkgs.gzip}/bin/gzip";
       gunzip = "${pkgs.gzip}/bin/gunzip";
 
@@ -545,14 +560,45 @@ let
       ${setMaintenance "on"}
 
       RC=0
+      ${optionalString (siteCfg.renamedApps != { }) ''
+        # Before anything imports the apps: the site still names OLD, which this
+        # package no longer has. A failure here is a failed migrate.
+        echo ${lib.escapeShellArg "frappe-migrate(${name}): renaming ${renamedList}"}
+        (cd ${runtimeBenchDir}/sites && ${pyEnv}/bin/python ${../lib/rename/frappe_rename_app.py} \
+          --site ${name} --yes ${
+            lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.renamedApps)
+          }) \
+          || RC=$?
+      ''}
+      ${optionalString (siteCfg.replacedApps != { }) ''
+        if [ "$RC" -eq 0 ]; then
+          INSTALLED="$(${benchBin} --site ${name} list-apps --format json 2>/dev/null \
+            | ${jq} -r --arg s ${name} '.[$s][]? // empty' 2>/dev/null)" || RC=$?
+          for pair in ${lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.replacedApps)}; do
+            [ "$RC" -eq 0 ] || break
+            old="''${pair%%=*}" new="''${pair#*=}"
+            ${grep} -qxF "$old" <<< "$INSTALLED" || continue
+            if ! ${grep} -qxF "$new" <<< "$INSTALLED"; then
+              echo "frappe-migrate(${name}): $new replaces $old: installing $new"
+              ${benchBin} --site ${name} install-app "$new" || RC=$?
+            fi
+            if [ "$RC" -eq 0 ]; then
+              echo "frappe-migrate(${name}): $new replaces $old: uninstalling $old"
+              ${benchBin} --site ${name} uninstall-app "$old" --yes --no-backup || RC=$?
+            fi
+          done
+        fi
+      ''}
       ${optionalString mg.offline.enable ''
         # A failure here is a failed migrate: the snapshot is restored below, so
         # a half-applied plan is not left behind.
-        echo "frappe-migrate(${name}): altering large tables online"
-        FRAPPE_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
-        FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
-          ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
-          || RC=$?
+        if [ "$RC" -eq 0 ]; then
+          echo "frappe-migrate(${name}): altering large tables online"
+          FRAPPE_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
+          FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
+            ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
+            || RC=$?
+        fi
       ''}
 
       if [ "$RC" -eq 0 ]; then
@@ -1240,6 +1286,37 @@ let
           type = types.listOf types.path;
           default = [ ];
           description = "JSON files deep-merged into site_config.json at activation (for secrets).";
+        };
+
+        renamedApps = mkOption {
+          type = appPairs;
+          default = { };
+          example = lib.literalExpression ''{ esign = "esign_webforms"; }'';
+          description = ''
+            Apps renamed in place, `OLD = NEW` (`frappe-rename-app`; see
+            docs/app-standards/rename.md). The package carries NEW only, and
+            `bench migrate` fails on an installed app it cannot import, so the
+            migrate unit runs `frappe-rename-app --site` on this site right
+            after maintenance mode goes on and before the offline migrate and
+            `bench migrate`, inside the same snapshot and rollback. A no-op once
+            the site names NEW. Pause the scheduler and drain the job queues
+            before the deploy that ships the rename.
+          '';
+        };
+
+        replacedApps = mkOption {
+          type = appPairs;
+          default = { };
+          example = lib.literalExpression ''{ old_app = "new_app"; }'';
+          description = ''
+            Apps replaced by a new app, `OLD = NEW` (spec §5.10): both are in the
+            package. On a site with OLD installed, the migrate unit installs NEW
+            (if it is not yet) and uninstalls OLD, without a backup of its own
+            (the pre-migrate snapshot is the backup), after maintenance mode goes
+            on and before migrating, inside the same snapshot and rollback. A
+            no-op where OLD is not installed. Drop OLD from the package only
+            after every site has run this: the uninstall needs its hooks.
+          '';
         };
 
         nginx = {

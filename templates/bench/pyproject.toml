@@ -25,12 +25,14 @@ dependencies = [
 # Dev-only tools — in the devenv shell, excluded from production containers.
 [dependency-groups]
 dev = [
+    "coverage>=7.10",
     "pre-commit>=4.5.1",
     "pydantic>=2.12.5",
     "pytest>=9.0.2",
     "responses",
     "ruff>=0.15.0",
     "semgrep",
+    "unittest-xml-reporting>=3.2",
 ]
 
 [tool.uv]

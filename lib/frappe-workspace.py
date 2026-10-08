@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import tomlkit
@@ -76,6 +77,117 @@ def cmd_dist_name(args):
 	return 0
 
 
+# The bench root's dev group, as templates/bench/pyproject.toml ships it, for a
+# root that has none. tests/root-sync.sh keeps the two in step.
+DEV_GROUP = [
+	"coverage>=7.10",
+	"pre-commit>=4.5.1",
+	"pydantic>=2.12.5",
+	"pytest>=9.0.2",
+	"responses",
+	"ruff>=0.15.0",
+	"semgrep",
+	"unittest-xml-reporting>=3.2",
+]
+
+# Dev tools an app that opted in to the app standards pins itself, in its
+# tracked tools/pyproject.toml, by the name it pins each by (docs/app-standards/
+# spec.md S1): a second, older copy in the bench env is one more version for an
+# editor or a hook to pick up. Dropped from that app's generated root only, one
+# by one, and only when tools/pyproject.toml lists the replacement; every other
+# root (an app that has not opted in, every bench-mode root) keeps all three.
+APP_PINNED = {"ruff": "ruff", "pre-commit": "prek", "semgrep": "semgrep"}
+
+
+def requirement_name(requirement):
+	"""The normalized distribution name of a PEP 508 requirement string."""
+	return normalize(re.split(r"[<>=!~\[ ;@]", str(requirement).strip(), maxsplit=1)[0])
+
+
+def app_tools(path):
+	"""The normalized names an app's tools/pyproject.toml lists, or an empty set when there is none.
+
+	Its [project].dependencies (spec §2.15), plus any dependency group, so a
+	tool pinned either way counts.
+	"""
+	try:
+		doc = tomlkit.parse(Path(path).read_text())
+	except FileNotFoundError:
+		return set()
+	reqs = list(doc.get("project", {}).get("dependencies", []))
+	for group in doc.get("dependency-groups", {}).values():
+		reqs += [r for r in group if isinstance(r, str)]
+	return {requirement_name(r) for r in reqs if isinstance(r, str)}
+
+
+# What frappe-test runs an app's tests under (spec S17), added to every root by
+# the template. An app-mode app that has not opted in must see no change from
+# frappe-nix main (spec S35), and main's root dev group had neither: so such a
+# root keeps each one only where its committed nix/uv.lock's own root already
+# lists it in its dev group (lib/app-workspace.nix passes --test-tools-lock, or
+# --test-tools-unlocked with no lock yet, for an app that has not opted in, and
+# only then). Whether a package of that name is locked anywhere does not count:
+# a version-16 lock always has both through frappe's `test` extra, and keeping
+# them on that ground makes main's lock stale and the next relock rewrite it.
+TEST_TOOLS = ("coverage", "unittest-xml-reporting")
+
+
+def locked_root_dev(path):
+	"""The normalized names a uv.lock's workspace root lists in its dev group.
+
+	The root is the lock's `source = { virtual = "." }` package; what it lists
+	is [package.metadata.requires-dev].dev (what the root's pyproject.toml asked
+	for), not [package.dev-dependencies] (which carries markers and extras per
+	entry, and is what that resolves to). An empty set when the lock has no such
+	package, None when there is no lock at all.
+	"""
+	try:
+		text = Path(path).read_text()
+	except FileNotFoundError:
+		return None
+	for package in tomllib.loads(text).get("package", []):
+		if package.get("source", {}).get("virtual") != ".":
+			continue
+		requires_dev = package.get("metadata", {}).get("requires-dev", {})
+		return {normalize(r["name"]) for r in requires_dev.get("dev", []) if "name" in r}
+	return set()
+
+
+def drop_unlocked_test_tools(dev, locked):
+	"""Remove from ``dev``, in place, each TEST_TOOLS entry ``locked`` (a set of names) lacks.
+
+	Returns the change lines ensure-root prints.
+	"""
+	gone = [
+		i
+		for i, item in enumerate(dev)
+		if isinstance(item, str)
+		and requirement_name(item) in TEST_TOOLS
+		and requirement_name(item) not in locked
+	]
+	changed = [
+		f"[dependency-groups].dev -= {dev[i]} (not in the dev group of the app's uv.lock)" for i in gone
+	]
+	for i in reversed(gone):
+		del dev[i]
+	return changed
+
+
+def drop_app_pinned(dev, tools):
+	"""Remove from ``dev``, in place, each APP_PINNED tool whose replacement ``tools`` lists.
+
+	Returns the change lines ensure-root prints. Nothing else in the group moves.
+	"""
+	drop = {normalize(name) for name, pinned in APP_PINNED.items() if normalize(pinned) in tools}
+	gone = [i for i, item in enumerate(dev) if isinstance(item, str) and requirement_name(item) in drop]
+	changed = [
+		f"[dependency-groups].dev -= {dev[i]} (pinned by the app's tools/pyproject.toml)" for i in gone
+	]
+	for i in reversed(gone):
+		del dev[i]
+	return changed
+
+
 def cmd_ensure_root(args):
 	"""Fill in the root-level keys the Nix side reads directly.
 
@@ -84,14 +196,18 @@ def cmd_ensure_root(args):
 	pyproject.toml that predates frappe-nix (a user's own project file) is
 	reconciled rather than overwritten, so only absent keys are filled.
 
-	Two callers. `frappe-init` passes every value, since the file may be a
+	Three callers. `frappe-init` passes every value, since the file may be a
 	user's own with none of them. The dev shell's root sync (lib/root-sync.nix)
 	passes none: a frappe-nix bench already has them, and what it is after is
 	the part below that keeps up with frappe-nix itself — the required
 	dependencies and what the template ships for them. Hence --name and
 	--requires-python are only required when the key they would fill is
 	absent, and the file is written only when something changed, so a run that
-	changes nothing leaves the mtime (and git) alone.
+	changes nothing leaves the mtime (and git) alone. lib/app-workspace.nix
+	passes only --app-tools, for the generated root of an app that opted in to
+	the app standards (drop_app_pinned), or only --test-tools-lock (or
+	--test-tools-unlocked), for the generated root of one that has not
+	(drop_unlocked_test_tools).
 	"""
 	original = Path(args.pyproject).read_text()
 	doc = tomlkit.parse(original)
@@ -136,11 +252,22 @@ def cmd_ensure_root(args):
 
 	groups = table_at(doc, "dependency-groups")
 	if "dev" not in groups:
-		groups["dev"] = tomlkit.array(
-			'["pre-commit>=4.5.1", "pydantic>=2.12.5", "pytest>=9.0.2", '
-			'"responses", "ruff>=0.15.0", "semgrep"]'
-		)
+		groups["dev"] = tomlkit.array(json.dumps(DEV_GROUP))
 		changed.append("[dependency-groups].dev")
+	# Only for the generated root of an app that opted in (lib/app-workspace.nix
+	# passes --app-tools then, and only then): the one place this removes
+	# something a root has.
+	if args.app_tools:
+		changed += drop_app_pinned(groups["dev"], app_tools(args.app_tools))
+	# Only for the generated root of an app that has not opted in
+	# (lib/app-workspace.nix): that root's dev group stays what main rendered
+	# for it, so upgrading frappe-nix neither changes its dev env nor makes its
+	# committed lock stale. With no lock yet that is main's dev group, without
+	# either test tool; a missing lock file reads the same way.
+	if args.test_tools_unlocked:
+		changed += drop_unlocked_test_tools(groups["dev"], set())
+	elif args.test_tools_lock:
+		changed += drop_unlocked_test_tools(groups["dev"], locked_root_dev(args.test_tools_lock) or set())
 
 	uv = table_at(doc, "tool", "uv")
 	# Not optional: the workspace root is a virtual package. lib/python.nix
@@ -701,6 +828,15 @@ def main():
 	# The rendered bench template: the source of the extra-build-dependencies
 	# and non-app [tool.uv.sources] entries an existing bench is reconciled to.
 	p.add_argument("--template", default="")
+	# An opted-in app's tracked tools/pyproject.toml: drop from the dev group
+	# each of ruff, pre-commit and semgrep it pins a replacement for (APP_PINNED).
+	p.add_argument("--app-tools", default="")
+	# An app-mode app's committed uv.lock, for an app that has not opted in: drop
+	# from the dev group each TEST_TOOLS entry the lock's own root does not list
+	# in its dev group. --test-tools-unlocked: the same app, with no lock yet;
+	# drop both.
+	p.add_argument("--test-tools-lock", default="")
+	p.add_argument("--test-tools-unlocked", action="store_true")
 	p.set_defaults(func=cmd_ensure_root)
 
 	p = sub.add_parser("add-app")

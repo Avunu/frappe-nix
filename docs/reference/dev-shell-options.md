@@ -3,13 +3,13 @@ title: Dev shell options
 description: Every perSystem.frappe-nix option that configures the development shell, the production package and the container images, with types and defaults.
 order: 1
 tags: [options, reference, devenv]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe`](nixos-options.md).
 
 > [!NOTE]
-> `devguard.mail.smtpPort`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus an offset hashed from `benchName`. The offset is between 0 and 899. devenv's port allocator walks forward if a port is taken.
+> `devguard.mail.smtpPort`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `benchName`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
 
 ## Core
 
@@ -107,13 +107,17 @@ See [The development shell](../development/README.md#ports-and-sockets).
 | Option           | Type         | Default | Notes                                                                                                                                                              |
 | ---------------- | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `sockets.enable` | bool         | `true`  | Put MariaDB, Redis, the realtime server and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs Frappe 15.46 or newer. |
-| `ports.base`     | port or null | `null`  | First port this bench tries. Defaults to 8000 plus a hash of `benchName`.                                                                                          |
+| `ports.offset`   | int, 0–899   | a hash of `benchName` | The offset every TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `benchName@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
+| `ports.worktreeSalt` | bool     | whether the app opted in to the app standards | App mode: salt a linked worktree's `ports.offset` with its path, so two worktrees of one app run at once, and have `devenv up` stop and name a taken port. On by default only with a `[tool.frappe-nix]` table; any app may set it. Bench mode ignores it. |
+| `ports.base`     | port or null | `null`  | The web port, overriding `8000 + ports.offset`. Mailpit and MariaDB keep theirs.                                                                                 |
 
 ## Apps and assets
 
 | Option                       | Type        | Default          | Notes                                                                                                                                                                                                           |
 | ---------------------------- | ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `appsReconcile.enable`       | bool        | `siteName != ""` | Install whatever `sites/apps.txt` names that `siteName`'s site does not have installed yet, on every `devenv up`. See [Apps in a bench](../development/apps.md#installed-app-drift).                            |
+| `renamedApps`                | attrs of str | `{ }`           | Apps renamed in place, `OLD = NEW`: `reconcile-apps` runs `frappe-rename-app --site` before it installs anything. See [Renaming an app](../app-standards/rename.md).                                                    |
+| `replacedApps`               | attrs of str | `{ }`           | Apps replaced by a new app, `OLD = NEW`: `reconcile-apps` installs NEW and uninstalls OLD on a site that has OLD. See [Renaming an app](../app-standards/rename.md#replacing-an-app-instead).                       |
 | `assets.reassert.hooks`      | list of str | `[ ]`            | `bench execute` targets run when `sites/assets/assets.json` names a bundle file that does not exist on disk. Empty by default, so it names no app. See [Asset builds](../development/assets.md#assetsreassert). |
 | `assets.reassert.debounceMs` | int         | `750`            | How long `assets.json` must sit unmodified before the bench-watch-driven check re-reads it.                                                                                                                     |
 

@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, and what to commit afterwards.
 order: 9
 tags: [upgrade, flake-update, reconcile]
-updated: 2026-10-06
+updated: 2026-10-07
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -41,6 +41,10 @@ A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from i
 ## In app mode
 
 In an [app repository](../scaffolding/app-mode.md) the pins are flake inputs, so a newer frappe-nix is the same `nix flake update frappe-nix`. Moving the Frappe pin or a sibling is `nix flake update frappe`, then `nix run .#relock`, and you commit `flake.lock` with `nix/`.
+
+The bench root's dev group gained `coverage` and `unittest-xml-reporting`, which [`frappe-test`](../app-standards/testing.md) runs the tests under. An app that has not opted in to the [app standards](../app-standards/README.md) keeps the root it had: each of the two stays out of it unless the root package in the committed `nix/uv.lock` already lists it in its `dev` group. On version-15 and version-16 alike, the generated root, the dev environment and the lock stay exactly as they were, and `nix run .#relock` leaves `nix/uv.lock` as it is. A version-16 lock does have both packages, through Frappe's `test` extra, but that does not put them in the dev environment.
+
+`frappe-test` then has no coverage to run under and says so (exit 10): pass `--no-coverage`, or opt in and run `nix run .#relock`, which adds them.
 
 ## The runtime moves with frappe-nix
 

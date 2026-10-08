@@ -556,6 +556,13 @@ in
           "opt-in: an opted-in shell lacks frappe-nix";
         assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/frappe-init") onPrograms)
           "opt-in: an opted-in shell lacks frappe-init";
+        # N1: what `frappe-test --nix-lint` runs, for interactive use (spec
+        # §5.1 stage 8).
+        assert lib.assertMsg (lib.all (n: builtins.any (lib.hasSuffix "/bin/${n}") onPrograms) [
+          "nixfmt"
+          "statix"
+          "deadnix"
+        ]) "opt-in: an opted-in shell lacks nixfmt, statix or deadnix";
         assert lib.assertMsg (
           on.apps ? frappe-init && on.apps ? frappe-nix
         ) "opt-in: an opted-in flake lacks apps.frappe-init or apps.frappe-nix";

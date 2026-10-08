@@ -3,18 +3,22 @@
 
 import datetime
 from types import SimpleNamespace
+from typing import cast
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from standards_fixture import demo, tasks
 from standards_fixture.events import FLAG
+from standards_fixture.overrides.todo import FixtureToDo
 from standards_fixture.request import add_fixture_header
 
 
 class TestHooks(IntegrationTestCase):
 	def test_todo_on_update_and_extension(self):
-		todo = frappe.get_doc({"doctype": "ToDo", "description": "check the hooks"}).insert()
+		todo = cast(
+			FixtureToDo, frappe.get_doc({"doctype": "ToDo", "description": "check the hooks"}).insert()
+		)
 		self.assertEqual(frappe.flags.get(FLAG), todo.name)
 		self.assertEqual(todo.fixture_label(), "[fixture] check the hooks")
 
