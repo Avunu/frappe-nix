@@ -160,6 +160,11 @@ cmd_builtbench() {
   prepare "$app"
   (cd "$app" && nix flake lock --override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$FRAPPE_REV")
   (cd "$app" && nix run "${nixflags[@]}" .#relock)
+  # frappe's ui/ frontend ships a yarn.lock that does not cover its own
+  # package.json at this revision (an offline install misses dompurify); a
+  # forced fallback lock fills the gap with upstream's pins kept, the remedy
+  # frappe-nix's own error names. Nothing here is about frappe's frontend.
+  (cd "$app" && nix run "${nixflags[@]}" .#relock -- --node-locks frappe/ui)
   commit "$app" locks
   endgroup
 
