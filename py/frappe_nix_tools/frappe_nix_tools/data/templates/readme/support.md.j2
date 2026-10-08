@@ -1,0 +1,14 @@
+{# Where to get help (spec §2.19). #}
+## Support
+
+{% if readme.support_url %}
+- Help and bug reports: {{ readme.support_url }}
+{% elif readme.issues_url %}
+- Bug reports and questions: [GitHub issues]({{ readme.issues_url }})
+{% endif %}
+{% if readme.email %}
+- E-mail: <{{ readme.email }}>
+{% endif %}
+{% for link in readme.links %}
+- [{{ link.label }}]({{ link.url }})
+{% endfor %}

@@ -1,0 +1,13 @@
+{# The marketplace listing's seed (spec §2.21), written once by `frappe-init --sync --init-listing`;
+   the app owns it from then on, and frappe-listing check validates it. The URLs come from the
+   profile's templates, or are left empty (L1 reports them) when the profile has none. #}
+# The app's registry listing (docs/app-standards/marketplace.md); frappe-listing check validates it.
+schema = 1
+title = {{ title | json_string }}
+tagline = {{ tagline | json_string }}
+type = "{{ app_type }}"
+category = "{{ 'Applications' if app_type == 'application' else 'Integrations' if app_type == 'integration' else 'Utilities' if app_type == 'utility' else 'Extensions' }}"
+categories = []
+website = {{ org['website-url'].replace('{app_hyphen}', app_hyphen).replace('{app}', app) | json_string }}
+documentation = {{ org['docs-url'].replace('{app_hyphen}', app_hyphen).replace('{app}', app) | json_string }}
+apps_screen = false

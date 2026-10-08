@@ -11,8 +11,8 @@ both modes exit 2 with the opt-in hint and write nothing.
 ``--write`` runs both phases (S32): phase A writes ``flake.nix`` and ``.envrc`` and locks the
 flake; phase B renders every other managed file, retracts what a module that turned off
 left, deletes what is retired, and brings the locks up (``tools/uv.lock``, ``yarn.lock``,
-node-lock seeds, relock, README blocks). It stages what it wrote with ``git add`` and
-commits nothing.
+node-lock seeds, relock). The README blocks are a managed file like the others (N5's
+``handler: readme``). It stages what it wrote with ``git add`` and commits nothing.
 
 ``--check`` computes the same plan in memory and runs nothing (no nix, uv or yarn), so it
 works in a CI job without Nix. Exit codes: 0 clean, 1 drift, 2 invalid configuration that
@@ -21,8 +21,6 @@ sync can't fix, 3 environment (not an app, unreadable lock, version skew).
 
 import argparse
 import contextlib
-import importlib.util
-import io
 import os
 import re
 import secrets
@@ -99,18 +97,6 @@ def _passthrough(args: argparse.Namespace) -> list[str]:
 	return out
 
 
-def _listing_readme(mode: str) -> tuple[int, str] | None:
-	"""``frappe-nix listing readme --<mode>``, when N5's command is installed; else ``None``."""
-	if importlib.util.find_spec("frappe_nix_tools.commands.listing") is None:
-		return None
-	from frappe_nix_tools import cli
-
-	out = io.StringIO()
-	with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-		code = cli.main(["listing", "readme", f"--{mode}"])
-	return code, out.getvalue()
-
-
 def _build(root: Path, args: argparse.Namespace, phases: tuple[str, ...] = ("a", "b")) -> engine.Plan:
 	return engine.build(
 		root,
@@ -180,19 +166,6 @@ def check(root: Path, args: argparse.Namespace) -> int:
 	if not _only(args):
 		items += engine.lock_problems(plan)
 		items += engine.untracked_lock_problems(plan)
-		if plan.ctx.modules.get("readme") and plan.ctx.discover.has_listing:
-			readme = _listing_readme("check")
-			if readme and readme[0] != CLEAN:
-				items.append(
-					Item(
-						"README.md",
-						"blocks",
-						None,
-						None,
-						readme[1].strip() or "README blocks drift",
-						readme[0],
-					)
-				)
 	items += engine.skew_problems(plan, args.expect_rev)
 	code = worst(*(i.code for i in items))
 	findings = [i.finding() for i in items]
@@ -448,14 +421,8 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 		# Relock stages what it writes (nix/uv.lock, nix/node-locks/); never the rest of nix/.
 		touched.append("nix/uv.lock")
 
-	# Step 12: the README blocks.
-	if not only and plan.ctx.modules.get("readme") and plan.ctx.discover.has_listing and not runner.dry_run:
-		readme = _listing_readme("write")
-		if readme is not None:
-			if readme[0] not in (CLEAN, DRIFT):
-				print(readme[1], file=sys.stderr)
-				return readme[0]
-			touched.append("README.md")
+	# Step 12, the README blocks, is the README.md entry's (N5's manifest.d/marketplace.json):
+	# the plan above rendered and wrote them, and --check compares them, like any managed file.
 
 	# Step 13 (the deletions are staged already, right after they were made). A lock or seed
 	# an earlier, failed run wrote is staged too: its step does not run again to stage it.

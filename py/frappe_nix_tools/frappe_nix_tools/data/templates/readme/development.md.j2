@@ -1,0 +1,14 @@
+{# How to work on the app (spec §2.19, S26). #}
+## Development
+
+```bash
+nix develop        # or: direnv allow
+{% if readme.prek %}
+prek install       # the git hooks CI runs
+{% endif %}
+{% if readme.tests %}
+frappe-test        # the tests, the way CI runs them
+{% endif %}
+```
+
+The managed files, checks and release flow are described in the [app standards documentation]({{ readme.dev_docs_url }}).

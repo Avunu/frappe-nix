@@ -1,0 +1,22 @@
+{# How to install the app (spec §2.19). Under main+tags the ref is the released tag, inside
+   release-please's version markers, so the release PR moves it with __version__. #}
+## Installation
+
+{% if readme.marketplace %}
+On Frappe Cloud, install {{ title }} from the [Frappe marketplace](https://cloud.frappe.io/marketplace/apps/{{ app }}).
+
+On a bench of your own:
+
+{% endif %}
+{% if readme.release_markers %}
+<!-- x-release-please-start-version -->
+
+{% endif %}
+```bash
+bench get-app {{ readme.repo_url }} --branch {{ readme.install_ref }}
+bench --site <site> install-app {{ app }}
+```
+{% if readme.release_markers %}
+
+<!-- x-release-please-end -->
+{% endif %}
