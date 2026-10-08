@@ -296,7 +296,7 @@ async function setDeskTheme(page: Page, user: string, theme: Theme): Promise<voi
 }
 
 async function capture(page: Page, shot: Shot, spec: ShotSpec, file: string): Promise<void> {
-	const errors = page.consoleErrors().length;
+	// goto() clears the events once the page has loaded: what follows is this shot's.
 	await page.goto(`${(page as Page & { base: string }).base}${shot.route}`);
 	await page.eval(
 		`(() => { const s = document.createElement('style'); s.id = '__frappe_shots';
@@ -321,8 +321,15 @@ async function capture(page: Page, shot: Shot, spec: ShotSpec, file: string): Pr
 			return true;
 		})()`,
 	);
-	const fresh = page.consoleErrors().slice(errors);
-	if (fresh.length) throw new ExitError(CAPTURE_ERROR, `${shot.name}: the page logged errors: ${fresh.slice(0, 3).join(" || ")}`);
+	// An uncaught exception is a capture error; console.error is a warning (the desk logs some
+	// on its own, such as a realtime socket that reconnects).
+	const thrown = page.events.filter((e) => e.method === "Runtime.exceptionThrown");
+	if (thrown.length) {
+		const details = thrown.map((e) => JSON.stringify(e.params).slice(0, 300)).slice(0, 3);
+		throw new ExitError(CAPTURE_ERROR, `${shot.name}: the page threw: ${details.join(" || ")}`);
+	}
+	const fresh = page.consoleErrors();
+	if (fresh.length) console.warn(`warning: ${shot.name}: the page logged errors: ${fresh.slice(0, 3).join(" || ")}`);
 	const params: Record<string, unknown> = { format: "png" };
 	if (shot.clip) {
 		const r = await page.eval<{ x: number; y: number; width: number; height: number } | null>(

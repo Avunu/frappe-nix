@@ -30,7 +30,9 @@ from frappe_nix_tools.listing.output import escape_data, escape_property
 
 
 def _target(args: argparse.Namespace) -> target.Target | None:
-	root = repo.toplevel(Path.cwd())
+	# The app is the current directory (a git work tree), as for sync and compat.
+	root = Path.cwd()
+	repo.toplevel(root)
 	profile = Path(args.profile_path).resolve() if getattr(args, "profile_path", None) else None
 	t = target.load(root, profile)
 	if not t.modules.get("icons"):

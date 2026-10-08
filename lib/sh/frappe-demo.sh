@@ -66,7 +66,8 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h | --help)
-      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+      echo "usage: frappe-demo [--site S] [--fresh] [--erpnext-demo | --no-erpnext-demo] [--date YYYY-MM-DD] [--seed N] [--no-up]"
+      echo "A repeatable demo site (docs/app-standards/screenshots.md)."
       exit 0
       ;;
     *) fail_env "unknown argument $1 (see --help)" ;;

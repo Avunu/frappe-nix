@@ -62,7 +62,9 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     -h | --help)
-      sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+      echo "usage: frappe-shots [--spec marketplace/screenshots.ts] [--only a,b] [--theme light|dark]"
+      echo "                    [--update | --check] [--reuse-site] [--out docs/screenshots] [--video <name>]"
+      echo "Repeatable screenshots of the demo site (docs/app-standards/screenshots.md)."
       exit 0
       ;;
     *) fail 2 "unknown argument $1 (see --help)" ;;

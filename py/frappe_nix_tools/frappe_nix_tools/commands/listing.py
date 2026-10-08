@@ -35,7 +35,10 @@ def _profile(args: argparse.Namespace) -> Path | None:
 
 
 def _target(args: argparse.Namespace, module: str = "listing") -> target.Target | None:
-	t = target.load(repo.toplevel(Path.cwd()), _profile(args))
+	# The app is the current directory (a git work tree), as for sync and compat.
+	root = Path.cwd()
+	repo.toplevel(root)
+	t = target.load(root, _profile(args))
 	if not t.modules.get(module):
 		print(
 			f"frappe-listing: notice: the {module} module is off for this app; nothing to do", file=sys.stderr
