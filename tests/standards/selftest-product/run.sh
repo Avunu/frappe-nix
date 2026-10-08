@@ -99,6 +99,8 @@ cmd_listing() {
   elapsed=$((SECONDS - start))
   endgroup
   grep -q 'pilot ImportCheck passes' "$app/.dev-dist/marketplace/report.json" || fail "L9 did not run pilot's ImportCheck"
+  grep -q 'pilot-app-validate-' "$app/.dev-dist/marketplace/getapp.log" ||
+    fail "ImportCheck made no throwaway venv, so frappe was not installed from source (getapp.log)"
   jq -e '.status == "pass"' "$app/.dev-dist/marketplace/report.json" > /dev/null || fail "report.json does not say pass"
   [ "$elapsed" -lt 1500 ] || fail "the cold check took ${elapsed}s, over 25 minutes"
   ok "listing check passes on the fixture with example-org, L9 included, cold in ${elapsed}s (< 1500)"
