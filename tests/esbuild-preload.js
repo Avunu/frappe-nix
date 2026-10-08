@@ -1,11 +1,13 @@
 // Checks for lib/js/esbuild-preload.js: frappe's esbuild/esbuild.js gets
 // frappe's node_modules first and object rest/spread lowered, the right-to-left
 // stylesheet build is skipped when asked, a failed per-app build command is carried past
-// when asked, and nothing else about the module —
+// when asked, each app's Vite bundles are registered after its `yarn build`
+// (lib/js/vite-register.cjs, always), and nothing else about the module —
 // or about any other caller's build — changes. A stand-in esbuild exports its API as getters, the
 // way the real one does — which is why the preload cannot patch it in place.
 //
-// usage: node esbuild-preload.js <path-to-lib/js/esbuild-preload.js>
+// usage: node esbuild-preload.js <path-to-lib/js>/esbuild-preload.js
+// (the directory's copy: the preload requires its neighbour vite-register.cjs)
 "use strict";
 
 const fs = require("fs");
@@ -242,6 +244,236 @@ check(
 );
 const js = plugin("");
 check("without it, frappe's own sass is untouched", ["js", "js", ["import"]], [js.info, js.impl, js.silenced]);
+
+
+// Vite registration (spec S30, §5.11). A bench whose esbuild.js stand-in runs
+// each app's command in apps/<app>, as frappe's run_build_command_for_apps()
+// does, with a stub yarn whose `build` runs the app's build.sh.
+const viteRoot = path.join(root, "vite");
+const vwrite = (rel, text) => {
+  fs.mkdirSync(path.dirname(path.join(viteRoot, rel)), { recursive: true });
+  fs.writeFileSync(path.join(viteRoot, rel), text);
+};
+vwrite(
+  "bin/yarn",
+  `#!/bin/sh
+[ "$1" = run ] && shift
+case "$1" in
+  build) exec sh ./build.sh ;;
+  *) echo "yarn $*" ;;
+esac
+`
+);
+fs.chmodSync(path.join(viteRoot, "bin/yarn"), 0o755);
+const viteDriver = `const fs = require("fs");
+const path = require("path");
+const { execSync } = require("child_process");
+const bench = process.env.FRAPPE_BENCH_ROOT || path.resolve(__dirname, "..", "..", "..");
+for (const app of JSON.parse(process.env.VITE_APPS)) {
+  process.chdir(path.join(bench, "apps", app));
+  execSync(process.env.VITE_COMMAND || "yarn build", { encoding: "utf8", stdio: "inherit" });
+}
+console.log("DONE");
+process.exit(0);
+`;
+const manifest = (entries) => JSON.stringify(entries, null, 2);
+const ESBUILD_KEYS = {
+  "desk.bundle.js": "/assets/frappe/dist/js/desk.bundle.FRAPPE1.js",
+  "foo.bundle.js": "/assets/spa/dist/js/foo.bundle.ESBLD1.js",
+};
+const RTL = JSON.stringify({ "rtl_desk.bundle.css": "/assets/frappe/dist/css-rtl/desk.bundle.RTL111.css" }, null, 4);
+const makeBench = (name) => {
+  const b = `${name}`;
+  vwrite(`${b}/apps/frappe/esbuild/esbuild.js`, viteDriver);
+  vwrite(`${b}/apps/frappe/build.sh`, "true\n");
+  vwrite(
+    `${b}/apps/frappe/frappe/public/dist/.vite/manifest.json`,
+    manifest({ "x.ts": { file: "js/frappe_vite.bundle.FRAPPE2.js", isEntry: true } })
+  );
+  vwrite(`${b}/apps/frappe/scripts/other.js`, viteDriver);
+  // spa: Vite 5's .vite/manifest.json (an entry, its stylesheet, a chunk that is
+  // no bundle), Vite 4's manifest.json in a nested outDir, and a manifest that
+  // does not parse.
+  vwrite(`${b}/apps/spa/build.sh`, "echo spa-built\n");
+  vwrite(
+    `${b}/apps/spa/spa/public/dist/.vite/manifest.json`,
+    manifest({
+      "src/foo.entry.ts": {
+        file: "js/foo.bundle.AbC123.js",
+        isEntry: true,
+        imports: ["_index-AbC.js"],
+        css: ["css/foo.bundle.XyZ789.css"],
+      },
+      "_index-AbC.js": { file: "js/index-AbC.js" },
+      "src/bar.entry.ts": { file: "js/index-AbC.js", isEntry: true },
+      "src/lazy.ts": { file: "js/lazy.bundle.LaZy12.js", isDynamicEntry: true },
+    })
+  );
+  vwrite(`${b}/apps/spa/spa/public/dist/js/foo.bundle.AbC123.js`, "console.log('foo');\n");
+  vwrite(`${b}/apps/spa/spa/public/dist/css/foo.bundle.XyZ789.css`, ".foo{}\n");
+  vwrite(`${b}/apps/spa/spa/public/dist/js/index-AbC.js`, "export {};\n");
+  vwrite(
+    `${b}/apps/spa/spa/public/dist/legacy/manifest.json`,
+    manifest({ "old.ts": { file: "js/old.bundle.Qwerty1.js", isEntry: true } })
+  );
+  vwrite(`${b}/apps/spa/spa/public/dist/broken/manifest.json`, "{");
+  vwrite(`${b}/apps/spa/spa/public/portal/.vite/manifest.json`, manifest({ "index.html": { file: "assets/index-PoRt12.js", isEntry: true } }));
+  vwrite(`${b}/apps/spa/spa/public/portal/assets/index-PoRt12.js`, "portal();\n");
+  vwrite(`${b}/apps/spa/spa/public/images/logo.svg`, "<svg/>\n");
+  // zfail: its build fails.
+  vwrite(`${b}/apps/zfail/build.sh`, "exit 3\n");
+  vwrite(
+    `${b}/apps/zfail/zfail/public/dist/.vite/manifest.json`,
+    manifest({ "z.ts": { file: "js/z.bundle.ZzZzZz.js", isEntry: true } })
+  );
+  vwrite(`${b}/sites/apps.txt`, "frappe\nspa\nlinked\nzfail\n");
+  vwrite(`${b}/sites/assets/assets.json`, JSON.stringify(ESBUILD_KEYS, null, 4));
+  vwrite(`${b}/sites/assets/assets-rtl.json`, RTL);
+  // linked: apps/linked is a link to a checkout elsewhere, as in the dev shell.
+  vwrite(`${b}-src/linked/build.sh`, "true\n");
+  vwrite(
+    `${b}-src/linked/linked/public/dist/.vite/manifest.json`,
+    manifest({ "l.ts": { file: "js/linked.bundle.LnK123.js", isEntry: true } })
+  );
+  fs.symlinkSync(path.join(viteRoot, `${b}-src/linked`), path.join(viteRoot, `${b}/apps/linked`));
+  return path.join(viteRoot, b);
+};
+
+const viteRun = (bench, { apps, keep = false, command = "", script = "apps/frappe/esbuild/esbuild.js", env = {} }) => {
+  const result = spawnSync(process.execPath, ["--require", preload, path.join(bench, script)], {
+    cwd: bench,
+    env: {
+      ...process.env,
+      PATH: `${path.join(viteRoot, "bin")}:${process.env.PATH}`,
+      FRAPPE_BENCH_ROOT: "",
+      FRAPPE_NIX_KEEP_GOING: keep ? "1" : "",
+      VITE_APPS: JSON.stringify(apps),
+      VITE_COMMAND: command,
+      ...env,
+    },
+    encoding: "utf8",
+  });
+  return { ...result, out: `${result.stdout}${result.stderr}` };
+};
+const assetsOf = (bench) => fs.readFileSync(path.join(bench, "sites/assets/assets.json"), "utf8");
+const keysOf = (bench) => JSON.parse(assetsOf(bench));
+
+const vb = makeBench("bench");
+const first = viteRun(vb, { apps: ["frappe", "spa", "linked"] });
+check("the build runs to the end without FRAPPE_NIX_KEEP_GOING", [0, true], [first.status, first.stdout.includes("DONE")]);
+const expected = {
+  "desk.bundle.js": "/assets/frappe/dist/js/desk.bundle.FRAPPE1.js",
+  "foo.bundle.js": "/assets/spa/dist/js/foo.bundle.AbC123.js",
+  "foo.bundle.css": "/assets/spa/dist/css/foo.bundle.XyZ789.css",
+  "old.bundle.js": "/assets/spa/dist/legacy/js/old.bundle.Qwerty1.js",
+  "linked.bundle.js": "/assets/linked/dist/js/linked.bundle.LnK123.js",
+};
+check(
+  "each app's Vite entries and their stylesheets are registered under /assets/<app>/dist/, by their bundle names",
+  expected,
+  keysOf(vb)
+);
+check("frappe's own keys are untouched, and frappe's own build registers nothing", [ESBUILD_KEYS["desk.bundle.js"], undefined], [keysOf(vb)["desk.bundle.js"], keysOf(vb)["frappe_vite.bundle.js"]]);
+check("a chunk that is no <name>.bundle.<hash> (index-AbC.js), and a dynamic import, are ignored", [false, false], ["index.js" in keysOf(vb), "lazy.bundle.js" in keysOf(vb)]);
+check(
+  "a Vite key replacing esbuild's is logged",
+  true,
+  first.stdout.includes("vite-register: spa: foo.bundle.js -> /assets/spa/dist/js/foo.bundle.AbC123.js (vite)")
+);
+check("a manifest that does not parse is skipped with a note, the others still count", true, first.stdout.includes("vite-register: skipping") && first.stdout.includes("broken/manifest.json"));
+check("assets.json keeps frappe's format: four spaces, no final newline", JSON.stringify(expected, null, 4), assetsOf(vb));
+check("assets-rtl.json is left alone", RTL, fs.readFileSync(path.join(vb, "sites/assets/assets-rtl.json"), "utf8"));
+check("a linked app (the dev shell's) registers under its apps/ name", expected["linked.bundle.js"], keysOf(vb)["linked.bundle.js"]);
+
+const before = assetsOf(vb);
+const mtime = fs.statSync(path.join(vb, "sites/assets/assets.json")).mtimeMs;
+const second = viteRun(vb, { apps: ["frappe", "spa", "linked"] });
+check(
+  "a second build changes no byte, rewrites nothing and logs no key",
+  [before, mtime, false],
+  [assetsOf(vb), fs.statSync(path.join(vb, "sites/assets/assets.json")).mtimeMs, second.stdout.includes("(vite)")]
+);
+check("a symlinked sites/assets/<app> (bench build's default) gets no copy", false, fs.existsSync(path.join(vb, "sites/assets/spa")));
+
+const runVariant = viteRun(makeBench("bench-run"), { apps: ["spa"], command: "yarn run build" });
+check("`yarn run build` counts as the build", true, runVariant.stdout.includes("foo.bundle.js -> "));
+const notBuild = makeBench("bench-install");
+viteRun(notBuild, { apps: ["spa"], command: "yarn install --frozen-lockfile" });
+check("any other command registers nothing", JSON.stringify(ESBUILD_KEYS, null, 4), assetsOf(notBuild));
+const otherScript = makeBench("bench-other");
+viteRun(otherScript, { apps: ["spa"], script: "apps/frappe/scripts/other.js" });
+check("a script other than esbuild.js registers nothing", JSON.stringify(ESBUILD_KEYS, null, 4), assetsOf(otherScript));
+
+const keepBench = makeBench("bench-keep");
+const kept = viteRun(keepBench, { apps: ["frappe", "zfail", "spa"], keep: true });
+check(
+  "with FRAPPE_NIX_KEEP_GOING, a failed build registers nothing, the next app still does, and the exit is 1",
+  [undefined, expected["foo.bundle.js"], 1],
+  [keysOf(keepBench)["z.bundle.js"], keysOf(keepBench)["foo.bundle.js"], kept.status]
+);
+const stockFail = makeBench("bench-stockfail");
+const stopped = viteRun(stockFail, { apps: ["zfail", "spa"] });
+check("without it, a failed build still ends the run, unregistered", [true, undefined], [stopped.status !== 0, keysOf(stockFail)["foo.bundle.js"] === expected["foo.bundle.js"] ? "registered" : undefined]);
+
+// FRAPPE_BENCH_ROOT names the bench, as it does for esbuild.js itself.
+const home = makeBench("bench-home");
+const elsewhereBench = makeBench("bench-elsewhere");
+viteRun(home, { apps: ["spa"], env: { FRAPPE_BENCH_ROOT: elsewhereBench } });
+check(
+  "with FRAPPE_BENCH_ROOT, the registration lands in that bench's sites/",
+  [JSON.stringify(ESBUILD_KEYS, null, 4), expected["foo.bundle.js"]],
+  [assetsOf(home), keysOf(elsewhereBench)["foo.bundle.js"]]
+);
+
+// `bench build --hard-link`: sites/assets/<app> is a real directory, filled
+// before the app's own build ran.
+const hard = makeBench("bench-hard");
+const hardAssets = path.join(hard, "sites/assets/spa");
+fs.mkdirSync(path.join(hardAssets, "dist/js"), { recursive: true });
+fs.linkSync(path.join(hard, "apps/spa/spa/public/dist/js/index-AbC.js"), path.join(hardAssets, "dist/js/index-AbC.js"));
+viteRun(hard, { apps: ["spa"] });
+check(
+  "with a real sites/assets/<app>, public/dist and each Vite outDir with a manifest (portal/) are copied in",
+  [true, true, true, false],
+  [
+    fs.existsSync(path.join(hardAssets, "dist/js/foo.bundle.AbC123.js")),
+    fs.existsSync(path.join(hardAssets, "dist/.vite/manifest.json")),
+    fs.existsSync(path.join(hardAssets, "portal/assets/index-PoRt12.js")),
+    fs.existsSync(path.join(hardAssets, "images")),
+  ]
+);
+check(
+  "a file already hard-linked there is left whole",
+  "export {};\n",
+  fs.readFileSync(path.join(hard, "apps/spa/spa/public/dist/js/index-AbC.js"), "utf8")
+);
+
+const broken = makeBench("bench-broken");
+fs.writeFileSync(path.join(broken, "sites/assets/assets.json"), "{ not json");
+const brokenRun = viteRun(broken, { apps: ["spa", "linked"] });
+check(
+  "an assets.json that does not parse is a warning naming the app, the build still succeeds, and the file is left as it was",
+  [0, true, "{ not json"],
+  [brokenRun.status, brokenRun.stderr.includes("vite-register: spa:"), fs.readFileSync(path.join(broken, "sites/assets/assets.json"), "utf8")]
+);
+
+// lib/js/vite-register.cjs's own entry points.
+const vr = require(path.join(path.dirname(preload), "vite-register.cjs"));
+check(
+  "findSites: $FRAPPE_BENCH_ROOT first, then the logical ../../sites, then the physical one; null outside a bench",
+  [path.join(vb, "sites"), path.join(vb, "sites"), path.join(vb, "sites"), null],
+  [
+    vr.findSites({ env: { FRAPPE_BENCH_ROOT: vb }, cwd: "/" }),
+    vr.findSites({ env: { PWD: path.join(vb, "apps/linked") }, cwd: path.join(viteRoot, "bench-src/linked") }),
+    vr.findSites({ env: {}, cwd: path.join(vb, "apps/spa") }),
+    vr.findSites({ env: {}, cwd: path.join(viteRoot, "bench-src/linked") }),
+  ]
+);
+check(
+  "the bundle pattern wants a hash of six or more characters",
+  [true, true, false, false],
+  ["a.bundle.AbC123.js", "a.bundle.A_b-C9xY.css", "a.bundle.min.js", "a.bundle.AbC123.map"].map((name) => vr.BUNDLE.test(name))
+);
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log("");

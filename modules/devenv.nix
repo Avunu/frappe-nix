@@ -1917,7 +1917,7 @@ in
           )
           ++ lib.optional (!cfg.watch.rtl) "--skip-rtl"
           ++ lib.optional cfg.watch.nativeSass "--sass=${sassEmbedded}/${sassEmbedded.module}"
-          ++ lib.optional (!cfg.watch.rtl || cfg.watch.nativeSass) "--preload=${../lib/js/esbuild-preload.js}"
+          ++ lib.optional (!cfg.watch.rtl || cfg.watch.nativeSass) "--preload=${../lib/js}/esbuild-preload.js"
         );
         sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
 
@@ -2600,7 +2600,7 @@ in
               ESBUILD_TARGET = cfg.esbuildTarget;
               # frappe_nodebuild hands it to every `bench build` and `bench
               # watch`, as builtBench's build phase does. See lib/nodebuild.
-              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js/esbuild-preload.js}";
+              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js}/esbuild-preload.js";
               # Frappe ends a build by running every app's `yarn build` in turn
               # and stops at the first that fails, leaving the apps after it
               # unbuilt. The preload carries on, builds the rest and still exits
