@@ -1,0 +1,22 @@
+[
+	{
+		"name": "fixture-note-list",
+		"theme": "dark",
+		"alt": "The Fixture Note list with the demo notes",
+		"featured": true,
+		"readme": "hero",
+		"width": 2880,
+		"height": 1800,
+		"sha256": "6764b70a639227cebbd070598b4896540c0e41a515f922570915169548e23d15"
+	},
+	{
+		"name": "fixture-note-list",
+		"theme": "light",
+		"alt": "The Fixture Note list with the demo notes",
+		"featured": true,
+		"readme": "hero",
+		"width": 2880,
+		"height": 1800,
+		"sha256": "f93a3eb1b40efbc2772a5387e0917b5ab1474100a47a4e25b63cc11af136efa3"
+	}
+]

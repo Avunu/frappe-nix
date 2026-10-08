@@ -1,0 +1,52 @@
+{
+	"$comment": "N5's marketplace files (docs/app-standards/spec.md §2.19, §2.21): the listing seed, the semgrep baseline, the screenshot types and the README blocks. The format is in frappe_nix_tools/scaffold/manifest.py; an entry whose template ends in / renders several templates under it (the README blocks), each overridable by an org profile.",
+	"entries": [
+		{
+			"path": "marketplace/listing.toml",
+			"template": "marketplace/listing.toml.j2",
+			"strategy": "seed",
+			"module": "listing",
+			"when": "'init_listing' in options and options.init_listing",
+			"uses": ["org.website-url?", "org.docs-url?"],
+			"overridable": true
+		},
+		{
+			"path": "marketplace/semgrep-baseline.json",
+			"template": "marketplace/semgrep-baseline.json.j2",
+			"strategy": "seed",
+			"module": "listing",
+			"handler": "semgrep-baseline"
+		},
+		{
+			"path": "marketplace/shots.d.ts",
+			"template": "marketplace/shots.d.ts.j2",
+			"strategy": "whole",
+			"module": "screenshots",
+			"when": "discover.has_shots",
+			"header": "ts"
+		},
+		{
+			"path": "README.md",
+			"template": "readme/",
+			"strategy": "blocks",
+			"module": "readme",
+			"when": "discover.has_listing",
+			"handler": "readme",
+			"overridable": true,
+			"uses": [
+				"org.license",
+				"org.copyright-holder",
+				"org.email?",
+				"org.support-url?",
+				"org.dev-docs-url",
+				"org.repo-url",
+				"org.readme.badges?",
+				"org.readme.links?",
+				"readme.install-ref",
+				"listing.publish",
+				"releases.branching",
+				"releases.tag-prefix"
+			]
+		}
+	]
+}

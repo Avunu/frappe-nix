@@ -1,6 +1,7 @@
 # A fictitious organisation's profile, for frappe-nix's own tests (docs/app-standards/spec.md §7):
-# every module the managed files need on, Example Org's values, a [[retire]] rule and an
-# [[extra-files]] entry. Not a real organisation's choices.
+# every module the managed files need on, Example Org's values, a [[retire]] rule, an
+# [[extra-files]] entry and a README block override (templates/readme/support.md.j2). Not a
+# real organisation's choices.
 schema = 1
 name = "example-org"
 description = "Example Org's app standards: a test fixture with every module on."
@@ -10,6 +11,7 @@ extends = "recommended@1.0"
 publisher = "Example Org"
 email = "apps@example.org"
 license = "MIT"
+github-owner = "example-org"
 website-url = "https://example.org/apps/{app}/"
 docs-url = "https://{app_hyphen}.docs.example.org/"
 support-url = "https://example.org/support/"

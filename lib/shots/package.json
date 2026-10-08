@@ -1,0 +1,12 @@
+{
+	"name": "frappe-nix-shots",
+	"version": "1.0.0",
+	"private": true,
+	"description": "frappe-shots' engine: the CDP driver, the runner and the image comparison (docs/app-standards/spec.md §5.5)",
+	"license": "MIT",
+	"type": "module",
+	"dependencies": {
+		"pixelmatch": "^7.1.0",
+		"pngjs": "^7.0.0"
+	}
+}

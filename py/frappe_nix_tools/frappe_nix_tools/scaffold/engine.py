@@ -34,6 +34,7 @@ import frappe_nix_tools
 from frappe_nix_tools.common import config, data_path, flakelock, known_apps, pins, pyproject, repo
 from frappe_nix_tools.common.config import NotOptedIn, Resolved
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ENVIRONMENT, INVALID, ConfigError, EnvError, Finding
+from frappe_nix_tools.listing import baseline, readme
 from frappe_nix_tools.scaffold import (
 	blocks,
 	context,
@@ -724,13 +725,15 @@ def profile_templates(root: Path, cfg: dict, profile_dir: Path | None) -> Path |
 def check_overrides(templates: Path | None, entries: list[manifest.Entry]) -> None:
 	"""Each file in the profile's ``templates/`` replaces an overridable template or is an
 	``[[extra-files]]`` template; anything else is exit 2 naming it (§8.1), and so is a symlink
-	anywhere in it (``rendering.template_files``)."""
+	anywhere in it (``rendering.template_files``). An overridable entry whose template ends in
+	``/`` (the README blocks, ``readme/``) renders several, and each one under it may be replaced."""
 	if templates is None:
 		return
 	allowed = {e.template for e in entries if e.template and (e.overridable or e.profile_template)}
+	folders = tuple(t for t in allowed if t.endswith("/"))
 	for path in rendering.template_files(templates):
 		rel = path.relative_to(templates).as_posix()
-		if rel not in allowed:
+		if rel not in allowed and not (folders and rel.startswith(folders)):
 			raise ConfigError(
 				f"the profile's templates/{rel} overrides no overridable template and no [[extra-files]] entry"
 				" names it (tool configs, merged keys and caller workflows change through parameters)"
@@ -922,6 +925,10 @@ def _validate_seed(plan: Plan, entry: manifest.Entry, path: str, current: str) -
 		doc = _json(current, path)
 		if not isinstance(doc, dict) or not isinstance(doc.get("."), str):
 			out.append(Item(path, "seed", current, current, 'must be {".": "<version>"}', INVALID))
+	elif entry.handler == "semgrep-baseline":
+		# N5's marketplace/semgrep-baseline.json (§2.21): its shape here, its counts in L7.
+		for problem in baseline.problems(current):
+			out.append(Item(path, "seed", current, current, problem, INVALID))
 	return out
 
 
@@ -1061,6 +1068,12 @@ def _entry_item(
 	elif strategy == "blocks" and entry.handler == "gitignore":
 		body = data_path("templates/gitignore.block").read_text()
 		out.append(item(blocks.gitignore(current, body, path)))
+	elif strategy == "blocks" and entry.handler == "readme":
+		# N5's README blocks (§2.19): a wrong or missing marker is the app's to fix (exit 2).
+		try:
+			out.append(item(readme.render(root, ctx, current, templates, path)))
+		except ConfigError as e:
+			out.append(Item(path, strategy, current, current, str(e), INVALID))
 	elif strategy == "blocks" and entry.handler == "init-py":
 		wanted, offending = blocks.init_py(current, plan.version)
 		out.append(item(wanted))
@@ -1251,6 +1264,12 @@ def _retract(plan: Plan, entry: manifest.Entry, path: str, templates: Path | Non
 		return Item(
 			path, entry.strategy, current, wanted, "the version block's markers go with releases", DRIFT
 		)
+	if entry.strategy == "blocks" and entry.handler == "readme":
+		if not readme.has_markers(current) or not _was_on(plan, entry):
+			return None
+		return Item(
+			path, entry.strategy, current, readme.strip(current), "the README blocks go with readme", DRIFT
+		)
 	if entry.strategy == "seed":
 		# A seed is the app's from the moment it exists: left, and said so on the run that
 		# turns its module off (a file sync never seeded is the app's all along).
@@ -1295,7 +1314,9 @@ def _absent(plan: Plan, entry: manifest.Entry, path: str, templates: Path | None
 	"""An entry whose module is on but whose ``when`` is false: delete the file only when
 	sync wrote it as it is."""
 	current = read(plan.root, path)
-	if current is None:
+	if current is None or entry.strategy == "blocks":
+		# A blocks file is the app's own (README.md): only the blocks are sync's, and they wait
+		# for the condition (a listing) to hold again.
 		return None
 	if entry.strategy == "whole" and _spa_config(plan.ctx, path, current):
 		# A Vite app's own tsconfig where sync renders none (no browser, desk or scripts

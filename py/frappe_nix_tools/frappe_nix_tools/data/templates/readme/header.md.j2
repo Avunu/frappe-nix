@@ -1,0 +1,35 @@
+{# The README header (spec §2.19): logo, title, tagline, badges, hero screenshot. #}
+<div align="center">
+
+{% if readme.logo %}
+<img src="{{ readme.logo }}" width="80" alt="">
+
+{% endif %}
+# {{ title }}
+
+{% if tagline %}
+{{ tagline }}
+
+{% endif %}
+{% if readme.ci_badge %}
+[![CI](https://github.com/{{ repo }}/actions/workflows/ci.yml/badge.svg?branch={{ branches.integration }})](https://github.com/{{ repo }}/actions/workflows/ci.yml)
+{% endif %}
+{% if readme.release_badge %}
+[![Latest release](https://img.shields.io/github/v/release/{{ repo }})](https://github.com/{{ repo }}/releases)
+{% endif %}
+[![License: {{ readme.license }}]({{ readme.license_badge }})](license.txt)
+[![Frappe v{{ frappe.major }}]({{ readme.frappe_badge }})](https://github.com/frappe/frappe/tree/{{ frappe.branch }})
+{% for badge in readme.badges %}
+[![{{ badge.label }}]({{ badge.image }})]({{ badge.link }})
+{% endfor %}
+{% if readme.hero %}
+
+<picture>
+{% if readme.hero.dark %}
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/{{ readme.hero.name }}-dark.webp">
+{% endif %}
+  <img src="docs/screenshots/{{ readme.hero.name }}-{{ 'light' if readme.hero.light else 'dark' }}.webp" alt="{{ readme.hero.alt }}">
+</picture>
+{% endif %}
+
+</div>

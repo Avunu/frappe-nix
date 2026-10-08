@@ -35,4 +35,6 @@ repository), `siteFlag` (sets `$SITE_FLAG`), `offlineMigrateEnv`,
 | File | Owner |
 | --- | --- |
 | `frappe-test.nix`, `frappe-rename-app.nix` | N1 |
-| `frappe-demo.nix`, `frappe-shots.nix` | N5 |
+
+`frappe-demo` and `frappe-shots` (N5) are not here: they are app standards tools
+(`lib/standards/tools/`), which only an opted-in app's shell carries.

@@ -1,0 +1,9 @@
+{# Which branch serves which Frappe major, and the apps this one needs (spec §2.19). The
+   tables come laid out as the markdown formatter prints them (readme.table). #}
+## Compatibility
+
+{{ readme.branch_table }}
+{% if readme.required %}
+
+{{ readme.requires_table }}
+{% endif %}
