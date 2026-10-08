@@ -22,7 +22,9 @@
 # 3 an environment error; 4 a capture error (navigation, timeout or a page error).
 
 SHOTS_DIR="@SHOTS_DIR@"
-FAKETIME_LIB="@FAKETIME_LIB@"
+# A literal $LIB, which the dynamic loader expands (lib/standards/tools/frappe-shots.nix).
+# shellcheck disable=SC2016
+FAKETIME_LIB='@FAKETIME_LIB@'
 
 fail() {
   echo "frappe-shots: $2" >&2

@@ -265,7 +265,7 @@ PY
   dev "$app" frappe-demo --fresh --site "$SITE" 2>&1 | tee "$WORK/demo-erpnext.log"
   endgroup
   company="$(dev "$app" bash -c "cd \"\$FRAPPE_BENCH_ROOT\" && bench --site $SITE execute frappe.db.get_value --args '[\"Company\", {\"company_name\": \"Example Demo\"}, \"abbr\"]'" | tail -n 1)"
-  [ "$company" = '"ED"' ] || fail "no company Example Demo (ED) after frappe-demo with erpnext: $company"
+  [ "$company" = ED ] || [ "$company" = '"ED"' ] || fail "no company Example Demo (ED) after frappe-demo with erpnext: $company"
   ok "with erpnext installed, the company is demo.company-name (Example Demo, ED)"
 }
 

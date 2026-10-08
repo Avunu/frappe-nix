@@ -41,6 +41,17 @@ let
     '';
   };
 
+  # libfaketime for Nix-built processes only. LD_PRELOAD reaches every process the bench
+  # starts, host binaries too (a `#!/usr/bin/env` shebang on a CI runner), and this
+  # libfaketime needs Nix's glibc: loaded into the host's, it fails the process. So the
+  # preload names `<dir>/$LIB/libfaketime.so.1`: Nix's ld.so expands $LIB to `lib` and finds
+  # it, a multiarch host's to `lib/x86_64-linux-gnu`, where there is nothing, and it only
+  # warns that the object cannot be preloaded.
+  faketime = pkgs.runCommand "frappe-shots-faketime" { } ''
+    mkdir -p "$out/lib"
+    ln -s ${pkgs.libfaketime}/lib/libfaketime.so.1 "$out/lib/libfaketime.so.1"
+  '';
+
   fonts = pkgs.makeFontsConf {
     fontDirectories = [
       pkgs.inter
@@ -68,7 +79,7 @@ let
     text =
       builtins.replaceStrings
         [ "@SHOTS_DIR@" "@FAKETIME_LIB@" ]
-        [ "${engine}" "${pkgs.libfaketime}/lib/libfaketime.so.1" ]
+        [ "${engine}" "${faketime}/$LIB/libfaketime.so.1" ]
         (builtins.readFile ../../sh/frappe-shots.sh);
     passthru = { inherit engine; };
     meta.description = "Take repeatable screenshots of a Frappe app's demo site and compare them with the committed ones";
