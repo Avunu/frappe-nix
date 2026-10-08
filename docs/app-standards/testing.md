@@ -1,7 +1,7 @@
 ---
 title: Testing
 description: "frappe-test: the app's tests with coverage, the whitelist and hook test map, the composition check and CI mode."
-order: 2
+order: 3
 tags: [app-standards, testing, coverage, frappe-test]
 updated: 2026-10-07
 ---
