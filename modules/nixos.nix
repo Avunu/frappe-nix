@@ -209,11 +209,16 @@ let
   # which is off by default, and pulling it in for every deployment to serve an
   # opt-in feature is not worth the closure. Consumers that enable backup
   # encryption add pkgs.gnupg via extraPath.
+  #
+  # file(1) is here for the same reason: `bench restore` (and anything else
+  # Frappe runs through a shell) calls it to identify the archive. Without it a
+  # site restore fails with "file: command not found" on any deployment.
   servicePath = [
     pkgs.git
     pkgs.gzip
     pkgs.gnutar
     pkgs.bash
+    pkgs.file
     cfg.database.package
   ]
   ++ cfg.extraPath;
@@ -949,6 +954,11 @@ let
     in
     pkgs.writeShellScriptBin "bench" ''
       set -euo pipefail
+
+      # `bench restore` shells out to file(1) to sniff the archive type. The
+      # wrapper runs under the caller's PATH (a root shell has no pkgs.file on
+      # it), so put file on the front rather than relying on the system PATH.
+      export PATH="${lib.makeBinPath [ pkgs.file ]}:$PATH"
 
       ${optionalString (singleSite != null) ''
         export FRAPPE_SITE=''${FRAPPE_SITE:-${singleSite}}
