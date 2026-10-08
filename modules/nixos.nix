@@ -213,12 +213,18 @@ let
   # file(1) is here for the same reason: `bench restore` (and anything else
   # Frappe runs through a shell) calls it to identify the archive. Without it a
   # site restore fails with "file: command not found" on any deployment.
+  #
+  # node is the bench's own Node, which Frappe calls by bare name (website
+  # theme generation runs `node generate_bootstrap_theme.js`, so `migrate`
+  # fails without it). Taking it from the bench package keeps it the same
+  # version the socket.io and asset builds were made with.
   servicePath = [
     pkgs.git
     pkgs.gzip
     pkgs.gnutar
     pkgs.bash
     pkgs.file
+    (pkgNodejs cfg.package)
     cfg.database.package
   ]
   ++ cfg.extraPath;
@@ -955,10 +961,13 @@ let
     pkgs.writeShellScriptBin "bench" ''
       set -euo pipefail
 
-      # `bench restore` shells out to file(1) to sniff the archive type. The
-      # wrapper runs under the caller's PATH (a root shell has no pkgs.file on
-      # it), so put file on the front rather than relying on the system PATH.
-      export PATH="${lib.makeBinPath [ pkgs.file ]}:$PATH"
+      # `bench restore` shells out to file(1) to sniff the archive type, and
+      # `migrate` runs the bench's node by bare name. The wrapper runs under the
+      # caller's PATH (a root shell has neither on a usable path for the frappe
+      # user — node in particular can resolve to a directory it cannot execute,
+      # which is the EACCES from website_theme), so put both on the front
+      # rather than relying on the caller's PATH.
+      export PATH="${lib.makeBinPath [ pkgs.file (pkgNodejs pkg) ]}:$PATH"
 
       ${optionalString (singleSite != null) ''
         export FRAPPE_SITE=''${FRAPPE_SITE:-${singleSite}}
