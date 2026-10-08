@@ -574,6 +574,49 @@ check(
 const [newer] = aged("bench-newer", new Date("2021-01-01"), new Date("2020-01-01"));
 check("a Vite file newer than esbuild's takes the key", expected["foo.bundle.js"], keysOf(newer)["foo.bundle.js"]);
 
+// Two manifests naming the same key: Vite 4's dist/manifest.json left beside
+// Vite 5's dist/.vite/manifest.json (an emptyOutDir: false build keeps both).
+// The newer file wins, whichever manifest is read last; the other is skipped.
+const twoManifests = (name, oldTime, newTime) => {
+  const bench = makeBench(name);
+  const dist = path.join(bench, "apps/spa/spa/public/dist");
+  vwrite(
+    `${name}/apps/spa/spa/public/dist/manifest.json`,
+    manifest({ "src/foo.entry.ts": { file: "js/foo.bundle.V4old1.js", isEntry: true, css: ["css/foo.bundle.V4css1.css"] } })
+  );
+  vwrite(`${name}/apps/spa/spa/public/dist/js/foo.bundle.V4old1.js`, "v4();\n");
+  vwrite(`${name}/apps/spa/spa/public/dist/css/foo.bundle.V4css1.css`, ".v4{}\n");
+  for (const file of ["js/foo.bundle.V4old1.js", "css/foo.bundle.V4css1.css"]) {
+    fs.utimesSync(path.join(dist, file), oldTime, oldTime);
+  }
+  for (const file of ["js/foo.bundle.AbC123.js", "css/foo.bundle.XyZ789.css"]) {
+    fs.utimesSync(path.join(dist, file), newTime, newTime);
+  }
+  return [bench, viteRun(bench, { apps: ["spa"] })];
+};
+const [v5wins, v5run] = twoManifests("bench-two-v5", new Date("2020-01-01"), new Date("2021-01-01"));
+check(
+  "a stale dist/manifest.json does not beat a newer dist/.vite/manifest.json for the same key, and is logged as skipped",
+  [0, expected["foo.bundle.js"], expected["foo.bundle.css"], true, true],
+  [
+    v5run.status,
+    keysOf(v5wins)["foo.bundle.js"],
+    keysOf(v5wins)["foo.bundle.css"],
+    v5run.stdout.includes("vite-register: spa: skipping js/foo.bundle.V4old1.js: js/foo.bundle.AbC123.js is newer"),
+    v5run.stdout.includes("vite-register: spa: skipping css/foo.bundle.V4css1.css: css/foo.bundle.XyZ789.css is newer"),
+  ]
+);
+const [v4wins, v4run] = twoManifests("bench-two-v4", new Date("2021-01-01"), new Date("2020-01-01"));
+check(
+  "the read order does not decide: when dist/manifest.json names the newer file, it takes the key",
+  ["/assets/spa/dist/js/foo.bundle.V4old1.js", "/assets/spa/dist/css/foo.bundle.V4css1.css", true],
+  [
+    keysOf(v4wins)["foo.bundle.js"],
+    keysOf(v4wins)["foo.bundle.css"],
+    v4run.stdout.includes("vite-register: spa: skipping js/foo.bundle.AbC123.js: js/foo.bundle.V4old1.js is newer"),
+  ]
+);
+
 // lib/js/vite-register.cjs's own entry points.
 const vr = require(path.join(path.dirname(preload), "vite-register.cjs"));
 check(
