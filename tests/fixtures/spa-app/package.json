@@ -1,0 +1,9 @@
+{
+	"name": "spa-app",
+	"version": "16.0.0",
+	"private": true,
+	"description": "The app frappe-nix's asset self-tests build",
+	"scripts": {
+		"build": "node build.mjs && node scripts/vite-register.mjs"
+	}
+}

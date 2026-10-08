@@ -1,0 +1,1 @@
+{ "name": "docs-app", "private": true, "scripts": { "build": "cd frontend && yarn build" } }
