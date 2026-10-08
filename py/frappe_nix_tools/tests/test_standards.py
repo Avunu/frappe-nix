@@ -652,6 +652,25 @@ class TestRetireByFunction(AppCase):
 		self.commit()
 		self.assertNotIn("(retire)", self.check()[1])
 
+	def test_a_tracked_file_in_an_unmanaged_directory_is_not_retired(self):
+		"""Sync never reads node_modules/ or .venv/: a force-added file there that a ``**`` rule
+		matches is not a legacy file, and the rest of the app is still checked."""
+		self.synced()
+		self.write("node_modules/x/requirements.txt", "# none\n")
+		self.write(".venv/lib/requirements.txt", "# none\n")
+		self.write("sub/requirements.txt", "# none\n")
+		git(self.root, "add", "-f", "node_modules/x/requirements.txt", ".venv/lib/requirements.txt")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("sub/requirements.txt (retire): legacy file", out)
+		self.assertNotIn("node_modules", out)
+		self.assertNotIn(".venv", out)
+		git(self.root, "rm", "-q", "sub/requirements.txt")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 0, out)
+
 	def test_the_profiles_rule(self):
 		write_profile(self.root)
 		self.write(".github/workflows/check.yml", "name: check\n")
