@@ -32,13 +32,44 @@
 #     history of commits and folders, but no file contents
 #     (--filter=blob:none): `git log`, `git log -- <file>` and merge-bases work
 #     offline, and a checkout downloads only the files it needs;
-#   - every other branch is fetched as commits only (tree:0, which then stays
-#     the clone's filter), so `git switch <any branch>` works and downloads
-#     that branch's folders and files when it is switched to.
+#   - every other branch is fetched the same way, so `git switch <any branch>`
+#     works and downloads only the files it needs.
+#
+# Not commits-only (tree:0) for those other branches, which is what this once
+# did. A treeless clone has no folders for any commit, so everything that
+# walks history — `git log -p` or `git log -- <path>` in an editor's history
+# view, `git blame`, `git diff` across a range — fetches them one commit at a
+# time, each as a pack of its own with the folders the last one already had
+# repeated in it. Measured on a 12k-object repo, a handful of such commands
+# left 345 packs holding 1.9x the objects there were.
+#
+# Two more things keep a partial clone from growing without bound, because
+# git does neither:
+#
+#   - the pinned commit is fetched, the ordinary way, before anything can ask
+#     git for a commit the clone lacks (prefetch_pin). `git submodule update`
+#     to a pin the clone has not got first asks the clone for it, and a
+#     partial clone answers with a lazy fetch that negotiates nothing — no
+#     "have" lines — so the remote sends the commit's whole history over
+#     again. One of those is a clone's worth of data: for erpnext, 1.5 GB per
+#     pin bump, thirty times in a week, 48 GB in all. Measured, the same
+#     update adds nothing to a full clone and 206 objects to a shallow one,
+#     but 11,800 to a partial clone of 11,400 objects (blobless or treeless
+#     alike); with the pin fetched first it adds 27;
+#   - the clone's packs are merged where they are alike in size (tidy_packs).
+#     Every lazy fetch is a pack, and the `git maintenance run --auto` that a
+#     fetch starts does not merge them in a partial clone: 383 packs stayed
+#     383, where a geometric repack takes them to 2 with the same objects. Not
+#     `git gc --auto`, which does the same but counts packs and not bytes, and
+#     so leaves a few giant duplicates alone until there are fifty.
 #
 # An app already checked out shallow, or following a single branch — every
 # clone made before this — is brought to the same shape in place, once: the
-# checkout does not move, only history is fetched. See needs_history.
+# checkout does not move, only history is fetched. See needs_history. A clone
+# an earlier frappe-nix made treeless keeps the commits it has without their
+# folders, and gets folders for the ones it fetches from now on (see
+# stop_treeless); `git fetch --refetch` in the app fills in the rest, at the
+# price of downloading its history again.
 #
 # Every one of these clones is set never to recurse into submodules on fetch.
 # An app with submodules of its own (hrms has frontend/frappe-ui) otherwise
@@ -119,16 +150,76 @@ pkgs.writeShellApplication {
         || git -C "$1" config fetch.recurseSubmodules false
     }
 
-    # Every branch, commits only, from here on. The refspec goes into the
-    # config only once the fetch has worked, so a clone the fetch failed on
-    # still reads as needing it (see needs_history) and the next entry retries.
+    # Every branch, with its folders but no file contents, from here on. The
+    # refspec goes into the config only once the fetch has worked, so a clone
+    # the fetch failed on still reads as needing it (see needs_history) and the
+    # next entry retries.
     track_all_branches() { # <path>
-      local args=(--filter=tree:0 --no-recurse-submodules)
+      local args=(--filter=blob:none --no-recurse-submodules)
       if is_shallow "$1"; then args+=(--unshallow); fi
       git -C "$1" fetch -q "''${args[@]}" origin '+refs/heads/*:refs/remotes/origin/*' < /dev/null || return 1
       git -C "$1" config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-      git -C "$1" config remote.origin.partialclonefilter tree:0
+      git -C "$1" config remote.origin.partialclonefilter blob:none
       no_submodule_fetch "$1"
+    }
+
+    is_partial() { # <path>
+      [ "$(git -C "$1" config --get remote.origin.promisor 2>/dev/null)" = true ]
+    }
+
+    # A clone an earlier frappe-nix made treeless fetches folders along with
+    # commits from now on (see the header). Config only: nothing is downloaded
+    # here, and the commits it already has stay as they are. A filter someone
+    # set there by hand to anything but tree:0 stands.
+    stop_treeless() { # <path>
+      [ "$(git -C "$1" config --get remote.origin.partialclonefilter 2>/dev/null)" = tree:0 ] || return 0
+      git -C "$1" config remote.origin.partialclonefilter blob:none
+    }
+
+    # The commit the bench records for an app.
+    pinned_commit() { # <path>
+      git ls-files -s -- "$1" 2>/dev/null \
+        | awk -v p="$1" '$1 == "160000" && $4 == p { print $2 }'
+    }
+
+    # Whether a commit is on disk, without the lazy fetch a partial clone would
+    # make to answer the question — which is the whole reason to ask.
+    have_commit() { # <path> <commit>
+      GIT_NO_LAZY_FETCH=1 git -C "$1" cat-file -e "$2^{commit}" 2> /dev/null
+    }
+
+    # Fetch the commit the bench records, the ordinary way, when the clone lacks
+    # it; see the header for what asking a partial clone for it costs
+    # otherwise. An ordinary fetch negotiates, so what comes down is the commits
+    # since the clone's last one. Asked on every entry, because a pin moves
+    # under a clone with a `git pull` of the bench, which changes nothing the
+    # shell watches and so does not re-enter it; the next entry is the first
+    # chance to fetch it before `git submodule update` is run. A fetch that
+    # fails (offline, a pin the remote no longer has) is reported and leaves
+    # the clone as it was.
+    prefetch_pin() { # <path>
+      local pin
+      pin="$(pinned_commit "$1")"
+      [ -n "$pin" ] || return 0
+      have_commit "$1" "$pin" && return 0
+      timeout 300 git -C "$1" fetch -q --no-recurse-submodules origin "$pin" < /dev/null > /dev/null 2>&1 \
+        || echo "frappe-nix: could not fetch ''${1}'s pinned commit ''${pin:0:12} — 'git submodule update' on it will download the app's whole history again" >&2
+    }
+
+    # Merge a partial clone's packs where they are alike in size. git's own
+    # background maintenance does not (see the header), and `gc --auto` counts
+    # packs, not bytes: five repeats of a 1.5 GB download are five packs, well
+    # under its limit of 50, and 7.5 GB. A geometric repack keeps each pack at
+    # least twice the size of the next smaller, so packs of one size — what a
+    # repeated download is — are merged, and the objects they share are stored
+    # once; when they already are in that shape it does nothing, so asking on
+    # every entry costs a directory listing. More than one pack to look at, or
+    # not at all.
+    tidy_packs() { # <path>
+      local packs
+      packs="$(find "$(git -C "$1" rev-parse --git-path objects/pack)" -name '*.pack' 2> /dev/null | wc -l)"
+      [ "$packs" -gt 1 ] || return 0
+      git -C "$1" maintenance run --quiet --task=geometric-repack < /dev/null > /dev/null 2>&1 || true
     }
 
     # The clone the first entry makes (see the header), at the pinned commit.
@@ -150,6 +241,9 @@ pkgs.writeShellApplication {
         git clone -q --no-checkout --filter=blob:none --single-branch -- "$url" "$1" < /dev/null || return 1
       fi
       git submodule absorbgitdirs -- "$1" > /dev/null || return 1
+      # The pin is usually on another branch than the one just cloned, and
+      # `submodule update` asks the clone for it before it fetches anything.
+      prefetch_pin "$1"
       git submodule update --force -- "$1" < /dev/null >&2 || return 1
       track_all_branches "$1" || echo "frappe-nix: $1 is checked out, but its other branches could not be fetched; the next shell entry tries again" >&2
     }
@@ -255,14 +349,18 @@ pkgs.writeShellApplication {
     done
 
     for app in "''${checked[@]}"; do
-      # A clone made treeless by a frappe-nix from before no_submodule_fetch.
-      if [ "$(git -C "apps/$app" config --get remote.origin.partialclonefilter 2>/dev/null)" = tree:0 ]; then
+      if is_partial "apps/$app"; then
+        # A clone made treeless by a frappe-nix from before no_submodule_fetch,
+        # or from before folders were fetched for every branch.
         no_submodule_fetch "apps/$app"
+        stop_treeless "apps/$app"
+        prefetch_pin "apps/$app"
+        tidy_packs "apps/$app"
       fi
       needs_history "apps/$app" || continue
       name="$(name_of "apps/$app")"
       echo "frappe-nix: apps/$app is a shallow or single-branch clone — fetching its branch's history" >&2
-      echo "  (commits and folders, no file contents) and every branch's commits, once. This can take a while." >&2
+      echo "  (commits and folders, no file contents) and every branch's, once. This can take a while." >&2
       add_history "apps/$app" "$name" \
         || echo "frappe-nix: could not fetch apps/$app's history — the next shell entry tries again" >&2
     done

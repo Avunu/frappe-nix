@@ -15,8 +15,14 @@ trap 'rm -rf "$ROOT"' EXIT
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-# Submodule operations on file:// URLs are refused by default.
-export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+# Submodule operations on file:// URLs are refused by default. Every fetch keeps
+# its pack (git unpacks one under 100 objects into loose ones, where a repeated
+# download would overwrite itself and leave nothing to count), and a gc runs in
+# the foreground, where there is something to look at when it is done.
+export GIT_CONFIG_COUNT=3
+export GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+export GIT_CONFIG_KEY_1=transfer.unpackLimit GIT_CONFIG_VALUE_1=1
+export GIT_CONFIG_KEY_2=gc.autoDetach GIT_CONFIG_VALUE_2=false
 
 fails=0
 ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -48,12 +54,12 @@ has_obj() { # <repo> <object>
 }
 
 # The shape the first entry gives a clone: partial, not shallow, every branch
-# of origin fetched, and commits only from here on.
+# of origin fetched, and folders but no file contents from here on.
 partial_all_branches() { # <path>
   [ "$(git -C "$1" config remote.origin.promisor)" = true ] \
     && [ "$(git -C "$1" rev-parse --is-shallow-repository)" = false ] \
     && [ "$(git -C "$1" config --get-all remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ] \
-    && [ "$(git -C "$1" config remote.origin.partialclonefilter)" = tree:0 ] \
+    && [ "$(git -C "$1" config remote.origin.partialclonefilter)" = blob:none ] \
     && git -C "$1" rev-parse -q --verify refs/remotes/origin/version-x > /dev/null
 }
 
@@ -191,7 +197,10 @@ check "the git dir is under .git/modules, as git's own submodule clone puts it" 
 # origin/develop is a commit past the pin, so nothing of it was checked out.
 check "the paired branch has its folders past the checkout…" has_obj apps/present 'origin/develop^{tree}'
 check_not "…but not their file contents" has_obj apps/present 'origin/develop:present/develop/log.txt'
-check_not "another branch has its commits but not its folders" has_obj apps/present 'origin/version-x^{tree}'
+# Not commits only (tree:0): a clone without folders fetches them one commit at
+# a time, in a pack apiece, for anything that walks history.
+check "another branch has its folders too…" has_obj apps/present 'origin/version-x^{tree}'
+check_not "…but not their file contents" has_obj apps/present 'origin/version-x:present/version-x/log.txt'
 check "and switching to it downloads what it needs" git -C apps/present switch -q version-x
 check "…files and all" test -f apps/present/present/version-x/log.txt
 git -C apps/present switch -q --detach "$(git ls-files -s -- apps/present | awk '{ print $2 }')"
@@ -282,24 +291,130 @@ cd "$ROOT/nestclone"
 run
 check_eq "exits 0" 0 "$RC"
 check "checks it out as a partial clone of every branch" partial_all_branches apps/nested
-check_not "…without fetching another branch's folders to look for submodule changes" \
-  has_obj apps/nested 'origin/version-x^{tree}'
-check_eq "…nor on a later fetch, which the clone is set up not to recurse on" \
+check_eq "…set not to recurse into submodules on fetch" \
   false "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+# A clone an earlier frappe-nix made: commits without their folders, which is
+# where the on-demand check is a lazy fetch per commit.
+git -C apps/nested config remote.origin.partialclonefilter tree:0
 commit_to nested version-x "version-x 3"
 git -C apps/nested fetch -q
-check_not "…so a plain git fetch in it does not fetch them either" \
+check_not "…so a plain git fetch in a clone made treeless does not fetch folders to look for submodule changes" \
   has_obj apps/nested 'origin/version-x^{tree}'
 # A clone converted before the setting existed.
 git -C apps/nested config --unset fetch.recurseSubmodules || true
 run
 check_eq "an existing treeless clone gets the setting on the next entry" \
   false "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+check_eq "…and folders along with the commits it fetches from now on" \
+  blob:none "$(git -C apps/nested config --get remote.origin.partialclonefilter)"
 check_eq "…silently" "" "$OUT"
 git -C apps/nested config fetch.recurseSubmodules on-demand
 run
 check_eq "but one set by hand is left as it is" \
   on-demand "$(git -C apps/nested config --get fetch.recurseSubmodules)"
+
+echo "── a pin the clone does not have ────────────────────────────────"
+# `git submodule update` to a pin a partial clone lacks first asks the clone for
+# it. The answer is a lazy fetch that negotiates nothing, so the remote sends
+# the commit's whole history again — a clone's worth of data per pin bump (48 GB
+# of erpnext in a week). Entry fetches the pin the ordinary way first.
+pack_entries() { # <git dir> — object entries across all of its packs
+  local n=0 i
+  for i in "$1"/objects/pack/*.idx; do n=$((n + $(git show-index < "$i" | wc -l))); done
+  echo "$n"
+}
+bump_pin() { # <app> — point the bench at the remote's develop tip
+  git update-index --cacheinfo "160000,$(git -C "$ROOT/remotes/$1.git" rev-parse develop),apps/$1"
+}
+seed_remote pins
+for i in $(seq 40); do commit_to pins develop "develop 1$i"; done
+mkdir -p "$ROOT/pinbench/apps"
+cd "$ROOT/pinbench"
+git init -q -b main
+git submodule add -q -b develop "file://$ROOT/remotes/pins.git" apps/pins
+git commit -q -m bench
+git clone -q "$ROOT/pinbench" "$ROOT/pinclone"
+git clone -q "$ROOT/pinbench" "$ROOT/pincontrol"
+for c in pinclone pincontrol; do
+  cd "$ROOT/$c"
+  run
+done
+GD=.git/modules/apps/pins
+
+# The control: what git does by itself, with no entry in between.
+cd "$ROOT/pincontrol"
+for i in 1 2 3 4 5; do commit_to pins develop "develop 2$i"; done
+bump_pin pins
+before="$(pack_entries $GD)"
+git submodule update -q -- apps/pins
+raw=$(($(pack_entries $GD) - before))
+echo "  · (git alone: a submodule update to a new pin adds $raw object entries to a clone of $before)"
+
+cd "$ROOT/pinclone"
+bump_pin pins
+before="$(pack_entries $GD)"
+run
+check_eq "exits 0" 0 "$RC"
+check "entry fetches the pin the clone lacked" has_obj apps/pins "$(git ls-files -s -- apps/pins | awk '{ print $2 }')"
+check "…and says nothing about it" silent_on "pinned commit"
+git submodule update -q -- apps/pins
+added=$(($(pack_entries $GD) - before))
+check "a submodule update to it then lands on the pin" at_pin pins
+# The history is 45 commits and, with their folders, over 180 objects: what a
+# lazy fetch of the pin sends. What is new is 5 commits and their folders.
+check "…and adds only what is new ($added object entries; git alone added $raw)" \
+  test "$added" -lt 60
+if [ "$raw" -lt 60 ]; then
+  echo "  · note: git alone no longer re-downloads the history for a new pin; prefetch_pin may be unneeded"
+fi
+# Offline, or a remote that no longer has the pin: said, and the clone left alone.
+for i in 1 2 3; do commit_to pins develop "develop 3$i"; done
+bump_pin pins
+mv "$ROOT/remotes/pins.git" "$ROOT/remotes/pins.git.away"
+before="$(pack_entries $GD)"
+run
+check_eq "exits 0 when the remote cannot be reached" 0 "$RC"
+check "…says the pin could not be fetched" says "could not fetch apps/pins's pinned commit"
+check "…and the history it would cost" says "download the app's whole history again"
+check_eq "…leaving the clone's packs as they were" "$before" "$(pack_entries $GD)"
+mv "$ROOT/remotes/pins.git.away" "$ROOT/remotes/pins.git"
+run
+check "the next entry fetches it" has_obj apps/pins "$(git ls-files -s -- apps/pins | awk '{ print $2 }')"
+
+echo "── a clone that took the repeated download ──────────────────────"
+# pincontrol ran `git submodule update` on its own, above: the history again, as
+# a pack beside the one it was already in.
+cd "$ROOT/pincontrol"
+unique() { GIT_NO_LAZY_FETCH=1 git -C apps/pins cat-file --batch-all-objects --batch-check='%(objectname)' 2> /dev/null | wc -l | tr -d ' '; }
+u="$(unique)"
+entries="$(pack_entries $GD)"
+check "(it holds more object entries than objects: $entries for $u)" test "$entries" -gt $((u + u / 5))
+run
+check_eq "exits 0" 0 "$RC"
+check "an entry merges the repeat away: $(pack_entries $GD) entries" test "$(pack_entries $GD)" -le $((u + u / 10))
+check_eq "…keeping every object" "$u" "$(unique)"
+check_eq "…silently" "" "$OUT"
+
+echo "── a partial clone with many packs ──────────────────────────────"
+# Every lazy fetch is a pack of its own. The `git maintenance run --auto` that a
+# fetch starts does not merge them in a partial clone.
+cd "$ROOT/pinclone"
+for i in 1 2 3 4 5 6 7; do
+  commit_to pins version-x "version-x 4$i"
+  git -C apps/pins fetch -q
+done
+packs() { find "$GD/objects/pack" -name '*.pack' | wc -l | tr -d ' '; }
+objects() { git -C apps/pins rev-list --all --objects --missing=allow-promisor | wc -l | tr -d ' '; }
+check "(a pack per fetch piles up)" test "$(packs)" -gt 4
+objs_before="$(objects)"
+run
+check_eq "exits 0" 0 "$RC"
+check "an entry consolidates them" test "$(packs)" -le 4
+check_eq "…without losing an object" "$objs_before" "$(objects)"
+check_eq "…silently" "" "$OUT"
+git -C apps/pins config remote.origin.partialclonefilter 'blob:limit=1k'
+run
+check_eq "a filter set by hand is left as it is" 'blob:limit=1k' "$(git -C apps/pins config --get remote.origin.partialclonefilter)"
 
 echo "── not a bench ──────────────────────────────────────────────────"
 mkdir -p "$ROOT/empty"
