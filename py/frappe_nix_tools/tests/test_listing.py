@@ -319,14 +319,14 @@ class TestBaseline(ListingCase):
 		fake_uv.chmod(0o755)
 		which = {"semgrep": None, "uv": str(fake_uv)}
 		with mock.patch.object(baseline.shutil, "which", side_effect=lambda name: which.get(name)):
-			env = baseline._semgrep_on_path(odd, odd / "shim", "1.0.0")
+			env = baseline._semgrep_on_path(odd, odd / "shim", "1.0.0", "3.14")
 		env["PATH"] = f"{odd / 'shim'}{os.pathsep}{bin_dir}{os.pathsep}{env['PATH']}"
 		out = subprocess.run(
 			["semgrep", "--version"], env=env, capture_output=True, text=True, check=True, cwd=odd
 		)
 		self.assertEqual(
 			json.loads(out.stdout),
-			["run", "--frozen", "--project", str(odd / "tools"), "semgrep", "--version"],
+			["run", "--frozen", "--python", "3.14", "--project", str(odd / "tools"), "semgrep", "--version"],
 		)
 		self.assertFalse((odd / "pwned").exists())
 
