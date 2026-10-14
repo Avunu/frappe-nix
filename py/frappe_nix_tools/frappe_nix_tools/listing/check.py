@@ -63,7 +63,7 @@ def l7(t: Target, outcome: Outcome, *, release: bool) -> None:
 	tree, rev = marketplace_tree(t)
 	outcome.marketplace_rev = rev
 	floor = manifest.load().floors.get("uv", {}).get("semgrep", "1.179.0")
-	blocking, advisory, log = baseline.scan(t.root, t.name, tree, floor)
+	blocking, advisory, log = baseline.scan(t.root, t.name, tree, floor, t.ctx.frappe.python)
 	outcome.semgrep_log = log
 	outcome.blocking, outcome.advisory = blocking, advisory
 	entries = baseline.load(t.root)

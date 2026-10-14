@@ -187,17 +187,24 @@ def export(root: Path, dest: Path) -> None:
 			shutil.copy2(src, target)
 
 
-def _semgrep_on_path(root: Path, shim: Path, floor: str) -> dict[str, str]:
+def _semgrep_on_path(root: Path, shim: Path, floor: str, python: str) -> dict[str, str]:
 	"""The environment the scan runs in: ``semgrep`` on PATH, from PATH itself, else the app's
-	``tools/`` project when it pins semgrep, else ``uvx`` at the floor version."""
+	``tools/`` project when it pins semgrep, else ``uvx`` at the floor version. Both run on
+	``python`` (the preset's): ``requires-python`` is only a floor, and uv would otherwise take
+	the newest CPython, which a semgrep release may not run on yet (1.179.0 on 3.15)."""
 	env = dict(os.environ, EIO_BACKEND="posix")
 	if shutil.which("semgrep"):
 		return env
 	tools = root / "tools" / "pyproject.toml"
 	if tools.is_file() and "semgrep" in tools.read_text() and shutil.which("uv"):
-		command = f'exec uv run --frozen --project {shlex.quote(str(root / "tools"))} semgrep "$@"'
+		command = (
+			f"exec uv run --frozen --python {shlex.quote(python)}"
+			f' --project {shlex.quote(str(root / "tools"))} semgrep "$@"'
+		)
 	elif shutil.which("uvx"):
-		command = f'exec uvx --from {shlex.quote(f"semgrep=={floor}")} semgrep "$@"'
+		command = (
+			f'exec uvx --python {shlex.quote(python)} --from {shlex.quote(f"semgrep=={floor}")} semgrep "$@"'
+		)
 	else:
 		raise EnvError(
 			"L7 needs semgrep: it is not on PATH, and neither the app's tools/ project nor uvx can run it"
@@ -237,13 +244,15 @@ def _validator_class(marketplace: Path) -> Any:
 	return module.SemgrepValidator
 
 
-def scan(root: Path, app: str, marketplace: Path, floor: str = "1.179.0") -> tuple[list[Hit], list[Hit], str]:
+def scan(
+	root: Path, app: str, marketplace: Path, floor: str = "1.179.0", python: str = "3.14"
+) -> tuple[list[Hit], list[Hit], str]:
 	"""``(blocking, advisory, log)``: the registry's semgrep check over the tracked tree."""
 	validator_class = _validator_class(marketplace)
 	with tempfile.TemporaryDirectory(prefix="frappe-listing-") as tmp:
 		work = Path(tmp) / app
 		export(root, work)
-		env = _semgrep_on_path(root, Path(tmp) / "bin", floor)
+		env = _semgrep_on_path(root, Path(tmp) / "bin", floor, python)
 		log = io.StringIO()
 		saved = dict(os.environ)
 		os.environ.clear()
