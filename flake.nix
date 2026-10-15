@@ -476,6 +476,9 @@
           import ./tests/logging-fields.nix { inherit self pkgs; }
           # What services.frappe.migrate.offline puts in the migrate unit, on and off.
           // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
+          # What services.frappe.chromium and .wkhtmltopdf put in the units and the
+          # bench wrapper.
+          // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }
         )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -486,6 +489,7 @@
             import ./tests/socket-runtime.nix { inherit self pkgs; }
           );
           socket = pkgs.testers.runNixOSTest (import ./tests/socket.nix { inherit self pkgs; });
+          pdf-renderers = pkgs.testers.runNixOSTest (import ./tests/pdf-renderers.nix { inherit self pkgs; });
         }
         # frappe-nix's own lint and type checks, and the drift check that keeps
         # its ruff config on the pinned upstream Frappe's. See dev/.
