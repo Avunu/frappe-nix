@@ -23,7 +23,7 @@ import tempfile
 import threading
 import types
 import unittest
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Generator, Iterator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -530,7 +530,7 @@ class TestLocalRequest(unittest.IsolatedAsyncioTestCase):
 		self.addCleanup(patcher.stop)
 
 	@contextmanager
-	def _wsgi(self, status: str = "200 OK", payload: object = None) -> Iterator[dict]:
+	def _wsgi(self, status: str = "200 OK", payload: object = None) -> Generator[dict, None, None]:
 		"""Stand in for frappe.app.application; importing the real one is expensive."""
 		seen: dict = {}
 
@@ -839,7 +839,7 @@ class TestDispatch(unittest.IsolatedAsyncioTestCase):
 		entered = []
 
 		@contextmanager
-		def fake_ctx(site: str, user: str) -> Iterator[None]:
+		def fake_ctx(site: str, user: str) -> Generator[None, None, None]:
 			entered.append((site, user))
 			yield
 
