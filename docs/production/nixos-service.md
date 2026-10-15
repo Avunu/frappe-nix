@@ -3,7 +3,7 @@ title: Run Frappe as a NixOS service
 description: Deploy one or more Frappe sites on NixOS with the frappe-nix services.frappe module, including secrets, MariaDB, Redis, nginx and the units it generates.
 order: 3
 tags: [nixos, services-frappe, systemd, deployment]
-updated: 2026-10-06
+updated: 2026-10-15
 ---
 
 `nixosModules.default` is a standalone NixOS module, not a flake-parts module, for multi-tenant production deployment. Use it when you want declarative Frappe or ERPNext sites with systemd units, automatic migrations and journald logging. You build the bench package as described in [Write the flake by hand](../scaffolding/write-the-flake.md).
@@ -187,6 +187,38 @@ If a reverse proxy or tunnel connector runs on the same host and terminates TLS,
 The module refuses paths directly in `/run` or `/`, and it creates the directory owned by the service user. That directory is the access control, because nginx makes its own socket world-writable. In this mode nginx takes the client address from the `CF-Connecting-IP` header, so use it only behind a connector that sets that header. `nginx.socketPath` requires `nginx.enable`.
 
 With the default unified runtime, `socketio.port` and `socketio.socketPath` do nothing, and the module warns if you set `socketio.socketPath`. `web.workers` is ignored too, with a warning when it is not at its default of 4, because the runtime sizes web concurrency with `runtime.webThreads`. These options apply only when `runtime.enable = false`. The `socketio.socketPath` option sets a unix socket for the realtime server, needs Frappe 15.46 or newer, and removes the site's last non-loopback TCP listener in that mode.
+
+## Render PDFs
+
+Frappe renders a PDF with one of three engines, and which one depends on the print format:
+
+- **Chromium** renders print-builder formats, any format set to the `chrome` generator, and every Print Designer format.
+- **wkhtmltopdf** renders the Standard print and classic HTML print formats, unless a format names another generator.
+- **Typst** renders print-builder formats set to it. It is a Python package in the bench itself, so it needs no option here. The print builder greys it out for a format it cannot render, and the ⓘ beside **PDF Renderer** lists why.
+
+Turn on the engines your print formats use:
+
+```nix
+services.frappe.chromium.enable = true;
+services.frappe.wkhtmltopdf.enable = true;
+```
+
+Both are off by default because of their size. Chromium adds about 0.5 GiB to the system closure with the fonts below, and wkhtmltopdf about 200 MiB.
+
+### Chromium
+
+Frappe and Print Designer look for the browser at `chromium/chrome-linux/headless_shell` in the bench. When it is missing they download Google's `chrome-headless-shell` there, and that build does not run on NixOS. With `chromium.enable` on, each site's runtime bench gets a link at that path to the same browser, built for NixOS. `frappe-init-<SITE>` remakes the link on every run, and so does the `bench` wrapper. Neither writes `common_site_config.json`.
+
+> [!NOTE]
+> A `chromium_path` in `common_site_config.json` takes precedence over the link. Leave it unset to use the module's browser. To swap the browser, set `chromium.package` to another chrome-headless-shell. Full Chromium (`pkgs.chromium`) does not work here: it needs a writable home directory and leaves a profile behind for every PDF.
+
+### wkhtmltopdf
+
+Frappe runs `wkhtmltopdf` by name, through pdfkit, which finds it with `which`. `wkhtmltopdf.enable` puts both on the units' `PATH` and on the `bench` wrapper's. nixpkgs' build is the one "with patched qt", which Frappe's PDF headers and footers need.
+
+### Fonts
+
+Either option adds Liberation and Noto to `fonts.packages`. A server has no fonts unless something installs them, and Chromium leaves out text it has no font for, so the PDF comes out blank. Liberation stands in for Arial, Times New Roman and Courier New. Add the fonts your print formats name to `fonts.packages` yourself.
 
 ## Next
 

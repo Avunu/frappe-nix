@@ -227,7 +227,16 @@ let
     (pkgNodejs cfg.package)
     cfg.database.package
   ]
+  ++ wkhtmltopdfPath
   ++ cfg.extraPath;
+
+  # wkhtmltopdf, for print formats on Frappe's original PDF generator. Frappe
+  # runs it by bare name, through pdfkit, which finds it by running `which`
+  # first, so that has to be on PATH too. Unlike Chromium, nothing is linked.
+  wkhtmltopdfPath = lib.optionals cfg.wkhtmltopdf.enable [
+    cfg.wkhtmltopdf.package
+    pkgs.which
+  ];
 
   # Secret-bearing files for a site's init unit, keyed for both
   # systemd LoadCredential= and the jq merge expression below. Source files
@@ -281,6 +290,54 @@ let
       fi
     done
   '';
+
+  # Chromium, for Frappe's "chrome" PDF generator and Print Designer. Both look
+  # for it at <bench>/chromium/chrome-linux/headless_shell, where `bench
+  # setup-chrome` downloads Google's chrome-headless-shell, unless
+  # common_site_config.json names a `chromium_path`. Left to themselves they
+  # download it, and that build does not run on NixOS: it expects an FHS dynamic
+  # loader. Print Designer retries the download from a scheduler event that
+  # fires every few minutes.
+  #
+  # So link a NixOS build of it where they look. This needs nothing in
+  # common_site_config.json, which is the operator's, and an operator's own
+  # `chromium_path` still wins, since both check it first. The link is re-made
+  # on every run, so it follows the package. The directory is removed only when
+  # the binary is not already a link, which is the leftover of an earlier
+  # download, so a routine run never leaves the path missing while a running
+  # process could be looking for it.
+  #
+  # The default is the same chrome-headless-shell, patched for NixOS by nixpkgs'
+  # Playwright packaging, not pkgs.chromium. Frappe starts a browser for every
+  # PDF and stops it with SIGTERM. Full Chromium's headless mode makes a profile
+  # under ~/.config for each start, which fails outright under this module's
+  # root-owned home and, where it can write, leaves about 2 MB behind every
+  # time, since SIGTERM skips the cleanup. The headless shell writes no profile,
+  # and its closure is a quarter of the size.
+  #
+  # bin/ is added so lib.getExe finds it, as for any other chromium.package.
+  # Chromium finds its resources through /proc/self/exe, which resolves the
+  # link to the real directory.
+  chromeHeadlessShell =
+    let
+      shell = pkgs.playwright-driver.components.chromium-headless-shell;
+    in
+    pkgs.runCommand "chrome-headless-shell" { meta.mainProgram = "chrome-headless-shell"; } ''
+      mkdir -p $out/bin
+      # The directory is named for the platform: -linux64, -linux-arm64.
+      ln -s ${shell}/chrome-headless-shell-*/chrome-headless-shell $out/bin/chrome-headless-shell
+      test -x $out/bin/chrome-headless-shell
+    '';
+
+  linkChromium =
+    benchRoot:
+    optionalString cfg.chromium.enable ''
+      if [ ! -L "${benchRoot}/chromium/chrome-linux/headless_shell" ]; then
+        rm -rf "${benchRoot}/chromium"
+      fi
+      mkdir -p "${benchRoot}/chromium/chrome-linux"
+      ln -sfn ${lib.getExe cfg.chromium.package} "${benchRoot}/chromium/chrome-linux/headless_shell"
+    '';
 
   # Per-site init script: assemble runtime bench tree, link the registry and
   # assets, seed sites dir, and synthesize site_config.json (merging secrets).
@@ -354,6 +411,7 @@ let
       chmod -R u+w ${runtimeBenchDir}/config
 
       ${linkRegistry benchDir sitesPath}
+      ${linkChromium runtimeBenchDir}
 
       # common_site_config.json is the operator's after the first boot: seeded
       # once from the package if it ships one, then never touched.
@@ -966,12 +1024,16 @@ let
       # caller's PATH (a root shell has neither on a usable path for the frappe
       # user — node in particular can resolve to a directory it cannot execute,
       # which is the EACCES from website_theme), so put both on the front
-      # rather than relying on the caller's PATH.
+      # rather than relying on the caller's PATH. wkhtmltopdf too, when it is
+      # on, so a PDF rendered from here finds what the units do.
       export PATH="${
-        lib.makeBinPath [
-          pkgs.file
-          (pkgNodejs pkg)
-        ]
+        lib.makeBinPath (
+          [
+            pkgs.file
+            (pkgNodejs pkg)
+          ]
+          ++ wkhtmltopdfPath
+        )
       }:$PATH"
 
       ${optionalString (singleSite != null) ''
@@ -1005,6 +1067,14 @@ let
       mkdir -p "$FRAPPE_BENCH_ROOT"/config
       cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
       chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
+
+      # So a PDF rendered from here (`bench execute`, a print run by hand)
+      # finds the same Chromium the units do.
+      ${optionalString cfg.chromium.enable ''
+        {
+          ${linkChromium "$FRAPPE_BENCH_ROOT"}
+        } 2>/dev/null || true
+      ''}
 
       # The registry, but only where there is none yet (a `bench new-site`
       # before the first activation). frappe-init-<site> owns these links,
@@ -1629,6 +1699,58 @@ in
       };
     };
 
+    chromium = {
+      enable = mkEnableOption ''
+        Chromium for PDFs: print formats on Frappe's "chrome" PDF generator,
+        and Print Designer's. Each site's runtime bench gets a NixOS build of
+        chrome-headless-shell at chromium/chrome-linux/headless_shell, where
+        both look for it, so neither downloads one of its own (which would not
+        run on NixOS). A `chromium_path` in common_site_config.json still takes
+        precedence.
+
+        Also adds fonts.packages for the pages to render with: Liberation
+        (metric-compatible with Arial, Times New Roman and Courier New) and
+        Noto. Without any fonts a page renders with no text at all. Off by
+        default because the browser and the fonts add up to about 0.5 GiB to
+        the closure'';
+
+      package = mkOption {
+        type = types.package;
+        default = chromeHeadlessShell;
+        defaultText = lib.literalMD "chrome-headless-shell from `pkgs.playwright-driver.components.chromium-headless-shell`";
+        description = ''
+          The Chromium the sites render PDFs with. Its main program is what gets
+          linked.
+
+          It should be a chrome-headless-shell, which is what Frappe downloads
+          and expects. Full Chromium (`pkgs.chromium`) starts in a different
+          headless mode that needs a writable home directory, which the
+          `frappe` user does not have, and leaves a profile behind for every
+          PDF.
+        '';
+      };
+    };
+
+    wkhtmltopdf = {
+      enable = mkEnableOption ''
+        wkhtmltopdf for PDFs: Frappe's "wkhtmltopdf" PDF generator, which is
+        what the Standard print and every classic (HTML) print format render
+        with unless they name another. Print-builder formats use Chromium or
+        Typst instead. Puts it on the units' PATH, with the `which` that pdfkit
+        finds it through, and adds the same fonts as chromium.enable. Off by
+        default because it adds about 200 MiB to the closure'';
+
+      package = mkOption {
+        type = types.package;
+        default = pkgs.wkhtmltopdf;
+        defaultText = lib.literalExpression "pkgs.wkhtmltopdf";
+        description = ''
+          The wkhtmltopdf the sites render PDFs with. Frappe's headers and
+          footers need a build "with patched qt", as nixpkgs' is.
+        '';
+      };
+    };
+
     extraEnv = mkOption {
       type = types.attrsOf types.str;
       default = { };
@@ -1793,6 +1915,17 @@ in
         systemd.services.mysql.serviceConfig = logFields { role = "db"; };
       }
     )
+
+    # A server has no fonts unless something asks for them, and Chromium renders
+    # text it has no font for as nothing at all. These are the fonts the OCI
+    # images carry (modules/containers.nix). fonts.packages is a list, so these
+    # add to an operator's own rather than replacing them.
+    (mkIf (cfg.chromium.enable || cfg.wkhtmltopdf.enable) {
+      fonts.packages = [
+        pkgs.liberation_ttf
+        pkgs.noto-fonts
+      ];
+    })
 
     (mkIf cfg.redis.createLocally {
       services.redis.servers.frappe = {
