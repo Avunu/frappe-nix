@@ -44,8 +44,8 @@ Nothing moves a submodule except `bench-update --pull`, bar a fresh clone's firs
 That first entry checks each one out as a _partial_ clone and not the shallow one `shallow = true` asks for:
 
 - The branch `.gitmodules` pairs the app with comes with every commit and folder but no file contents, so `git log` and merge-bases work offline and a checkout downloads only the files it needs.
-- Every other branch comes as commits only, so `git switch <BRANCH>` works and downloads that branch's folders and files as it switches.
-- An app already checked out shallow, or following a single branch, is brought to the same shape in place, once, without moving its checkout.
+- No other branch is fetched: frappe's and erpnext's hundreds of release and hotfix branches would be as much again as the checkout. To work on another one, fetch it first: `git remote set-branches --add origin <BRANCH> && git fetch origin && git switch <BRANCH>`.
+- An app already checked out shallow is given its branch's history in place, once, without moving its checkout.
 
 Past that, entering the shell only reports a registered submodule with no checkout, one removed by hand or deinitialized, and the command that checks it out. Doing it for you on every `nix develop` is how an app removed by hand came straight back, re-cloned.
 

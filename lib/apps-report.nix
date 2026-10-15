@@ -26,17 +26,30 @@
 # in .gitmodules asks for. A shallow `git submodule update` clones the remote's
 # *default* branch at depth 1 and then fetches the pinned commit — usually on
 # another branch — with no depth at all, so it is slow and still leaves the
-# clone following one branch that is not even the app's. Instead:
+# clone following one branch that is not even the app's. Instead, the branch
+# .gitmodules pairs the app with, and only that branch, is cloned with its
+# whole history of commits and folders but no file contents
+# (--filter=blob:none): `git log`, `git log -- <file>` and merge-bases work
+# offline, and a checkout downloads only the files it needs.
 #
-#   - the branch .gitmodules pairs the app with is cloned with its whole
-#     history of commits and folders, but no file contents
-#     (--filter=blob:none): `git log`, `git log -- <file>` and merge-bases work
-#     offline, and a checkout downloads only the files it needs;
-#   - every other branch is fetched the same way, so `git switch <any branch>`
-#     works and downloads only the files it needs.
+# Only that branch, because the rest is as much again as the checkout and
+# more. frappe has 337 branches and erpnext 694, every release and hotfix
+# line: at version-15, frappe's own history is 52 MB, its files 21 MB and its
+# other branches 47 MB; erpnext's 71, 18 and 54 MB. That was the bulk of a
+# first entry, for a `git switch` to another major hardly anyone makes in a
+# bench's app. One that does fetches the branch first:
 #
-# Not commits-only (tree:0) for those other branches, which is what this once
-# did. A treeless clone has no folders for any commit, so everything that
+#   git remote set-branches --add origin version-16 && git fetch origin && git switch version-16
+#
+# Not a sparse checkout, either, though translations are most of an app's
+# files (frappe: 67 of 90 MB, erpnext: 47 of 72). With `self.submodules =
+# true` Nix copies an app from the working tree, and leaves out, without a
+# word, a file sparse-checkout left out: a bench built from such a clone would
+# ship without its translations.
+#
+# Not commits-only (tree:0) for an app's branch, which is what this once did
+# for its other branches. A treeless clone has no folders for any commit, so
+# everything that
 # walks history — `git log -p` or `git log -- <path>` in an editor's history
 # view, `git blame`, `git diff` across a range — fetches them one commit at a
 # time, each as a pack of its own with the folders the last one already had
@@ -63,9 +76,10 @@
 #     `git gc --auto`, which does the same but counts packs and not bytes, and
 #     so leaves a few giant duplicates alone until there are fifty.
 #
-# An app already checked out shallow, or following a single branch — every
-# clone made before this — is brought to the same shape in place, once: the
-# checkout does not move, only history is fetched. See needs_history. A clone
+# An app already checked out shallow — what `shallow = true` made of every
+# app — is given its paired branch's history in place, once: the checkout
+# does not move, only history is fetched. See needs_history. One an earlier
+# frappe-nix gave every branch keeps them. A clone
 # an earlier frappe-nix made treeless keeps the commits it has without their
 # folders, and gets folders for the ones it fetches from now on (see
 # stop_treeless); `git fetch --refetch` in the app fills in the rest, at the
@@ -150,19 +164,6 @@ pkgs.writeShellApplication {
         || git -C "$1" config fetch.recurseSubmodules false
     }
 
-    # Every branch, with its folders but no file contents, from here on. The
-    # refspec goes into the config only once the fetch has worked, so a clone
-    # the fetch failed on still reads as needing it (see needs_history) and the
-    # next entry retries.
-    track_all_branches() { # <path>
-      local args=(--filter=blob:none --no-recurse-submodules)
-      if is_shallow "$1"; then args+=(--unshallow); fi
-      git -C "$1" fetch -q "''${args[@]}" origin '+refs/heads/*:refs/remotes/origin/*' < /dev/null || return 1
-      git -C "$1" config --replace-all remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-      git -C "$1" config remote.origin.partialclonefilter blob:none
-      no_submodule_fetch "$1"
-    }
-
     is_partial() { # <path>
       [ "$(git -C "$1" config --get remote.origin.promisor 2>/dev/null)" = true ]
     }
@@ -245,7 +246,7 @@ pkgs.writeShellApplication {
       # `submodule update` asks the clone for it before it fetches anything.
       prefetch_pin "$1"
       git submodule update --force -- "$1" < /dev/null >&2 || return 1
-      track_all_branches "$1" || echo "frappe-nix: $1 is checked out, but its other branches could not be fetched; the next shell entry tries again" >&2
+      no_submodule_fetch "$1"
     }
 
     # Put things back as they were before first_checkout — which, since it only
@@ -265,31 +266,31 @@ pkgs.writeShellApplication {
       [ -n "$3" ] || git config --unset "submodule.$2.active" || true
     }
 
-    # A checked-out app that is shallow, or follows one branch of origin: what
-    # `shallow = true` made of every app until the first entry cloned them as
-    # above. An app with no origin, or one whose origin already fetches every
-    # branch (a full clone, bench-get-app's), is left as it is.
+    # A checked-out app that is shallow: what `shallow = true` made of every
+    # app until the first entry cloned them as above. A clone that is not,
+    # partial or full (bench-get-app's), has its history already and is left
+    # as it is.
     needs_history() { # <path>
-      local specs
-      is_shallow "$1" && return 0
-      specs="$(git -C "$1" config --get-all remote.origin.fetch 2>/dev/null || true)"
-      [ -n "$specs" ] || return 1
-      [[ "$specs" != *'refs/heads/*:'* ]]
+      is_shallow "$1"
     }
 
     # needs_history's app, in place, to first_checkout's shape: the paired
-    # branch's commits and folders, every branch's commits. HEAD, the checkout
-    # and any local branch stay exactly where they are; this only fetches.
+    # branch's commits and folders, followed from here on alongside whatever
+    # branch the clone already followed (git's shallow clone takes the
+    # remote's default). HEAD, the checkout and any local branch stay exactly
+    # where they are; this only fetches. A fetch that fails leaves the clone
+    # shallow, so the next entry tries again.
     add_history() { # <path> <name>
-      local branch args=()
+      local branch specs refspecs=()
       branch="$(branch_of "$2")"
-      if [ -n "$branch" ]; then
-        if is_shallow "$1"; then args+=(--unshallow); fi
-        git -C "$1" fetch -q "''${args[@]}" --filter=blob:none --no-recurse-submodules origin \
-          "+refs/heads/$branch:refs/remotes/origin/$branch" < /dev/null \
-          || echo "frappe-nix: could not fetch $1's '$branch' history — fetching every branch's commits alone" >&2
+      if [ -n "$branch" ]; then refspecs=("+refs/heads/$branch:refs/remotes/origin/$branch"); fi
+      git -C "$1" fetch -q --unshallow --filter=blob:none --no-recurse-submodules origin "''${refspecs[@]}" < /dev/null || return 1
+      specs="$(git -C "$1" config --get-all remote.origin.fetch || true)"
+      if [ -n "$branch" ] && [[ $'\n'"$specs"$'\n' != *$'\n'"''${refspecs[0]}"$'\n'* ]]; then
+        git -C "$1" config --add remote.origin.fetch "''${refspecs[0]}"
       fi
-      track_all_branches "$1"
+      git -C "$1" config remote.origin.partialclonefilter blob:none
+      no_submodule_fetch "$1"
     }
 
     first=()
@@ -351,7 +352,7 @@ pkgs.writeShellApplication {
     for app in "''${checked[@]}"; do
       if is_partial "apps/$app"; then
         # A clone made treeless by a frappe-nix from before no_submodule_fetch,
-        # or from before folders were fetched for every branch.
+        # or from before folders were fetched for its branches.
         no_submodule_fetch "apps/$app"
         stop_treeless "apps/$app"
         prefetch_pin "apps/$app"
@@ -359,8 +360,8 @@ pkgs.writeShellApplication {
       fi
       needs_history "apps/$app" || continue
       name="$(name_of "apps/$app")"
-      echo "frappe-nix: apps/$app is a shallow or single-branch clone — fetching its branch's history" >&2
-      echo "  (commits and folders, no file contents) and every branch's, once. This can take a while." >&2
+      echo "frappe-nix: apps/$app is a shallow clone — fetching its branch's history (commits and" >&2
+      echo "  folders, no file contents), once. This can take a while." >&2
       add_history "apps/$app" "$name" \
         || echo "frappe-nix: could not fetch apps/$app's history — the next shell entry tries again" >&2
     done

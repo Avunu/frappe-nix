@@ -53,14 +53,17 @@ has_obj() { # <repo> <object>
   GIT_NO_LAZY_FETCH=1 git -C "$1" cat-file -e "$2" 2> /dev/null
 }
 
-# The shape the first entry gives a clone: partial, not shallow, every branch
-# of origin fetched, and folders but no file contents from here on.
-partial_all_branches() { # <path>
+# The shape the first entry gives a clone: partial, not shallow, the paired
+# branch (develop) of origin followed and no other, folders but no file
+# contents from here on, and no recursing into nested submodules on fetch.
+partial_one_branch() { # <path>
   [ "$(git -C "$1" config remote.origin.promisor)" = true ] \
     && [ "$(git -C "$1" rev-parse --is-shallow-repository)" = false ] \
-    && [ "$(git -C "$1" config --get-all remote.origin.fetch)" = '+refs/heads/*:refs/remotes/origin/*' ] \
+    && [ "$(git -C "$1" config --get-all remote.origin.fetch)" = '+refs/heads/develop:refs/remotes/origin/develop' ] \
     && [ "$(git -C "$1" config remote.origin.partialclonefilter)" = blob:none ] \
-    && git -C "$1" rev-parse -q --verify refs/remotes/origin/version-x > /dev/null
+    && [ "$(git -C "$1" config fetch.recurseSubmodules)" = false ] \
+    && git -C "$1" rev-parse -q --verify refs/remotes/origin/develop > /dev/null \
+    && ! git -C "$1" rev-parse -q --verify refs/remotes/origin/version-x > /dev/null
 }
 
 # Everything git knows about the bench and its submodules, and the file tree.
@@ -189,7 +192,7 @@ run
 check_eq "exits 0" 0 "$RC"
 for a in present fresh taken inplace; do
   check "checks out apps/$a at its pinned commit" at_pin "$a"
-  check "…as a partial clone of every branch" partial_all_branches "apps/$a"
+  check "…as a partial clone of its branch alone" partial_one_branch "apps/$a"
 done
 check "says so" says "checking out apps/present (first shell entry in this clone)"
 check "the git dir is under .git/modules, as git's own submodule clone puts it" \
@@ -197,13 +200,18 @@ check "the git dir is under .git/modules, as git's own submodule clone puts it" 
 # origin/develop is a commit past the pin, so nothing of it was checked out.
 check "the paired branch has its folders past the checkout…" has_obj apps/present 'origin/develop^{tree}'
 check_not "…but not their file contents" has_obj apps/present 'origin/develop:present/develop/log.txt'
-# Not commits only (tree:0): a clone without folders fetches them one commit at
-# a time, in a pack apiece, for anything that walks history.
-check "another branch has its folders too…" has_obj apps/present 'origin/version-x^{tree}'
+# Another branch is as much again as the checkout for frappe and erpnext, and
+# is fetched when it is wanted, the way the header says.
+check_not "another branch is not fetched" has_obj apps/present "$(git -C "$ROOT/remotes/present.git" rev-parse version-x)"
+check "…until asked for" sh -c 'git -C apps/present remote set-branches --add origin version-x && git -C apps/present fetch -q origin'
+check "…with its folders…" has_obj apps/present 'origin/version-x^{tree}'
 check_not "…but not their file contents" has_obj apps/present 'origin/version-x:present/version-x/log.txt'
 check "and switching to it downloads what it needs" git -C apps/present switch -q version-x
 check "…files and all" test -f apps/present/present/version-x/log.txt
 git -C apps/present switch -q --detach "$(git ls-files -s -- apps/present | awk '{ print $2 }')"
+git -C apps/present config --replace-all remote.origin.fetch '+refs/heads/develop:refs/remotes/origin/develop'
+git -C apps/present branch -q -D version-x
+git -C apps/present update-ref -d refs/remotes/origin/version-x
 check "a branch the remote no longer has falls back to its default" says "could not clone apps/inplace at 'retired'"
 git checkout -q -- .gitmodules
 check "names an app whose directory is in the way" says "apps/gone is not checked out, but its directory is not empty"
@@ -243,12 +251,12 @@ check "(they start out shallow)" test "$(git -C apps/fresh rev-parse --is-shallo
 run
 check_eq "exits 0" 0 "$RC"
 for a in present fresh taken inplace; do
-  check "apps/$a becomes a partial clone of every branch" partial_all_branches "apps/$a"
+  check "apps/$a becomes a partial clone of its branch" partial_one_branch "apps/$a"
   check_eq "…its checkout where it was" "${head_before[$a]}" "$(git -C "apps/$a" rev-parse HEAD)"
 done
 check_eq "a local commit is kept, and the worktree left clean" "" "$(git -C apps/present status --porcelain)"
 check "the paired branch gains its folders" has_obj apps/fresh 'origin/develop~2^{tree}'
-check "says what it is fetching" says "apps/fresh is a shallow or single-branch clone"
+check "says what it is fetching" says "apps/fresh is a shallow clone"
 before="$(snapshot)"
 run
 after="$(snapshot)"
@@ -290,16 +298,16 @@ git clone -q "$ROOT/nestbench" "$ROOT/nestclone"
 cd "$ROOT/nestclone"
 run
 check_eq "exits 0" 0 "$RC"
-check "checks it out as a partial clone of every branch" partial_all_branches apps/nested
+check "checks it out as a partial clone of its branch" partial_one_branch apps/nested
 check_eq "…set not to recurse into submodules on fetch" \
   false "$(git -C apps/nested config --get fetch.recurseSubmodules)"
 # A clone an earlier frappe-nix made: commits without their folders, which is
 # where the on-demand check is a lazy fetch per commit.
 git -C apps/nested config remote.origin.partialclonefilter tree:0
-commit_to nested version-x "version-x 3"
+commit_to nested develop "develop 3"
 git -C apps/nested fetch -q
 check_not "…so a plain git fetch in a clone made treeless does not fetch folders to look for submodule changes" \
-  has_obj apps/nested 'origin/version-x^{tree}'
+  has_obj apps/nested 'origin/develop^{tree}'
 # A clone converted before the setting existed.
 git -C apps/nested config --unset fetch.recurseSubmodules || true
 run
@@ -400,7 +408,7 @@ echo "── a partial clone with many packs ───────────�
 # fetch starts does not merge them in a partial clone.
 cd "$ROOT/pinclone"
 for i in 1 2 3 4 5 6 7; do
-  commit_to pins version-x "version-x 4$i"
+  commit_to pins develop "develop 4$i"
   git -C apps/pins fetch -q
 done
 packs() { find "$GD/objects/pack" -name '*.pack' | wc -l | tr -d ' '; }
