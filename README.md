@@ -2,7 +2,7 @@
 
 Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench projects.
 
-**Documentation:** [frappe-nix.avunu.net](https://frappe-nix.avunu.net). The same pages are in [`docs/`](docs/README.md), so they also read on GitHub.
+**Documentation:** [docs.avunu.net/frappe-nix/](https://docs.avunu.net/frappe-nix/). The same pages are in [`docs/`](docs/README.md), so they also read on GitHub.
 
 `frappe-nix` packages everything needed to develop and ship a Frappe/ERPNext bench declaratively, so a consuming project can be a thin wrapper. From a single `uv` workspace + `apps/` tree it provides:
 
