@@ -77,6 +77,8 @@ jobs:
       - name: List the checks
         id: split
         run: |
+          # The ${n} is Nix's, not the shell's.
+          # shellcheck disable=SC2016
           nix eval --json .#checks.x86_64-linux \
             --apply 'cs: builtins.partition (n: cs.${n} ? driver) (builtins.attrNames cs)' \
             > "$RUNNER_TEMP/checks.json"
