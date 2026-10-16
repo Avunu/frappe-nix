@@ -90,7 +90,13 @@ if [ "$started" != 1 ]; then
   echo "the stand-in server never appeared to pgrep" >&2
   exit 1
 fi
-check_not "migrate refuses while a server is running on the datadir" "$TOOL" migrate "$ROOT/db"
+if [ "$btrfs" = 1 ]; then
+  check_not "migrate refuses while a server is running on the datadir" "$TOOL" migrate "$ROOT/db"
+else
+  # Off btrfs there is nothing to migrate, and the tool says so before it looks
+  # for a server, so a live one does not matter.
+  check "off btrfs, migrate has nothing to do even with a server running" "$TOOL" migrate "$ROOT/db"
+fi
 kill "$server" 2> /dev/null || true
 wait "$server" 2> /dev/null || true
 
