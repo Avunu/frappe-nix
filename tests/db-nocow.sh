@@ -76,10 +76,20 @@ echo two > "$ROOT/db/site/tabItem.ibd"
 # the --datadir argument from the command line pgrep reads.
 bash -c 'sleep 30; :' fake-mariadbd "--datadir=$ROOT/db" &
 server=$!
-for _ in $(seq 1 50); do
-  pgrep -f -- "--datadir=$ROOT/db" > /dev/null && break
+# Wait until pgrep sees it, as the tool will. A busy builder can take seconds to
+# start a process, and carrying on before it is visible would test nothing.
+started=0
+for _ in $(seq 1 300); do
+  if pgrep -f -- "--datadir=$ROOT/db" > /dev/null; then
+    started=1
+    break
+  fi
   sleep 0.1
 done
+if [ "$started" != 1 ]; then
+  echo "the stand-in server never appeared to pgrep" >&2
+  exit 1
+fi
 check_not "migrate refuses while a server is running on the datadir" "$TOOL" migrate "$ROOT/db"
 kill "$server" 2> /dev/null || true
 wait "$server" 2> /dev/null || true
