@@ -69,6 +69,19 @@ let
   pkgNodejs = pkg: pkg.passthru.nodejs;
   pkgAppsPath = pkg: pkg.passthru.appsPath (pkgBenchDir pkg);
 
+  # Host-local home of a site's scheduler lock. Frappe's lock is a flock on
+  # config/scheduler_process, and siteDir may be a network filesystem: on
+  # JuiceFS a flock lives in the metadata engine under the mount's session,
+  # so an unlock lost while that engine is unreachable outlives the process
+  # and every later scheduler start sees "already running" and returns.
+  schedulerLockDir = name: "/run/frappe-scheduler/${name}";
+
+  # Point config/scheduler_process at schedulerLockDir. Runs after the
+  # config/ copy, which ships a regular scheduler_process of its own.
+  linkSchedulerLock = name: benchRoot: ''
+    ln -sfn ${schedulerLockDir name}/scheduler_process ${benchRoot}/config/scheduler_process
+  '';
+
   libraryPath = lib.makeLibraryPath [
     pkgs.zlib
     pkgs.openssl
@@ -409,6 +422,7 @@ let
       mkdir -p ${runtimeBenchDir}/config
       cp -rT ${benchDir}/config ${runtimeBenchDir}/config
       chmod -R u+w ${runtimeBenchDir}/config
+      ${linkSchedulerLock name runtimeBenchDir}
 
       ${linkRegistry benchDir sitesPath}
       ${linkChromium runtimeBenchDir}
@@ -1070,6 +1084,13 @@ let
       mkdir -p "$FRAPPE_BENCH_ROOT"/config
       cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
       chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
+      ${concatStringsSep "\n" (
+        mapAttrsToList (name: _: ''
+          if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
+            ${linkSchedulerLock name ''"$FRAPPE_BENCH_ROOT"''}
+          fi
+        '') enabledSites
+      )}
 
       # So a PDF rendered from here (`bench execute`, a print run by hand)
       # finds the same Chromium the units do.
@@ -1862,6 +1883,12 @@ in
       # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
       systemd.tmpfiles.rules =
         mapAttrsToList (_name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -") enabledSites
+        # The file too, not just its directory: the config/ copy writes through
+        # the scheduler_process symlink, and cp refuses a dangling one.
+        ++ lib.concatMap (name: [
+          "d ${schedulerLockDir name} 0750 ${cfg.user} ${cfg.group} -"
+          "f ${schedulerLockDir name}/scheduler_process 0640 ${cfg.user} ${cfg.group} -"
+        ]) (builtins.attrNames enabledSites)
         # Socket directories gate access to the sockets inside them, since nginx
         # chmods its listen socket to 0666 and gunicorn's follows its umask.
         # 0770, not 0750: nginx *creates* its socket in here and is only a member

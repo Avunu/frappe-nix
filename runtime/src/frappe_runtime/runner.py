@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import frappe
+from frappe.utils import get_bench_path
 from frappe.utils.background_jobs import FrappeWorkerNoFork, get_queue_list, get_redis_conn
 from frappe.utils.scheduler import start_scheduler
 from rq.timeouts import TimerDeathPenalty
@@ -33,6 +34,8 @@ logger = logging.getLogger("frappe.runner")
 # worker looks at the stop flag again.
 JOB_POLL_SECONDS = 5
 RESTART_CHECK_SECONDS = 10
+# The time between two tries of a scheduler lock that another process holds.
+SCHEDULER_RETRY_SECONDS = 60
 SOCKETIO_PATH = "/socket.io"
 # No user waits for these requests. Thus they do not increase a count, and they do
 # not make the process busy.
@@ -369,14 +372,31 @@ class Scheduler:
 	"""The scheduler of frappe on a daemon thread of its own.
 
 	start_scheduler holds a lock file of the bench. A second scheduler, in this
-	process or in a different one, sees the lock and stops immediately.
+	process or in a different one, sees the lock and returns immediately, and
+	frappe logs that only at debug. Thus the thread says so here, and tries the
+	lock again: a holder that goes away (a hand-run `bench schedule`, a flock that
+	a network filesystem kept) must not leave the process without a scheduler.
+	Each try also runs frappe's set_niceness again. On Linux nice is per thread,
+	so that lowers only this thread, which mostly sleeps and only enqueues.
 	"""
 
 	def _run(self) -> None:
 		_init_frappe_for_thread()
-		start_scheduler()
+		while True:
+			start_scheduler()
+			if not self.lock_busy:
+				logger.error(
+					"scheduler: %s is locked by another scheduler, no scheduled job runs here;"
+					" retry every %ds",
+					os.path.join(get_bench_path(), "config", "scheduler_process"),
+					SCHEDULER_RETRY_SECONDS,
+				)
+				self.lock_busy = True
+			time.sleep(SCHEDULER_RETRY_SECONDS)
 
 	def __init__(self):
+		# Log the busy lock once per process, not at each retry.
+		self.lock_busy = False
 		self.thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
 
 	def start(self) -> None:
