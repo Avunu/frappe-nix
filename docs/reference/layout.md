@@ -60,8 +60,7 @@ frappe-nix/
 │   └── nixos.nix             # services.frappe (the NixOS systemd module)
 ├── runtime/                  # frappe-runtime: the unified process (a hard fork, MIT)
 ├── tests/                    # flake checks (see `nix flake check`)
-├── docs/                     # these pages
-└── docs-site/                # the Jx project that builds docs/ into the documentation site
+└── docs/                     # these pages
 ```
 
 `lib/sh/*.sh` are concatenated into a single `writeShellApplication`, so shellcheck sees the whole program at build time. `main.sh` holds the only top-level code and must stay last.
@@ -93,17 +92,10 @@ The `check` workflow runs on every pull request and every push to `main`. Its `f
 
 The VM tests are not on the pull request path. They build a full Frappe bench inside a NixOS guest, which is far past what a hosted runner does in a reasonable time without a binary cache. Run them from the Actions tab with **Run workflow**.
 
-Dependabot keeps the flake inputs and the GitHub Actions current, and its pull requests merge automatically once the required checks pass. The documentation site's own packages are updated by Dependabot too, but those pull requests are left for a person to review. See `.github/dependabot.yml`.
+Dependabot keeps the flake inputs and the GitHub Actions current, and its pull requests merge automatically once the required checks pass. See `.github/dependabot.yml`.
 
 ## Building these pages
 
-The documentation site is a [Jx](https://jxsuite.com) project in `docs-site/` that reads the Markdown in `docs/`. You need [Bun](https://bun.sh) 1.4 or newer.
+The documentation site is built from the shared workspace [Avunu/site-docs](https://github.com/Avunu/site-docs), where frappe-nix is a submodule that tracks its latest release; there is no site project in this repository. The pages are plain Markdown that reads the same on GitHub: callouts are GitHub alerts, and links between pages are relative file links.
 
-```bash
-cd docs-site
-bun install
-bun run dev --port 3417      # live reload while you edit docs/
-bun run check                # what CI runs: tests, contrast, a strict build and a link check
-```
-
-`docs-site/README.md` describes the site, its commands and how it publishes. The pages themselves are plain Markdown that reads the same on GitHub: callouts are GitHub alerts, and links between pages are relative file links.
+A pull request that touches `docs/` runs the `Docs` workflow, which builds the workspace with the pull request's pages in place of the submodule and checks them strictly, links to the other projects included. To preview or check locally, follow the site-docs README with `--source frappe-nix=<this checkout>`.
