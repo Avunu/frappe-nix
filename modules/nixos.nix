@@ -582,9 +582,6 @@ let
     # grepping for its wording.
     pkgs.writeShellScript "frappe-migrate-${name}" ''
       set -uo pipefail
-      # Snapshots are full DB dumps — keep everything this script writes
-      # owner-only (systemd's default umask would make them world-readable).
-      umask 0077
       export PYTHONPATH="${pkgAppsPath pkg}"
 
       BUILD="${pkg}"
@@ -615,11 +612,17 @@ let
 
       SNAP=""
       ${optionalString mg.snapshot ''
-        mkdir -p "${snapDir}"
+        # Snapshots are full DB dumps, so they are owner-only (systemd's default
+        # umask would make them world-readable). The umask is set for the dump
+        # alone: `bench migrate` writes files nginx serves, such as the Website
+        # Theme CSS that after_migrate regenerates under public/files. nginx
+        # reads those as a member of the service group, and under a 0077 umask
+        # it answers 403.
+        mkdir -p -m 0700 "${snapDir}"
         SNAP="${snapDir}/premigrate-${name}-$(date +%Y%m%d-%H%M%S).sql.gz"
         echo "frappe-migrate(${name}): taking pre-migrate snapshot -> $SNAP"
-        if ! ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
-             --routines --triggers ${dbName} | ${gzip} > "$SNAP"; then
+        if ! (umask 0077 && ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
+             --routines --triggers ${dbName} | ${gzip} > "$SNAP"); then
           echo "<3>frappe-migrate(${name}): ERROR pre-migrate snapshot failed; aborting before migrate (no safety net)." >&2
           rm -f "$SNAP"
           exit 1

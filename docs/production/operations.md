@@ -49,7 +49,7 @@ A site whose database holds **no tables** has never been installed. It is a fres
 
 Frappe migrations perform DDL (`CREATE` and `ALTER TABLE`), which auto-commits in MariaDB and cannot be rolled back in a transaction. The unit therefore wraps the migration in a physical snapshot instead:
 
-1. **Snapshot.** `mysqldump --single-transaction` of the site database to `<siteDir>/snapshots/premigrate-<SITE>-<TIMESTAMP>.sql.gz`, readable only by its owner (mode 0600). If the snapshot cannot be taken, the migration is aborted. It never migrates without a safety net.
+1. **Snapshot.** `mysqldump --single-transaction` of the site database to `<siteDir>/snapshots/premigrate-<SITE>-<TIMESTAMP>.sql.gz`, readable only by its owner (mode 0600, in a 0700 directory). Only the dump runs under that umask: files the migrate writes for nginx to serve, such as the Website Theme CSS that `bench migrate` regenerates under `public/files`, stay readable by the service group. If the snapshot cannot be taken, the migration is aborted. It never migrates without a safety net.
 2. **Migrate.** `bench --site <SITE> migrate`, with the site in maintenance mode.
 3. **On success.** Clear maintenance mode, record the build and prune old snapshots.
 4. **On failure.** Restore the snapshot by dropping all current tables and re-importing the dump, **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero, so the unit shows `failed`. The database is returned to its pre-migrate state.
