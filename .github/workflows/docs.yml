@@ -1,15 +1,17 @@
 name: Docs
 
-# Checks the documentation on every pull request that touches it. The work is done by the shared
-# workflow of Avunu/docusystem, pinned to a commit (Dependabot's github-actions entry moves the pin).
-# Nothing here can publish: the token is read-only. Publishing is docs-publish.yml.
+# Checks the documentation on every pull request that touches it, against the shared site at
+# docs.avunu.net. The work is done by Avunu/site-docs's check-docs.yml, pinned to a commit (Dependabot's
+# github-actions entry moves the pin): it builds the workspace with this pull request's docs/ in place of
+# the frappe-nix submodule, so links to the other projects are checked too. The token is read-only and
+# nothing here publishes: site-docs builds and deploys the site from the released submodule.
+#
+# The job stays named `build`: its check, `build / Check`, is the one the main ruleset requires.
 on:
   pull_request:
     paths:
       - docs/**
-      - docs-site/**
       - .github/workflows/docs.yml
-      - .github/workflows/docs-publish.yml
 
 permissions: {}
 
@@ -21,6 +23,6 @@ jobs:
   build:
     permissions:
       contents: read # checkout
-    uses: Avunu/docusystem/.github/workflows/docs-build.yml@5f97ba8d997b882044ad6d6e7c66dca9194a8422 # v0.1.0
+    uses: Avunu/site-docs/.github/workflows/check-docs.yml@2e7a51919ee26a518c2769d3cd64549d009f2fe5 # 2026-10-16
     with:
-      site-directory: docs-site
+      path: frappe-nix # its path in site-docs's projects.json
