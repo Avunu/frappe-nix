@@ -1,17 +1,16 @@
 name: Docs
 
-# Checks the documentation on every pull request that touches it, against the shared site at
-# docs.avunu.net. The work is done by Avunu/site-docs's check-docs.yml, pinned to a commit (Dependabot's
-# github-actions entry moves the pin): it builds the workspace with this pull request's docs/ in place of
-# the frappe-nix submodule, so links to the other projects are checked too. The token is read-only and
-# nothing here publishes: site-docs builds and deploys the site from the released submodule.
+# Checks the documentation on every pull request, against the shared site at docs.avunu.net. The work is
+# done by Avunu/site-docs's check-docs.yml, pinned to a commit: it builds the workspace with this pull
+# request's docs/ in place of the frappe-nix submodule, so links to the other projects are checked too.
+# The token is read-only and nothing here publishes: site-docs builds and deploys the site from the
+# released submodule.
 #
-# The job stays named `build`: its check, `build / Check`, is the one the main ruleset requires.
+# The job stays named `build`: its check, `build / Check`, is the one the main ruleset requires. A
+# required check has to report on every pull request or the ones that do not touch the pages wait for
+# it for ever, so this workflow has no `paths:` filter (it takes about 30 seconds).
 on:
   pull_request:
-    paths:
-      - docs/**
-      - .github/workflows/docs.yml
 
 permissions: {}
 
