@@ -57,7 +57,7 @@ These either settle points the plan leaves open or resolve contradictions the Ph
 | S23 | **With the `screenshots` module on, screenshots are made repeatable** by running the bench under libfaketime with a fixed start time (`FAKETIME="@<demo date> 09:00:00"`, so the clock advances from there), plus CDP timezone, locale and media overrides, no animations, masks, and lossless WebP. The refresh PR is never merged automatically. | ERPNext demo data is relative to "today". Freezing the clock outright would hang timeouts. |
 | S24 | **Ratchets** are coverage `fail_under`, the `ty: ignore` count, semgrep baseline counts, and the `[[tool.frappe-nix.untested]]`, `[[tool.frappe-nix.unchecked-js]]` and `[[tool.frappe-nix.coverage-omit]]` lists. They are compared against the PR's merge-base (`git merge-base "$BASE_SHA" HEAD`), never the base tip. They apply only once the base already has `[tool.frappe-nix]` (in the Avunu fleet, from PR B onward), and are skipped on integration-branch pushes and schedules. Each ratchet belongs to its module and is off with it. Coverage also ratchets upward: frappe-test fails when coverage has climbed `tests.coverage.raise-margin` points (default 2) past a `fail_under` below `tests.coverage.target` (default 80) (§5.1 stage 4). | The adoption PR (PR B) is the PR that sets each starting value. The base tip would fail a PR that branched before develop raised `fail_under`. Plan decision 5 wants a floor that only rises towards the target, and a notice alone never raises it. |
 | S25 | **Release PRs get screenshots from the nightly run, not a dispatched run.** | A release branch differs from develop only in the version and changelog, so a separate run would show nothing new. This adjusts D16. |
-| S26 | **The README "Development" block links to the profile value `org.dev-docs-url`.** The built-in default is frappe-nix's own docs in its repository, `https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards`. The Avunu profile sets `https://frappe-nix.avunu.net/docs/app-standards/`. | A link to frappe-nix's own repository is not an org value; a site an organisation hosts is. Avunu's site exists and returns 200; the profile changes it in one profile release when avunu-docs gets a public URL. |
+| S26 | **The README "Development" block links to the profile value `org.dev-docs-url`.** The built-in default is frappe-nix's own docs in its repository, `https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards`. The Avunu profile sets `https://docs.avunu.net/frappe-nix/docs/app-standards/`. | A link to frappe-nix's own repository is not an org value; a site an organisation hosts is. Avunu's documentation is one site, docs.avunu.net, built by Avunu/site-docs; frappe-nix's address on it is its `path` in that repository's `projects.json`. |
 | S27 | **`ruff` rules.** With `python-lint` on, an app gets these values from the `recommended` profile (carbon_frappe's set), each one a parameter (§8.2): <ul><li>`select = F,E,W,I,UP,B,RUF,SIM,C4,PIE,PERF,T20`;</li><li>`ignore` is exactly `E501`, `W191`;</li><li>tabs, 110 columns, `typing-modules = ["frappe.types.DF"]`.</li></ul> frappe-nix's own Frappe-tracking ruff config (v0.14.10) is unrelated and unchanged. | This is D4. The completeness critic confirmed it isn't a user decision. |
 | S28 | **`[tool.bench.frappe-dependencies]` ranges always use the comma form** `">=16.0.0,<17.0.0"`. `payments` is `">=0.0.1,<1.0.0"`. | `packaging.SpecifierSet`, which pilot uses, rejects the `-dev` space form (completeness critic). payments' `version-16` `__version__` is 0.0.1 (registry-dryrun track). |
 | S29 | **No workflow pushes a commit that changes `.github/workflows/*`.** relock-push, relock-upgrade and nightly `shots` refuse a patch that touches that path (exit 1, naming the file). Moving `version-*` and `release-*` with a REST ref PATCH to a commit that already exists on develop or main is allowed. | GitHub refuses such pushes from `GITHUB_TOKEN`. The REST fast-forward is proven: carbon_frappe's `version-16` was moved by github-actions[bot] from 1ed9df5 to 30a4be4 across workflow changes that were already on develop. |
@@ -263,7 +263,7 @@ Avunu/frappe-standards-profile/                [P; owned and released by Avunu, 
 │                                              tags.json, applied with `frappe-nix repo apply --policy-dir` (§5.6)
 ├── .github/workflows/fleet-audit.yml          caller of frappe-nix's reusable fleet-audit.yml, nightly (§5.7)
 ├── .github/workflows/validate.yml             on every PR: `frappe-nix profile validate profile.toml`, the snapshot
-│                                              comparison, and `docusystem doctor` on a synced copy of the fixture app
+│                                              comparison, `sync --write` and `sync --check` of a copy of the fixture app, and fleet.json
 ├── .github/workflows/release.yml              release-please, then a REST fast-forward of `v1` (§6.4)
 └── release-please config, CHANGELOG.md        tags vX.Y.Z and a moving `v1` branch (§6.4)
 ```
@@ -335,7 +335,7 @@ Avunu/frappe-standards-profile/                [P; owned and released by Avunu, 
   - any template overrides Avunu wants (none are required);
   - `fleet.json`, the 12-app fleet list that 1.1 kept in frappe-nix, each entry with `profile` (§4.9);
   - a scheduled caller of frappe-nix's reusable `fleet-audit.yml`, holding the `FRAPPE_NIX_AUDIT_TOKEN` secret (§5.7);
-  - a `validate.yml` that runs `frappe-nix profile validate` from the frappe-nix release it targets, compares `frappe-nix profile show --format json` on a copy of the fixture app with the committed `resolved.snapshot.json` (so a frappe-nix release that changes any Avunu value fails P's CI), and runs `docusystem doctor` on that synced copy;
+  - a `validate.yml` that runs `frappe-nix profile validate` from the frappe-nix release it targets, compares `frappe-nix profile show --format json` on a copy of the fixture app with the committed `resolved.snapshot.json` (so a frappe-nix release that changes any Avunu value fails P's CI), and syncs that copy offline and checks it;
   - release-please releases (tags `vX.Y.Z`, moving branch `v1`) with a `release.yml` that runs release-please and then fast-forwards `v1` by REST PATCH, with GitHub Actions (integration 15368) as the only bypass actor on `v*` branches (§6.4);
   - its own `repo-policy/` (`main.json`, `release.json` on `refs/heads/v*`, `tags.json` on `refs/tags/v*`, as frappe-nix's `repo-policy/self/` with the `v*` ref instead of `release-*`), applied with `frappe-nix repo apply --policy-dir repo-policy --repo Avunu/frappe-standards-profile` once N4 has merged.
 
@@ -636,7 +636,7 @@ Files whose entry isn't live MUST NOT exist. Sync deletes them (and retracts mer
 
 These are **not managed**, but are checked or tolerated:
 
-- `docs/` and `docs-site/` are owned by the app's docs tool (docusystem in the Avunu fleet). Its workflows (docusystem's `docs.yml` and `docs-publish.yml`) are left alone, but zizmor and actionlint lint them when `workflow-lint` is on.
+- `docs/` is owned by the app's docs tool (in the Avunu fleet, Avunu/site-docs, which publishes it at docs.avunu.net; the app's `docs.yml` calls its shared check), and so is `docs-site/` where an org builds a site in each app (the `docs-site` module). The tool's workflows are left alone, but zizmor and actionlint lint them when `workflow-lint` is on.
 - `nix/uv.lock` and `nix/node-locks/**` belong to relock.
 - `CHANGELOG.md` belongs to release-please.
 - `semgrep/*.yml` is the app's own extra rules, which `lint` runs.
@@ -1288,7 +1288,7 @@ repos:
 
 **Generated files.** `cfg.generated` reaches every tool that would otherwise rewrite or stamp a generated file: the global `exclude` above (so ruff, ssort and test_utils skip it), `validate_copyright`'s exclude, and the oxfmt and oxlint `ignorePatterns`. `glob_to_regex` is a fixed filter in the engine (`**` → `.*`, `*` → `[^/]*`, anchored at the end with `$`). The managed files whose first line is the managed header are excluded from `validate_copyright` by name, so sync and the stamp never rewrite each other.
 
-**zizmor scope** (`workflow-lint`). zizmor audits `.github/workflows` and `.github/dependabot.yml`. Every rendered dependabot entry therefore carries a `cooldown` (§2.17), which zizmor's dependabot-cooldown audit requires. docusystem's `docs*.yml` are audited too.
+**zizmor scope** (`workflow-lint`). zizmor audits `.github/workflows` and `.github/dependabot.yml`. Every rendered dependabot entry therefore carries a `cooldown` (§2.17), which zizmor's dependabot-cooldown audit requires. The docs tool's own workflows (`docs*.yml`) are audited too.
 
 **Floor semantics (S9).** The renderer emits `rev: {{ rev(url, floor) }}`. When the existing file has a rev for the same `repo:` URL that compares ≥ the floor, that rev is kept. Revs compare with `packaging.version` after stripping a leading `v`. The floors are `v6.0.0`, `0.17.0` and `v1.30.1`.
 
@@ -1377,7 +1377,7 @@ Module `releases` (`releases.tool = "release-please"`, the only tool in v1). Pro
 
 ### 2.17 `.github/dependabot.yml` (whole + local region `updates`)
 
-Module `dependabot`. Profile values: `dependabot.ecosystems` (one switch per ecosystem below), `dependabot.cadence` (`"weekly"` in `recommended`, `"daily"` in the Avunu profile) and `dependabot.cadence-overrides` (per ecosystem), `dependabot.cooldown-days` (3), and, when `docs-site` is on, `docs-site.action-patterns` (the `docs-actions` group and auto-merge patterns), `docs-site.cooldown-exclude-actions` (the github-actions entry's cooldown `exclude`, exact names) and `docs-site.package-names` (the `/docs-site` npm entry's cooldown `exclude`). All three are empty in `recommended`; the Avunu profile sets `["Avunu/docusystem*"]`, `["Avunu/docusystem"]` and `["@avunu/docusystem"]`. The group takes glob patterns, while a docs tool's own check may expect an exact name in the cooldown exclude (docusystem's `doctor` tests `excludes.includes("Avunu/docusystem")`), so the two are separate parameters. Each entry is rendered only when its ecosystem switch is on (and, as before, its `{% if %}` fact holds). `{{ cadence(<ecosystem>) }}` is the override for that ecosystem, else `dependabot.cadence`; a `weekly` cadence renders `day: monday`.
+Module `dependabot`. Profile values: `dependabot.ecosystems` (one switch per ecosystem below), `dependabot.cadence` (`"weekly"` in `recommended`, `"daily"` in the Avunu profile) and `dependabot.cadence-overrides` (per ecosystem), `dependabot.cooldown-days` (3), and, when `docs-site` is on, `docs-site.action-patterns` (the `docs-actions` group and auto-merge patterns), `docs-site.cooldown-exclude-actions` (the github-actions entry's cooldown `exclude`, exact names) and `docs-site.package-names` (the `/docs-site` npm entry's cooldown `exclude`). All three are empty in `recommended`. The Avunu profile leaves the module off, because its documentation is built by Avunu/site-docs and not by a `docs-site/` in each app (until 2026-10 it set `["Avunu/docusystem*"]`, `["Avunu/docusystem"]` and `["@avunu/docusystem"]` for docusystem, the npm package that built those sites). The group takes glob patterns, while a docs tool's own check may expect an exact name in the cooldown exclude (docusystem's `doctor` tested `excludes.includes("Avunu/docusystem")`), so the two are separate parameters. Each entry is rendered only when its ecosystem switch is on (and, as before, its `{% if %}` fact holds). `{{ cadence(<ecosystem>) }}` is the override for that ecosystem, else `dependabot.cadence`; a `weekly` cadence renders `day: monday`.
 
 ```yaml
 # frappe-nix:managed — generated by frappe-nix (`frappe-init --sync`); edit only inside the frappe-nix:local region.
@@ -1514,7 +1514,7 @@ updates:
 
 The rendered output is expanded to block style by oxfmt's rules; the template stores the oxfmt-formatted result. Major npm and uv updates arrive as individual PRs, because the groups only take minor and patch updates. `deps.yml` labels them `needs-review`.
 
-- **Docs-tool compatibility.** For docusystem (Avunu profile), the `/docs-site` npm entry and the github-actions entry for `/` are the entries `docusystem init` scaffolds, with the cooldown exclusions its `doctor` checks (`@avunu/docusystem` and `Avunu/docusystem`, which come from the profile's `docs-site` values). `docusystem upgrade` only adds an entry when none exists for that ecosystem and directory, so on a synced repo it writes nothing. The acceptance test is in N4 (§7), run with the `docs-compat` fixture profile, whose three `docs-site` values are exactly the Avunu profile's; P's own CI runs `docusystem doctor` against the real Avunu profile (§1.3 P).
+- **Docs-tool compatibility.** For docusystem (the Avunu fleet's docs tool until 2026-10; the Avunu profile has the module off now), the `/docs-site` npm entry and the github-actions entry for `/` are the entries `docusystem init` scaffolds, with the cooldown exclusions its `doctor` checks (`@avunu/docusystem` and `Avunu/docusystem`, which come from the profile's `docs-site` values). `docusystem upgrade` only adds an entry when none exists for that ecosystem and directory, so on a synced repo it writes nothing. The acceptance test is in N4 (§7), run with the `docs-compat` fixture profile, whose three `docs-site` values are the ones the Avunu profile had until then.
 - **Dependabot ignores for nix.** If the nix ecosystem doesn't honour `ignore` for a flake input, `deps.yml` still never auto-merges a PR that moves the `frappe-nix` or `standards-profile` lock node: `relock-plan` detects it, and the auto-merge job comments `<input> moves through frappe-nix repo rollout` and closes the PR.
 
 ### 2.18 `.github/zizmor.yml` (whole)
@@ -1590,7 +1590,7 @@ type = "extension"                         # application | extension | integrati
 category = "Extensions"                    # Applications | Compliance | Developer Tools | Extensions | Integrations | Utilities
 categories = ["Theme", "UI"]               # non-empty
 website = "https://avunu.net/open-source/carbon_theme/"
-documentation = "https://carbon-theme.avunu.net/"
+documentation = "https://docs.avunu.net/carbon-theme/"
 apps_screen = false
 
 [apps_screen_entry]                        # required iff apps_screen = true
@@ -1605,7 +1605,7 @@ channel = "stable"
 Expected URL patterns are the profile's templates, with `{app}` and `{app_hyphen}` substituted:
 
 - `website`: `org.website-url` (Avunu profile: `https://avunu.net/open-source/{app}/`);
-- `documentation`: `org.docs-url` (Avunu profile: `https://{app_hyphen}.avunu.net/`).
+- `documentation`: `org.docs-url` (Avunu profile: `https://docs.avunu.net/{app_hyphen}/`).
 
 A value that differs is a warning, not an error (docs-and-urls track). With an empty template there is no expected pattern and L12 is skipped. `sync --init-listing` seeds both URLs from the templates, or leaves them as `""` (which L1 then reports) when the templates are empty.
 
@@ -2350,7 +2350,7 @@ jobs:
 ```
 
 - zizmor MUST pass on every rendered caller, in every combination of enabled gates the N4 fixture matrix renders (§7), and on frappe-nix's own `app-*.yml`, with the shipped `zizmor.yml`. If zizmor's `excessive-permissions` audit flags a caller job's union of permissions, N4 adds a narrowly scoped `rules.excessive-permissions.ignore` for `ci.yml`, `release.yml`, `deps.yml` and `nightly.yml` to the template, with a comment that reusable callers must grant the union.
-- A docs tool's own workflows (docusystem's `docs.yml` and `docs-publish.yml`) stay as that tool renders them.
+- A docs tool's own workflows (a docs site's `docs.yml` and `docs-publish.yml`, or the `docs.yml` that calls a shared check) stay as that tool renders them.
 - **Schedules are parameters** (`ci.schedules`, §8.2): `ci` (`"0 6 * * *"`), `release` (`"30 5 * * *"`), `deps-sweep` (`"0 9 * * *"`), `deps-relock` (`"0 8 * * 1"`) and `nightly` (`"0 7 * * *"`), each a cron string or `""` for none. The defaults suit a public repo (unlimited Actions minutes). A private repo that pays for minutes turns off what it doesn't need. The `ci` and `release` crons exist because a `GITHUB_TOKEN` auto-merge raises no push: with them off and auto-merge on, the integration branch's CI status and the release PR catch up only on the next human push, and `repo doctor` says so. `deps-sweep` is the fallback for dispatches Dependabot runs can't make (§4.5). In the Avunu fleet (plan §7 decision 2), a private repo (timeclock today) is made public **before** its PR A, which its `fleet.json` entry (`private: true`) enforces (§5.6).
 - `ci.yml` doesn't run on `version-*`: that branch only moves by the release workflow's PATCH, which raises no event (§4.2).
 
@@ -2488,7 +2488,7 @@ The top-level `profile` (and an entry's own `profile`, which wins) is the profil
 
 ```json
 { "repo": "Avunu/carbon_frappe", "app": "carbon_frappe", "target_app": "carbon_theme", "private": false, "list": true,
-  "documentation": "https://carbon-theme.avunu.net/" }
+  "documentation": "https://docs.avunu.net/carbon-theme/" }
 ```
 
 ### 4.10 frappe-nix's own settings (N6)
@@ -3099,7 +3099,7 @@ frappe's `--using-cached` glob uses the same `<name>.bundle.<ext>` keys, so pilo
 - `update-assets.mjs` is deleted (it is on the retire list, §2.4.1); `scripts/vite-register.mjs` replaces it.
 - `[tool.bench.assets]`, for pilot, is declared only by apps with the `pilot-assets` module on.
 
-**`lib/node-targets.nix` and `lib/node-locks.nix`.** A new option, `frappe-nix.app.excludeNodeTargets` (a list of top-level directory names, default `[]`), removes directories from node-target discovery; both discovery implementations honour it. Its default changes nothing for any app, so a non-opted-in app with a nested frontend named `docs-site` keeps being built (S35). An opted-in app's managed `flake.nix` sets `[ "docs-site" ]` while the `docs-site` module is on (§2.5), because a docs tool's site (docusystem's, in the Avunu fleet) is built by its own workflow, never by the bench; an app adds other names through `nix/local.nix`.
+**`lib/node-targets.nix` and `lib/node-locks.nix`.** A new option, `frappe-nix.app.excludeNodeTargets` (a list of top-level directory names, default `[]`), removes directories from node-target discovery; both discovery implementations honour it. Its default changes nothing for any app, so a non-opted-in app with a nested frontend named `docs-site` keeps being built (S35). An opted-in app's managed `flake.nix` sets `[ "docs-site" ]` while the `docs-site` module is on (§2.5), because a docs tool's site (docusystem's, in the Avunu fleet until 2026-10) is built by its own workflow, never by the bench; an app adds other names through `nix/local.nix`.
 
 ### 5.12 CI mode and the worktree port salt (N1, `modules/devenv.nix`)
 
@@ -3317,7 +3317,7 @@ Each PR's own CI MUST prove these. A "nix check" is under `tests/standards/` and
 - `actionlint` and `zizmor` (strict `hash-pin`) pass on frappe-nix's `.github/workflows/*.yml`, on every rendered caller for the fixture under `recommended`, `example-org` (everything on) and a gate matrix (each of `typescript`, `tests`, `listing`, `commits`, `releases`, `dependabot` off in turn), and on the rendered `.github/dependabot.yml` (every entry has a `cooldown`). A planted dependabot entry without `cooldown` makes the zizmor hook fail. actionlint accepts per-job `defaults.run.working-directory: ${{ inputs.app-root }}` and finds no job-level `if:` reading `secrets`.
 - **[1.2] Callers contain only enabled gates:** with every gate on, `ci.yml` has the jobs `lint`, `typecheck`, `test`, `marketplace`, each `name: ci`; turning `typescript` off removes exactly the `typecheck` job; turning `listing` off removes `marketplace`; `commits` off removes `pr-policy.yml`; `releases` off removes `release.yml`; `dependabot` off removes `deps.yml` and `dependabot.yml`. The unit test compares each rendered file against its all-on form with the job's block removed.
 - **Required checks follow the gates:** `frappe-nix repo apply --dry-run` against a mocked API renders `integration.json` with exactly the contexts of the app's enabled gates (`ci / lint` and `ci / test` for a fixture with only those on; all five with everything on), `required_approving_review_count` from `repo-policy.required-approvals`, and no `release-branch.json` under `main+tags`; for an app with `repo-policy.enable = false` it makes no API call and exits 0 with a notice.
-- **docs-site compatibility:** on the rendered fixture with `docs-site/` and the `docs-compat` fixture profile, whose `docs-site` values are exactly the Avunu profile's (`action-patterns = ["Avunu/docusystem*"]`, `cooldown-exclude-actions = ["Avunu/docusystem"]`, `package-names = ["@avunu/docusystem"]`; the docs tool's own identifiers, not org values), `docusystem doctor` reports no dependabot warning and `docusystem upgrade --dry-run` plans no change to `.github/dependabot.yml`. A variant whose cooldown exclude is the glob `Avunu/docusystem*` makes `doctor` warn, which proves the test sees the difference.
+- **docs-site compatibility:** on the rendered fixture with `docs-site/` and the `docs-compat` fixture profile, whose `docs-site` values are the ones the Avunu profile had until its documentation moved to Avunu/site-docs (`action-patterns = ["Avunu/docusystem*"]`, `cooldown-exclude-actions = ["Avunu/docusystem"]`, `package-names = ["@avunu/docusystem"]`; the docs tool's own identifiers, not org values), `docusystem doctor` reports no dependabot warning and `docusystem upgrade --dry-run` plans no change to `.github/dependabot.yml`. A variant whose cooldown exclude is the glob `Avunu/docusystem*` makes `doctor` warn, which proves the test sees the difference.
 - **Python tests** (`py/frappe_nix_tools/tests`, run as a nix check with pytest):
   - **policy:** under `frappe-major`, rejects `feat!: x`, a `BREAKING CHANGE:` footer, and `Release-As: 17.0.0` when the major is 16; accepts `chore(deps): bump …` and `chore(develop): release 16.1.0`; under `semver` accepts `feat!: x`; with `main+tags`, a PR based on `develop` fails check 1 naming `main`; **[1.2]** a PR based on another open PR's head passes check 1 with `allow-stacked = true` and fails with false; a PR based on `version-16` passes with `pr-allowed-bases = ["version-*"]`;
   - **ratchet:** R1–R7 positive and negative cases, inactive when the base lacks `[tool.frappe-nix]`, and each rule skipped when its module is off;
@@ -3484,7 +3484,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `screenshots` | `marketplace/shots.d.ts`, frappe-shots, nightly `shots` (§5.5) | `timezone` (string, "America/New_York"); `locale` (string, "en-US") | `demo` | off | off | on |
 | `demo` | frappe-demo (§5.4) | `company-name` ("Demo Company"); `company-abbr` ("DC"); `country` ("United States"); `currency` ("USD"); `timezone` ("America/New_York"); `language` ("English"); `date` ("2026-01-15"); `seed` (1); `erpnext-demo` (false) | — | off | off | on (company "Avunu Demo", "AD") |
 | `test-utils` | the agritheory/test_utils hooks (S19), minibench customizations, nightly duplication | `hooks` (list of hook ids, all eight of §2.14); `track-overrides` (bool, false) | — | off | off | on |
-| `docs-site` | dependabot entries and groups for a docs site (§2.17), and the `docs-site` node-target exclusion (§5.11) | `action-patterns` (list, []); `cooldown-exclude-actions` (list, []); `package-names` (list, []) | `dependabot` | off | off | on (docusystem's patterns) |
+| `docs-site` | dependabot entries and groups for a docs site (§2.17), and the `docs-site` node-target exclusion (§5.11) | `action-patterns` (list, []); `cooldown-exclude-actions` (list, []); `package-names` (list, []) | `dependabot` | off | off | off |
 
 Notes:
 
@@ -3840,7 +3840,7 @@ package-names = []
 
 ### 8.6 Example org profile: Avunu (worked example)
 
-This profile lives in `Avunu/frappe-standards-profile/profile.toml` (item P), **not** in frappe-nix. It is the reference for what an org profile looks like, and it is how the Avunu fleet gets exactly the behaviour 1.1 specified: an app synced with it renders what 1.1 describes, apart from the S33 renames, the S39 caller split and the review changes of Appendix R2. 1.1 fixed these values inside frappe-nix; here the profile owns them, so it **extends the frozen snapshot `recommended@1.0` and sets explicitly every value the fleet relies on**, including those that equal today's `recommended`. A later frappe-nix MINOR that changes `recommended`, or a flipped Q9 default, therefore can't move an Avunu app. P's CI proves it: it compares the resolved configuration of a copy of the frappe-nix fixture app with the committed `resolved.snapshot.json` (§6.4), and runs `docusystem doctor` on it.
+This profile lives in `Avunu/frappe-standards-profile/profile.toml` (item P), **not** in frappe-nix. It is the reference for what an org profile looks like, and it is how the Avunu fleet gets exactly the behaviour 1.1 specified: an app synced with it renders what 1.1 describes, apart from the S33 renames, the S39 caller split and the review changes of Appendix R2. 1.1 fixed these values inside frappe-nix; here the profile owns them, so it **extends the frozen snapshot `recommended@1.0` and sets explicitly every value the fleet relies on**, including those that equal today's `recommended`. A later frappe-nix MINOR that changes `recommended`, or a flipped Q9 default, therefore can't move an Avunu app. P's CI proves it: it compares the resolved configuration of a copy of the frappe-nix fixture app with the committed `resolved.snapshot.json` (§6.4).
 
 ```toml
 schema = 1
@@ -3856,8 +3856,8 @@ copyright-holder = "Avunu LLC"
 license = "MIT"
 github-owner = "Avunu"
 website-url = "https://avunu.net/open-source/{app}/"
-docs-url = "https://{app_hyphen}.avunu.net/"
-dev-docs-url = "https://frappe-nix.avunu.net/docs/app-standards/"
+docs-url = "https://docs.avunu.net/{app_hyphen}/"
+dev-docs-url = "https://docs.avunu.net/frappe-nix/docs/app-standards/"
 repo-url = "https://github.com/{repo}"
 
 [org.brand]
@@ -4047,10 +4047,7 @@ hooks = ["validate_frappe_project", "validate_patches", "static_analysis", "vali
 track-overrides = false
 
 [docs-site]
-enable = true
-action-patterns = ["Avunu/docusystem*"]     # the docs-actions group and its needs-review rule
-cooldown-exclude-actions = ["Avunu/docusystem"]   # exact name, as `docusystem doctor` checks it
-package-names = ["@avunu/docusystem"]
+enable = false                              # the documentation is built by Avunu/site-docs, not from a docs-site/ in each app
 
 [[retire]]                                  # the fleet's old workflows whose jobs moved to ci.yml (§2.4.1)
 paths = [".github/workflows/check.yml", ".github/workflows/version-branch-guard.yml"]
