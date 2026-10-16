@@ -123,7 +123,7 @@ Use `extraConfigFiles` for anything else sensitive, such as object-storage crede
 > [!WARNING]
 > `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `extraConfig` and secrets in `extraConfigFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
 
-If your bench declares its secrets with [frappe-nix.secrets](../development/secrets.md), a deployment can read the same ciphertext through `lib.frappeSecrets` instead of keeping a second copy.
+If your bench declares its secrets with [frappe-nix.secrets](../development/secrets.md), a deployment can read the same ciphertext through `lib.secrets` instead of keeping a second copy.
 
 ## Database and Redis
 

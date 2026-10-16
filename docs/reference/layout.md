@@ -24,10 +24,8 @@ frappe-nix/
 │   ├── overrides.nix         # mysqlclient / pycups / python-ldap / pyvips / cairocffi
 │   ├── yarn-lock.nix         # one fetchurl per tarball in a yarn.lock
 │   ├── node-locks.nix        # the node-locks/ fallback generator
-│   ├── secrets-schema.nix    # the one derivation of a bench's secret set
-│   ├── secrets-tools.nix     # generated agenix rules and the recipient checker
-│   ├── agecheck.py           # are the .age files encrypted to who we think?
-│   ├── backup-fetch.nix      # the object-store half of bench restore, shellchecked
+│   ├── secrets.nix           # python-devops-nix's secrets tools, with frappe-nix's names
+│   ├── backup-fetch.nix      # the object-store half of bench restore (python-devops-nix's lib.backups)
 │   ├── devguard/             # frappe_devguard: guards against reaching production (dev only)
 │   ├── unixsock/             # frappe_unixsock: unix-socket transport fixes (dev and prod)
 │   ├── journald/             # frappe_journald: journald priorities, no log files (dev and prod, acts only under systemd)
@@ -76,7 +74,7 @@ nix build -L .#checks.x86_64-linux.<NAME>                 # one check
 
 On `x86_64-linux` the checks are:
 
-`agecheck`, `app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `backup-fetch`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-cli`, `setup-requirements`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
+`app-workspace`, `apps-registry`, `apps-report`, `assets-reassert`, `bench-get-app`, `bench-patches`, `bench-remove-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `nix-lint`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-module`, `setup-requirements`, `shared-config`, `socket`, `socket-runtime`, `unixsock`, `update-deps` and `yarn-lock`.
 
 Two of them, `migrate-rollback` and `socket`, run a NixOS virtual machine that builds a full Frappe bench inside the guest. `socket-runtime` does the same for the unified runtime. They are Linux-only and heavy.
 

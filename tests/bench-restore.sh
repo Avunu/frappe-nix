@@ -83,7 +83,7 @@ export FRAPPE_BENCH_ROOT="$ROOT"
 export FRAPPE_SITE="erp.example.com"
 export FRAPPE_DB_SOCKET="/run/x/mysql.sock"
 export DEVENV_STATE="$WORK/state"
-export FRAPPE_BACKUP_SOURCE="$SRC"
+export FRAPPE_NIX_BACKUP_SOURCE="$SRC"
 export LIST_APPS_JSON="$WORK/apps.json"
 printf '{"erp.example.com":["frappe","erpnext"]}' >"$LIST_APPS_JSON"
 
@@ -216,7 +216,7 @@ fi
 
 # ── 11. an explicit file bypasses the object store entirely ──────────────
 printf 'local' >"$WORK/local.sql.gz"
-FRAPPE_BACKUP_SOURCE="$WORK/nonexistent" run "$WORK/local.sql.gz"
+FRAPPE_NIX_BACKUP_SOURCE="$WORK/nonexistent" run "$WORK/local.sql.gz"
 if [ "$RC" -eq 0 ] && logged "local.sql.gz" && logged "--db-root-username root"; then
   ok "an explicit file is restored without touching the object store"
 else
@@ -229,6 +229,18 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202; then
   ok "--list shows the available backups"
 else
   no "--list shows the available backups" "rc=$RC out=$OUT"
+fi
+
+# ── 13. the old variable names still work, and say so ────────────────────
+# FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (CONVENTIONS.md,
+# Tool-owned variables); the old name is read, with a warning, until the next
+# minor release.
+FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
+  printf '%s' "$OUT" | grep -q 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
+  ok "FRAPPE_BACKUP_SOURCE is still read, with a deprecation warning"
+else
+  no "the legacy FRAPPE_BACKUP_SOURCE still works" "rc=$RC out=$OUT"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

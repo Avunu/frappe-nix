@@ -2127,10 +2127,10 @@ in
         # agenix-shell's own secret options are. Empty when secrets are off.
         secretsCfg = topLevel.config.frappe-nix.secrets;
 
-        secretsTools = import ../lib/secrets-tools.nix {
-          inherit lib pkgs;
+        secretsTools = import ../lib/secrets.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
           cfg = secretsCfg;
-          schema = import ../lib/secrets-schema.nix { inherit lib; };
         };
 
         # The app standards in app mode (`frappe-nix`, `frappe-init`, and every
@@ -2151,10 +2151,16 @@ in
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           secrets = secretsTools;
+          # edit-secret, rekey-secrets, check-secrets, and setup-backup-access
+          # when restoring can fetch. Empty when secrets are off.
+          secretScripts = secretsTools.scripts (
+            lib.optionalAttrs cfg.restore.enable { fetch = lib.getExe backupFetch; }
+          );
           restore = cfg.restore // {
-            fetch = "${backupFetch}/bin/frappe-nix-backup-fetch";
+            fetch = lib.getExe backupFetch;
             # Sourced by bench-restore at the moment it needs the credentials,
-            # not by enterShell — see lib/secrets-tools.nix for why.
+            # not by enterShell: see loadSecrets in python-devops-nix's
+            # lib.secrets.tools for why.
             loadSecrets = lib.optionalString secretsTools.enabled (
               secretsTools.loadSecrets config.agenix-shell.installationScript
             );
@@ -2193,10 +2199,12 @@ in
           inherit (cfg) renamedApps replacedApps;
         };
 
-        # The object-store half of `bench restore`, kept separate so shellcheck
-        # sees it (devenv script bodies are never linted) and so the NixOS-side
-        # restore can call the same discovery instead of copying it.
-        backupFetch = import ../lib/backup-fetch.nix { inherit pkgs; };
+        # The object-store half of `bench restore`: python-devops-nix's backup
+        # fetch layer with frappe-nix's layout. See lib/backup-fetch.nix.
+        backupFetch = import ../lib/backup-fetch.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        };
 
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.

@@ -137,7 +137,7 @@ provision-site          # (first run, in another shell) create the site + instal
 | --- | --- |
 | flakeModules.default | The flake-parts module — imports it and configure perSystem.frappe-nix. |
 | nixosModules.default | Standalone NixOS module exposing services.frappe (multi-tenant production systemd). |
-| lib.frappeSecrets | (in a consuming bench) The declared .age paths and recipients, so a deployment can read the same ciphertext — see [Secrets](#secrets). |
+| lib.secrets | (in a consuming bench) The declared .age paths and recipients, so a deployment can read the same ciphertext — see [Secrets](#secrets). |
 | lib.mkFlake | flake-parts.lib.mkFlake wrapper that merges frappe-nix's inputs into the consumer's. |
 | lib.overrides | Composable Python package overrides for native deps (mysqlclient, pycups, python-ldap, pyvips, cairocffi). |
 
@@ -190,7 +190,7 @@ frappe-nix.secrets = {
 };
 ```
 
-There is no `secrets.nix`: the recipient list in `flake.nix` is the only place it is written down, and `check-secrets` proves the ciphertext agrees. With secrets declared, `setup-backup-access` and `bench restore` clone production into the dev shell, and `services.frappe` can read the same ciphertext through `lib.frappeSecrets`. See [Secrets](docs/development/secrets.md) and [Restore a production backup](docs/development/restore-from-production.md).
+There is no `secrets.nix`: the recipient list in `flake.nix` is the only place it is written down, and `check-secrets` proves the ciphertext agrees. With secrets declared, `setup-backup-access` and `bench restore` clone production into the dev shell, and `services.frappe` can read the same ciphertext through `lib.secrets`. See [Secrets](docs/development/secrets.md) and [Restore a production backup](docs/development/restore-from-production.md).
 
 ## Local apps
 

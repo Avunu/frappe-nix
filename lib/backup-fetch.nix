@@ -1,23 +1,32 @@
-# frappe-nix-backup-fetch — the object-store half of `bench restore`.
+# frappe-nix-backup-fetch: the object-store half of `bench restore`.
 #
-# A writeShellApplication rather than a devenv `scripts.<n>.exec` string, for
-# the same reason lib/init.nix is one: devenv script bodies are never
-# shellchecked, and this is a few hundred lines of quoting-sensitive discovery
-# logic. Building it separately also makes it callable from the NixOS side,
-# which today carries a near-identical copy of the same shell.
-{ pkgs }:
+# python-devops-nix's backup fetch layer (lib.backups.fetch; PLAN.md, Phase 2)
+# with frappe-nix's names and its backup layout: one folder per backup, named
+# for its timestamp, as Frappe's S3 backup integration writes them
+# (py/frappe_nix_tools/frappe_nix_tools/restore/backup_layout.py).
+#
+#   frappe-nix-backup-fetch list|folders|fetch [--at …] [--files] [--private-files]
+#
+# `fetch` prints a JSON manifest and touches no database, which is what lets a
+# production host reuse it with its own restore half.
+#
+# The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_MC and
+# FRAPPE_NIX_BACKUP_CACHE (CONVENTIONS.md, Tool-owned variables). The names
+# frappe-nix used before are read too, with a warning, until the next minor
+# release.
+{ pkgs, python-devops-nix }:
 
-pkgs.writeShellApplication {
-  name = "frappe-nix-backup-fetch";
-
-  runtimeInputs = with pkgs; [
-    minio-client # `mc` — S3 protocol, and it reads local paths identically
-    jq
-    coreutils
-    findutils
-    gnugrep
-    gnused
-  ];
-
-  text = builtins.readFile ./sh/backup-fetch.sh;
+python-devops-nix.lib.backups.fetch {
+  inherit pkgs;
+  label = "frappe-nix";
+  envPrefix = "FRAPPE";
+  layout = ../py/frappe_nix_tools/frappe_nix_tools/restore/backup_layout.py;
+  legacyEnv = {
+    BACKUP_SOURCE = "FRAPPE_BACKUP_SOURCE";
+    MC = "FRAPPE_BACKUP_MC";
+    BACKUP_CACHE = "FRAPPE_BACKUP_CACHE";
+  };
+  # frappe-nix's tool interpreter (PLAN.md, Python versions), as
+  # frappe-nix-tools uses.
+  python = pkgs.python314;
 }

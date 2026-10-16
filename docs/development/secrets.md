@@ -102,7 +102,7 @@ Once backup access exists, see [Restore a production backup](restore-from-produc
 
 ## Use the same secrets on the server
 
-A bench that declares secrets exposes them as `lib.frappeSecrets`, so a deployment reads the same ciphertext instead of keeping a second copy in the server repository that has to be rotated in lockstep and silently drifts when it is not. It carries:
+A bench that declares secrets exposes them as `lib.secrets` (also as `lib.frappeSecrets`, its old name, until the next minor release), so a deployment reads the same ciphertext instead of keeping a second copy in the server repository that has to be rotated in lockstep and silently drifts when it is not. It carries:
 
 - `recipients`: every developer and host key, labelled;
 - `sites.<SITE>`: the paths of that site's `encryptionKey`, `databasePassword` and `extraConfig` files;
@@ -112,7 +112,7 @@ On a NixOS host that decrypts with [agenix](https://github.com/ryantm/agenix) yo
 
 ```nix
 age.secrets = lib.mapAttrs (_: f: { file = f; mode = "0400"; })
-  inputs.mybench.lib.frappeSecrets.files;
+  inputs.mybench.lib.secrets.files;
 
 services.frappe.sites."erp.example.com" = {
   encryptionKeyFile = config.age.secrets.<NAME>.path;
