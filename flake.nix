@@ -479,6 +479,8 @@
           # What services.frappe.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
           // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }
+          # The container image names, with and without containers.registry.
+          // import ./tests/containers-registry.nix { inherit self pkgs; }
         )
         # NixOS VM tests (Linux only — runNixOSTest builds a VM).
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

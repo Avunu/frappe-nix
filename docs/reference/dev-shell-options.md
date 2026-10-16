@@ -180,7 +180,7 @@ Alter large tables online in front of `bench migrate`. See [Migrate large tables
 
 See [Build production images](../production/images.md).
 
-| Option                | Type | Default | Notes                                                                                                                                                                       |
-| --------------------- | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `containers.enable`   | bool | `false` | Build the OCI images.                                                                                                                                                       |
-| `containers.registry` | str  | `""`    | Container registry URL prefix. Declared but not used: frappe-nix does not push images. See [Build production images](../production/images.md#building-loading-and-pushing). |
+| Option                | Type | Default | Notes                                                                                                                                                                                                                                             |
+| --------------------- | ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `containers.enable`   | bool | `false` | Build the OCI images.                                                                                                                                                                                                                             |
+| `containers.registry` | str  | `""`    | Registry prefix for the image names: `"ghcr.io/avunu"` names them `ghcr.io/avunu/<benchName>/<name>`. A trailing slash is dropped. frappe-nix does not push. See [Build production images](../production/images.md#building-loading-and-pushing). |

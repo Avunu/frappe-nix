@@ -1461,7 +1461,8 @@ in
           registry = mkOption {
             type = types.str;
             default = "";
-            description = "Container registry URL prefix.";
+            example = "ghcr.io/avunu";
+            description = "Registry prefix for the image names: \"ghcr.io/avunu\" names them ghcr.io/avunu/<benchName>/<name>. A trailing slash is dropped; empty leaves the names bare.";
           };
         };
       };

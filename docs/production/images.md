@@ -60,7 +60,7 @@ frappe-nix = {
 };
 ```
 
-Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<benchName>/<name>`. The [unified runtime](runtime.md) is on by default, which gives you three images.
+Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<benchName>/<name>`, or `<registry>/<benchName>/<name>` with `containers.registry` set (see [Building, loading and pushing](#building-loading-and-pushing)). The [unified runtime](runtime.md) is on by default, which gives you three images.
 
 | Package     | Image                         | Contents                                                                                     |
 | ----------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
@@ -99,11 +99,22 @@ docker load < result
 
 `result` is an image tarball, and `docker load` registers it as `<BENCH_NAME>/runtime:latest`. Repeat with `.#nginx` and `.#bench-cli` for the other two.
 
-frappe-nix declares a `containers.registry` option but does not use it to push anything. Pushing is up to you, with ordinary container tooling:
+Set `containers.registry` and the images are named for the registry, so they load ready to push. The registry goes in front of the name with a slash, and a trailing slash on it is dropped. With it empty, the default, the names stay bare.
+
+```nix
+frappe-nix.containers.registry = "registry.example.com";
+```
+
+```bash
+nix build .#runtime
+docker load < result    # registry.example.com/<BENCH_NAME>/runtime:latest
+docker push registry.example.com/<BENCH_NAME>/runtime:latest
+```
+
+frappe-nix does not push anything itself. Without a registry set, `docker tag` the bare name first:
 
 ```bash
 docker tag <BENCH_NAME>/runtime:latest registry.example.com/<BENCH_NAME>/runtime:latest
-docker push registry.example.com/<BENCH_NAME>/runtime:latest
 ```
 
 ## Running the images

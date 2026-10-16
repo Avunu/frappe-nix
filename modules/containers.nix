@@ -214,6 +214,19 @@ _:
 
         prefix = cfg.benchName;
 
+        # Images are <benchName>/<name>, and containers.registry prefixes that:
+        # "ghcr.io/avunu" (or "ghcr.io/avunu/") names them
+        # ghcr.io/avunu/<benchName>/<name>; "" leaves them bare. The same rule
+        # as odoo-nix's modules/containers.nix. Only image names take it, not
+        # the store paths named after prefix.
+        registry = lib.removeSuffix "/" cfg.containers.registry;
+        imageName =
+          name:
+          let
+            image = "${prefix}/${name}";
+          in
+          if registry == "" then image else "${registry}/${image}";
+
         mkFrappeContainer =
           {
             name,
@@ -224,7 +237,7 @@ _:
             exposedPorts ? { },
           }:
           pkgs.dockerTools.buildLayeredImage {
-            name = "${prefix}/${name}";
+            name = imageName name;
             tag = "latest";
             maxLayers = 125;
             contents = [
@@ -362,7 +375,7 @@ _:
               # Node's realtime server. Only built when the unified runtime is off — it is
               # the last thing in the runtime closure that needs Node at all.
               socketio = pkgs.dockerTools.buildLayeredImage {
-                name = "${prefix}/socketio";
+                name = imageName "socketio";
                 tag = "latest";
                 maxLayers = 125;
                 contents = [
@@ -410,7 +423,7 @@ _:
         )
         // {
           nginx = pkgs.dockerTools.buildLayeredImage {
-            name = "${prefix}/nginx";
+            name = imageName "nginx";
             tag = "latest";
             maxLayers = 125;
             contents = [
