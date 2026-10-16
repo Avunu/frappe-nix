@@ -19,9 +19,12 @@ let
 
   # Stub `bench`: implements just the subcommands the units invoke.
   #   set-maintenance-mode on|off -> writes maintenance_mode into site_config.json
-  #   migrate                     -> succeeds, unless /run/fail-migrate exists, in
-  #                                  which case it simulates a PARTIAL failure
-  #                                  (creates a table + inserts a row, then exits 1)
+  #   migrate                     -> writes a public file, as after_migrate does
+  #                                  when it regenerates the Website Theme CSS,
+  #                                  then succeeds, unless /run/fail-migrate
+  #                                  exists, in which case it simulates a PARTIAL
+  #                                  failure (creates a table + inserts a row,
+  #                                  then exits 1)
   #   schedule|worker             -> sleep (so the long-running units stay active)
   # It connects to the DB exactly like Frappe does: over the unix socket.
   fakeBench = pkgs.writeShellScriptBin "bench" ''
@@ -50,6 +53,9 @@ let
         DBUSER="$(${jq} -r '.db_user' "$CONFIG")"
         SOCK="$(${jq} -r '.db_socket // "/run/mysqld/mysqld.sock"' "$CONFIG")"
         export MYSQL_PWD="$(${jq} -r '.db_password // empty' "$CONFIG")"
+        THEME_DIR="$(dirname "$CONFIG")/public/files/website_theme"
+        mkdir -p "$THEME_DIR"
+        echo 'body {}' > "$THEME_DIR/theme_test.css"
         if [ -e /run/fail-migrate ]; then
           echo "fake bench: simulating a partial, failing migration" >&2
           ${mysql} --socket="$SOCK" -u"$DBUSER" "$DBNAME" \
@@ -100,6 +106,8 @@ let
       '';
 
   cfgPath = "/var/lib/frappe/${siteName}/sites/${siteName}/site_config.json";
+  themeDir = "/var/lib/frappe/${siteName}/sites/${siteName}/public/files/website_theme";
+  snapDir = "/var/lib/frappe/${siteName}/snapshots";
   markerPath = "/var/lib/frappe/${siteName}/.frappe-migrate-build";
   migrateUnit = "frappe-migrate-${siteName}.service";
 in
@@ -146,6 +154,15 @@ in
     )
     machine.succeed("systemctl restart ${migrateUnit}")
     machine.succeed("test -e ${markerPath}")
+
+    # The snapshot is a full dump: owner-only, in an owner-only directory. What
+    # migrate itself writes is not: nginx serves public/files as a member of the
+    # service group, so a theme written owner-only is a 403 on every page.
+    assert machine.succeed("stat -c %a ${snapDir}").strip() == "700"
+    assert machine.succeed("stat -c %a ${snapDir}/premigrate-*.sql.gz").strip() == "600"
+    for path, need in [("${themeDir}", 0o050), ("${themeDir}/theme_test.css", 0o040)]:
+        mode = int(machine.succeed(f"stat -c %a {path}").strip(), 8)
+        assert mode & need == need, f"{path} is {mode:o}, which nginx cannot read through the group"
 
     # Force the next migration to fail (and mutate the DB); drop the marker so
     # the build guard does not short-circuit the re-run.
