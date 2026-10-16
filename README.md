@@ -209,7 +209,7 @@ Every option, with its type and default, is in the reference: [`perSystem.frappe
 
 ## Layout
 
-The repository layout and the checks CI runs are described in [Repository layout](docs/reference/layout.md). In short: `lib/` holds the Nix and shell building blocks (`lib/sh/*.sh` is concatenated into the `frappe-init` scaffolder), `modules/` the flake-parts and NixOS modules, `templates/` what a new bench or app repository is laid down from, `runtime/` the unified runtime, `tests/` the flake checks, `docs/` the documentation pages, and `docs-site/` the project that builds them into the documentation site.
+The repository layout and the checks CI runs are described in [Repository layout](docs/reference/layout.md). In short: `lib/` holds the Nix and shell building blocks (`lib/sh/*.sh` is concatenated into the `frappe-init` scaffolder), `modules/` the flake-parts and NixOS modules, `templates/` what a new bench or app repository is laid down from, `runtime/` the unified runtime, `tests/` the flake checks, and `docs/` the documentation pages.
 
 ## License
 
