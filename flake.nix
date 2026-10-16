@@ -24,10 +24,6 @@
       inputs.uv2nix.follows = "uv2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    nix-oci = {
-      url = "github:dauliac/nix-oci";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     # Decrypts age secrets into a dev shell. Imported by
     # modules/flake-module.nix, so consumers do not declare it themselves.
     #
