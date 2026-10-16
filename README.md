@@ -172,7 +172,7 @@ What lands is three things: `frappe-runtime` in `[project].dependencies`; a `[to
 
 ### Development guard rails
 
-A bench restored from a production backup carries working production credentials. `frappe-nix.devguard` stops it from mailing customers, deleting objects from a production bucket, uploading backups and the like. Treat it as a large reduction in blast radius, not an airgap: only the mail guard is transport-level, and every other guard patches Frappe and app APIs. See [Development guard rails](docs/development/guard-rails.md).
+A bench restored from a production backup carries working production credentials. `frappe-nix.devguard` stops it from mailing customers, calling payment gateways and other APIs, deleting objects from a production bucket, uploading backups and the like. Treat it as a large reduction in blast radius, not an airgap: the egress and mail guards hold at the transport level but only for the bench's Python, and every other guard patches Frappe and app APIs. See [Development guard rails](docs/development/guard-rails.md).
 
 ## Secrets
 

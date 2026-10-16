@@ -55,17 +55,26 @@ script, not only `cloud_storage`:
 Clients pointed at a loopback endpoint (a local MinIO) are left alone, as the
 integrations guard does for loopback hosts.
 
+Reaching the bucket at all is the egress guard's call, and it refuses S3 like
+any other destination. In ``push`` mode the calls this guard admits — reads,
+the ``HeadObject`` probe and new-object writes — run inside the egress guard's
+:func:`~frappe_devguard.guards.egress.passage`, which lets them through; the
+refused ones never get that far. In ``local`` mode nothing is meant to reach
+the bucket, so nothing is let through.
+
 Consequences worth knowing in ``push`` mode: an upload whose key production
 already holds (the same file name on the same document) is refused rather than
 versioned, and a file pushed by mistake has to be removed from production, not
 from dev.
 """
 
+import contextlib
 from urllib.parse import urlsplit
 
 from .._hook import on_import
 from .._patch import announce, block, mark, require, warn
 from .._settings import settings
+from . import egress
 
 NAME = "objectstore"
 
@@ -245,12 +254,17 @@ def _refuse_overwrite(original, client, operation, params):
 	)
 
 
+def _passage():
+	"""Let a vetted call through the egress guard — in push mode only."""
+	return egress.passage(NAME) if mode() == "push" else contextlib.nullcontext()
+
+
 def _patch_client(module):
 	base = require(module, "BaseClient")
 	original = require(base, "_make_api_call")
 
-	def _make_api_call(self, operation_name, api_params):
-		if not _guarded(self) or _is_read(operation_name):
+	def _vetted(self, operation_name, api_params):
+		if _is_read(operation_name):
 			return original(self, operation_name, api_params)
 
 		if operation_name in _DELETES:
@@ -281,6 +295,12 @@ def _patch_client(module):
 			reason = "only object reads and new-object writes are permitted"
 		announce(NAME, "the configured object store is read-only from this bench")
 		block(NAME, f"{operation_name} {_where(api_params)}: {reason}")
+
+	def _make_api_call(self, operation_name, api_params):
+		if not _guarded(self):
+			return original(self, operation_name, api_params)
+		with _passage():
+			return _vetted(self, operation_name, api_params)
 
 	base._make_api_call = mark(_make_api_call, "botocore.client.BaseClient._make_api_call")
 

@@ -3,7 +3,7 @@ title: Dev shell options
 description: Every perSystem.frappe-nix option that configures the development shell, the production package and the container images, with types and defaults.
 order: 1
 tags: [options, reference, devenv]
-updated: 2026-10-07
+updated: 2026-10-15
 ---
 
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe`](nixos-options.md).
@@ -129,6 +129,8 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | Option                                   | Type              | Default                          | Notes                                                                                                        |
 | ---------------------------------------- | ----------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `devguard.enable`                        | bool              | `true`                           | Master switch for all guard rails. See [Development guard rails](../development/guard-rails.md).             |
+| `devguard.egress.enable`                 | bool              | `true`                           | Refuse every connection the bench's Python opens to anything but this machine.                               |
+| `devguard.egress.allowHosts`             | list of str       | `[ ]`                            | Hostnames (`*.` for subdomains), addresses or CIDRs to let through. Shared with `integrations.allowHosts`.   |
 | `devguard.mail.enable`                   | bool              | `true`                           | Route all outgoing mail to Mailpit, and refuse IMAP and POP3.                                                |
 | `devguard.mail.host`                     | str               | `"127.0.0.1"`                    | Interface Mailpit binds and Frappe is redirected to.                                                         |
 | `devguard.mail.smtpPort`                 | port              | 19000 plus a hash of `benchName` | Catcher SMTP port (per bench).                                                                               |
@@ -144,7 +146,7 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | `devguard.objectstore.mode`              | `local` or `push` | `"local"`                        | `local`: `cloud_storage` writes to local disk. `push`: new files are uploaded to the bucket (additive only). |
 | `devguard.objectstore.conditionalWrites` | bool              | `true`                           | Send `If-None-Match: *` on push-mode writes. Set `false` for Backblaze B2, which answers it with 501.        |
 | `devguard.integrations.enable`           | bool              | `true`                           | Block outbound HTTP via `frappe.integrations.utils.make_request`.                                            |
-| `devguard.integrations.allowHosts`       | list of str       | `[ ]`                            | Hosts to permit anyway. Loopback is always allowed.                                                          |
+| `devguard.integrations.allowHosts`       | list of str       | `[ ]`                            | Hosts to permit anyway. Loopback is always allowed. Shared with `egress.allowHosts`.                         |
 | `devguard.google.enable`                 | bool              | `true`                           | Block Google Calendar, Contacts and Drive access.                                                            |
 | `devguard.webhooks.enable`               | bool              | `true`                           | Drop outbound Webhook requests.                                                                              |
 | `devguard.plaid.enable`                  | bool              | `true`                           | Block Plaid bank synchronization.                                                                            |

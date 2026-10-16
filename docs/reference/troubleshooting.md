@@ -3,7 +3,7 @@ title: FAQ and troubleshooting
 description: Answers to common questions about frappe-nix and the errors you are most likely to meet in the dev shell, in builds and on a deployed host, with their fixes.
 order: 6
 tags: [faq, troubleshooting, errors]
-updated: 2026-10-06
+updated: 2026-10-15
 ---
 
 Each entry starts with what you see, then what it means and what to do. Where a page explains the cause in depth, the entry links to it.
@@ -112,6 +112,10 @@ The wiki frontend bakes `socketio_port` into its bundle at build time. Run `benc
 ### Mail does not arrive anywhere
 
 That is the mail guard working. Everything a dev site sends goes to Mailpit, whose address is in the shell banner. See [Development guard rails](../development/guard-rails.md).
+
+### `frappe_devguard[egress]: blocked connection to <ADDRESS>`
+
+That is the egress guard working: the bench's Python may only connect to this machine. It usually surfaces wrapped, as a `ConnectionError` or `URLError` from the client that tried, and the name in parentheses is the host the address was resolved from. To let a host through, add it to `devguard.egress.allowHosts`, or set `FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS` for one command. See [Outbound connections](../development/guard-rails.md#outbound-connections).
 
 ### Attachments pushed from dev never reach a Backblaze B2 bucket
 

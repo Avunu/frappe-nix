@@ -64,7 +64,7 @@ Nix alone gives you the building blocks. frappe-nix is the part that knows how a
 
 - **A scaffolder that replaces `bench init`.** It creates a bench, converts an existing one in place without deleting anything, or sets up a single app's repository. See [Choose a mode](scaffolding/README.md).
 - **A development shell that matches production.** One `direnv allow` and `devenv up` replace a setup wiki. See [The development shell](development/README.md).
-- **Guard rails.** A bench restored from production cannot mail customers, delete files from a production bucket or push backups. See [Development guard rails](development/guard-rails.md).
+- **Guard rails.** A bench restored from production cannot mail customers, call payment gateways or other APIs, delete files from a production bucket or push backups. See [Development guard rails](development/guard-rails.md).
 - **A `bench` wrapper** that sends `bench update`, `bench get-app`, `bench restore` and friends to versions that understand git submodules, the uv workspace and the read-only Nix store. See [Everyday commands](development/commands.md).
 - **One runtime process** per bench that serves the web app, realtime, background jobs and the scheduler together. See [The unified runtime](production/runtime.md).
 - **A NixOS module and container images** built from the same package the developers run. See [Production](production/README.md).

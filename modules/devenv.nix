@@ -838,9 +838,10 @@ in
               A bench restored from a production backup carries working
               production credentials in its database and site_config.json.
               Left alone it will mail real customers, push its dev-mutated
-              database over the production backup rotation, and delete
-              production files out of an object store. Each guard closes one
-              of those routes.
+              database over the production backup rotation, delete
+              production files out of an object store, and call every payment
+              gateway and API it holds a key for. Each guard closes one of
+              those routes, and `egress` closes the ones nobody listed.
 
               The interception is grafted into the development virtualenv,
               below the Frappe app layer, so it needs no per-site app install
@@ -853,6 +854,53 @@ in
             '';
           };
 
+          egress = {
+            enable = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Refuse every connection the bench's Python opens to anything
+                but this machine, unless the destination is on `allowHosts`.
+
+                The catch-all behind the other guards, which each know one
+                integration. It sits on `socket.socket.connect`, where every
+                Python client ends up (requests, httpx, aiohttp, urllib,
+                botocore, smtplib), so it also refuses the SDKs nobody wrote a
+                guard for: a payment gateway such as GoCardless creating real
+                mandates and subscriptions, a bank or payout API. Unix
+                sockets, loopback and the mail catcher always pass, so
+                MariaDB, Redis, Socket.IO and Mailpit are unaffected.
+
+                Python only: subprocesses (git, mc, chromium, wkhtmltopdf,
+                node) are outside it. `FRAPPE_DEVGUARD_DISABLE=egress` turns it
+                off for a single command.
+              '';
+            };
+
+            allowHosts = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              example = [
+                "api-sandbox.gocardless.com"
+                "*.example.com"
+                "10.0.0.0/8"
+              ];
+              description = ''
+                Destinations to let through: hostnames (`*.example.com` for a
+                domain and its subdomains), IP addresses or CIDRs.
+
+                A hostname is matched against the name a connection was
+                resolved from, so it works for clients that resolve first and
+                connect by address, which is nearly all of them. Shared with
+                `integrations.allowHosts`: an entry in either list opens the
+                host to both guards.
+
+                `FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS=a,b` replaces this list for
+                a single command.
+              '';
+            };
+          };
+
           mail = {
             enable = mkOption {
               type = types.bool;
@@ -861,7 +909,7 @@ in
                 Route ALL outgoing mail from every site in this bench to
                 Mailpit, and refuse incoming IMAP/POP3.
 
-                The only guard with transport-level containment: it patches
+                Transport-level, like `egress`: it patches
                 smtplib/imaplib/poplib, which know nothing about Frappe and so
                 hold across upgrades and third-party apps.
               '';
@@ -978,9 +1026,9 @@ in
                 the site_config.json inside it, over the production backup
                 rotation.
 
-                App-layer only: unlike the mail guard there is no
-                transport-level containment behind this, so an unknown
-                third-party uploader is not covered.
+                App-layer, for a readable refusal: an unknown third-party
+                uploader is refused by `egress` at the socket instead, unless
+                it adds objects to S3 while `objectstore.mode` is `push`.
               '';
             };
           };
@@ -1056,6 +1104,11 @@ in
                 document — is refused rather than versioned, and a file pushed
                 by mistake has to be removed from production.
 
+                The egress guard refuses the bucket like any other
+                destination. In `push` mode the S3 calls this guard admits are
+                let through it; in `local` mode the bucket is not contacted at
+                all.
+
                 `FRAPPE_DEVGUARD_OBJECTSTORE_MODE=push` switches a single
                 command without a rebuild.
               '';
@@ -1084,6 +1137,10 @@ in
               description = ''
                 Hosts to permit anyway, for deliberate integration work.
                 Loopback is always allowed.
+
+                Shared with `egress.allowHosts`, which takes the same entries
+                and more (wildcards, addresses, CIDRs): an entry in either list
+                opens the host to both guards.
               '';
               example = [ "api.sandbox.example.com" ];
             };
@@ -1769,6 +1826,10 @@ in
         # Frappe at it.
         mailEnabled = dg.enable && mc.enable;
 
+        # What the egress guard lets through, for the banner: frappe_devguard
+        # unions the two lists itself, so both are shown.
+        egressAllowHosts = lib.unique (dg.egress.allowHosts ++ dg.integrations.allowHosts);
+
         sockets = cfg.sockets.enable;
 
         portOffset = portOffsetOf cfg;
@@ -1820,6 +1881,10 @@ in
         devguardConfig = {
           enabled = dg.enable;
           guards = {
+            egress = {
+              inherit (dg.egress) enable;
+              allow_hosts = dg.egress.allowHosts;
+            };
             mail = {
               inherit (mc) enable;
               inherit (mc) host;
@@ -2850,6 +2915,17 @@ in
                     ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
                     ${lib.optionalString (cfg.siteName != "") "--site-name ${lib.escapeShellArg cfg.siteName}"} \
                     ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
+                    ${
+                      if !dg.enable then
+                        "--devguard-off"
+                      else
+                        lib.optionalString dg.egress.enable (
+                          "--egress"
+                          + lib.optionalString (
+                            egressAllowHosts != [ ]
+                          ) " --egress-allow ${lib.escapeShellArg (lib.concatStringsSep ", " egressAllowHosts)}"
+                        )
+                    } \
                     ${
                       lib.optionalString mailEnabled (
                         "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"

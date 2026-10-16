@@ -12,9 +12,15 @@ minute off the ``all`` scheduler bucket, iterates Integration Requests in state
 sandbox guard. On a bench restored from production, that charges real
 customers.
 
-Everything is refused by default. ``devguard.integrations.allowHosts`` opens
-specific hosts back up for deliberate integration work; loopback is always
-allowed so a locally-stubbed service still works.
+Everything is refused by default. A host on either allowlist —
+``devguard.egress.allowHosts`` or ``devguard.integrations.allowHosts`` — is
+opened back up for deliberate integration work, here and in the egress guard
+alike, so one entry is enough. Loopback is always allowed so a locally-stubbed
+service still works.
+
+This guard is the readable layer: it names the URL it refused. The egress guard
+behind it refuses the same request at the socket, and also the SDKs that never
+come through here.
 """
 
 from urllib.parse import urlsplit
@@ -22,19 +28,16 @@ from urllib.parse import urlsplit
 from .._hook import on_import
 from .._patch import announce, block, mark, require
 from .._settings import settings
+from . import egress
 
 NAME = "integrations"
-
-_LOOPBACK = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 _INSTALLED = False
 
 
 def allowed(url):
-	host = (urlsplit(url).hostname or "").lower()
-	if not host or host in _LOOPBACK:
-		return True
-	return host in {entry.lower() for entry in settings().items(NAME, "allow_hosts")}
+	host = urlsplit(url).hostname or ""
+	return not host or egress.listed(host)
 
 
 def _patch_utils(module):
@@ -46,7 +49,7 @@ def _patch_utils(module):
 		announce(
 			NAME,
 			"outbound integration HTTP is blocked — add hosts to "
-			"devguard.integrations.allowHosts to permit specific ones",
+			"devguard.egress.allowHosts to permit specific ones",
 		)
 		block(NAME, f"{method} {url}: outbound integration request blocked")
 
