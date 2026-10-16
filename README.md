@@ -152,7 +152,7 @@ When `frappe-nix.enable` is set, the module adds these **packages** to your flak
 
 and one **app** (`nix run .#<name>`): `relock`, which runs `uv lock` from a `uv` that does not come from the workspace, so it still works when a stale `uv.lock` stops the dev shell from opening. In app mode it also writes `nix/uv.lock` (and `nix/node-locks/`) back into the repo. See [Dependencies and locks](docs/development/locks.md).
 
-With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`. See [Build production images](docs/production/images.md).
+With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`, or `<registry>/<benchName>/<name>:latest` with `containers.registry` set): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`. See [Build production images](docs/production/images.md).
 
 ## The unified runtime
 
