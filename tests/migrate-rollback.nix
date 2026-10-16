@@ -255,26 +255,35 @@ in
     # shell. The canary table it creates stands in for the Frappe schema and is
     # the known pre-migrate state S0: a single row v=1.
     #
-    # Why the documented command passes --no-setup-db: Frappe's default makes
-    # the database and its user over a MariaDB root connection, and on this
-    # module's MariaDB root has no password, only unix_socket auth, which
-    # admits OS root and nobody else. A root `bench` used to get in that way;
-    # it now runs as frappe, which cannot. The module has already made the
-    # database and its user (ensureDatabases, ensureUsers, the password sync),
-    # so the root connection was never needed.
+    # Frappe's default makes the database and its user over a MariaDB root
+    # connection, and on this module's MariaDB root has no password, only
+    # unix_socket auth, which admits OS root and nobody else. A root `bench`
+    # used to get in that way; it now runs as frappe, which cannot. The module
+    # has already made the database and its user (ensureDatabases,
+    # ensureUsers, the password sync), so the root connection is not needed.
     root_connect = (
         "${pkgs.python3.withPackages (ps: [ ps.pymysql ])}/bin/python3 -c "
         "'import pymysql; pymysql.connect(unix_socket=\"/run/mysqld/mysqld.sock\", user=\"root\")'"
     )
     machine.succeed(root_connect)
     machine.fail(f"runuser -u frappe -- {root_connect}")
-    # So Frappe's default fails through the root `bench`, and leaves nothing.
-    machine.fail("bench new-site ${siteName} --force --admin-password admin </dev/null")
+    # So the wrapper adds --no-setup-db for a site declared in services.frappe,
+    # unless the caller passes a database flag of their own. Then it passes
+    # the command through untouched, and here Frappe's root login is refused,
+    # leaving nothing behind.
+    status, out = machine.execute(
+        "bench new-site ${siteName} --force --db-root-username root --admin-password admin </dev/null 2>&1"
+    )
+    assert status != 0, out
+    assert "adding --no-setup-db" not in out, out
+    assert "Access denied for user 'root'" in out, out
     machine.succeed("${mysql} -N ${dbName} -e 'SHOW TABLES' | wc -l | grep -qx 0")
-    # Without --force it refuses: frappe-init has made the site directory.
-    machine.fail("bench new-site ${siteName} --no-setup-db --admin-password admin </dev/null")
-    # The documented command.
-    machine.succeed("bench new-site ${siteName} --force --no-setup-db --admin-password admin </dev/null")
+    # Without --force it refuses: frappe-init has made the site directory. The
+    # wrapper never adds --force.
+    machine.fail("bench new-site ${siteName} --admin-password admin </dev/null")
+    # The documented command, and the wrapper says what it added.
+    out = machine.succeed("bench new-site ${siteName} --force --admin-password admin </dev/null 2>&1")
+    assert "adding --no-setup-db" in out, out
     assert machine.succeed("${mysql} -N ${dbName} -e 'SELECT v FROM canary'").strip() == "1"
     # Everything under the site is the service user's, the new directories too.
     machine.succeed("test -d ${siteDir}/private/backups")

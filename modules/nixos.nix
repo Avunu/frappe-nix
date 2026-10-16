@@ -1137,6 +1137,48 @@ let
           CMD="$1"; shift
           exec ${benchBin} $SITE_FLAG "$CMD" "$@"
           ;;
+        new-site)
+          # For a site declared here, the database and its user already exist:
+          # ensureDatabases/ensureUsers made them for createLocally, and an
+          # external database is the operator's, named by database.* and
+          # already in site_config.json. Frappe's default setup would make
+          # them again over a MariaDB root login, which a local MariaDB grants
+          # only to OS root (unix_socket) and so refuses to whoever runs this.
+          # So add --no-setup-db, the same way the dev shell's umbrella adds
+          # its new-site flags, unless the caller passed any database flag of
+          # Frappe's new-site (frappe/commands/site.py): then they asked for
+          # something else, and get exactly what they asked for. --force is
+          # never added: on an installed site it reinstalls the core tables.
+          shift
+          NEW_SITE=""
+          DB_FLAGS=false
+          SKIP=false
+          for arg in "$@"; do
+            if $SKIP; then SKIP=false; continue; fi
+            case "$arg" in
+              --db-*=* | --mariadb-*=*) DB_FLAGS=true ;;
+              --setup-db | --no-setup-db | --no-mariadb-socket) DB_FLAGS=true ;;
+              --db-* | --mariadb-*) DB_FLAGS=true; SKIP=true ;;
+              --admin-password | --source-sql | --source_sql | --install-app) SKIP=true ;;
+              -*) ;;
+              *) if [ -z "$NEW_SITE" ]; then NEW_SITE="$arg"; fi ;;
+            esac
+          done
+          SITE_CONFIG=""
+          ${concatStringsSep "\n" (
+            mapAttrsToList (name: siteCfg: ''
+              if [ "$NEW_SITE" = ${lib.escapeShellArg name} ]; then
+                SITE_CONFIG=${lib.escapeShellArg "${siteCfg.siteDir}/sites/${name}/site_config.json"}
+              fi
+            '') enabledSites
+          )}
+          if [ -n "$SITE_CONFIG" ] && ! $DB_FLAGS \
+             && ${pkgs.jq}/bin/jq -e '.db_name and .db_password' "$SITE_CONFIG" >/dev/null 2>&1; then
+            echo "bench: adding --no-setup-db: services.frappe already provides $NEW_SITE's database and user (pass any --db-* flag to let Frappe set them up instead)" >&2
+            exec ${benchBin} new-site --no-setup-db "$@"
+          fi
+          exec ${benchBin} new-site "$@"
+          ;;
         *)
           exec ${benchBin} "$@"
           ;;

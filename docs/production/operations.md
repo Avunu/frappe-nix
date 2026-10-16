@@ -31,13 +31,13 @@ The command runs as `frappe`, so the file must be readable by `frappe`: not unde
 To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs:
 
 ```bash
-sudo env FRAPPE_SITE=site1.example.com bench new-site site1.example.com --force --no-setup-db --admin-password <ADMIN_PASSWORD>
+sudo env FRAPPE_SITE=site1.example.com bench new-site site1.example.com --force --admin-password <ADMIN_PASSWORD>
 ```
 
-Both flags are needed on this module:
+`FRAPPE_SITE` tells the wrapper which site directory to use, so set it even though it repeats the site name. Two things differ from a stock bench:
 
-- `--no-setup-db`: the module has already created the site's database and its user, from the `database.*` options. Frappe's default would create them again over a MariaDB root connection. On a local MariaDB (`database.createLocally`), root has no password and logs in only through `unix_socket`, which admits OS root and no one else. The wrapper runs as `frappe`, so that login fails with `Access denied for user 'root'@'localhost'`.
-- `--force`: `frappe-init-<SITE>` has already created the site directory and its `site_config.json`. Without the flag, Frappe stops with `Site … already exists`. Frappe keeps that `site_config.json`. Do not pass `--force` for a site that is already installed: it drops and recreates Frappe's core tables in the existing database. `FRAPPE_SITE` tells the wrapper which site directory to use, so set it even when it repeats the site name.
+- The wrapper adds `--no-setup-db`, and says so on stderr. The site's database and its user already exist: the module creates them for `database.createLocally`, and for an external database they are yours, named by the `database.*` options. Frappe's default would create them again over a MariaDB root login. A local MariaDB lets only OS root log in as root, through `unix_socket`, and the wrapper runs as `frappe`. The wrapper adds the flag only for a site declared in `services.frappe` whose `site_config.json` has a database name and password. It adds nothing when you pass any of Frappe's database flags yourself (`--db-root-username`, `--db-root-password`, `--db-host`, `--setup-db` and the rest), and then the command runs exactly as you typed it.
+- `--force` is required, and the wrapper never adds it. `frappe-init-<SITE>` has already created the site directory and its `site_config.json`. Without the flag, Frappe stops with `Site … already exists`. Frappe keeps that `site_config.json`. Do not pass `--force` for a site that is already installed: it drops and recreates Frappe's core tables in the existing database.
 
 If a `bench new-site` fails, Frappe removes the whole site directory, `site_config.json` included. Run `sudo systemctl restart frappe-init-<SITE>.service` to recreate them before you try again.
 
