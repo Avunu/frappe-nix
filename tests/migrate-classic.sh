@@ -351,6 +351,31 @@ else
 fi
 check "the colliding app is still a member" grep -q '"apps/foo"' "$ROOT/foo/pyproject.toml"
 
+echo "── scaffolding clones apps partial, not shallow ─────────────"
+# --init clones frappe from GitHub; point that URL (and hrms's owner/repo) at
+# the fixture remotes. file:// serves a filter only with uploadpack.allowFilter;
+# without it git falls back to a full clone, which the checks below would catch.
+# git reports the rewritten URL, hence --allow-file-remotes: without it the
+# pipeline would vendor both apps.
+for app in frappe hrms; do
+  git -C "$ROOT/fx/remotes/$app.git" config uploadpack.allowFilter true
+  git config --global "url.file://$ROOT/fx/remotes/$app.git.insteadOf" "https://github.com/frappe/$app.git"
+done
+# A branch the scaffold must not fetch: the clone follows version-15 alone.
+git -C "$ROOT/fx/remotes/frappe.git" branch develop version-15
+"$FRAPPE_INIT" --init --skip-lock --allow-file-remotes --frappe-version version-15 --apps frappe/hrms "$ROOT/new" > "$ROOT/init.log" 2>&1 ||
+  { cat "$ROOT/init.log"; no "scaffolding a bench"; }
+for app in frappe hrms; do
+  check_eq "apps/$app is not shallow" false "$(git -C "$ROOT/new/apps/$app" rev-parse --is-shallow-repository)"
+  check_eq "apps/$app is a blob:none partial clone" blob:none \
+    "$(git -C "$ROOT/new/apps/$app" config --get remote.origin.partialclonefilter)"
+  check_eq "apps/$app follows version-15 alone" "+refs/heads/version-15:refs/remotes/origin/version-15" \
+    "$(git -C "$ROOT/new/apps/$app" config --get-all remote.origin.fetch)"
+  check_eq "apps/$app has the branch's whole history" 2 "$(git -C "$ROOT/new/apps/$app" rev-list --count HEAD)"
+  check_eq "apps/$app is registered on version-15" version-15 \
+    "$(git -C "$ROOT/new" config -f .gitmodules "submodule.apps/$app.branch")"
+done
+
 echo
 if [ "$fails" -gt 0 ]; then
   echo "$fails assertion(s) failed"

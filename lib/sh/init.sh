@@ -14,20 +14,24 @@ choose_frappe_version() {
   printf '%s' "$choice"
 }
 
-# Shallow-clone the chosen branch. `git clone --depth 1 -b <branch>` is used
-# rather than `submodule add -b`, because the latter only honours the remote's
-# default branch; registration happens afterwards, in the shared pipeline.
+# Clone the chosen branch the way shell entry's first checkout does
+# (lib/apps-report.nix): a partial clone of that one branch, with every commit
+# and folder but only the files the checkout needs (--filter=blob:none
+# --single-branch). Not a shallow one: the next `nix develop` gives a shallow
+# app its branch's history in place anyway, so --depth 1 only put that
+# download off, and until then `bench-update --pull` could have to deepen the
+# clone before it could tell whether the pin is behind its branch.
+#
+# `git clone -b <branch>` rather than `submodule add -b`, because the latter
+# only honours the remote's default branch; registration happens afterwards,
+# in the shared pipeline.
 clone_app() {
-  local url=$1 app=$2 path="apps/$2" use_branch=""
+  local url=$1 path="apps/$2" args=()
   if git ls-remote --heads "$url" "$branch" 2>/dev/null | grep -q .; then
-    use_branch="$branch"
+    args=(--branch "$branch")
   fi
-  info "+ $path (${use_branch:-default branch}) — $url"
-  if [ -n "$use_branch" ]; then
-    git clone -q --depth 1 --branch "$use_branch" -- "$url" "$path"
-  else
-    git clone -q --depth 1 -- "$url" "$path"
-  fi
+  info "+ $path (${args[1]:-default branch}) — $url"
+  git clone -q --filter=blob:none --single-branch "${args[@]}" -- "$url" "$path"
 }
 
 cmd_init() {

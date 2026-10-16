@@ -51,7 +51,7 @@ The full list, including the migration-only flags, is in [Scaffolder reference](
 
 ## How apps are chosen
 
-Each app follows the chosen version's branch when the remote has one. The scaffolder checks with `git ls-remote` and falls back to the repository's default branch otherwise. Apps are cloned shallow first, then registered as git submodules by the same pipeline [migration](migrate.md) uses, so a new bench and a migrated one cannot drift apart.
+Each app follows the chosen version's branch when the remote has one. The scaffolder checks with `git ls-remote` and falls back to the repository's default branch otherwise. Apps are cloned as the dev shell's first entry clones them, a [partial clone](../development/apps.md#fresh-clones) of that one branch, then registered as git submodules by the same pipeline [migration](migrate.md) uses, so a new bench and a migrated one cannot drift apart.
 
 > [!NOTE]
 > The presets live in `lib/frappe-presets.json` and are curated from Frappe's own `requires-python` and `engines` fields, so they move as Frappe's requirements move. The Python and Node versions in the generated `flake.nix` are plain options, and you can change them there.
