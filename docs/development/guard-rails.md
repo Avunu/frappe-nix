@@ -1,29 +1,30 @@
 ---
 title: Development guard rails
-description: The devguard options that stop a bench restored from production from mailing customers, deleting production files or pushing backups, and the limits of that protection.
+description: The devguard options that stop a bench restored from production from mailing customers, calling payment gateways and other APIs, deleting production files or pushing backups, and the limits of that protection.
 order: 2
-tags: [devguard, safety, mail, backups]
-updated: 2026-10-06
+tags: [devguard, safety, egress, mail, backups]
+updated: 2026-10-15
 ---
 
-A bench restored from a production backup carries working production credentials in its database and `site_config.json`. Left alone, `devenv up` will mail real customers within minutes, delete production files out of an object store within the hour, and, depending on what is configured, capture real payments, push its dev-mutated database over the production backup rotation and delete real calendar events.
+A bench restored from a production backup carries working production credentials in its database and `site_config.json`. Left alone, `devenv up` will mail real customers within minutes, delete production files out of an object store within the hour, and, depending on what is configured, capture real payments, create real direct-debit mandates and subscriptions, push its dev-mutated database over the production backup rotation and delete real calendar events.
 
-`frappe-nix.devguard` closes those routes. Nothing is installed into any site and no config is edited. Each guard is independently toggleable, and `devguard.enable = false` turns them all off. The guards are on by default.
+`frappe-nix.devguard` closes those routes. Nothing is installed into any site and no config is edited. Each guard is independently toggleable, and `devguard.enable = false` turns them all off. The guards are on by default, and the shell banner says so.
 
 ## The guards
 
 | Guard          | What it stops                                                                          | How                                                                                                                                                                                                                                                |
 | -------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `egress`       | Any connection off the machine: payment SDKs, bank APIs, unguarded integrations        | Refuses `socket.connect` to a non-loopback address unless it is on `allowHosts`. Unix sockets, loopback and the mail catcher always pass.                                                                                                          |
 | `mail`         | Any mail leaving the machine                                                           | Redirects SMTP to Mailpit and refuses IMAP and POP3.                                                                                                                                                                                               |
 | `backups`      | Dropbox, S3, Google Drive and Frappe Cloud backup upload                               | No-ops the scheduler entries, blocks the upload funnels and throws on the desk buttons.                                                                                                                                                            |
 | `objectstore`  | Deleting from, or overwriting in, the production bucket                                | Drops S3 deletes and refuses overwrites at botocore. Local mode, the default, also forces `cloud_storage`'s `use_local`. Push mode lets new attachments upload.                                                                                    |
-| `integrations` | Outbound HTTP via `frappe.integrations.utils.make_request`                             | Refuses non-loopback hosts unless listed in `allowHosts`.                                                                                                                                                                                          |
+| `integrations` | Outbound HTTP via `frappe.integrations.utils.make_request`                             | Refuses hosts on neither allowlist, naming the URL it refused.                                                                                                                                                                                     |
 | `google`       | Calendar, Contacts and Drive access, whose sync writes back and can delete real events | Blocks GoogleOAuth's service-object and token-refresh calls.                                                                                                                                                                                       |
 | `webhooks`     | Webhook rows firing at production endpoints                                            | No-ops `enqueue_webhook`.                                                                                                                                                                                                                          |
 | `plaid`        | Bank sync against the production Plaid item                                            | Blocks `PlaidConnector` and no-ops the hourly job.                                                                                                                                                                                                 |
 | `scheduler`    | Third-party backup jobs and Server Script scheduler events                             | Skips them in `ScheduledJobType.execute`. The denylist matches exact dotted paths: the seven Dropbox, S3 and Google Drive backup jobs in Frappe core up to version 15, and the same seven in the standalone `offsite_backups` app from version 16. |
 
-Local backups are untouched by all of this. `bench backup`, `bench restore`, `trim-database`, `drop-site` and the desk Backups page keep working. Only egress is blocked.
+Local backups are untouched by all of this. `bench backup`, `bench restore`, `trim-database`, `drop-site` and the desk Backups page keep working. Only the uploads are blocked.
 
 The mail guard sends everything to Mailpit. Open its web UI, at the address printed in the shell banner, to see what your site tried to send. Every option is in the [reference](../reference/dev-shell-options.md#development-guard-rails).
 
@@ -31,16 +32,46 @@ The mail guard sends everything to Mailpit. Open its web UI, at the address prin
 
 Incoming mail is blocked by default. A dev bench polling production mailboxes every 10 minutes marks real messages as seen and fires auto-replies. Set `devguard.mail.pop3.enable = true` to serve incoming mail from Mailpit's POP3 listener instead. Frappe issues `DELE` after fetching and Mailpit honors it, so pulled messages disappear from the Mailpit UI.
 
+## Outbound connections
+
+The `egress` guard is the catch-all behind the others, which each know one integration. Every Python client, whether requests, httpx, aiohttp, urllib, botocore or smtplib, ends in `socket.socket.connect`, and the guard refuses any connection there that is not to this machine. A payment SDK such as `gocardless_pro` therefore cannot set up real mandates or subscriptions, and neither can the next integration nobody has written a guard for. The refusal happens before a packet leaves and is an `OSError`, so a client that already handles "the service is unreachable" fails the way it would offline. The first refusal in a process says how to let a destination through, and each one names the host the address was resolved from:
+
+```text
+WARNING frappe_devguard[egress] ACTIVE — outbound connections from this process are refused (loopback only). Allow a destination with devguard.egress.allowHosts, …
+WARNING frappe_devguard[egress] blocked connection to 104.16.246.239:443 (api-sandbox.gocardless.com)
+```
+
+Unix sockets, loopback and the mail catcher always pass, so MariaDB, Redis, Socket.IO, Mailpit and the bench calling its own web server are unaffected.
+
+To let a destination through, list it:
+
+```nix
+frappe-nix.devguard.egress.allowHosts = [
+  "api-sandbox.gocardless.com" # a hostname
+  "*.example.com"              # a domain and its subdomains
+  "10.0.0.0/8"                 # an address or a CIDR
+];
+```
+
+For a single command, `FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS=api-sandbox.gocardless.com bench console` replaces the list. `integrations.allowHosts` is the same list: an entry in either one opens the host to both guards.
+
+A hostname is matched against the name a connection was resolved from, because clients resolve a name and then connect to the address. The guard wraps `getaddrinfo` to remember which names produced which addresses. Two consequences follow. An address that an allowlisted name shares with another host, as on a CDN, passes for both. And a client that resolves some other way, such as aiodns or gevent's resolver, is refused unless its address or CIDR is listed.
+
+Only sandbox credentials belong behind an allowlisted sandbox host. A production key sent to a sandbox endpoint is refused there, but a production endpoint on the list accepts it.
+
+In push mode, the S3 calls the `objectstore` guard admits get through as well; see [Pushing attachments to production](#pushing-attachments-to-production).
+
 ## Turning guards off
 
 Per command, without a rebuild:
 
 ```bash
 FRAPPE_DEVGUARD_DISABLE=backups,google bench console   # named guards, one command
+FRAPPE_DEVGUARD_DISABLE=egress bench console           # outbound connections, one command
 FRAPPE_DEVGUARD_ENABLED=0 bench console                # all of them
 ```
 
-Values the Nix configuration bakes in are likewise overridable at runtime, without a rebuild. Each setting has an environment variable named `FRAPPE_DEVGUARD_<GUARD>_<SETTING>`, such as `FRAPPE_DEVGUARD_MAIL_HOST`, `FRAPPE_DEVGUARD_MAIL_PORT` and `FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS`.
+Values the Nix configuration bakes in are likewise overridable at runtime, without a rebuild. Each setting has an environment variable named `FRAPPE_DEVGUARD_<GUARD>_<SETTING>`, such as `FRAPPE_DEVGUARD_MAIL_HOST`, `FRAPPE_DEVGUARD_MAIL_PORT` and `FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS`.
 
 Settings resolve in this order, highest first: the `FRAPPE_DEVGUARD_*` environment variables, then a runtime file that `devenv up` writes to `$DEVENV_RUNTIME/devguard-runtime.json` (it records the ports Mailpit was started on; these are fixed at evaluation from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets) and nothing moves them at run time, so they match the baked values), then the values Nix baked in at build time, then the built-in defaults. Because the baked values are there, the guards still hold when the devenv environment is absent, such as an editor terminal or a stray `sudo -u`. Settings are read when a guard runs, which is why a guard can be turned off for a single command.
 
@@ -56,6 +87,8 @@ The bucket is still additive-only. Every S3 call in the bench passes through bot
 - refuses everything else, including bucket policy, lifecycle rules, ACLs and tagging.
 
 Presigned URLs are issued for reads only. So deleting a File in dev removes its row and never production's object. An attachment whose key production already holds, the same file name on the same document, is refused rather than versioned. A file pushed by mistake has to be removed from production.
+
+Push mode is also what lets the bucket through the [egress guard](#outbound-connections). The calls the objectstore guard admits (reads, the `HeadObject` probe and new-object writes) are let through the egress guard, and the ones it refuses never reach the network. That covers the S3 calls botocore makes after these checks, from any app, and nothing else: another AWS service, or a bucket reached without botocore, is refused as usual. So while push mode is on, any app's S3 client can add objects to a bucket it holds credentials for. Turn it on for the push and off again. In local mode the bucket is not contacted at all.
 
 `FRAPPE_DEVGUARD_OBJECTSTORE_MODE=push` does the same for a single command without a rebuild.
 
@@ -87,10 +120,17 @@ Shipping it to production does not weaken devguard's development-only guarantee:
 > [!WARNING]
 > Treat the guard rails as a large reduction in blast radius, not an airgap.
 
-Only the `mail` guard offers **transport-level** containment. It patches `smtplib`, `imaplib` and `poplib`, which know nothing about Frappe and so hold across upgrades, third-party apps and `override_doctype_class` controllers.
+Two guards are **transport-level**: `egress`, which refuses connections at `socket.socket.connect`, and `mail`, which patches `smtplib`, `imaplib` and `poplib`. They know nothing about Frappe and so hold across upgrades, third-party apps and `override_doctype_class` controllers.
 
-Every other guard patches Frappe and app APIs, and is therefore one refactor or one unknown app away from being bypassed. The `scheduler` denylist covers exactly the dotted paths in it. Egress from a document event in an app nobody has looked at is not covered.
+Both cover the bench's Python and nothing else. Outside them are:
 
-Two related notes for a restored bench. Frappe's telemetry is inert here only because `developer_mode: 1` is set, so re-check it if you ever clear that flag. And `check_for_update` and `fetch_changelog_feed` still reach github.com and frappe.io, which is harmless and deliberately left alone.
+- subprocesses: `git`, `mc`, `curl`, Chromium, wkhtmltopdf and Node open their own connections;
+- C extensions that connect without Python's socket module, such as `mysqlclient`'s libmariadb or gRPC;
+- UDP sent with `sendto` rather than through a connected socket;
+- the browser, whose scripts reach whatever the page tells them to.
+
+Every other guard patches Frappe and app APIs, and is therefore one refactor or one unknown app away from being bypassed. The `scheduler` denylist covers exactly the dotted paths in it. What slips past an API-level guard, such as a document event in an app nobody has looked at, still meets `egress` at the socket, only with a less readable error.
+
+Two related notes for a restored bench. Frappe's telemetry is inert here only because `developer_mode: 1` is set, so re-check it if you ever clear that flag. And `check_for_update` and `fetch_changelog_feed` now fail as they would offline, because egress refuses github.com and frappe.io. Add those hosts to `egress.allowHosts` if you want the update notices back.
 
 Restoring production data also carries production's encryption key, which can decrypt every stored credential in the dump. `bench restore` refuses to write that key into a bench with `devguard.enable = false`. See [Restore a production backup](restore-from-production.md#the-encryption-key).

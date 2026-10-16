@@ -285,6 +285,260 @@ os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
 
 
 # --------------------------------------------------------------------------
+# egress: every non-loopback connect() is refused
+#
+# 192.0.2.0/24 is TEST-NET-1, where nothing ever answers. A connection the guard
+# lets through therefore fails at the network instead (unreachable in the build
+# sandbox, a timeout elsewhere), which is how "let through" is told apart from
+# "refused". Names under .test are reserved too; a stand-in resolver maps the
+# few the checks need, so nothing here depends on real DNS.
+# --------------------------------------------------------------------------
+
+import asyncio
+import urllib.error
+import urllib.request
+
+from frappe_devguard.guards import egress, integrations
+
+BLOCKED = ("192.0.2.1", 9)
+
+_DNS = {
+	"api.gocardless.test": "192.0.2.10",
+	"api.allowed.test": "192.0.2.11",
+	"cdn.allowed.test": "192.0.2.12",
+	"alias.test": "127.0.0.1",
+}
+_real_resolver = egress._getaddrinfo
+
+
+def _stand_in_dns(host, port, *args, **kwargs):
+	name = host.decode() if isinstance(host, bytes) else host
+	if isinstance(name, str) and name.endswith((".test", ".invalid")):
+		if name not in _DNS:
+			raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+		return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_DNS[name], port or 0))]
+	return _real_resolver(host, port, *args, **kwargs)
+
+
+egress._getaddrinfo = _stand_in_dns
+
+
+def let_through(fn):
+	"""Whether the guard let FN's connection through, whatever the network said."""
+	try:
+		fn()
+	except DevGuardBlocked:
+		return False
+	except OSError as exc:
+		# urllib wraps the socket error; the guard's refusal is its reason.
+		return not isinstance(getattr(exc, "reason", None), DevGuardBlocked)
+	return True
+
+
+def connect(address, method="connect"):
+	sock = socket.socket()
+	sock.settimeout(0.3)
+	try:
+		return getattr(sock, method)(address)
+	finally:
+		sock.close()
+
+
+def blocked_message(fn):
+	try:
+		fn()
+	except DevGuardBlocked as exc:
+		return str(exc)
+	return ""
+
+
+check("egress guard enabled by default", frappe_devguard.settings().guard_enabled("egress"))
+check(
+	"socket.connect and getaddrinfo are patched",
+	frappe_devguard.status().get("socket.socket.connect") == "patched"
+	and frappe_devguard.status().get("socket.getaddrinfo") == "patched",
+	frappe_devguard.status(),
+)
+
+# -- what always passes --
+
+session = socket.create_connection(("127.0.0.1", SMTP_PORT), timeout=2)
+check("loopback connects", session.getpeername()[1] == SMTP_PORT)
+session.close()
+check("localhost by name connects", connect(("localhost", SMTP_PORT), "connect_ex") == 0)
+
+_unix_dir = tempfile.mkdtemp()
+_unix_path = os.path.join(_unix_dir, "s")
+_unix_server = socket.socket(socket.AF_UNIX)
+_unix_server.bind(_unix_path)
+_unix_server.listen(1)
+_unix_client = socket.socket(socket.AF_UNIX)
+_unix_client.connect(_unix_path)
+print("ok   unix sockets connect")
+_unix_client.close()
+_unix_server.close()
+
+# -- what is refused, and how --
+
+check("a non-loopback connect is refused", not let_through(lambda: connect(BLOCKED)))
+check("so is connect_ex", not let_through(lambda: connect(BLOCKED, "connect_ex")))
+check(
+	"so is create_connection",
+	not let_through(lambda: socket.create_connection(BLOCKED, timeout=0.3)),
+)
+check(
+	"the refusal names the destination",
+	"192.0.2.1:9" in blocked_message(lambda: connect(BLOCKED)),
+	blocked_message(lambda: connect(BLOCKED)),
+)
+expect_raises(
+	"urllib surfaces it as a URLError",
+	urllib.error.URLError,
+	lambda: urllib.request.urlopen("http://192.0.2.1:9/", timeout=0.3),
+)
+check(
+	"whose reason is the guard",
+	not let_through(lambda: urllib.request.urlopen("http://192.0.2.1:9/", timeout=0.3)),
+)
+expect_raises(
+	"asyncio connections are refused too",
+	DevGuardBlocked,
+	lambda: asyncio.run(asyncio.open_connection(*BLOCKED)),
+)
+
+# What reached production: an SDK (gocardless_pro, through requests and
+# urllib3) resolves the API host and connects by address. The refusal says
+# which name the address came from.
+check(
+	"an SDK connecting by name is refused",
+	not let_through(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
+)
+check(
+	"and the refusal names the host it resolved",
+	"(api.gocardless.test)"
+	in blocked_message(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
+)
+
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "mail"
+expect_raises(
+	"with the mail guard off, SMTP to a real server is still refused",
+	DevGuardBlocked,
+	lambda: smtplib.SMTP("192.0.2.25", 25, timeout=1),
+)
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+
+# -- the allowlist --
+
+os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = (
+	"203.0.113.0/24, api.example.test, *.corp.test, 198.51.100.7, api.allowed.test"
+)
+for _host in (
+	"127.0.0.1",
+	"::1",
+	"::ffff:127.0.0.1",
+	"0.0.0.0",
+	"localhost",
+	"site.localhost",
+	"alias.test",  # a name that resolves only to loopback
+	"203.0.113.50",
+	"api.example.test",
+	"API.example.test.",
+	"a.corp.test",
+	"corp.test",
+	"198.51.100.7",
+):
+	check(f"allowed: {_host}", egress._allowed(_host))
+for _host in (
+	"192.0.2.1",
+	"203.0.114.1",
+	"example.test",
+	"evilapi.example.test",
+	"corp.test.evil.test",
+	"198.51.100.8",
+	"nxdomain.invalid",
+):
+	check(f"refused: {_host}", not egress._allowed(_host))
+
+# The fix for an allowlist that never matched: connect() is handed the address,
+# never the name, so a hostname entry has to be matched against what resolved.
+check(
+	"an allowlisted name passes when its client resolves first",
+	let_through(lambda: socket.create_connection(("api.allowed.test", 9), timeout=0.3)),
+)
+check(
+	"through urllib too",
+	let_through(lambda: urllib.request.urlopen("http://api.allowed.test:9/", timeout=0.3)),
+)
+check(
+	"the name it came from does not open an unlisted one",
+	not let_through(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
+)
+os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = "*.allowed.test"
+check(
+	"a wildcard entry matches a resolved subdomain",
+	let_through(lambda: socket.create_connection(("cdn.allowed.test", 9), timeout=0.3)),
+)
+os.environ.pop("FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS")
+check(
+	"and dropping the entry refuses it again",
+	not let_through(lambda: socket.create_connection(("cdn.allowed.test", 9), timeout=0.3)),
+)
+
+egress._remember("odd.test", [(socket.AF_UNIX, socket.SOCK_STREAM, 0, "", "/not/an/inet/sockaddr")])
+print("ok   an unexpected resolver answer is ignored, not raised")
+
+# -- one list for egress and integrations --
+
+os.environ["FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS"] = "api.sandbox.test"
+check("integrations.allowHosts opens a host to egress", egress._allowed("api.sandbox.test"))
+os.environ.pop("FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS")
+
+os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = "*.stripe.test"
+check(
+	"egress.allowHosts opens a host to integrations",
+	integrations.allowed("https://api.stripe.test/v1/charges"),
+)
+check("an unlisted integration host is refused", not integrations.allowed("https://api.other.test/"))
+os.environ.pop("FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS")
+check("integrations: loopback is allowed", integrations.allowed("http://127.0.0.1:8000/api"))
+check("integrations: local names are allowed", integrations.allowed("http://site.localhost:8000/"))
+
+# -- the mail catcher --
+
+os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "catcher.devguard.invalid"
+check("the mail catcher's host is always allowed", egress._allowed("catcher.devguard.invalid"))
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "mail"
+check("unless the mail guard is off", not egress._allowed("catcher.devguard.invalid"))
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "127.0.0.1"
+
+# -- passage, for a guard that vetted the call itself --
+
+with egress.passage("objectstore"):
+	check("inside a passage a connection is let through", let_through(lambda: connect(BLOCKED)))
+	_other_thread = []
+	_thread = threading.Thread(target=lambda: _other_thread.append(let_through(lambda: connect(BLOCKED))))
+	_thread.start()
+	_thread.join()
+	check("but not one another thread makes", _other_thread == [False], _other_thread)
+check("after it, refused again", not let_through(lambda: connect(BLOCKED)))
+try:
+	with egress.passage("objectstore"):
+		raise RuntimeError("boom")
+except RuntimeError:
+	pass
+check("a passage ends even when its block raises", not egress.in_passage())
+
+# -- turning it off --
+
+for _var, _value in (("FRAPPE_DEVGUARD_DISABLE", "egress"), ("FRAPPE_DEVGUARD_ENABLED", "0")):
+	os.environ[_var] = _value
+	check(f"{_var}={_value} lets a connection through", let_through(lambda: connect(BLOCKED)))
+	os.environ.pop(_var)
+check("and unsetting it refuses again", not let_through(lambda: connect(BLOCKED)))
+
+
+# --------------------------------------------------------------------------
 # post-import hook
 # --------------------------------------------------------------------------
 
@@ -650,9 +904,12 @@ def fake_botocore():
 			self.existing = set(existing)
 			self.head_error = head_error
 			self.calls = []
+			# Per call: would the egress guard have let its connection through?
+			self.passage = []
 
 		def _make_api_call(self, operation_name, api_params):
 			self.calls.append((operation_name, dict(api_params)))
+			self.passage.append(egress.in_passage())
 			if operation_name == "HeadObject":
 				if self.head_error:
 					raise FakeClientError(self.head_error)
@@ -694,6 +951,11 @@ check("objectstore defaults to local mode", objectstore.mode() == "local")
 _c = S3()
 _c._make_api_call("GetObject", {"Bucket": "prod", "Key": "a"})
 check("reads reach the store", ops(_c) == ["GetObject"], ops(_c))
+check(
+	"but local mode gives them no egress passage: the bucket stays unreached",
+	_c.passage == [False],
+	_c.passage,
+)
 
 _c = S3()
 _resp = _c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
@@ -732,10 +994,20 @@ _c = S3()
 put(_c)
 check("push mode writes a new key", ops(_c) == ["HeadObject", "PutObject"], ops(_c))
 check(
+	"through the egress guard: the probe and the write both get passage",
+	_c.passage == [True, True],
+	_c.passage,
+)
+check("which ends with the call", not egress.in_passage())
+check(
 	"with If-None-Match so the store refuses a racing overwrite",
 	_c.calls[-1][1].get("IfNoneMatch") == "*",
 	_c.calls[-1][1],
 )
+
+_c = S3()
+_c._make_api_call("GetObject", {"Bucket": "prod", "Key": "inherited.pdf"})
+check("push-mode reads get passage, so inherited files resolve", _c.passage == [True], _c.passage)
 
 _c = S3(existing={"taken.pdf"})
 expect_raises("push mode refuses to overwrite a key", DevGuardBlocked, lambda: put(_c, "taken.pdf"))
@@ -846,10 +1118,25 @@ _c = S3(service="sqs")
 _c._make_api_call("DeleteQueue", {"QueueUrl": "q"})
 check("non-S3 clients are left alone", ops(_c) == ["DeleteQueue"], ops(_c))
 
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "push"
+_c = S3(service="ses")
+_c._make_api_call("SendEmail", {"Destination": {}})
+check("push mode opens no passage for other AWS services", _c.passage == [False], _c.passage)
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
+
 os.environ["FRAPPE_DEVGUARD_DISABLE"] = "objectstore"
 _c = S3()
 _c._make_api_call("DeleteObject", {"Bucket": "prod", "Key": "a"})
 check("FRAPPE_DEVGUARD_DISABLE=objectstore restores stock behaviour", ops(_c) == ["DeleteObject"])
+os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "push"
+_c = S3()
+put(_c)
+check(
+	"and with the guard off, push mode opens no passage either: S3 is just another destination",
+	_c.passage == [False],
+	_c.passage,
+)
+os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
 os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
 
 os.environ["FRAPPE_DEVGUARD_OBJECTSTORE_MODE"] = "yolo"

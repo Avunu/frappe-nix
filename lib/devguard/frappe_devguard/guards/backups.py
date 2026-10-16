@@ -10,12 +10,14 @@ A bench restored from production carries enabled `S3 Backup Settings` /
 the production backup rotation — `site_config.json`, and therefore the DB
 password, encryption key and object-store keys, included.
 
-Unlike the mail guard this is app-layer only: there is no transport-level
-containment behind it, so a Frappe refactor or an unknown third-party uploader
-is not covered. `require()` makes such a drift loud rather than silent, and the
-`scheduler` guard catches scheduled jobs by name, but neither is the same
-guarantee. Do not read the ``offsite_backup_utils`` patch below as one either:
-two paths reach an upload without ever calling it.
+This guard is app-layer, there for the readable refusal. A Frappe refactor or
+an unknown third-party uploader slips past it and meets the egress guard at the
+socket instead — with one exception: in objectstore ``push`` mode a new S3
+object is let through, because adding objects to the bucket is what that mode
+is for. `require()` makes a drift here loud rather than silent, and the
+`scheduler` guard catches scheduled jobs by name. Do not read the
+``offsite_backup_utils`` patch below as a guarantee: two paths reach an upload
+without ever calling it.
 
 Frappe 16 moved all three integrations out of core into the standalone
 `frappe/offsite_backups` app. Both layouts are guarded, because frappe-nix's

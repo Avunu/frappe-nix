@@ -53,6 +53,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--site-name", default="")
 	parser.add_argument("--sockets", action="store_true")
 	parser.add_argument("--devenv-runtime", default="")
+	parser.add_argument("--devguard-off", action="store_true")
+	parser.add_argument("--egress", action="store_true")
+	parser.add_argument("--egress-allow", default="")
 	parser.add_argument("--mail", action="store_true")
 	parser.add_argument("--mail-host", default="")
 	parser.add_argument("--mail-http-port", default="")
@@ -92,6 +95,15 @@ def main() -> None:
 	console.print(f"  URL: http://127.0.0.1:{args.port}")
 	if args.sockets:
 		console.print(f"  Sockets: {args.devenv_runtime}/{{mysql,redis,socketio,web}}.sock")
+	if args.devguard_off:
+		# A persistent, project-level decision: while it stands, bench restore
+		# will not carry production's encryption key (restore.requireDevguard).
+		console.print(
+			"  [bold red]devguard OFF[/] — nothing stops a restored database from reaching production"
+		)
+	elif args.egress:
+		allowed = f" (allowed: {escape(args.egress_allow)})" if args.egress_allow else ""
+		console.print(f"  Egress: outbound connections blocked{allowed}")
 	if args.mail:
 		console.print(f"  Mail: ALL outgoing email → Mailpit (http://{args.mail_host}:{args.mail_http_port})")
 		incoming = "served from Mailpit POP3" if args.mail_pop3 else "blocked"

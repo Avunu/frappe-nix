@@ -8,20 +8,30 @@ covered without installing an app and without editing any ``site_config.json``
 A bench restored from a production backup carries working production
 credentials in its database and ``site_config.json``. Left alone it will mail
 real customers, push its dev-mutated database over the production backup
-rotation, delete production files out of an object store, and capture real
-payments. Each guard closes one of those routes; see ``guards/``.
+rotation, delete production files out of an object store, capture real
+payments and set up real direct-debit subscriptions. Each guard closes one of
+those routes; see ``guards/``.
 
 Guards are installed unconditionally and consult :func:`settings` at call time,
 so ``FRAPPE_DEVGUARD_ENABLED=0`` (everything) or
 ``FRAPPE_DEVGUARD_DISABLE=backups,google`` (named guards) gives byte-for-byte
 stock behaviour for a single command.
 
-Only the mail guard offers transport-level containment: it patches
-``smtplib``/``imaplib``/``poplib``, which know nothing about Frappe and so hold
-across upgrades and third-party apps. The rest patch Frappe and app APIs, and
-are therefore one refactor or one unknown app away from being bypassed. The
-fail-closed :func:`_patch.require` checks make such a drift loud rather than
-silent, but they are not the same guarantee.
+Two layers, deliberately:
+
+transport level
+    ``egress`` refuses every non-loopback ``connect()`` this process makes,
+    whatever library asked, and the mail transport (``mail_stdlib``) points
+    ``smtplib`` at Mailpit and refuses ``imaplib``/``poplib``. Neither knows
+    anything about Frappe, so both hold across upgrades, third-party apps and
+    code nobody has read — a payment SDK such as gocardless_pro included.
+the rest
+    Frappe and app APIs, patched so the failure is readable — a scheduled job
+    skipped by name, a backup button that says why, S3 deletes dropped — rather
+    than a socket error three frames down. These are one refactor or one
+    unknown app away from being bypassed. The fail-closed
+    :func:`_patch.require` checks make such a drift loud rather than silent,
+    but they are not the same guarantee, which is why ``egress`` exists.
 """
 
 from ._settings import DevGuardBlocked, DevGuardPatchError, settings

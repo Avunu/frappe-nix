@@ -19,8 +19,8 @@ instead of baking them would have been simpler but wrong: outside the devenv
 environment ``DEVENV_RUNTIME`` is unset, so the mail guard would fall back to
 the stock 1025 — which on a machine running several benches is *another
 project's* Mailpit. Falling back to this bench's own derived base is contained;
-falling back to a shared default is a cross-project mail leak, in the one guard
-that offers transport-level containment.
+falling back to a shared default is a cross-project mail leak, in one of the
+two guards that offer transport-level containment.
 
 Settings are read at *call* time rather than frozen at import, so a guard can
 be turned off for a single command without a rebuild.
@@ -41,6 +41,8 @@ except ImportError:  # pragma: no cover - exercised by the source-tree unit chec
 DEFAULTS: dict[str, Any] = {
 	"enabled": True,
 	"guards": {
+		# The catch-all: every non-loopback connect() from this process.
+		"egress": {"enable": True, "allow_hosts": []},
 		"mail": {
 			"enable": True,
 			"host": "127.0.0.1",
