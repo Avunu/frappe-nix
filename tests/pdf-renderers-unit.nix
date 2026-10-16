@@ -51,7 +51,8 @@ let
   initOf = config: config.systemd.services."frappe-init-${site}".serviceConfig.ExecStart;
   benchOf =
     config:
-    "${lib.findFirst (p: (p.name or "") == "bench") null config.environment.systemPackages}/bin/bench";
+    # The inner script: the `bench` on PATH only picks who runs it.
+    "${(lib.findFirst (p: (p.name or "") == "bench") null config.environment.systemPackages).inner}";
   # Whether the site's runtime unit has a package's bin/ on its PATH, or any
   # wkhtmltopdf at all. Decided here, and the default package below is named
   # without its context, so the check builds none of them.

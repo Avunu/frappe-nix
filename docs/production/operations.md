@@ -3,7 +3,7 @@ title: Operate a deployed site
 description: Create or restore a site on a services.frappe host, deploy upgrades with snapshot-protected migrations, tune the runtime and find where things live.
 order: 4
 tags: [operations, migrations, backups, runtime-tuning]
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 This page covers the operational side of a [`services.frappe`](nixos-service.md) host: getting a site installed, upgrading it safely, tuning the runtime and knowing where the state is.
@@ -15,16 +15,18 @@ The module deploys code and configuration. It does not install a site. On the fi
 The module installs a `bench` wrapper on the system `PATH`. With exactly one enabled site it selects that site automatically. With several, set `FRAPPE_SITE` yourself:
 
 ```bash
-sudo -u frappe env FRAPPE_SITE=site1.example.com bench migrate
+sudo env FRAPPE_SITE=site1.example.com bench migrate
 ```
 
-Run the wrapper as the service user, so the files it creates stay owned by `frappe`. For `restore`, `migrate`, `console` and `clear-cache` it passes `--site` for you.
+From a root shell the wrapper does not run as root. It runs the command as a transient systemd unit, as the service user (`frappe`) and with the units' `PATH`, so whatever it writes (the site's files, backups, the runtime bench tree) stays owned by `frappe`. On a terminal it gets one, so `bench console` and `bench mariadb` stay interactive. Otherwise stdin and stdout pass through, so `bench mariadb < dump.sql` works, and the wrapper exits with the command's status. Of the caller's environment only `FRAPPE_SITE` is carried across. The service user itself, and any other user, runs the wrapper in place. For `restore`, `migrate`, `console` and `clear-cache` it passes `--site` for you.
 
 To load an existing database, restore an SQL backup:
 
 ```bash
-sudo -u frappe env FRAPPE_SITE=site1.example.com bench restore <SQL_FILE_PATH>
+sudo env FRAPPE_SITE=site1.example.com bench restore <SQL_FILE_PATH>
 ```
+
+The command runs as `frappe`, so the file must be readable by `frappe`: not under `/root`, for example.
 
 To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs. Follow the Frappe bench documentation for the flags that fit your layout. After either route, run `nixos-rebuild switch` again, or restart the migrate unit:
 

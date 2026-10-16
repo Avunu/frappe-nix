@@ -26,6 +26,11 @@ let
   #                                  failure (creates a table + inserts a row,
   #                                  then exits 1)
   #   schedule|worker             -> sleep (so the long-running units stay active)
+  #   admin-probe [EXIT]          -> what an operator's `bench` from a root shell
+  #                                  does: reads the site's DB credentials, writes
+  #                                  a new file under the site (who ran it, the
+  #                                  query result, stdin, whether stdin was a
+  #                                  tty), then exits EXIT (default 0)
   # It connects to the DB exactly like Frappe does: over the unix socket.
   fakeBench = pkgs.writeShellScriptBin "bench" ''
     set -u
@@ -63,6 +68,22 @@ let
           exit 1
         fi
         echo "fake bench: migrate OK"
+        ;;
+      admin-probe)
+        DBNAME="$(${jq} -r '.db_name' "$CONFIG")"
+        DBUSER="$(${jq} -r '.db_user' "$CONFIG")"
+        SOCK="$(${jq} -r '.db_socket // "/run/mysqld/mysqld.sock"' "$CONFIG")"
+        export MYSQL_PWD="$(${jq} -r '.db_password // empty' "$CONFIG")"
+        OUT="$(dirname "$CONFIG")/private/files/admin-probe"
+        mkdir -p "$OUT"
+        if [ -t 0 ]; then tty=tty; else tty=notty; fi
+        {
+          echo "user=$(id -un)"
+          echo "canary=$(${mysql} --socket="$SOCK" -u"$DBUSER" -N "$DBNAME" -e 'SELECT v FROM canary')"
+          echo "tty=$tty"
+          if [ "$tty" = notty ]; then echo "stdin=$(cat)"; fi
+        } > "$OUT/$tty.txt"
+        exit "''${1:-0}"
         ;;
       schedule|worker)
         exec sleep infinity
@@ -110,6 +131,7 @@ let
   snapDir = "/var/lib/frappe/${siteName}/snapshots";
   markerPath = "/var/lib/frappe/${siteName}/.frappe-migrate-build";
   migrateUnit = "frappe-migrate-${siteName}.service";
+  probeDir = "/var/lib/frappe/${siteName}/sites/${siteName}/private/files/admin-probe";
 in
 {
   name = "frappe-migrate-rollback";
@@ -197,5 +219,26 @@ in
     machine.wait_for_unit("${migrateUnit}")
     machine.succeed("test -e ${markerPath}")
     assert machine.succeed("jq -r .maintenance_mode ${cfgPath}").strip() == "0"
+
+    # The `bench` an operator runs from a root shell runs as the service user,
+    # so what it writes under the site is the service's, not root's. Piped:
+    # stdin reaches the command, and the site's DB credentials (in its 0600
+    # site_config.json) work.
+    machine.succeed("echo from-stdin | bench admin-probe")
+    machine.succeed("stat -c %U:%G ${probeDir} ${probeDir}/notty.txt | sort -u | grep -qx frappe:frappe")
+    probe = machine.succeed("cat ${probeDir}/notty.txt")
+    for line in ("user=frappe", "canary=1", "tty=notty", "stdin=from-stdin"):
+        assert line in probe.splitlines(), probe
+    # The command's exit status is the wrapper's.
+    status, _ = machine.execute("bench admin-probe 7 </dev/null")
+    assert status == 7, f"bench exited {status}, not the command's 7"
+    # On a terminal it gets one, so `bench console` stays interactive.
+    machine.succeed("script -qec 'bench admin-probe' /dev/null")
+    machine.succeed("stat -c %U ${probeDir}/tty.txt | grep -qx frappe")
+    machine.succeed("grep -qx tty=tty ${probeDir}/tty.txt")
+    # The service user itself runs it in place, with the same result.
+    machine.succeed("rm -r ${probeDir}")
+    machine.succeed("echo again | runuser -u frappe -- bench admin-probe")
+    machine.succeed("grep -qx stdin=again ${probeDir}/notty.txt")
   '';
 }
