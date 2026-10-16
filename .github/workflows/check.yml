@@ -8,15 +8,20 @@ name: check
 #
 # The `flake` job is the always-on nix gate: it evaluates every flake output on
 # x86_64-linux, which is what actually breaks when nixpkgs or uv2nix move under us
-# (renamed attrs, changed function signatures, dropped packages), then builds the checks
-# that need nix: the Nix linters and ty, which the hooks cannot run.
+# (renamed attrs, changed function signatures, dropped packages), then builds every
+# check that is not a NixOS VM test. The list is read from the flake, not written
+# here: a check that is not built does not count as coverage, and a hand-kept list
+# is how six of them once went unbuilt. A new check is on the PR path the moment
+# it is in `checks`.
+#
+# The `vm-tests` job builds the NixOS VM tests, one matrix entry each, on every
+# pull request. Which checks those are is also read from the flake (a
+# runNixOSTest result carries a `driver`), and the `flake` job hands the list
+# over. None of them builds Frappe: each stubs the bench and tests what the
+# NixOS module generates, so a VM test is a NixOS closure from cache.nixos.org
+# and a few minutes of KVM, which hosted runners have.
 #
 # Every job that uses nix sets up magic-nix-cache, so a run reuses what earlier runs built.
-#
-# The VM tests are not on the PR path on purpose — they build a full Frappe bench inside
-# a NixOS guest, which is far past what a hosted runner does in a reasonable time. Run them
-# with "Run workflow", or move them onto `pull_request` once this repo has a Cachix/Attic
-# cache to pull from.
 
 on:
   push:
@@ -28,7 +33,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # `prek run --all-files --show-diff-on-failure`: a hook that rewrites a file fails the
       # job, so what merges is what the hooks would have left.
@@ -36,8 +41,10 @@ jobs:
 
   flake:
     runs-on: ubuntu-latest
+    outputs:
+      vm-tests: ${{ steps.split.outputs.vm-tests }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
@@ -65,40 +72,44 @@ jobs:
       - name: Build the bench scaffolder
         run: nix build .#default --show-trace
 
-      # Offline checks (no network, no VM): the devguard unit tests, the
-      # `frappe-init --migrate` end-to-end runs over a synthetic classic bench,
-      # the online-ALTER step in front of `bench migrate`, what
-      # services.frappe.chromium and .wkhtmltopdf add to the units, nixfmt,
-      # statix and deadnix, ty over the tree, the check that the ruff config
-      # and pins still match the pinned upstream Frappe's, and every app
-      # standards check (tests/standards/, through the one `standards-all`
-      # linkFarm).
-      - name: Run the offline checks
+      # checks.x86_64-linux, split in two: the NixOS VM tests (a runNixOSTest result
+      # has a `driver`) go to the `vm-tests` job, everything else is built below.
+      - name: List the checks
+        id: split
         run: |
-          nix build -L --show-trace \
-            .#checks.x86_64-linux.standards-all \
-            .#checks.x86_64-linux.devguard \
-            .#checks.x86_64-linux.migrate-classic \
-            .#checks.x86_64-linux.migrate-versions \
-            .#checks.x86_64-linux.offline-migrate \
-            .#checks.x86_64-linux.offline-migrate-scripts \
-            .#checks.x86_64-linux.offline-migrate-unit \
-            .#checks.x86_64-linux.pdf-renderers-unit \
-            .#checks.x86_64-linux.frappe-upstream-config \
-            .#checks.x86_64-linux.nix-lint \
-            .#checks.x86_64-linux.ty
+          # The ${n} is Nix's, not the shell's.
+          # shellcheck disable=SC2016
+          nix eval --json .#checks.x86_64-linux \
+            --apply 'cs: builtins.partition (n: cs.${n} ? driver) (builtins.attrNames cs)' \
+            > "$RUNNER_TEMP/checks.json"
+          echo "vm-tests=$(jq -c .right "$RUNNER_TEMP/checks.json")" >> "$GITHUB_OUTPUT"
+          jq -r '.wrong[]' "$RUNNER_TEMP/checks.json" > "$RUNNER_TEMP/offline-checks"
+          echo "VM tests: $(jq -c .right "$RUNNER_TEMP/checks.json")"
+          echo "Offline checks: $(wc -l < "$RUNNER_TEMP/offline-checks")"
+
+      # Every check that is not a VM test: the devguard, journald, unixsock and other
+      # graft unit tests, agecheck and the secrets CLI against real keys, the scripts
+      # driven over fixtures and stubs, the NixOS module's units at evaluation,
+      # nixfmt, statix and deadnix, ty, the upstream-config drift check, and every
+      # app standards check. All offline and no KVM. `--keep-going` so one failure
+      # does not hide the others.
+      - name: Build the offline checks
+        run: |
+          sed 's|^|.#checks.x86_64-linux.|' "$RUNNER_TEMP/offline-checks" \
+            | xargs nix build -L --show-trace --keep-going --no-link
 
   vm-tests:
-    # Manual only — see the header note.
-    if: github.event_name == 'workflow_dispatch'
+    needs: flake
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        test: [migrate-rollback, socket]
+        test: ${{ fromJSON(needs.flake.outputs.vm-tests) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # `kvm` stays at its default (on): the installer adds the udev rule so the
+      # daemon advertises the `kvm` system feature the VM tests need.
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
           determinate: false
