@@ -37,17 +37,19 @@ let
   fetch = import ../lib/backup-fetch.nix { inherit pkgs python-devops-nix; };
 
   render =
-    devguard:
+    {
+      devguard ? true,
+      enable ? true,
+      withFiles ? "none",
+    }:
     (import ../lib/scripts.nix {
       inherit lib pkgs;
       appsWithNode = [ ];
       benchBin = "bench";
       inherit secrets;
       restore = {
-        inherit devguard;
-        enable = true;
+        inherit devguard enable withFiles;
         prefix = "";
-        withFiles = "none";
         carryConfigKeys = [
           "encryption_key"
           "backup_encryption_key"
@@ -71,18 +73,22 @@ in
           coreutils
           shellcheck
         ];
-        guarded = render true;
-        unguarded = render false;
+        guarded = render { };
+        unguarded = render { devguard = false; };
+        nofetch = render { enable = false; };
+        allfiles = render { withFiles = "all"; };
         passAsFile = [
           "guarded"
           "unguarded"
+          "nofetch"
+          "allfiles"
         ];
       }
       ''
         export HOME="$PWD"
 
         # devenv would ship these unlinted; lint them here instead.
-        for f in "$guardedPath" "$unguardedPath"; do
+        for f in "$guardedPath" "$unguardedPath" "$nofetchPath" "$allfilesPath"; do
           shellcheck -s bash -S warning -e SC2317 "$f"
         done
 
@@ -93,6 +99,8 @@ in
         ! grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$guardedPath" ||
           { echo "devguard interlock present when guards are on" >&2; exit 1; }
 
-        bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
+        UNGUARDED_SCRIPT="$unguardedPath" NOFETCH_SCRIPT="$nofetchPath" \
+          ALLFILES_SCRIPT="$allfilesPath" \
+          bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
       '';
 }
