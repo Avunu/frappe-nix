@@ -98,4 +98,4 @@ Dependabot keeps the flake inputs and the GitHub Actions current, and its pull r
 
 The documentation site is built from the shared workspace [Avunu/site-docs](https://github.com/Avunu/site-docs), where frappe-nix is a submodule that tracks its latest release; there is no site project in this repository. The pages are plain Markdown that reads the same on GitHub: callouts are GitHub alerts, and links between pages are relative file links.
 
-A pull request that touches `docs/` runs the `Docs` workflow, which builds the workspace with the pull request's pages in place of the submodule and checks them strictly, links to the other projects included. To preview or check locally, follow the site-docs README with `--source frappe-nix=<this checkout>`.
+Every pull request runs the `Docs` workflow (its check, `build / Check`, is required by the `main` ruleset, so it cannot be limited to the pull requests that touch `docs/`), which builds the workspace with the pull request's pages in place of the submodule and checks them strictly, links to the other projects included. To preview or check locally, follow the site-docs README with `--source frappe-nix=<this checkout>`.
