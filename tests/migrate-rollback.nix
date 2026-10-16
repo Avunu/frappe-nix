@@ -17,6 +17,85 @@ let
   jq = "${pkgs.jq}/bin/jq";
   mysql = "${pkgs.mariadb}/bin/mysql";
 
+  # Stub `bench new-site`, for the path docs/production/operations.md gives an
+  # operator. It connects the way Frappe does (PyMySQL, over the db_socket in
+  # site_config.json, with the settings of frappe.database.mariadb.database's
+  # get_connection_settings), and follows the steps of frappe.installer's
+  # _new_site that touch the database or the disk:
+  #   * refuses an existing site directory without --force (frappe-init has
+  #     always made one, so --force is always needed on this module);
+  #   * keeps the module's site_config.json (make_site_config writes only a
+  #     missing one);
+  #   * makes the site's directories (make_site_dirs);
+  #   * with --setup-db, the default: setup_database's root connection, as
+  #     --db-root-username (else "root") with --db-root-password (else empty,
+  #     as an operator pressing Enter at the prompt), then CREATE USER IF NOT
+  #     EXISTS, drop and create the database, GRANT;
+  #   * bootstrap_database as the site's own user from site_config.json, with
+  #     a canary table standing in for framework_mariadb.sql.
+  # It does not run Frappe's installer, so it proves the access and ownership
+  # each step needs, not that Frappe's schema installs. Nor does it model
+  # _new_site's rollback, which on a failure removes the site directory.
+  newSiteStub =
+    pkgs.writers.writePython3 "new-site-stub"
+      {
+        libraries = [ pkgs.python3Packages.pymysql ];
+        flakeIgnore = [ "E501" ];
+      }
+      ''
+        import argparse
+        import json
+        import os
+        import sys
+
+        import pymysql
+
+        p = argparse.ArgumentParser()
+        p.add_argument("site")
+        p.add_argument("--force", action="store_true")
+        p.add_argument("--setup-db", dest="setup_db", action="store_true", default=True)
+        p.add_argument("--no-setup-db", dest="setup_db", action="store_false")
+        p.add_argument("--db-root-username")
+        p.add_argument("--db-root-password")
+        p.add_argument("--admin-password")
+        a = p.parse_args()
+
+        site_path = os.path.join(os.environ["SITES_PATH"], a.site)
+        if not a.force and os.path.exists(site_path):
+            sys.exit(f"Site {a.site} already exists, use `--force` to proceed anyway")
+        with open(os.path.join(site_path, "site_config.json")) as f:
+            conf = json.load(f)
+        for d in ("public/files", "private/backups", "private/files", "locks", "logs"):
+            os.makedirs(os.path.join(site_path, d), exist_ok=True)
+
+
+        def connect(user, password, database=None):
+            kw = {"user": user, "charset": "utf8mb4", "unix_socket": conf["db_socket"]}
+            if password:
+                kw["password"] = password
+            if database:
+                kw["database"] = database
+            return pymysql.connect(**kw)
+
+
+        db, user = conf["db_name"], conf["db_user"]
+        if a.setup_db:
+            root = connect(a.db_root_username or "root", a.db_root_password or "")
+            with root.cursor() as c:
+                c.execute(f"CREATE USER IF NOT EXISTS '{user}'@'localhost' IDENTIFIED BY '{conf['db_password']}'")
+                c.execute(f"DROP DATABASE IF EXISTS `{db}`")
+                c.execute(f"CREATE DATABASE `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+                c.execute(f"GRANT ALL PRIVILEGES ON `{db}`.* TO '{user}'@'localhost'")
+            root.close()
+
+        site = connect(user, conf.get("db_password"), db)
+        with site.cursor() as c:
+            c.execute("CREATE TABLE canary (v INT)")
+            c.execute("INSERT INTO canary VALUES (1)")
+        site.commit()
+        print(f"stub new-site: {a.site} installed")
+      '';
+
   # Stub `bench`: implements just the subcommands the units invoke.
   #   set-maintenance-mode on|off -> writes maintenance_mode into site_config.json
   #   migrate                     -> writes a public file, as after_migrate does
@@ -85,6 +164,9 @@ let
         } > "$OUT/$tty.txt"
         exit "''${1:-0}"
         ;;
+      new-site)
+        exec ${newSiteStub} "$@"
+        ;;
       schedule|worker)
         exec sleep infinity
         ;;
@@ -131,7 +213,8 @@ let
   snapDir = "/var/lib/frappe/${siteName}/snapshots";
   markerPath = "/var/lib/frappe/${siteName}/.frappe-migrate-build";
   migrateUnit = "frappe-migrate-${siteName}.service";
-  probeDir = "/var/lib/frappe/${siteName}/sites/${siteName}/private/files/admin-probe";
+  siteDir = "/var/lib/frappe/${siteName}/sites/${siteName}";
+  probeDir = "${siteDir}/private/files/admin-probe";
 in
 {
   name = "frappe-migrate-rollback";
@@ -168,12 +251,37 @@ in
     machine.succeed("journalctl -u ${migrateUnit} -p warning | grep -q '^.*: frappe-migrate(.*the site is not installed'")
     machine.fail("test -e ${markerPath}")
 
-    # Install the site -- canary stands in for the Frappe schema -- and
-    # establish a known pre-migrate state S0: a single row v=1. With a schema
-    # present the same build now migrates for real and records the marker.
-    machine.succeed(
-        "${mysql} ${dbName} -e 'CREATE TABLE canary (v INT); INSERT INTO canary VALUES (1);'"
+    # Install the site the way docs/production/operations.md says, from a root
+    # shell. The canary table it creates stands in for the Frappe schema and is
+    # the known pre-migrate state S0: a single row v=1.
+    #
+    # Why the documented command passes --no-setup-db: Frappe's default makes
+    # the database and its user over a MariaDB root connection, and on this
+    # module's MariaDB root has no password, only unix_socket auth, which
+    # admits OS root and nobody else. A root `bench` used to get in that way;
+    # it now runs as frappe, which cannot. The module has already made the
+    # database and its user (ensureDatabases, ensureUsers, the password sync),
+    # so the root connection was never needed.
+    root_connect = (
+        "${pkgs.python3.withPackages (ps: [ ps.pymysql ])}/bin/python3 -c "
+        "'import pymysql; pymysql.connect(unix_socket=\"/run/mysqld/mysqld.sock\", user=\"root\")'"
     )
+    machine.succeed(root_connect)
+    machine.fail(f"runuser -u frappe -- {root_connect}")
+    # So Frappe's default fails through the root `bench`, and leaves nothing.
+    machine.fail("bench new-site ${siteName} --force --admin-password admin </dev/null")
+    machine.succeed("${mysql} -N ${dbName} -e 'SHOW TABLES' | wc -l | grep -qx 0")
+    # Without --force it refuses: frappe-init has made the site directory.
+    machine.fail("bench new-site ${siteName} --no-setup-db --admin-password admin </dev/null")
+    # The documented command.
+    machine.succeed("bench new-site ${siteName} --force --no-setup-db --admin-password admin </dev/null")
+    assert machine.succeed("${mysql} -N ${dbName} -e 'SELECT v FROM canary'").strip() == "1"
+    # Everything under the site is the service user's, the new directories too.
+    machine.succeed("test -d ${siteDir}/private/backups")
+    machine.succeed("test -z \"$(find ${siteDir} ! -user frappe -o ! -group frappe)\"")
+
+    # With a schema present the same build now migrates for real and records
+    # the marker.
     machine.succeed("systemctl restart ${migrateUnit}")
     machine.succeed("test -e ${markerPath}")
 

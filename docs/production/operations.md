@@ -28,7 +28,20 @@ sudo env FRAPPE_SITE=site1.example.com bench restore <SQL_FILE_PATH>
 
 The command runs as `frappe`, so the file must be readable by `frappe`: not under `/root`, for example.
 
-To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs. Follow the Frappe bench documentation for the flags that fit your layout. After either route, run `nixos-rebuild switch` again, or restart the migrate unit:
+To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs:
+
+```bash
+sudo env FRAPPE_SITE=site1.example.com bench new-site site1.example.com --force --no-setup-db --admin-password <ADMIN_PASSWORD>
+```
+
+Both flags are needed on this module:
+
+- `--no-setup-db`: the module has already created the site's database and its user, from the `database.*` options. Frappe's default would create them again over a MariaDB root connection. On a local MariaDB (`database.createLocally`), root has no password and logs in only through `unix_socket`, which admits OS root and no one else. The wrapper runs as `frappe`, so that login fails with `Access denied for user 'root'@'localhost'`.
+- `--force`: `frappe-init-<SITE>` has already created the site directory and its `site_config.json`. Without the flag, Frappe stops with `Site … already exists`. Frappe keeps that `site_config.json`. Do not pass `--force` for a site that is already installed: it drops and recreates Frappe's core tables in the existing database. `FRAPPE_SITE` tells the wrapper which site directory to use, so set it even when it repeats the site name.
+
+If a `bench new-site` fails, Frappe removes the whole site directory, `site_config.json` included. Run `sudo systemctl restart frappe-init-<SITE>.service` to recreate them before you try again.
+
+After either route, run `nixos-rebuild switch` again, or restart the migrate unit:
 
 ```bash
 sudo systemctl restart frappe-migrate-site1.example.com.service
