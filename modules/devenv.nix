@@ -110,77 +110,45 @@ in
       pkgs,
       ...
     }:
+    let
+      # The per-service ports (`ports.http` and the rest), from `ports.offset`.
+      bases = ports.basesFor (portOffsetOf config.frappe-nix);
+      portOption =
+        description: default: defaultText:
+        mkOption {
+          type = types.port;
+          inherit default;
+          defaultText = lib.literalMD defaultText;
+          description = "${description} Derived from `ports.offset`, for the module to read; set it (`lib.mkForce`) only to fix one service's port.";
+        };
+    in
     {
       # Renames, each kept through 1.x, until frappe-nix 2.0.0 (PLAN.md, design
-      # rule 2; CONVENTIONS.md, Identity options, Restore and devguard).
-      imports = map (pair: renamed (builtins.elemAt pair 0) (builtins.elemAt pair 1)) [
-        [
-          [ "benchName" ]
-          [ "name" ]
-        ]
-        [
-          [ "siteName" ]
-          [ "defaultSite" ]
-        ]
-        [
-          [
-            "restore"
-            "withFiles"
-          ]
-          [
-            "restore"
-            "files"
-          ]
-        ]
-        [
-          [
-            "devguard"
-            "mail"
-            "smtpPort"
-          ]
-          [
-            "devguard"
-            "mail"
-            "port"
-          ]
-        ]
-        [
-          [
-            "devguard"
-            "scheduler"
-            "enable"
-          ]
-          [
-            "devguard"
-            "jobs"
-            "enable"
-          ]
-        ]
-        [
-          [
-            "devguard"
-            "scheduler"
-            "blockServerScripts"
-          ]
-          [
-            "devguard"
-            "jobs"
-            "blockServerScripts"
-          ]
-        ]
-        [
-          [
-            "devguard"
-            "scheduler"
-            "extraBlockedJobs"
-          ]
-          [
-            "devguard"
-            "jobs"
-            "extraBlocked"
-          ]
-        ]
-      ];
+      # rule 2; CONVENTIONS.md, Identity options, Restore, devguard and the
+      # development shell option tree). Old path = new path.
+      imports =
+        lib.mapAttrsToList (from: to: renamed (lib.splitString "." from) (lib.splitString "." to))
+          {
+            "benchName" = "name";
+            "siteName" = "defaultSite";
+            "restore.withFiles" = "restore.files";
+            "devguard.scheduler.enable" = "devguard.jobs.enable";
+            "devguard.scheduler.blockServerScripts" = "devguard.jobs.blockServerScripts";
+            "devguard.scheduler.extraBlockedJobs" = "devguard.jobs.extraBlocked";
+            # The development shell option tree: what the shell does on a change
+            # is `watch`, the catcher is `mailpit`, and `devguard` is policy only.
+            "runtime.dev" = "watch.python";
+            "assets.reassert.hooks" = "watch.reassert.hooks";
+            "assets.reassert.debounceMs" = "watch.reassert.debounceMs";
+            "devguard.mail.host" = "mailpit.host";
+            "devguard.mail.port" = "mailpit.port";
+            "devguard.mail.smtpPort" = "mailpit.port";
+            "devguard.mail.httpPort" = "mailpit.httpPort";
+            "devguard.mail.pop3.enable" = "mailpit.pop3.enable";
+            "devguard.mail.pop3.port" = "mailpit.pop3.port";
+            "devguard.mail.pop3.user" = "mailpit.pop3.user";
+            "devguard.mail.pop3.password" = "mailpit.pop3.password";
+          };
 
       options.frappe-nix = {
         enable = mkEnableOption "Frappe bench devenv shell";
@@ -461,16 +429,6 @@ in
             description = "Concurrent background jobs inside the runtime process.";
           };
 
-          dev = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Pass --dev: reload on a change to a Python source file, and serve
-              /assets and /files from the runtime. Replaces the reloader that
-              `bench serve` provided.
-            '';
-          };
-
           src = mkOption {
             type = types.nullOr types.path;
             default = ../runtime;
@@ -524,6 +482,70 @@ in
         };
 
         watch = {
+          python = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Restart the server on a change to a Python source file: the
+              runtime's `--dev` reloader, or `bench serve`'s own with
+              `runtime.enable = false`. Was `runtime.dev`.
+
+              `/assets` and `/files` are served either way (the runtime's
+              `--serve-assets`), since the dev nginx proxies them to it.
+            '';
+          };
+
+          reassert = {
+            hooks = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                `bench execute` targets — dotted Python paths — run against
+                `defaultSite` whenever `sites/assets/assets.json` names a bundle
+                file that does not exist on disk.
+
+                Empty by default, and this option names no app: some Frappe
+                apps ship their own JS/CSS build tooling that overwrites
+                Frappe's own bundle keys in `assets.json`, and Frappe's esbuild
+                pipeline writes that file two different ways that can key the
+                same bundle differently — one that runs on every `bench build`
+                and `bench watch` rebuild, one that runs only on
+                `bench build --using-cached`. An app relying on the second can
+                go stale under `bench watch` alone, and Frappe's own
+                resolution is a bare dict lookup with no existence check, so it
+                404s with no server-side signal. See
+                https://github.com/Avunu/frappe-nix/issues/32.
+
+                Point this at whatever bench-execute-able function reruns your
+                app's own asset-shadow fixup. Every hook runs, in order, each
+                time the invariant check fails.
+
+                Needs `defaultSite` set — `bench execute` needs one site to run
+                in; an evaluation error if hooks are non-empty with
+                `defaultSite = ""`. Was `assets.reassert.hooks`.
+              '';
+            };
+
+            debounceMs = mkOption {
+              type = types.int;
+              default = 750;
+              description = ''
+                How long `sites/assets/assets.json` must sit unmodified
+                (fswatch's `--latency`, coalescing a burst of writes from one
+                rebuild into a single check) before the long-running watcher
+                re-reads it.
+
+                Independently of this, the check itself retries a failed JSON
+                parse a few times before giving up: esbuild's `assets.json`
+                writer is a plain truncate-and-write with no
+                temp-file-and-rename, so even a debounced read can land
+                mid-write and see a torn file. A parse failure is treated as
+                "try again shortly," never as the invariant failing. Was
+                `assets.reassert.debounceMs`.
+              '';
+            };
+          };
+
           apps = mkOption {
             type = types.nullOr (types.listOf types.str);
             default = null;
@@ -775,58 +797,6 @@ in
           '';
         };
 
-        assets = {
-          reassert = {
-            hooks = mkOption {
-              type = types.listOf types.str;
-              default = [ ];
-              description = ''
-                `bench execute` targets — dotted Python paths — run against
-                `defaultSite` whenever `sites/assets/assets.json` names a bundle
-                file that does not exist on disk.
-
-                Empty by default, and this option names no app: some Frappe
-                apps ship their own JS/CSS build tooling that overwrites
-                Frappe's own bundle keys in `assets.json`, and Frappe's esbuild
-                pipeline writes that file two different ways that can key the
-                same bundle differently — one that runs on every `bench build`
-                and `bench watch` rebuild, one that runs only on
-                `bench build --using-cached`. An app relying on the second can
-                go stale under `bench watch` alone, and Frappe's own
-                resolution is a bare dict lookup with no existence check, so it
-                404s with no server-side signal. See
-                https://github.com/Avunu/frappe-nix/issues/32.
-
-                Point this at whatever bench-execute-able function reruns your
-                app's own asset-shadow fixup. Every hook runs, in order, each
-                time the invariant check fails.
-
-                Needs `defaultSite` set — `bench execute` needs one site to run
-                in; an evaluation error if hooks are non-empty with
-                `defaultSite = ""`.
-              '';
-            };
-
-            debounceMs = mkOption {
-              type = types.int;
-              default = 750;
-              description = ''
-                How long `sites/assets/assets.json` must sit unmodified
-                (fswatch's `--latency`, coalescing a burst of writes from one
-                rebuild into a single check) before the long-running watcher
-                re-reads it.
-
-                Independently of this, the check itself retries a failed JSON
-                parse a few times before giving up: esbuild's `assets.json`
-                writer is a plain truncate-and-write with no
-                temp-file-and-rename, so even a debounced read can land
-                mid-write and see a torn file. A parse failure is treated as
-                "try again shortly," never as the invariant failing.
-              '';
-            };
-          };
-        };
-
         sockets = {
           enable = mkOption {
             type = types.bool;
@@ -931,6 +901,30 @@ in
             '';
             example = 8200;
           };
+
+          # One port per service, each derived from `offset` (lib/ports.nix
+          # basesFor), for the rest of the module to read. Not readOnly: that
+          # would refuse the rare fixed port for one service (`lib.mkForce`),
+          # since the default counts as a definition.
+          http = portOption "The web port: nginx, or the server itself without sockets." (
+            if config.frappe-nix.ports.base != null then config.frappe-nix.ports.base else bases.web
+          ) "`ports.base`, else `8000` + `ports.offset`";
+          db =
+            portOption "MariaDB's port. Unbound in socket mode, but the bench's own number." bases.db
+              "`3306` + `ports.offset`";
+          socketio =
+            portOption "The Node realtime server's, with `runtime.enable = false` and no sockets."
+              bases.socketio
+              "`9000` + `ports.offset`";
+          smtp =
+            portOption "Mailpit's SMTP port: `mailpit.port`'s default." bases.mailSmtp
+              "`19000` + `ports.offset`";
+          mailUi =
+            portOption "Mailpit's web UI: `mailpit.httpPort`'s default." bases.mailHttp
+              "`20000` + `ports.offset`";
+          pop3 =
+            portOption "Mailpit's POP3 port: `mailpit.pop3.port`'s default." bases.mailPop3
+              "`21000` + `ports.offset`";
         };
 
         pythonOverrides = mkOption {
@@ -961,6 +955,98 @@ in
             the lock says, in place of the derived one. It reaches
             pyproject.toml at the next relock (`nix run .#relock`).
           '';
+        };
+
+        mailpit = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Run Mailpit, the mail catcher, with the bench's processes; every
+              process that can send mail starts after it.
+
+              On whether or not the mail guard is (`devguard.mail.enable`): a
+              catcher that is up costs nothing, and testing mail with the guard
+              off still wants one. With the guard on, every site's outgoing
+              mail goes to it. With this off and the guard on, mail is
+              redirected to a port nothing listens on, and sending fails.
+            '';
+          };
+
+          host = mkOption {
+            type = types.str;
+            default = "127.0.0.1";
+            description = "Interface Mailpit binds and the mail guard redirects to. Was `devguard.mail.host`.";
+          };
+
+          port = mkOption {
+            type = types.port;
+            default = config.frappe-nix.ports.smtp;
+            defaultText = lib.literalMD "`ports.smtp`";
+            description = ''
+              Mailpit's SMTP port, and where the mail guard sends every site's
+              mail. Was `devguard.mail.port` (`devguard.mail.smtpPort` before).
+
+              Per-bench by default so several benches can catch mail at once.
+              Nothing moves it at run time (devenv's allocator is the identity
+              under flake integration). In app mode with `ports.worktreeSalt`
+              on, `devenv up` stops before starting anything if it is taken.
+              $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
+              prefers over the baked-in value, records the same port.
+            '';
+          };
+
+          httpPort = mkOption {
+            type = types.port;
+            default = config.frappe-nix.ports.mailUi;
+            defaultText = lib.literalMD "`ports.mailUi`";
+            description = "Mailpit's web UI port. Was `devguard.mail.httpPort`.";
+          };
+
+          pop3 = {
+            enable = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                Serve incoming mail from Mailpit's POP3 listener, and have the
+                mail guard send Frappe's POP3 there instead of refusing it, so
+                the receive loop can be exercised end to end. Was
+                `devguard.mail.pop3.enable`.
+
+                Off by default: Frappe's POP3 path issues DELE after fetching
+                and Mailpit honours it, so every message pulled into a site
+                disappears from the Mailpit UI.
+
+                Off, the mail guard refuses IMAP/POP3 connections outright —
+                which is the point, since a bench restored from production would
+                otherwise poll real mailboxes every 10 minutes, mark messages
+                seen, and fire auto-replies.
+              '';
+            };
+
+            port = mkOption {
+              type = types.port;
+              default = config.frappe-nix.ports.pop3;
+              defaultText = lib.literalMD "`ports.pop3`";
+              description = "Mailpit's POP3 port. Was `devguard.mail.pop3.port`.";
+            };
+
+            user = mkOption {
+              type = types.str;
+              default = "dev";
+              description = "POP3 username, substituted for whatever the Email Account carries. Was `devguard.mail.pop3.user`.";
+            };
+
+            password = mkOption {
+              type = types.str;
+              default = "dev";
+              description = ''
+                POP3 password. Written to a world-readable file in the Nix
+                store, so treat it as a local development credential only. Was
+                `devguard.mail.pop3.password`.
+              '';
+            };
+          };
         };
 
         devguard = {
@@ -1043,45 +1129,13 @@ in
               default = true;
               description = ''
                 Route ALL outgoing mail from every site in this bench to
-                Mailpit, and refuse incoming IMAP/POP3.
+                Mailpit (`mailpit.host`:`mailpit.port`), and refuse incoming
+                IMAP/POP3, or serve it from Mailpit with `mailpit.pop3.enable`.
 
                 Transport-level, like `egress`: it patches
                 smtplib/imaplib/poplib, which know nothing about Frappe and so
                 hold across upgrades and third-party apps.
               '';
-            };
-
-            host = mkOption {
-              type = types.str;
-              default = "127.0.0.1";
-              description = "Interface Mailpit binds and Frappe is redirected to.";
-            };
-
-            port = mkOption {
-              type = types.port;
-              default = 19000 + portOffsetOf config.frappe-nix;
-              defaultText = lib.literalMD "`19000` + `ports.offset`";
-              description = ''
-                Catcher SMTP port — drives both Mailpit and Frappe.
-
-                Per-bench by default so several benches can catch mail at once,
-                and kept clear of the 11000 range because that would cover
-                11311, Frappe's own default redis_queue port.
-
-                This is the port Mailpit binds: nothing moves it at run time
-                (devenv's allocator is the identity under flake integration).
-                In app mode with `ports.worktreeSalt` on, `devenv up` stops
-                before starting anything if it is taken.
-                $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
-                prefers over this baked-in value, records the same port.
-              '';
-            };
-
-            httpPort = mkOption {
-              type = types.port;
-              default = 20000 + portOffsetOf config.frappe-nix;
-              defaultText = lib.literalMD "`20000` + `ports.offset`";
-              description = "Mailpit web UI port. Per-bench by default; see port.";
             };
 
             sender = mkOption {
@@ -1104,47 +1158,6 @@ in
               '';
             };
 
-            pop3 = {
-              enable = mkOption {
-                type = types.bool;
-                default = false;
-                description = ''
-                  Serve incoming mail from Mailpit's POP3 listener instead of
-                  blocking it, so the receive loop can be exercised end to end.
-
-                  Off by default: Frappe's POP3 path issues DELE after fetching
-                  and Mailpit honours it, so every message pulled into a site
-                  disappears from the Mailpit UI.
-
-                  With this disabled, IMAP/POP3 connections are refused outright —
-                  which is the point, since a bench restored from production would
-                  otherwise poll real mailboxes every 10 minutes, mark messages
-                  seen, and fire auto-replies.
-                '';
-              };
-
-              port = mkOption {
-                type = types.port;
-                default = 21000 + portOffsetOf config.frappe-nix;
-                defaultText = lib.literalMD "`21000` + `ports.offset`";
-                description = "Mailpit POP3 port. Per-bench by default; see port.";
-              };
-
-              user = mkOption {
-                type = types.str;
-                default = "dev";
-                description = "POP3 username. Substituted for whatever the Email Account carries.";
-              };
-
-              password = mkOption {
-                type = types.str;
-                default = "dev";
-                description = ''
-                  POP3 password. Written to a world-readable file in the Nix
-                  store, so treat it as a local development credential only.
-                '';
-              };
-            };
           };
 
           backups = {
@@ -1987,9 +2000,12 @@ in
 
         dg = cfg.devguard;
         mc = dg.mail;
-        # Mailpit itself is only worth running when the mail guard will point
-        # Frappe at it.
-        mailEnabled = dg.enable && mc.enable;
+        # The catcher (the `mailpit` tree) and the guard that sends mail to it
+        # (devguard.mail) are separate: Mailpit runs whether or not the guard
+        # is on.
+        mp = cfg.mailpit;
+        mailpitEnabled = mp.enable;
+        mailGuard = dg.enable && mc.enable;
 
         # What the egress guard lets through, for the banner: frappe_devguard
         # unions the two lists itself, so both are shown.
@@ -1998,26 +2014,25 @@ in
         sockets = cfg.sockets.enable;
 
         portOffset = portOffsetOf cfg;
-        portBases = ports.basesFor portOffset;
 
         # Every base below is the port itself, not where an allocator starts
         # looking: devenv's allocator is the identity under flake integration,
         # so a taken port stays taken. `devenv up` checks nginx's and Mailpit's
         # before it starts anything (portsFreeCheck).
-        webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;
+        webBase = cfg.ports.http;
 
         # Per-bench, for the same reason every other port here is: a shared base
         # means two benches both resolve to 3306 and whichever answers first
         # wins. See the mysqld settings below for what connects over TCP at all
         # when the socket is right there.
-        dbBase = portBases.db;
+        dbBase = cfg.ports.db;
 
-        # These carry the per-bench offset through their option defaults, so a
-        # consumer overriding devguard.mail.port still drives both Mailpit
-        # and the address Frappe is redirected to, exactly as before.
-        mailpitSmtpBase = mc.port;
-        mailpitHttpBase = mc.httpPort;
-        mailpitPop3Base = mc.pop3.port;
+        # These carry the per-bench offset through their option defaults
+        # (ports.smtp and the rest), so a consumer overriding mailpit.port still
+        # drives both Mailpit and the address Frappe is redirected to.
+        mailpitSmtpBase = mp.port;
+        mailpitHttpBase = mp.httpPort;
+        mailpitPop3Base = mp.pop3.port;
 
         # Single source of truth: the same values reach Mailpit through
         # MAILPIT_* and Frappe through these baked defaults, so the two can
@@ -2029,16 +2044,18 @@ in
               inherit (dg.egress) enable;
               allow_hosts = dg.egress.allowHosts;
             };
+            # Where to redirect is the catcher's (mailpit.*); whether to is
+            # the guard's.
             mail = {
               inherit (mc) enable;
-              inherit (mc) host port;
-              http_port = mc.httpPort;
+              inherit (mp) host port;
+              http_port = mp.httpPort;
               inherit (mc) sender;
               inherit (mc) unmute;
-              pop3_enabled = mc.pop3.enable;
-              pop3_port = mc.pop3.port;
-              pop3_user = mc.pop3.user;
-              pop3_password = mc.pop3.password;
+              pop3_enabled = mailpitEnabled && mp.pop3.enable;
+              pop3_port = mp.pop3.port;
+              pop3_user = mp.pop3.user;
+              pop3_password = mp.pop3.password;
             };
             backups.enable = dg.backups.enable;
             objectstore = {
@@ -2077,7 +2094,7 @@ in
         devguardPkg = grafts.devguard devguardConfig;
 
         mailpitPop3Auth = pkgs.writeText "mailpit-pop3-auth" ''
-          ${mc.pop3.user}:${mc.pop3.password}
+          ${mp.pop3.user}:${mp.pop3.password}
         '';
 
         # Unlike devguard there is nothing to bake into the others:
@@ -2626,12 +2643,12 @@ in
                 wanted = [
                   "${webName} 127.0.0.1 ${toString webPort}"
                 ]
-                ++ lib.optionals mailEnabled (
+                ++ lib.optionals mailpitEnabled (
                   [
-                    "mailpit-smtp ${mc.host} ${toString config.processes.mailpit.ports.smtp.value}"
-                    "mailpit-ui ${mc.host} ${toString config.processes.mailpit.ports.ui.value}"
+                    "mailpit-smtp ${mp.host} ${toString config.processes.mailpit.ports.smtp.value}"
+                    "mailpit-ui ${mp.host} ${toString config.processes.mailpit.ports.ui.value}"
                   ]
-                  ++ lib.optional mc.pop3.enable "mailpit-pop3 ${mc.host} ${toString config.processes.mailpit.ports.pop3.value}"
+                  ++ lib.optional mp.pop3.enable "mailpit-pop3 ${mp.host} ${toString config.processes.mailpit.ports.pop3.value}"
                 );
               in
               ''
@@ -2667,7 +2684,7 @@ in
             # wired in at all — nobody configured a hook, nothing here costs
             # anything (Nix laziness: assetsReassertCheck below is never
             # forced, so lib/assets-reassert.nix is never even imported).
-            assetsReassertActive = cfg.assets.reassert.hooks != [ ];
+            assetsReassertActive = cfg.watch.reassert.hooks != [ ];
 
             # `bench execute` needs one concrete site; a multi-tenant bench
             # (defaultSite = "") has none, so a non-empty hook list there is a
@@ -2679,12 +2696,12 @@ in
               else if cfg.defaultSite != "" then
                 cfg.defaultSite
               else
-                throw "frappe-nix: assets.reassert.hooks needs `defaultSite` set — it targets `bench execute` at one concrete site, and a multi-tenant dev bench (defaultSite = \"\") has no single answer.";
+                throw "frappe-nix: watch.reassert.hooks needs `defaultSite` set — it targets `bench execute` at one concrete site, and a multi-tenant dev bench (defaultSite = \"\") has no single answer.";
 
             # fswatch --latency wants seconds as a decimal, not milliseconds.
             assetsReassertDebounceSeconds =
               let
-                ms = cfg.assets.reassert.debounceMs;
+                ms = cfg.watch.reassert.debounceMs;
                 whole = ms / 1000;
                 frac = ms - whole * 1000;
               in
@@ -2699,7 +2716,7 @@ in
                 inherit lib pkgs redisCli;
                 benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
                 site = assetsReassertSite;
-                hooks = cfg.assets.reassert.hooks;
+                hooks = cfg.watch.reassert.hooks;
               }
             );
 
@@ -2782,7 +2799,7 @@ in
                 just
                 pv
               ]
-              ++ lib.optional mailEnabled pkgs.mailpit
+              ++ lib.optional mailpitEnabled pkgs.mailpit
               # ragenix + the recipient checker, once the bench declares secrets.
               ++ secretsTools.packages
               # The fetcher, plus gnupg for backups Frappe encrypted: it shells
@@ -3080,10 +3097,11 @@ in
                           ) " --egress-allow ${lib.escapeShellArg (lib.concatStringsSep ", " egressAllowHosts)}"
                         )
                     } \
+                    ${lib.optionalString mailGuard "--mail"} \
                     ${
-                      lib.optionalString mailEnabled (
-                        "--mail --mail-host ${lib.escapeShellArg mc.host} --mail-http-port ${toString mailpitHttpBase}"
-                        + lib.optionalString mc.pop3.enable " --mail-pop3"
+                      lib.optionalString mailpitEnabled (
+                        "--mailpit --mail-host ${lib.escapeShellArg mp.host} --mail-http-port ${toString mailpitHttpBase}"
+                        + lib.optionalString mp.pop3.enable " --mail-pop3"
                       )
                     } \
                     ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
@@ -3177,13 +3195,13 @@ in
             # the whole reason to use it instead of the hand-rolled process this
             # replaces. POP3 is not one of its options, so that port is allocated
             # here and passed through additionalArgs.
-            services.mailpit = lib.mkIf mailEnabled {
+            services.mailpit = lib.mkIf mailpitEnabled {
               enable = true;
-              uiListenAddress = "${mc.host}:${toString mailpitHttpBase}";
-              smtpListenAddress = "${mc.host}:${toString mailpitSmtpBase}";
-              additionalArgs = lib.optionals mc.pop3.enable [
+              uiListenAddress = "${mp.host}:${toString mailpitHttpBase}";
+              smtpListenAddress = "${mp.host}:${toString mailpitSmtpBase}";
+              additionalArgs = lib.optionals mp.pop3.enable [
                 "--pop3"
-                "${mc.host}:${toString config.processes.mailpit.ports.pop3.value}"
+                "${mp.host}:${toString config.processes.mailpit.ports.pop3.value}"
                 "--pop3-auth-file"
                 "${mailpitPop3Auth}"
               ];
@@ -3324,8 +3342,10 @@ in
             processes =
               let
                 # Anything that can send mail waits for the catcher, so the first
-                # send of a session doesn't hit a closed port.
-                needsMailpit = lib.optional mailEnabled "devenv:processes:mailpit";
+                # send of a session doesn't hit a closed port. Whenever Mailpit
+                # runs, guard or not: a site whose own Email Account points at it
+                # sends there too.
+                needsMailpit = lib.optional mailpitEnabled "devenv:processes:mailpit";
                 needsConfig = [
                   "frappe:config"
                 ]
@@ -3357,8 +3377,11 @@ in
                       + ''
                         exec ${pythonEnvs.devPythonEnv}/bin/frappe-runtime \
                           ${if sockets then ''--uds "${webSocket}"'' else "--host 127.0.0.1 --port ${toString webPort}"} \
-                          --job-threads ${toString cfg.runtime.jobThreads}''
-                      + lib.optionalString cfg.runtime.dev " --dev";
+                          --job-threads ${toString cfg.runtime.jobThreads} \
+                          --serve-assets''
+                      # /assets and /files whatever watch.python says: nginx proxies
+                      # them here. --dev adds the reloader.
+                      + lib.optionalString cfg.watch.python " --dev";
                     after =
                       needsConfig
                       ++ [
@@ -3408,7 +3431,9 @@ in
                     # it is the port the site is actually reachable on, and it is
                     # what `bench serve` logs.
                     exec = ''
-                      exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}
+                      exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}${
+                        lib.optionalString (!cfg.watch.python) " --noreload"
+                      }
                     '';
                     after =
                       needsConfig
@@ -3478,7 +3503,7 @@ in
                     after = needsConfig ++ [ "devenv:processes:redis" ];
                   }
                   // lib.optionalAttrs (!sockets) {
-                    ports.main.allocate = portBases.socketio;
+                    ports.main.allocate = cfg.ports.socketio;
                     env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
                   }
                   // lib.optionalAttrs sockets {
@@ -3604,19 +3629,19 @@ in
                   ];
                 };
               }
-              // lib.optionalAttrs mailEnabled {
+              // lib.optionalAttrs mailpitEnabled {
                 mailpit = {
                   # Everything that can send mail waits for the catcher, and
                   # "wait" means @ready — devenv's default — so it needs a probe
                   # of its own. The UI port is a real check: Mailpit only serves
                   # it once its listeners are up.
                   ready.http.get = {
-                    inherit (mc) host;
+                    inherit (mp) host;
                     port = config.processes.mailpit.ports.ui.value;
                     path = "/";
                   };
                 }
-                // lib.optionalAttrs mc.pop3.enable {
+                // lib.optionalAttrs mp.pop3.enable {
                   ports.pop3.allocate = mailpitPop3Base;
                 };
               };
@@ -3639,7 +3664,7 @@ in
                   config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
                   port=${toString webPort}
 
-                  ${lib.optionalString mailEnabled ''
+                  ${lib.optionalString mailpitEnabled ''
                     # Mailpit's ports come from the allocator too, and devguard
                     # cannot see them: it is loaded by a .pth in every interpreter,
                     # including ones started outside this shell. Hand it the
@@ -3653,7 +3678,7 @@ in
                             port = config.processes.mailpit.ports.smtp.value;
                             http_port = config.processes.mailpit.ports.ui.value;
                           }
-                          // lib.optionalAttrs mc.pop3.enable {
+                          // lib.optionalAttrs mp.pop3.enable {
                             pop3_port = config.processes.mailpit.ports.pop3.value;
                           };
                         }

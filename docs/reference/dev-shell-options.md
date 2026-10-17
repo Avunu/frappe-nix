@@ -9,7 +9,7 @@ updated: 2026-10-15
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
 
 > [!NOTE]
-> `devguard.mail.port`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
+> Every TCP port (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3` and the rest) is a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
 
 ## Core
 
@@ -51,6 +51,9 @@ How the `watch` process chooses what to rebuild. See [Memory and disk](../develo
 | `watch.excludePublishers` | list of str         | `[ "Frappe Technologies" ]`             | With `watch.apps` `null`, leave out every app whose `hooks.py` `app_publisher` contains one of these, ignoring case. `[ ]` watches everything, as `bench watch` does.                                                                   |
 | `watch.rtl`               | bool                | `false`                                 | Also rebuild right-to-left stylesheets on save. `bench build` always builds them.                                                                                                                                                       |
 | `watch.nativeSass`        | bool                | `true` where nixpkgs builds `dart-sass` | Compile the watcher's stylesheets with native Dart Sass ([`lib/sass-embedded.nix`](../../lib/sass-embedded.nix)) instead of Frappe's JavaScript build of it, 3 to 6 times faster per stylesheet. `bench build` keeps Frappe's compiler. |
+| `watch.python` | bool | `true` | Restart the server on a Python source change: the runtime's `--dev`, or `bench serve`'s reloader with `runtime.enable = false`. `/assets` and `/files` are served either way. Formerly `runtime.dev`. |
+| `watch.reassert.hooks` | list of str | `[ ]` | `bench execute` targets run when `sites/assets/assets.json` names a bundle file that does not exist on disk. Empty by default, so it names no app. Needs `defaultSite`. See [Assets](../development/assets.md#watchreassert). Formerly `assets.reassert.hooks`. |
+| `watch.reassert.debounceMs` | int | `750` | How long `assets.json` must sit unmodified before the bench-watch-driven check re-reads it. Formerly `assets.reassert.debounceMs`. |
 
 ## MariaDB
 
@@ -99,7 +102,6 @@ The unified `frappe-runtime` process. See [The unified runtime](../production/ru
 | -------------------- | ------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `runtime.enable`     | bool         | `true`                        | Run one `frappe-runtime` process (web, realtime, jobs and scheduler) instead of the split web, socketio, worker and scheduler processes. |
 | `runtime.jobThreads` | int          | `2`                           | Concurrent background jobs inside the runtime process.                                                                                   |
-| `runtime.dev`        | bool         | `true`                        | Pass `--dev`: reload on a Python source change, and serve `/assets` and `/files` from the runtime.                                       |
 | `runtime.src`        | null or path | `runtime/` in this repository | The source `frappe-runtime` is built from, overriding the revision `uv.lock` resolved. `null` hands control back to `uv.lock`.           |
 
 ## Ports and sockets
@@ -112,6 +114,12 @@ See [The development shell](../development/README.md#ports-and-sockets).
 | `ports.offset`   | int, 0–899   | a hash of `name` | The offset every TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `<name>@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
 | `ports.worktreeSalt` | bool     | whether the app opted in to the app standards | App mode: salt a linked worktree's `ports.offset` with its path, so two worktrees of one app run at once, and have `devenv up` stop and name a taken port. On by default only with a `[tool.frappe-nix]` table; any app may set it. Bench mode ignores it. |
 | `ports.base`     | port or null | `null`  | The web port, overriding `8000 + ports.offset`. Mailpit and MariaDB keep theirs.                                                                                 |
+| `ports.http` | port | `ports.base`, else `8000 + ports.offset` | The web port: nginx, or the server itself without sockets. Each `ports.*` below is derived for the module to read; set one (`lib.mkForce`) only to fix that service's port. |
+| `ports.db` | port | `3306 + ports.offset` | MariaDB's port. Unbound in socket mode. |
+| `ports.socketio` | port | `9000 + ports.offset` | The Node realtime server's, with `runtime.enable = false` and no sockets. |
+| `ports.smtp` | port | `19000 + ports.offset` | Mailpit's SMTP port: `mailpit.port`'s default. |
+| `ports.mailUi` | port | `20000 + ports.offset` | Mailpit's web UI: `mailpit.httpPort`'s default. |
+| `ports.pop3` | port | `21000 + ports.offset` | Mailpit's POP3 port: `mailpit.pop3.port`'s default. |
 
 ## Apps and assets
 
@@ -120,8 +128,21 @@ See [The development shell](../development/README.md#ports-and-sockets).
 | `appsReconcile.enable`       | bool        | `defaultSite != ""` | Install whatever `sites/apps.txt` names that `defaultSite`'s site does not have installed yet, on every `devenv up`. See [Apps in a bench](../development/apps.md#installed-app-drift).                            |
 | `renamedApps`                | attrs of str | `{ }`           | Apps renamed in place, `OLD = NEW`: `reconcile-apps` runs `frappe-rename-app --site` before it installs anything. See [Renaming an app](../app-standards/rename.md).                                                    |
 | `replacedApps`               | attrs of str | `{ }`           | Apps replaced by a new app, `OLD = NEW`: `reconcile-apps` installs NEW and uninstalls OLD on a site that has OLD. See [Renaming an app](../app-standards/rename.md#replacing-an-app-instead).                       |
-| `assets.reassert.hooks`      | list of str | `[ ]`            | `bench execute` targets run when `sites/assets/assets.json` names a bundle file that does not exist on disk. Empty by default, so it names no app. See [Asset builds](../development/assets.md#assetsreassert). |
-| `assets.reassert.debounceMs` | int         | `750`            | How long `assets.json` must sit unmodified before the bench-watch-driven check re-reads it.                                                                                                                     |
+
+## Mailpit
+
+The mail catcher, as a service. It runs whether or not the mail guard is on, and every process that can send mail starts after it. With the guard on (`devguard.mail.enable`), every site's outgoing mail goes to it.
+
+| Option                  | Type | Default         | Notes |
+| ----------------------- | ---- | --------------- | ----- |
+| `mailpit.enable`        | bool | `true`          | Run Mailpit with the bench's processes. Before, it ran only with the mail guard on. Off with the guard on, mail goes to a port nothing listens on. |
+| `mailpit.host`          | str  | `"127.0.0.1"`   | Interface Mailpit binds and the mail guard redirects to. Formerly `devguard.mail.host`. |
+| `mailpit.port`          | port | `ports.smtp`    | SMTP port, and where the mail guard sends mail. Formerly `devguard.mail.port` (`devguard.mail.smtpPort` before that). |
+| `mailpit.httpPort`      | port | `ports.mailUi`  | Web UI port. Formerly `devguard.mail.httpPort`. |
+| `mailpit.pop3.enable`   | bool | `false`         | Serve incoming mail from Mailpit's POP3 listener, and have the mail guard send Frappe's POP3 there instead of refusing it. Formerly `devguard.mail.pop3.enable`. |
+| `mailpit.pop3.port`     | port | `ports.pop3`    | POP3 port. Formerly `devguard.mail.pop3.port`. |
+| `mailpit.pop3.user`     | str  | `"dev"`         | POP3 username (local development only). Formerly `devguard.mail.pop3.user`. |
+| `mailpit.pop3.password` | str  | `"dev"`         | POP3 password (local development only). Formerly `devguard.mail.pop3.password`. |
 
 ## Development guard rails
 
@@ -132,16 +153,9 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | `devguard.enable`                        | bool              | `true`                           | Master switch for all guard rails. See [Development guard rails](../development/guard-rails.md).             |
 | `devguard.egress.enable`                 | bool              | `true`                           | Refuse every connection the bench's Python opens to anything but this machine.                               |
 | `devguard.egress.allowHosts`             | list of str       | `[ ]`                            | Hostnames (`*.` for subdomains), addresses or CIDRs to let through. Shared with `integrations.allowHosts`.   |
-| `devguard.mail.enable`                   | bool              | `true`                           | Route all outgoing mail to Mailpit, and refuse IMAP and POP3.                                                |
-| `devguard.mail.host`                     | str               | `"127.0.0.1"`                    | Interface Mailpit binds and Frappe is redirected to.                                                         |
-| `devguard.mail.port`                     | port              | 19000 plus a hash of `name` | Catcher SMTP port (per bench). Formerly `devguard.mail.smtpPort`.                                            |
-| `devguard.mail.httpPort`                 | port              | 20000 plus a hash of `name` | Mailpit web UI port (per bench).                                                                             |
+| `devguard.mail.enable` | bool | `true` | Route all outgoing mail to Mailpit (`mailpit.host`:`mailpit.port`), and refuse IMAP and POP3, or serve them from Mailpit with `mailpit.pop3.enable`. Mailpit itself is the `mailpit` tree below. |
 | `devguard.mail.sender`                   | str               | `"notifications@example.com"`    | From address used only on sites with no outgoing Email Account at all.                                       |
 | `devguard.mail.unmute`                   | bool              | `true`                           | Ignore `mute_emails` in `site_config.json`.                                                                  |
-| `devguard.mail.pop3.enable`              | bool              | `false`                          | Serve incoming mail from Mailpit's POP3 listener instead of blocking it.                                     |
-| `devguard.mail.pop3.port`                | port              | 21000 plus a hash of `name` | Mailpit POP3 port (per bench).                                                                               |
-| `devguard.mail.pop3.user`                | str               | `"dev"`                          | Mailpit POP3 username (local development only).                                                              |
-| `devguard.mail.pop3.password`            | str               | `"dev"`                          | Mailpit POP3 password (local development only).                                                              |
 | `devguard.backups.enable`                | bool              | `true`                           | Block Dropbox, S3, Google Drive and Frappe Cloud backup upload.                                              |
 | `devguard.objectstore.enable`            | bool              | `true`                           | Never delete from, or overwrite in, the configured S3 bucket.                                                |
 | `devguard.objectstore.mode`              | `local` or `push` | `"local"`                        | `local`: `cloud_storage` writes to local disk. `push`: new files are uploaded to the bucket (additive only). |

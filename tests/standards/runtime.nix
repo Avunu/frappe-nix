@@ -64,7 +64,7 @@ let
         // extra;
       });
       shell = config.devenv.shells.default;
-      mail = config.frappe-nix.devguard.mail;
+      mail = config.frappe-nix.mailpit;
     in
     {
       inherit (config.frappe-nix.ports) offset;
@@ -124,15 +124,17 @@ let
   });
 
   portFacts =
+    assert lib.assertMsg
+      (
+        contains "webBase = cfg.ports.http;" devenvSource
+        && contains "dbBase = cfg.ports.db;" devenvSource
+        && contains "bases = ports.basesFor (portOffsetOf config.frappe-nix);" devenvSource
+      )
+      "devenv.nix: the web or db port no longer comes from ports.basesFor, through ports.http and ports.db";
     assert lib.assertMsg (
-      contains "webBase = if cfg.ports.base != null then cfg.ports.base else portBases.web;" devenvSource
-      && contains "dbBase = portBases.db;" devenvSource
-      && contains "portBases = ports.basesFor portOffset;" devenvSource
-    ) "devenv.nix: the web or db base no longer comes from ports.basesFor";
-    assert lib.assertMsg (
-      contains "default = 19000 + portOffsetOf config.frappe-nix;" devenvSource
-      && contains "default = 20000 + portOffsetOf config.frappe-nix;" devenvSource
-      && contains "default = 21000 + portOffsetOf config.frappe-nix;" devenvSource
+      contains "default = config.frappe-nix.ports.smtp;" devenvSource
+      && contains "default = config.frappe-nix.ports.mailUi;" devenvSource
+      && contains "default = config.frappe-nix.ports.pop3;" devenvSource
       && contains (lib.concatStringsSep "\n" [
         "    if fcfg.app.enable then"
         "      ports.effectiveOffset envPortOffset fcfg.ports.offset"

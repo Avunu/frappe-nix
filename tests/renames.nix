@@ -5,6 +5,13 @@
 #   renames-devenv   frappe-nix.benchName → name, siteName → defaultSite; the
 #                    new names set devenv's `name` and FRAPPE_SITE, and the old
 #                    ones are listed in frappe-nix.deprecations (lib.warn).
+#   renames-option-tree  the development shell option tree (CONVENTIONS.md):
+#                    runtime.dev → watch.python, assets.reassert → watch.reassert,
+#                    devguard.mail.{host,port,httpPort,pop3.*} → mailpit.*, each
+#                    reaching the new option and listed for its warning; and the
+#                    new defaults: Mailpit runs with the mail guard off and orders
+#                    the server after it, the runtime always serves /assets and
+#                    reloads only with watch.python, and ports.* are per service.
 #   renames-nixos    services.frappe → services.frappe-nix, as a whole tree, and
 #                    sites.<site>.extraConfig{,Files} → settings{,Files}: the
 #                    old names set the same units (nested mkIf and mkDefault
@@ -157,6 +164,144 @@ in
       });
     };
   };
+
+  renames-option-tree =
+    let
+      base = {
+        name = "option-tree";
+        ports.offset = 123;
+      };
+      old = benchWith (
+        base
+        // {
+          runtime.dev = false;
+          assets.reassert.debounceMs = 500;
+          devguard.mail = {
+            host = "127.0.0.2";
+            port = 2525;
+            httpPort = 2526;
+            pop3 = {
+              enable = true;
+              port = 2527;
+              user = "u";
+              password = "p";
+            };
+          };
+        }
+      );
+      new = benchWith (
+        base
+        // {
+          watch.python = false;
+          watch.reassert.debounceMs = 500;
+          mailpit = {
+            host = "127.0.0.2";
+            port = 2525;
+            httpPort = 2526;
+            pop3 = {
+              enable = true;
+              port = 2527;
+              user = "u";
+              password = "p";
+            };
+          };
+        }
+      );
+      defaults = benchWith base;
+      guardOff = benchWith (base // { devguard.mail.enable = false; });
+      forced = benchWith (base // { ports.smtp = lib.mkForce 2999; });
+      tree = config: {
+        inherit (config.frappe-nix) mailpit;
+        python = config.frappe-nix.watch.python;
+        debounceMs = config.frappe-nix.watch.reassert.debounceMs;
+      };
+      shell = config: config.devenv.shells.default;
+      # The fixture's lock has no frappe-runtime, so its shell runs the split
+      # processes: `bench serve` is the web server there.
+      webExec = config: (shell config).processes.web.exec;
+      devenvSource = builtins.readFile ../modules/devenv.nix;
+      # Not lib.hasInfix: that is builtins.match ".*X.*", and on a 4000-line
+      # file the regex engine's recursion overflows the C stack on some
+      # builds of Nix ("stack overflow", no trace). tests/standards/runtime.nix
+      # does the same.
+      contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
+    in
+    checks.eval "renames-option-tree" {
+      expected = {
+        old = tree new // {
+          deprecated = [
+            "frappe-nix.assets.reassert.debounceMs"
+            "frappe-nix.devguard.mail.host"
+            "frappe-nix.devguard.mail.httpPort"
+            "frappe-nix.devguard.mail.pop3.enable"
+            "frappe-nix.devguard.mail.pop3.password"
+            "frappe-nix.devguard.mail.pop3.port"
+            "frappe-nix.devguard.mail.pop3.user"
+            "frappe-nix.devguard.mail.port"
+            "frappe-nix.runtime.dev"
+          ];
+        };
+        new.deprecated = [ ];
+        ports = {
+          http = 8123;
+          db = 3429;
+          socketio = 9123;
+          smtp = 19123;
+          mailUi = 20123;
+          pop3 = 21123;
+          mailpit = {
+            port = 19123;
+            httpPort = 20123;
+            pop3 = 21123;
+          };
+        };
+        forcedSmtp = 2999;
+        guardOff = {
+          enable = true;
+          process = true;
+          webAfterMailpit = true;
+        };
+        watchPython = {
+          defaultReloads = true;
+          offReloads = false;
+          runtimeServesAssetsAlways = true;
+          runtimeDevFollowsWatchPython = true;
+        };
+      };
+      actual = {
+        old = tree old // {
+          deprecated = deprecated old;
+        };
+        new.deprecated = deprecated new;
+        ports = {
+          inherit (defaults.frappe-nix.ports)
+            http
+            db
+            socketio
+            smtp
+            mailUi
+            pop3
+            ;
+          mailpit = {
+            inherit (defaults.frappe-nix.mailpit) port httpPort;
+            pop3 = defaults.frappe-nix.mailpit.pop3.port;
+          };
+        };
+        forcedSmtp = forced.frappe-nix.mailpit.port;
+        guardOff = {
+          inherit (guardOff.frappe-nix.mailpit) enable;
+          process = (shell guardOff).processes ? mailpit;
+          webAfterMailpit = lib.elem "devenv:processes:mailpit" (shell guardOff).processes.web.after;
+        };
+        watchPython = {
+          defaultReloads = !(lib.hasInfix "--noreload" (webExec defaults));
+          offReloads = !(lib.hasInfix "--noreload" (webExec new));
+          # The runtime's exec, as written in the module (no fixture locks it).
+          runtimeServesAssetsAlways = contains "--serve-assets''" devenvSource;
+          runtimeDevFollowsWatchPython = contains ''lib.optionalString cfg.watch.python " --dev"'' devenvSource;
+        };
+      };
+    };
 
   renames-nixos = checks.eval "renames-nixos" {
     expected = {

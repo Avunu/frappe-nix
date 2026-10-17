@@ -19,9 +19,9 @@ You enter the shell with `direnv allow` (or `nix develop --no-pure-eval`) and st
 | runtime (web, realtime, background jobs, scheduler) | `$DEVENV_RUNTIME/web.sock`                                                                             |
 | MariaDB                                             | `$DEVENV_RUNTIME/mysql.sock`                                                                           |
 | Redis (cache and queue)                             | `$DEVENV_RUNTIME/redis.sock`                                                                           |
-| Mailpit (SMTP, web UI, POP3)                        | TCP 19000, 20000 and 21000, each plus the same hash. POP3 only when `devguard.mail.pop3.enable` is on. |
+| Mailpit (SMTP, web UI, POP3)                        | TCP 19000, 20000 and 21000, each plus the same hash. POP3 only when `mailpit.pop3.enable` is on. Mailpit runs whether or not the mail guard is on (`mailpit.enable`). |
 | watch                                               | none                                                                                                   |
-| assetsWatch                                         | none. Runs only when `assets.reassert.hooks` is set.                                                   |
+| assetsWatch                                         | none. Runs only when `watch.reassert.hooks` is set.                                                   |
 
 nginx routes `/socket.io` and everything else to the same socket, because the unified runtime answers both. That is the same shape [`services.frappe-nix`](../production/nixos-service.md) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which lets the browser reach both over one origin.
 

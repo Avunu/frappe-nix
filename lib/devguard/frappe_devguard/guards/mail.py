@@ -239,7 +239,7 @@ def _patch_email_account(module):
 			raise DevGuardBlocked(
 				"frappe_devguard[mail]: refusing to open the mailbox for "
 				f"{self.get('email_id')!r} from a development bench. Enable "
-				"devguard.mail.pop3 to read caught mail back instead."
+				"mailpit.pop3.enable to read caught mail back instead."
 			)
 		# Point the account at Mailpit's POP3 listener. Credentials are
 		# substituted at the poplib layer, and clearing ``password`` here keeps

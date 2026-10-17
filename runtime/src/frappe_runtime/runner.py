@@ -60,6 +60,7 @@ class Config:
 	request_drain_seconds: float
 	job_drain_seconds: float
 	dev: bool
+	serve_assets: bool = False
 	uds: str | None = None
 
 	@property
@@ -138,7 +139,7 @@ class TrafficMiddleware:
 	@classmethod
 	def load(cls, config: Config, traffic: Traffic) -> TrafficMiddleware:
 		"""Initialize frappe and get its ASGI app."""
-		if config.dev:
+		if config.dev or config.serve_assets:
 			os.environ["FRAPPE_SERVE_ASSETS"] = "1"
 		if config.web_threads:
 			os.environ["FRAPPE_WEB_THREADS"] = str(config.web_threads)
@@ -581,6 +582,11 @@ def main() -> None:
 		"--dev",
 		action="store_true",
 		help="reload on a change of a python file, and send the assets",
+	)
+	parser.add_argument(
+		"--serve-assets",
+		action="store_true",
+		help="send /assets and /files without --dev's reload, for a dev bench that does not want it",
 	)
 	parser.add_argument(
 		"--web-threads", type=int, default=0, help="concurrent web requests (0 = the default of frappe.asgi)"
