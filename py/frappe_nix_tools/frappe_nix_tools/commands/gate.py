@@ -141,8 +141,14 @@ class Gate:
 
 
 def frappe_nix(*args: str) -> list[str]:
-	"""This frappe-nix-tools' own CLI, whatever ``frappe-nix`` is on PATH."""
-	return [sys.executable, "-m", "frappe_nix_tools.cli", *args]
+	"""This frappe-nix-tools' own CLI, whatever ``frappe-nix`` is on PATH.
+
+	It carries this process's ``sys.path`` instead of relying on ``-m``: a Nix-wrapped console
+	script (the dev shell's ``frappe-nix``) adds its dependencies to ``sys.path`` inside the
+	script, so its bare ``sys.executable`` cannot import ``frappe_nix_tools`` on its own.
+	"""
+	boot = f"import sys; sys.path[:0] = {sys.path!r}; from frappe_nix_tools.cli import main; sys.exit(main())"
+	return [sys.executable, "-c", boot, *args]
 
 
 def ok(code: int, what: str = "") -> tuple[str, str]:

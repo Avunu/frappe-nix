@@ -10,6 +10,8 @@ directory, so no test needs the network; ``sync --check`` runs for real.
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -218,6 +220,19 @@ class TestSummary(unittest.TestCase):
 	def test_step_summary_table(self) -> None:
 		table = gate.summary("lint", [gate.Step("prek", "", "failed", "exit 1 | x")])
 		self.assertIn("| prek | — | failed: exit 1 \\| x |", table)
+
+
+class TestSelfInvocation(unittest.TestCase):
+	def test_runs_without_the_callers_environment(self) -> None:
+		# The dev shell's wrapped frappe-nix finds its package only through the script's own
+		# sys.path: its interpreter is a bare one (here, a venv's base) and PYTHONPATH is unset.
+		bare = getattr(sys, "_base_executable", sys.executable)
+		env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/")}
+		with mock.patch.object(gate.sys, "executable", bare):
+			cmd = gate.frappe_nix("--help")
+		proc = subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
+		self.assertEqual(proc.returncode, 0, proc.stderr)
+		self.assertIn("gate", proc.stdout)
 
 
 if __name__ == "__main__":
