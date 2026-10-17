@@ -1976,7 +1976,7 @@ Steps:
 1. checkout with `fetch-depth: 0`;
 2. setup-uv, then `uv sync --frozen --project tools`;
 3. install frappe-nix-tools;
-4. `frappe-nix policy --pr`, with `env` `GH_TOKEN: ${{ github.token }}`, `INTEGRATION` (`inputs.integration-branch`), `EVENT_NAME`, `BASE_REF` (`github.event.pull_request.base.ref`), `HEAD_SHA` (`github.event.pull_request.head.sha || github.sha`), `PR_TITLE` and `REF_NAME`. On a dispatch, `BASE_REF` and `PR_TITLE` are empty; `frappe-nix policy` then takes them from the PR it looks up (§5.9).
+4. `frappe-nix policy --pr`, with `env` `GH_TOKEN: ${{ github.token }}`, `INTEGRATION` (`inputs.integration-branch`), `EVENT_NAME`, `BASE_REF` (`github.event.pull_request.base.ref`), `HEAD_SHA` (`github.event.pull_request.head.sha || github.sha`), `PR_TITLE`, `PR_AUTHOR` (`github.event.pull_request.user.login`) and `REF_NAME`. On a dispatch, `BASE_REF`, `PR_TITLE` and `PR_AUTHOR` are empty; `frappe-nix policy` then takes them from the PR it looks up (§5.9).
 
 What `frappe-nix policy --pr` checks is in §5.9.
 
@@ -2972,12 +2972,14 @@ Module `commits` for `policy`; each `compat` and `ratchet` rule names its module
 
 Under `"semver"` (or with `releases` off) it rejects nothing beyond what `committed` checks, and the hook is not rendered.
 
-**`frappe-nix policy --pr`** runs in CI. When `EVENT_NAME == workflow_dispatch`, it finds the PR with `gh pr list --head $REF_NAME --state open --json number,title,baseRefName,headRefOid` and asserts that `headRefOid == HEAD_SHA`. It then takes the title and base from that result instead of `PR_TITLE` and `BASE_REF`, which are empty on a dispatch; if either is missing from the result, it fails rather than check an empty value. If there is no PR, it passes, for example on a branch dispatched by the sweep after the PR closed. It then checks:
+**`frappe-nix policy --pr`** runs in CI. When `EVENT_NAME == workflow_dispatch`, it finds the PR with `gh pr list --head $REF_NAME --state open --json number,title,baseRefName,headRefOid,author` and asserts that `headRefOid == HEAD_SHA`. It then takes the title, base and author from that result instead of `PR_TITLE`, `BASE_REF` and `PR_AUTHOR`, which are empty on a dispatch; if either is missing from the result, it fails rather than check an empty value. If there is no PR, it passes, for example on a branch dispatched by the sweep after the PR closed. It then checks:
 
 1. The base is allowed: `base == $INTEGRATION` (`branches.integration`); or `base` matches a pattern in `commits.pr-allowed-bases` (fnmatch, default `[]`; e.g. `["version-*"]` for maintenance PRs); or, while `commits.allow-stacked` is true (`recommended`; false in the Avunu profile, plan §5 "no stacked PRs"), `base` is the head branch of another open PR in the same repository, so a stacked PR passes and is re-checked when GitHub retargets it after its parent merges. Otherwise the error message is `retarget: gh pr edit <n> --base <integration>`.
 2. The title passes `committed --commit-file <(title)` and the subject rules above that apply.
 3. Every commit in `git rev-list --no-merges base..head` passes `committed <sha>` and the rules above that apply, including the `Release-As` major rule under `frappe-major`.
 4. On a `release-please--*` branch: `frappe-nix compat`. Under `frappe-major`, C1 then requires the proposed `package.json` version's major to equal `frappe-major`.
+
+In a Dependabot PR (the PR's author, never the spoofable `github.actor`, is `dependabot[bot]`), the title and the commits Dependabot authored are checked with `committed.toml`'s `subject_length` turned off, because a bump of a SHA-pinned action or reusable workflow gets a subject far past 100 characters; every other rule, `!` and `BREAKING CHANGE` included, still applies.
 
 Exit 0 or 1. `--major-free` (frappe-nix itself, §4.10, which has no `[tool.frappe-nix]`) drops the `Release-As` major rule and check 4, and takes the integration branch from `--base-branch` (default `main`).
 
