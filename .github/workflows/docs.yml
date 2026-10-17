@@ -22,6 +22,6 @@ jobs:
   build:
     permissions:
       contents: read # checkout
-    uses: Avunu/site-docs/.github/workflows/check-docs.yml@06562bcc4dfe0081a7ad3838a7862b421d0e90eb # 2026-10-16
+    uses: Avunu/site-docs/.github/workflows/check-docs.yml@c9e636d8f316af89afc0c4d97ac9e5aef5b62f4e # 2026-10-16
     with:
       path: frappe-nix # its path in site-docs's projects.json
