@@ -2,8 +2,15 @@
 #
 # Produces a `frappe-init` executable that either writes a new bench (a thin
 # frappe-nix wrapper flake + apps as git submodules, with python/node pinned
-# from lib/frappe-presets.json) or converts an existing `bench init` bench in
-# place. The mode is detected from the target directory.
+# from lib/frappe-presets.json), converts an existing `bench init` bench in
+# place, or puts a dev environment in one Frappe app's repository. The mode is
+# detected from the target directory.
+#
+# The scaffolder itself is Python, `frappe_nix_tools.frappe_init` in
+# frappe-nix-tools (py/frappe_nix_tools, PLAN.md Track D, D2), on
+# frappe-nix's tool interpreter. This file is its glue: the store paths it
+# needs, as the JSON FRAPPE_NIX_CLI_CONFIG names, and the commands it runs on
+# PATH.
 { pkgs }:
 
 let
@@ -39,49 +46,39 @@ let
     '';
   };
 
-  # Concatenated rather than sourced at runtime: writeShellApplication runs
-  # shellcheck over the produced file, and a `source` would hide every
-  # cross-file definition from it. main.sh must come last — it is the only file
-  # with top-level code.
-  sources = [
-    ./sh/common.sh
-    ./sh/detect.sh
-    ./sh/template.sh
-    ./sh/secrets.sh
-    ./sh/apps.sh
-    ./sh/pipeline.sh
-    ./sh/init.sh
-    ./sh/app-sync.sh
-    ./sh/app-init.sh
-    ./sh/migrate.sh
-    ./sh/main.sh
-  ];
+  # frappe-init runs as `python -m` in an environment with frappe-nix-tools in
+  # it, not as a console script of the package: nixpkgs' wrapper for those puts
+  # python3.14 and the package's own bin/ (an unwrapped frappe-nix, without
+  # node and yarn) on PATH ahead of the caller's, which every git, uv and
+  # frappe-nix that frappe-init runs would inherit. An environment's interpreter
+  # changes no PATH. -I, because frappe-init runs inside benches and app
+  # repositories: neither their directory nor a dev shell's PYTHONPATH may put a
+  # module ahead of frappe-nix-tools' own.
+  python = frappeNixTools.pythonModule.withPackages (_: [ frappeNixTools ]);
+
+  # What frappe-init reads (frappe_init/config.py); it refuses a missing or
+  # an unknown key.
+  config = pkgs.writeText "frappe-init.json" (
+    builtins.toJSON {
+      presets = "${./frappe-presets.json}";
+      template = "${../templates/bench}";
+      appTemplate = "${../templates/app}";
+    }
+  );
 in
 pkgs.writeShellApplication {
   name = "frappe-init";
   runtimeInputs = with pkgs; [
     git
     uv
-    gum
-    jq
-    gawk
-    gnused
-    gnugrep
-    coreutils
-    findutils
-    diffutils
     workspaceTool
     frappeNix
   ];
-  # The scripts are plain .sh files (no Nix-string escaping); bake the presets
-  # file and template dir store paths in via placeholders.
-  text =
-    builtins.replaceStrings
-      [ "@PRESETS@" "@TEMPLATE@" "@APP_TEMPLATE@" ]
-      [
-        "${./frappe-presets.json}"
-        "${../templates/bench}"
-        "${../templates/app}"
-      ]
-      (lib.concatMapStringsSep "\n" builtins.readFile sources);
+  text = ''
+    FRAPPE_NIX_CLI_CONFIG=${config} exec ${python}/bin/python3 -I -m frappe_nix_tools.frappe_init "$@"
+  '';
+  meta = {
+    description = "Scaffold a frappe-nix bench, migrate a bench to it, or set up a Frappe app's repository";
+    mainProgram = "frappe-init";
+  };
 }

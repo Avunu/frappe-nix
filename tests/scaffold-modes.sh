@@ -95,18 +95,32 @@ expect_exit "an unknown flag" 1 "unknown flag: --bogus" --bogus
 expect_exit "a value flag at the end of the line" 1 "--name needs a value" --init --name
 expect_exit "a value flag at the end of the line, under --check" 2 "--format needs a value" --check --format
 
+echo "── renamed flags ────────────────────────────────────────────"
+# CONVENTIONS.md, Scaffolder: --version and --default-site; the old names are
+# read, with a warning, until the next minor release.
+expect_exit "--frappe-version is still read" 0 "scaffold bench 'old' (version-16" \
+  --init --dry-run --frappe-version version-16 --name old "$ROOT/old"
+says "--frappe-version is now --version" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"
+expect_exit "--site is still read" 0 "default site   : old.local" \
+  --init --dry-run --version version-16 --site old.local "$ROOT/old"
+says "--site is now --default-site" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"
+expect_exit "--version=<v>" 0 "(version-15 → python 3.12 / node 20)" --init --dry-run --version=version-15 "$ROOT/old"
+expect_exit "--version with no value" 1 "--version needs a value" --init --version
+expect_exit "--help names the new flags" 0 "--default-site <site>" --help
+says "--frappe-version" && no "--help does not name the old ones" || ok "--help does not name the old ones"
+
 echo "── scaffold: refusals ───────────────────────────────────────"
 mkdir -p "$ROOT/full" && echo x > "$ROOT/full/a"
 expect_exit "--init into a directory that is not empty" 2 "is not empty" --init "$ROOT/full"
 expect_exit "--init without a version in a non-TTY" 5 "is required" --init "$ROOT/nv"
 check "…creates nothing" test '!' -e "$ROOT/nv"
 expect_exit "--init with an unknown version" 5 "unknown frappe version 'version-9'" \
-  --init --frappe-version version-9 "$ROOT/nv"
+  --init --version version-9 "$ROOT/nv"
 expect_exit "a target that is not empty and is no bench or app" 6 "is not a Frappe bench" "$ROOT/full"
 
 echo "── scaffold: --dry-run ──────────────────────────────────────"
 expect_exit "--init --dry-run" 0 "--dry-run: nothing was changed." \
-  --init --dry-run --frappe-version version-16 --name 'My_Bench!' --apps erpnext,acme/widgets "$ROOT/dry"
+  --init --dry-run --version version-16 --name 'My_Bench!' --apps erpnext,acme/widgets "$ROOT/dry"
 says "scaffold bench 'my-bench' (version-16 → python 3.14 / node 24)" &&
   ok "the plan names the normalised bench, the preset's python and node" ||
   no "the plan names the normalised bench, the preset's python and node: $(cat "$OUT")"
@@ -118,13 +132,13 @@ check "--dry-run creates nothing" test '!' -e "$ROOT/dry"
 
 mkdir -p "$ROOT/cwd" && cd "$ROOT/cwd"
 expect_exit "no target, an empty directory: scaffold into ./frappe-bench" 0 "in frappe-bench" \
-  --dry-run --frappe-version version-15
+  --dry-run --version version-15
 says "scaffold bench 'frappe-bench'" && ok "…named after it" || no "…named after it: $(cat "$OUT")"
 cd "$ROOT"
 
 echo "── scaffold: a new bench ────────────────────────────────────"
 expect_exit "--init a bench with an app" 0 "Next steps:" \
-  --init --skip-lock --allow-file-remotes --frappe-version version-15 --name acme --site acme.localhost \
+  --init --skip-lock --allow-file-remotes --version version-15 --name acme --default-site acme.localhost \
   --apps hrms "$ROOT/new"
 cp "$OUT" "$ROOT/new.log"
 cd "$ROOT/new"
@@ -151,10 +165,15 @@ says "Next steps:" && says "git diff --cached --stat" && says "direnv allow" && 
   ok "the next steps" || no "the next steps: $(cat "$OUT")"
 says "provision-site               # (in another shell) create acme.localhost + install apps" &&
   ok "…name provision-site for a bench without secrets" || no "…name provision-site for a bench without secrets"
+says "To restore this bench from production backups, declare its secrets" &&
+  ok "…and say how to declare them, though the template mentions them in a comment" ||
+  no "…and say how to declare them, though the template mentions them in a comment"
 OUT="$ROOT/out"
 
 expect_exit "a frappe-nix bench is reconciled (repair mode)" 0 "already a frappe-nix bench" --dry-run .
 says "frappe version : version-15" && ok "…at its own version" || no "…at its own version: $(cat "$OUT")"
+says "bench name     : acme" && ok "…under the name its flake.nix gives it" ||
+  no "…under the name its flake.nix gives it: $(cat "$OUT")"
 cd "$ROOT"
 
 echo "── migrate: refusals ────────────────────────────────────────"
@@ -193,12 +212,12 @@ small_bench "$ROOT/sites2" -
 mkdir -p "$ROOT/sites2/sites/a.local" "$ROOT/sites2/sites/b.local"
 printf '{}\n' > "$ROOT/sites2/sites/a.local/site_config.json"
 printf '{}\n' > "$ROOT/sites2/sites/b.local/site_config.json"
-expect_exit "no default_site and several sites, in a non-TTY" 5 "pass --site" --migrate --dry-run "$ROOT/sites2"
-expect_exit "…which --site settles" 0 "default site   : b.local" --migrate --dry-run --site b.local "$ROOT/sites2"
+expect_exit "no default_site and several sites, in a non-TTY" 5 "pass --default-site" --migrate --dry-run "$ROOT/sites2"
+expect_exit "…which --default-site settles" 0 "default site   : b.local" --migrate --dry-run --default-site b.local "$ROOT/sites2"
 small_bench "$ROOT/sites0" -
 expect_exit "no default_site and no site" 0 "default site   : frappe.localhost" --migrate --dry-run "$ROOT/sites0"
-expect_exit "--site over the bench's default_site" 0 "default site   : other.local" \
-  --migrate --dry-run --site other.local "$ROOT/plain"
+expect_exit "--default-site over the bench's default_site" 0 "default site   : other.local" \
+  --migrate --dry-run --default-site other.local "$ROOT/plain"
 expect_exit "--name over the directory's" 0 "bench name     : renamed" --migrate --dry-run --name Renamed "$ROOT/plain"
 
 echo "── migrate: flags ───────────────────────────────────────────"
@@ -244,10 +263,10 @@ mkdir -p "$ROOT/nogit/an_app"
 printf '[project]\nname = "an_app"\n' > "$ROOT/nogit/pyproject.toml"
 printf 'app_name = "an_app"\n' > "$ROOT/nogit/an_app/hooks.py"
 expect_exit "--app on an app that is not a git repository" 6 "is not a git repository" \
-  --app --frappe-version version-16 --skip-lock "$ROOT/nogit"
+  --app --version version-16 --skip-lock "$ROOT/nogit"
 expect_exit "--app without a version in a non-TTY" 5 "is required" --app "$ROOT/nogit"
 expect_exit "an app is found without --app" 0 "this is a Frappe app, not a bench" \
-  --dry-run --frappe-version version-16 "$ROOT/nogit"
+  --dry-run --version version-16 "$ROOT/nogit"
 says "default site   : an-app.localhost" && ok "…whose default site is <name>.localhost" ||
   no "…whose default site is <name>.localhost: $(cat "$OUT")"
 expect_exit "--standards outside app mode" 1 "an app standards flag: app mode only" \
