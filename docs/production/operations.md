@@ -3,7 +3,7 @@ title: Operate a deployed site
 description: Create or restore a site on a services.frappe host, deploy upgrades with snapshot-protected migrations, tune the runtime and find where things live.
 order: 4
 tags: [operations, migrations, backups, runtime-tuning]
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 This page covers the operational side of a [`services.frappe`](nixos-service.md) host: getting a site installed, upgrading it safely, tuning the runtime and knowing where the state is.
@@ -15,18 +15,33 @@ The module deploys code and configuration. It does not install a site. On the fi
 The module installs a `bench` wrapper on the system `PATH`. With exactly one enabled site it selects that site automatically. With several, set `FRAPPE_SITE` yourself:
 
 ```bash
-sudo -u frappe env FRAPPE_SITE=site1.example.com bench migrate
+sudo env FRAPPE_SITE=site1.example.com bench migrate
 ```
 
-Run the wrapper as the service user, so the files it creates stay owned by `frappe`. For `restore`, `migrate`, `console` and `clear-cache` it passes `--site` for you.
+From a root shell the wrapper does not run as root. It runs the command as a transient systemd unit, as the service user (`frappe`) and with the units' `PATH`, so whatever it writes (the site's files, backups, the runtime bench tree) stays owned by `frappe`. On a terminal it gets one, so `bench console` and `bench mariadb` stay interactive. Otherwise stdin and stdout pass through, so `bench mariadb < dump.sql` works, and the wrapper exits with the command's status. Of the caller's environment only `FRAPPE_SITE` is carried across. The service user itself, and any other user, runs the wrapper in place. For `restore`, `migrate`, `console` and `clear-cache` it passes `--site` for you.
 
 To load an existing database, restore an SQL backup:
 
 ```bash
-sudo -u frappe env FRAPPE_SITE=site1.example.com bench restore <SQL_FILE_PATH>
+sudo env FRAPPE_SITE=site1.example.com bench restore <SQL_FILE_PATH>
 ```
 
-To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs. Follow the Frappe bench documentation for the flags that fit your layout. After either route, run `nixos-rebuild switch` again, or restart the migrate unit:
+The command runs as `frappe`, so the file must be readable by `frappe`: not under `/root`, for example.
+
+To create a brand-new site, run `bench new-site` on the host, as the module's own migrate message instructs:
+
+```bash
+sudo env FRAPPE_SITE=site1.example.com bench new-site site1.example.com --force --admin-password <ADMIN_PASSWORD>
+```
+
+`FRAPPE_SITE` tells the wrapper which site directory to use, so set it even though it repeats the site name. Two things differ from a stock bench:
+
+- The wrapper adds `--no-setup-db`, and says so on stderr. The site's database and its user already exist: the module creates them for `database.createLocally`, and for an external database they are yours, named by the `database.*` options. Frappe's default would create them again over a MariaDB root login. A local MariaDB lets only OS root log in as root, through `unix_socket`, and the wrapper runs as `frappe`. The wrapper adds the flag only for a site declared in `services.frappe` whose `site_config.json` has a database name and password. It adds nothing when you pass any of Frappe's database flags yourself (`--db-root-username`, `--db-root-password`, `--db-host`, `--setup-db` and the rest), and then the command runs exactly as you typed it.
+- `--force` is required, and the wrapper never adds it. `frappe-init-<SITE>` has already created the site directory and its `site_config.json`. Without the flag, Frappe stops with `Site … already exists`. Frappe keeps that `site_config.json`. Do not pass `--force` for a site that is already installed: it drops and recreates Frappe's core tables in the existing database.
+
+If a `bench new-site` fails, Frappe removes the whole site directory, `site_config.json` included. Run `sudo systemctl restart frappe-init-<SITE>.service` to recreate them before you try again.
+
+After either route, run `nixos-rebuild switch` again, or restart the migrate unit:
 
 ```bash
 sudo systemctl restart frappe-migrate-site1.example.com.service

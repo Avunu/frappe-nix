@@ -1023,17 +1023,20 @@ let
   siteNames = builtins.attrNames enabledSites;
   singleSite = if builtins.length siteNames == 1 then builtins.head siteNames else null;
 
-  benchCli =
+  # What `bench` runs, as whoever runs it. benchCli below decides who that is.
+  benchInner =
     let
       pkg = cfg.package;
       benchDir = pkgBenchDir pkg;
       pyEnv = pkgPythonEnv pkg;
       benchBin = "${pyEnv}/bin/bench";
+      # extraEnv too: it is "for all Frappe services", and a `bench migrate` or
+      # `bench execute` run by hand should see what the units see.
       coreEnvExports = concatStringsSep "\n" (
-        mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") (mkCoreEnv pkg)
+        mapAttrsToList (k: v: "export ${k}=${lib.escapeShellArg v}") (mkCoreEnv pkg // cfg.extraEnv)
       );
     in
-    pkgs.writeShellScriptBin "bench" ''
+    pkgs.writeShellScript "frappe-bench" ''
       set -euo pipefail
 
       # `bench restore` shells out to file(1) to sniff the archive type, and
@@ -1134,11 +1137,102 @@ let
           CMD="$1"; shift
           exec ${benchBin} $SITE_FLAG "$CMD" "$@"
           ;;
+        new-site)
+          # For a site declared here, the database and its user already exist:
+          # ensureDatabases/ensureUsers made them for createLocally, and an
+          # external database is the operator's, named by database.* and
+          # already in site_config.json. Frappe's default setup would make
+          # them again over a MariaDB root login, which a local MariaDB grants
+          # only to OS root (unix_socket) and so refuses to whoever runs this.
+          # So add --no-setup-db, the same way the dev shell's umbrella adds
+          # its new-site flags, unless the caller passed any database flag of
+          # Frappe's new-site (frappe/commands/site.py): then they asked for
+          # something else, and get exactly what they asked for. --force is
+          # never added: on an installed site it reinstalls the core tables.
+          shift
+          NEW_SITE=""
+          DB_FLAGS=false
+          SKIP=false
+          for arg in "$@"; do
+            if $SKIP; then SKIP=false; continue; fi
+            case "$arg" in
+              --db-*=* | --mariadb-*=*) DB_FLAGS=true ;;
+              --setup-db | --no-setup-db | --no-mariadb-socket) DB_FLAGS=true ;;
+              --db-* | --mariadb-*) DB_FLAGS=true; SKIP=true ;;
+              --admin-password | --source-sql | --source_sql | --install-app) SKIP=true ;;
+              -*) ;;
+              *) if [ -z "$NEW_SITE" ]; then NEW_SITE="$arg"; fi ;;
+            esac
+          done
+          SITE_CONFIG=""
+          ${concatStringsSep "\n" (
+            mapAttrsToList (name: siteCfg: ''
+              if [ "$NEW_SITE" = ${lib.escapeShellArg name} ]; then
+                SITE_CONFIG=${lib.escapeShellArg "${siteCfg.siteDir}/sites/${name}/site_config.json"}
+              fi
+            '') enabledSites
+          )}
+          if [ -n "$SITE_CONFIG" ] && ! $DB_FLAGS \
+             && ${pkgs.jq}/bin/jq -e '.db_name and .db_password' "$SITE_CONFIG" >/dev/null 2>&1; then
+            echo "bench: adding --no-setup-db: services.frappe already provides $NEW_SITE's database and user (pass any --db-* flag to let Frappe set them up instead)" >&2
+            exec ${benchBin} new-site --no-setup-db "$@"
+          fi
+          exec ${benchBin} new-site "$@"
+          ;;
         *)
           exec ${benchBin} "$@"
           ;;
       esac
     '';
+
+  # The `bench` an operator runs. From a root shell, frappe-bench above would
+  # run as root, and everything it writes -- the runtime bench tree it
+  # (re)creates, a site's public/private files, backups, logs -- would be
+  # root's, which the units (running as cfg.user) then cannot write. So, as
+  # root, it runs as a transient unit with the units' user, group and PATH.
+  # The site's secrets need nothing more: frappe-init-<site> has already
+  # merged them into site_config.json, which is cfg.user's.
+  #
+  # --pty when attached to a terminal (`bench console`, `bench mariadb`),
+  # --pipe otherwise, so stdin, stdout and stderr pass through as they are
+  # (`bench mariadb < dump.sql`). Either way systemd-run waits and exits with
+  # the command's status. FRAPPE_SITE is the one variable of the caller's that
+  # is carried across, since it picks the site; TERM is carried by --pty.
+  #
+  # Anyone else (the service user, say) runs frappe-bench in place, as before.
+  # The same as odoo-nix's adminCli.
+  benchCli = pkgs.writeShellApplication {
+    name = "bench";
+    # For tests/pdf-renderers-unit.nix, which reads what frappe-bench does.
+    passthru.inner = benchInner;
+    text =
+      optionalString (cfg.user != "root") ''
+        if [ "$EUID" -eq 0 ]; then
+          if [ -t 0 ] && [ -t 1 ]; then io=--pty; else io=--pipe; fi
+          site=()
+          if [ -n "''${FRAPPE_SITE:-}" ]; then site=(--setenv=FRAPPE_SITE="$FRAPPE_SITE"); fi
+          exec ${config.systemd.package}/bin/systemd-run --quiet --wait --collect "$io" \
+            --uid=${lib.escapeShellArg cfg.user} --gid=${lib.escapeShellArg cfg.group} \
+            --setenv=PATH=${lib.escapeShellArg (lib.makeBinPath (servicePath ++ unitDefaultPath))} \
+            "''${site[@]}" \
+            -- ${benchInner} "$@"
+        fi
+      ''
+      + ''
+        exec ${benchInner} "$@"
+      '';
+  };
+
+  # What NixOS puts on every unit's PATH after its own `path`
+  # (systemd.services.<name>.path's defaults), which frappe-bench needs for
+  # its own mkdir, cp and ln.
+  unitDefaultPath = [
+    pkgs.coreutils
+    pkgs.findutils
+    pkgs.gnugrep
+    pkgs.gnused
+    config.systemd.package
+  ];
 
   # Where gunicorn listens: a unix socket when web.socketPath is set, else TCP.
   webBind =
