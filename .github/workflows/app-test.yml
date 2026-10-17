@@ -148,11 +148,15 @@ jobs:
         name: Prepare the self-test's fixture
         env:
           APP_ROOT: ${{ inputs.app-root }}
+          APP: ${{ inputs.app }}
         run: |
           set -euo pipefail
           commit() { git add -A && git -c user.name=self-test -c user.email=self-test@localhost commit -qm "$1"; }
           if [ "$APP_ROOT" != . ] && [ ! -e .git ]; then
             git init -q
+            # coverage matches omit patterns against absolute paths, and this app sits under
+            # frappe-nix's tests/: narrow the tests omit to the app's own tests/.
+            sed -i "s#\"\*/tests/\*\"#\"*/${APP}/tests/*\"#" pyproject.toml
             commit "the fixture app"
           fi
           if [ ! -f nix/uv.lock ]; then
