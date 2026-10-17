@@ -450,6 +450,8 @@
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
         # .gitmodules too — and what it refuses to touch.
         // import ./tests/bench-remove-app.nix { inherit pkgs; }
+        # `bench-new-app` over a stub upstream scaffolder: what it registers.
+        // import ./tests/bench-new-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix {
           inherit pkgs;

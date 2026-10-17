@@ -64,6 +64,7 @@ mkdir -p "$BIN"
 printf '#!%s\n' "$(command -v bash)" > "$BIN/uv"
 cat >> "$BIN/uv" <<'STUB'
 echo "$*" >> "$UV_CALLS"
+[ -z "${UV_FAIL:-}" ] || { echo "  × No solution found" >&2; exit 1; }
 STUB
 
 printf '#!%s\n' "$(command -v bash)" > "$BIN/bench"
@@ -273,6 +274,42 @@ check_eq "--no-backup exits 0" 0 "$RC" || echo "$OUT"
 check_not "…and backs nothing up" compgen -G ".frappe-nix-backup/gadgets-*"
 check_not "apps/gadgets is gone" test -e apps/gadgets
 
+echo "── only a workspace registration left ──────────────────────────────"
+# Not under apps/ and not in .gitmodules, but still a uv workspace member: a
+# directory deleted by hand.
+fresh_bench
+add_local_app leftover
+git rm -r -q -f -- apps/leftover
+rm -rf apps/leftover
+run leftover
+check_eq "exits 0" 0 "$RC" || echo "$OUT"
+check "says only the registration is left" says "only its workspace registration is left"
+check_not "it is no longer a workspace member" is_member leftover
+check_not "…nor a uv source" has_source leftover
+check "uv lock ran" grep -qx lock "$UV_CALLS"
+
+echo "── a nested repository is not removed ─────────────────────────────"
+fresh_bench
+mkdir -p apps/stray/stray
+printf 'app_name = "stray"\n' > apps/stray/stray/hooks.py
+git -C apps/stray init -q -b main
+git -C apps/stray add -A
+git -C apps/stray commit -q -m stray
+run stray
+check_eq "exits 1" 1 "$RC"
+check "says what it is" says "is a git repository but not a registered submodule"
+check "…and how to remove it by hand" says "git rm --cached apps/stray && rm -rf apps/stray"
+check "apps/stray is untouched" test -f apps/stray/stray/hooks.py
+
+echo "── a relock that fails ─────────────────────────────────────────────"
+fresh_bench
+add_submodule_app crm
+UV_FAIL=1 run crm
+check_eq "exits 1" 1 "$RC"
+check "says the lock failed, and how to re-run it" says "uv lock failed"
+check_not "the app is still removed" test -e apps/crm
+check_not "…and no longer a workspace member" is_member crm
+
 echo "── refusals ───────────────────────────────────────────────────────"
 run widgets
 check_eq "an app that is not there exits 1" 1 "$RC"
@@ -282,6 +319,11 @@ check_eq "frappe itself exits 1" 1 "$RC"
 check "…and stays a member" is_member frappe
 run ../etc
 check_eq "a path exits 1" 1 "$RC"
+run .
+check_eq "'.' exits 1" 1 "$RC"
+run ..
+check_eq "'..' exits 1" 1 "$RC"
+check "…and says it is not an app name" says "is not an app name"
 run
 check_eq "no app exits 1" 1 "$RC"
 run crm telephony
