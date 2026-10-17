@@ -3,7 +3,7 @@ title: FAQ and troubleshooting
 description: Answers to common questions about frappe-nix and the errors you are most likely to meet in the dev shell, in builds and on a deployed host, with their fixes.
 order: 6
 tags: [faq, troubleshooting, errors]
-updated: 2026-10-15
+updated: 2026-10-16
 ---
 
 Each entry starts with what you see, then what it means and what to do. Where a page explains the cause in depth, the entry links to it.
@@ -31,7 +31,7 @@ A flake's source tree is exactly its git-tracked files, so an untracked or ignor
 
 ### The scaffolder says a flag is required, or the directory is the wrong shape
 
-Without a terminal the scaffolder asks nothing, so it needs `--frappe-version` (and `-y` to migrate). See [Scaffolder](scaffolder.md#exit-codes) for what each exit code means.
+Without a terminal the scaffolder asks nothing, so it needs `--version` (and `-y` to migrate). See [Scaffolder](scaffolder.md#exit-codes) for what each exit code means.
 
 ### An app is missing from the build
 

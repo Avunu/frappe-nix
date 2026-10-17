@@ -1786,7 +1786,7 @@ in
             --provenance ${provenanceFile}
 
           # The dev defaults a scaffolded bench commits, which app mode has no
-          # committed file to carry — the same set lib/sh/template.sh's
+          # committed file to carry — the same set frappe_init/template.py's
           # reconcile_common_site_config writes, minus the ports, which
           # tasks."frappe:config" owns. Written once and never reconciled: after
           # this the file is the developer's.

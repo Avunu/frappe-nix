@@ -34,8 +34,8 @@
 # following a symlink is free.
 #
 # The root pyproject.toml is rendered from templates/bench/pyproject.toml with
-# the same placeholders lib/sh/template.sh substitutes, and the members and
-# sources tables are filled by the same `frappe-nix-workspace` the scaffolder
+# the same placeholders frappe-init substitutes (frappe_init/template.py), and
+# the members and sources tables are filled by the same `frappe-nix-workspace` the scaffolder
 # uses. That is deliberate: a second generator would drift, and computing
 # [tool.uv.sources] keys means reading each app's own [project].name — which is
 # what uv resolves the member to, and which is not always the directory name. A
@@ -88,13 +88,13 @@ let
 
   # An app with no pyproject.toml (a legacy setup.py-only app) stays in apps/ and
   # on PYTHONPATH but cannot be a uv member — the same policy compute_membership
-  # applies in lib/sh/apps.sh.
+  # applies in frappe-init (frappe_init/apps.py).
   memberNames = map (a: a.name) (
     lib.filter (a: builtins.pathExists (a.src + "/pyproject.toml")) apps
   );
 
   # "python314" -> "py314" / "3.14", exactly as resolve_preset does in
-  # lib/sh/common.sh.
+  # frappe-init (frappe_init/presets.py).
   pynum = lib.removePrefix "python" preset.python;
   pytag = "py${pynum}";
   pyver = "${builtins.substring 0 1 pynum}.${builtins.substring 1 (-1) pynum}";
@@ -154,7 +154,7 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
           frappe-nix-workspace ensure-root --pyproject pyproject.toml --test-tools-unlocked
         ''
     )}
-    # The same call reconcile_workspace makes (lib/sh/apps.sh): sync-apps keys
+    # The same call reconcile_workspace makes (frappe_init/apps.py): sync-apps keys
     # [tool.uv.sources] on each app's own distribution name. No sites/ here —
     # the registry (sites/apps.txt, sites/apps.json) is generated from these
     # members by lib/bench.nix, and by modules/devenv.nix for the dev bench.

@@ -29,11 +29,15 @@ dependencies = [
     "pyyaml>=6",
     # The bench commands' command line (frappe-nix-bench, PLAN.md Track D).
     "click>=8.1",
+    # frappe-init's prompts (frappe_nix_tools.frappe_init, PLAN.md Track D).
+    "rich>=13",
 ]
 
 [project.scripts]
 frappe-nix = "frappe_nix_tools.cli:main"
 frappe-nix-bench = "frappe_nix_tools.bench_cli:main"
+# frappe-init has no script here: lib/init.nix runs `python -m frappe_nix_tools.frappe_init`
+# with the configuration it bakes (see there for why).
 
 [project.urls]
 Documentation = "https://github.com/Avunu/frappe-nix/tree/main/docs/app-standards"

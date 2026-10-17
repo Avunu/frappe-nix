@@ -1330,7 +1330,7 @@ secretScripts
       case "$KIND" in
         submodule | submodule-uninitialized)
           # The submodule's name, which .git/config and .git/modules/ are keyed
-          # on — not always its path (lib/sh/detect.sh resolves it the same way).
+          # on — not always its path (frappe_init/detect.py resolves it the same way).
           NAME="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
             | awk -v p="$APP_DIR" '$2 == p { sub(/^submodule\./, "", $1); sub(/\.path$/, "", $1); print $1; exit }')" || true
           NAME="''${NAME:-$APP_DIR}"
@@ -1338,7 +1338,7 @@ secretScripts
           # Plumbing, not `git rm`: git rm — --cached included — refuses
           # outright while .gitmodules has any unstaged edit ("please stage your
           # changes to .gitmodules or stash them to proceed"), the usual state
-          # of a bench mid-work. vendor_app (lib/sh/apps.sh) sidesteps it the
+          # of a bench mid-work. vendor_app (frappe_init/apps.py) sidesteps it the
           # same way.
           if [ "$KIND" = submodule ]; then
             git submodule deinit -q -f -- "$APP_DIR"

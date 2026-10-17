@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, and what to commit afterwards.
 order: 9
 tags: [upgrade, flake-update, reconcile]
-updated: 2026-10-07
+updated: 2026-10-16
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -35,6 +35,8 @@ The shell hook does not register submodules, vendor apps, edit `.gitignore` or `
 ```bash
 nix run github:Avunu/frappe-nix -- -y
 ```
+
+The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, until the next minor release; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
 
 A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from inside the shell. `nodeOfflineHashes` was one such. It stays an evaluation error that names the edit.
 

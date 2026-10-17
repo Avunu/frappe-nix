@@ -98,16 +98,16 @@ expect_failure "nothing detectable in a non-TTY" \
 
 echo "── explicit override ────────────────────────────────────────"
 d="$(make_bench b8 - 15.1.0 -)"
-out="$("$FRAPPE_INIT" --migrate --dry-run --frappe-version version-16 "$d" 2>&1)"
+out="$("$FRAPPE_INIT" --migrate --dry-run --version version-16 "$d" 2>&1)"
 if printf '%s' "$out" | grep -q 'python 3.14'; then
-  ok "--frappe-version overrides detection"
+  ok "--version overrides detection"
 else
-  no "--frappe-version overrides detection"
+  no "--version overrides detection"
 fi
 if printf '%s' "$out" | grep -q 'looks like version-15'; then
-  ok "a disagreeing --frappe-version warns"
+  ok "a disagreeing --version warns"
 else
-  no "a disagreeing --frappe-version warns"
+  no "a disagreeing --version warns"
 fi
 
 echo

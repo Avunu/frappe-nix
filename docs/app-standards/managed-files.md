@@ -3,7 +3,7 @@ title: Managed files
 description: "The files frappe-nix keeps in an opted-in app, the [tool.frappe-nix] parameters, and frappe-init --sync and --check."
 order: 2
 tags: [app-standards, sync, managed-files]
-updated: 2026-10-07
+updated: 2026-10-16
 ---
 
 An app that has opted in to the app standards carries a set of tool configs that frappe-nix writes and keeps in step: the flake, the git hooks, the formatter and linter settings, the TypeScript projects, the release-please files and the tool locks. Which of them an app gets is decided by its [profile](profiles.md): every file belongs to a module, and exists only while that module is on. The [interface spec](spec.md) (§2, §3) is the contract this page summarises.
@@ -38,7 +38,7 @@ Both run in the app's repository: a git work tree whose `pyproject.toml` `[proje
 An app with no flake, or one whose flake still follows frappe-nix `main`, opts in with:
 
 ```sh
-nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --frappe-version version-16
+nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --version version-16
 ```
 
 It needs only `nix` and `git`. Sync runs in two phases. **Phase A** creates `[tool.frappe-nix]` (the profile from `--standards`; the major from `--frappe-version` or the existing flake's `frappeVersion`; the siblings from `hooks.required_apps` plus the flake's, an existing sibling pinned off the generic rule written in the object form so its branch is kept; `integration-branch` when `origin/HEAD` names another branch than the branching model's default), writes `flake.nix` and `.envrc`, and locks the flake. When the lock now pins a different frappe-nix release than the one running, sync hands over to `nix run .#frappe-init -- --sync` once, so **phase B** always renders with the tools the lock pins. Phase B renders every other file, retracts what a module that turned off left behind, deletes the retired files, and brings the locks up: `uv lock --project tools`, `yarn install`, the node-lock seeds, `nix run .#relock`, and the README blocks.

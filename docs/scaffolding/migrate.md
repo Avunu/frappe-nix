@@ -3,7 +3,7 @@ title: Migrate an existing bench
 description: Convert a classic bench init bench, or a half-converted one, into a frappe-nix repository in place, without deleting anything.
 order: 2
 tags: [scaffolding, migrate, bench, submodules]
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 The same entry point converts a classic `bench init` bench, or a half-converted one, into a frappe-nix repository. It detects the mode from the directory, so from inside a bench you run the same command as for a new one. Do a dry run first to read the plan.
@@ -19,7 +19,7 @@ It is a **reconciler, not a converter**. It probes what the bench already has, a
 Nothing is committed. The result is staged, so `git diff --cached` is your review. Add `--commit` to commit it.
 
 > [!NOTE]
-> The migrator supports `version-15` and newer. Older apps ship a `setup.py` with no `pyproject.toml`, so they cannot be uv workspace members, and the Python and Node pins differ. Upgrade the bench first with `bench switch-to-branch version-15`, or pass `--frappe-version version-15` to proceed anyway.
+> The migrator supports `version-15` and newer. Older apps ship a `setup.py` with no `pyproject.toml`, so they cannot be uv workspace members, and the Python and Node pins differ. Upgrade the bench first with `bench switch-to-branch version-15`, or pass `--version version-15` to proceed anyway.
 
 ## What it does
 
@@ -43,7 +43,7 @@ Concretely, it:
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `--dry-run`               | Print the full plan (per-app disposition, warnings) and exit.                                                                          |
 | `-y`, `--yes`             | Skip the confirmation. Required to migrate without a terminal.                                                                         |
-| `--frappe-version <V>`    | Override version detection.                                                                                                            |
+| `--version <V>`           | Override version detection.                                                                                                            |
 | `--migrate`, `--init`     | Force the mode instead of detecting it.                                                                                                |
 | `--vendor <A,B>`          | Vendor these apps even though they have a remote.                                                                                      |
 | `--no-vendor`             | Abort instead of vendoring an app with no usable remote.                                                                               |
@@ -53,7 +53,8 @@ Concretely, it:
 | `--keep-db-root-password` | Do not blank `mariadb_root_password`.                                                                                                  |
 | `--commit[=<MESSAGE>]`    | Commit the migration instead of only staging it.                                                                                       |
 | `--absorb-gitdirs`        | Run `git submodule absorbgitdirs` after registering the apps.                                                                          |
-| `--site <SITE>`           | Default site. Needed without a terminal when the bench has several sites and no `default_site`.                                        |
+| `--name <NAME>`           | The bench name. Defaults to the `benchName` a frappe-nix bench's `flake.nix` already sets, else the directory's name.                  |
+| `--default-site <SITE>`   | Default site. Needed without a terminal when the bench has several sites and no `default_site`.                                        |
 
 The complete list is in [Scaffolder reference](../reference/scaffolder.md).
 

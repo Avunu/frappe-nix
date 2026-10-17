@@ -358,7 +358,7 @@ jobs:
             grep -q -- '\$ nix develop --no-pure-eval --override-input frappe-nix .* -c frappe-nix sync --write --phase b' "$RUNNER_TEMP/sync.log"
             PATH="$path:$RUNNER_TEMP/frappe-nix/bin" frappe-nix sync --check
           else
-            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --standards recommended --frappe-version version-16
+            PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --sync --standards recommended --version version-16
             grep -qx 'profile = "recommended"' pyproject.toml || { echo "::error::--standards did not create the table"; exit 1; }
             PATH="$path" "$RUNNER_TEMP/frappe-init/bin/frappe-init" --check
           fi
@@ -400,7 +400,7 @@ jobs:
           git add -A
           git -c user.name=ci -c user.email=ci@example.com commit -qm app
           set +e
-          "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --standards recommended --frappe-version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
+          "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --standards recommended --version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
           code="${PIPESTATUS[0]}"
           set -e
           if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix release-1 > /dev/null; then

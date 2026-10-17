@@ -1,7 +1,7 @@
 """The ``blocks`` strategy: only the text between markers is sync's (spec §3.2).
 
 - ``.gitignore``: the ``# >>> frappe-nix >>>`` block ``frappe-init`` has always written
-  (``lib/sh/template.sh``), its markers kept as they are, its body
+  (``frappe_init/template.py``, which calls this), its markers kept as they are, its body
   ``frappe_nix_tools/data/templates/gitignore.block``;
 - ``<app>/__init__.py``: the ``x-release-please`` version block (§2.13). When ``releases``
   turns off, only the markers go: the version line is the app's.
@@ -22,7 +22,7 @@ _VERSION = re.compile(r"""^__version__\s*=\s*(['"])(?P<v>[^'"]*)\1\s*(#.*)?$""")
 def gitignore(current: str | None, body: str, path: str = ".gitignore") -> str:
 	"""``current`` with the managed block set to ``body`` (appended when there is none).
 
-	Byte-compatible with ``install_gitignore_block`` in ``lib/sh/template.sh``.
+	``frappe-init``'s ``install_gitignore_block`` calls this too, so the two writers agree.
 	"""
 	body = body.rstrip("\n")
 	if current is None:

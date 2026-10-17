@@ -4,7 +4,7 @@
 # Called from ./outputs.nix with python314Packages.callPackage.
 #
 # pythonRuntimeDepsCheck stays on: it fails the build when nixpkgs' jinja2,
-# tomlkit, packaging, pyyaml or click no longer satisfy py/frappe_nix_tools/pyproject.toml,
+# tomlkit, packaging, pyyaml, click or rich no longer satisfy py/frappe_nix_tools/pyproject.toml,
 # which is the same range the no-Nix `uv tool install` resolves against. The
 # unittest suites in py/frappe_nix_tools/tests run as the check phase.
 {
@@ -16,6 +16,7 @@
   packaging,
   pyyaml,
   click,
+  rich,
   unittestCheckHook,
   git,
 }:
@@ -41,6 +42,7 @@ buildPythonPackage {
     packaging
     pyyaml
     click
+    rich
   ];
 
   nativeCheckInputs = [
@@ -63,6 +65,7 @@ buildPythonPackage {
     "frappe_nix_tools.common.config"
     "frappe_nix_tools.bench_cli"
     "frappe_nix_tools.restore.command"
+    "frappe_nix_tools.frappe_init.command"
   ];
 
   meta = {

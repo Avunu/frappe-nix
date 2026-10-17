@@ -1,6 +1,6 @@
 """``frappe-nix sync --write|--check``: the managed files of a Frappe app (spec §2, §3).
 
-``frappe-init --sync`` and ``frappe-init --check`` run this (``lib/sh/app-sync.sh``). It
+``frappe-init --sync`` and ``frappe-init --check`` run this (``frappe_init/app_mode.py``). It
 works in the current directory, which must be an app: a git work tree whose
 ``pyproject.toml`` ``[project].name`` names a package holding ``hooks.py``.
 

@@ -191,7 +191,8 @@ check "use_redis_auth forced off" \
 # bench *name* so every clone of one bench agrees — otherwise this committed
 # file would carry a machine-specific value and never stop conflicting.
 # 8662 is 8000 + sha256("bench")[0:4] % 900; keep in step with frappe_web_port
-# in lib/sh/template.sh and portOffsetFor in modules/devenv.nix.
+# in frappe_init/template.py (py/frappe_nix_tools) and portOffsetFor in
+# modules/devenv.nix.
 check "webserver_port is derived from the bench name" \
   jq -e '.webserver_port == 8662' sites/common_site_config.json
 check "socketio_port matches it, so the browser reaches nginx at one origin" \
@@ -363,7 +364,7 @@ for app in frappe hrms; do
 done
 # A branch the scaffold must not fetch: the clone follows version-15 alone.
 git -C "$ROOT/fx/remotes/frappe.git" branch develop version-15
-"$FRAPPE_INIT" --init --skip-lock --allow-file-remotes --frappe-version version-15 --apps frappe/hrms "$ROOT/new" > "$ROOT/init.log" 2>&1 ||
+"$FRAPPE_INIT" --init --skip-lock --allow-file-remotes --version version-15 --apps frappe/hrms "$ROOT/new" > "$ROOT/init.log" 2>&1 ||
   { cat "$ROOT/init.log"; no "scaffolding a bench"; }
 for app in frappe hrms; do
   check_eq "apps/$app is not shallow" false "$(git -C "$ROOT/new/apps/$app" rev-parse --is-shallow-repository)"

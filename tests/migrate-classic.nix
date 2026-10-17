@@ -1,4 +1,5 @@
-# Migration checks for `frappe-init --migrate`.
+# Checks for `frappe-init`: migration, preset resolution, and its modes, flags
+# and exit codes.
 #
 # Plain runCommand rather than runNixOSTest: both are offline (the fixture's
 # "remotes" are local bare repos, and the migrator runs with --skip-lock), so
@@ -39,5 +40,19 @@ in
       }
       ''
         bash ${./migrate-versions.sh} ${frappe-init}/bin/frappe-init 2>&1 | tee "$out"
+      '';
+
+  # The modes, flags and exit codes the two above leave alone: scaffolding a
+  # bench (plan, seeds, next steps), the mode guards and every documented exit
+  # code, and the migration flags.
+  scaffold-modes =
+    pkgs.runCommand "frappe-nix-scaffold-modes-check"
+      {
+        nativeBuildInputs = deps;
+      }
+      ''
+        bash ${./scaffold-modes.sh} \
+          ${frappe-init}/bin/frappe-init \
+          ${./make-classic-bench.sh} 2>&1 | tee "$out"
       '';
 }

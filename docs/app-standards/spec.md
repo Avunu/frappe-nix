@@ -185,9 +185,8 @@ frappe-nix/
 │   ├── frappe-test.nix, frappe-rename-app.nix [N1]
 │   └── frappe-demo.nix, frappe-shots.nix      [N5]
 ├── lib/sh/frappe-test.sh                      [N1]
-├── lib/sh/app-sync.sh                         [N3]
-├── lib/sh/{main.sh,app-init.sh}               [N3]   (new flags: --sync, --check, --standards, --format, --only)
-├── lib/init.nix                               [N3]   (adds app-sync.sh and the frappe-nix-tools runtime input)
+├── py/frappe_nix_tools/…/frappe_init/        [N3]   (frappe-init, in Python since PLAN.md D2; new flags: --sync, --check, --standards, --format, --only)
+├── lib/init.nix                               [N3]   (frappe-init's wrapper, and the frappe-nix-tools runtime input)
 ├── lib/rename/frappe_rename_app.py            [N1]   (ported from the Phase 0 rename-mechanics prototype)
 ├── lib/demo/frappe_demo.py                    [N5]
 ├── lib/shots/{cdp.ts,runner.ts,diff.ts,shots.d.ts,package.json,yarn.lock} [N5]
@@ -1694,7 +1693,7 @@ frappe-init --app   [--standards <profile>] …                      (the existi
 - Both imply `--app` mode. Both run in the current directory, which MUST be a git work tree whose `pyproject.toml` `[project].name` names a package containing `hooks.py`.
 - **Opt-in (S35).** `--sync` and `--check` on an app without `[tool.frappe-nix]` exit 2 with `this app has not opted in to frappe-nix app standards; run frappe-init --sync --standards minimal|recommended|github:<owner>/<repo>`, and write nothing. `--standards <profile>` creates the table with `profile = "<profile>"` (step 1) and is otherwise ignored when the table exists and names the same profile; naming a different one is exit 2 (edit `profile` instead). `frappe-init --app` without `--standards`, on an app without the table, does exactly what it does in `main`: it copies `templates/app/` and stops. With `--standards`, or on an app that has the table, it copies `templates/app/` with `install_template keep` and then runs `frappe-nix sync --write`.
 - `--profile-path <dir>` reads the org profile from a local directory instead of the locked input, for profile authors. It is never rendered into `flake.nix`, it prints a warning on every run, and `--check` with it exits 3 when `CI` is set.
-- `frappe-init` sources `lib/sh/app-sync.sh`, which `exec`s `frappe-nix sync --write|--check …` from `frappe-nix-tools` in its `runtimeInputs`.
+- `frappe-init` (`frappe_init/app_mode.py`) `exec`s `frappe-nix sync --write|--check …` from `frappe-nix-tools` in its `runtimeInputs`.
 - **Bootstrap** (an app with no flake, or one that locks frappe-nix `main`), from outside any dev shell:
 
   ```
