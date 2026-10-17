@@ -770,7 +770,7 @@ def check_frappe_nix_url(cfg: dict, modules: dict) -> None:
 
 def check_preset(app: context.App, cfg: dict, modules: dict) -> None:
 	"""``typescript.preset = "inline"`` has no Frappe declarations, which check-js,
-	audit-consumer and the gen-doctypes freshness step need (§2.9)."""
+	audit-consumer and the gen-registry freshness step need (§2.9)."""
 	ts = cfg.get("typescript", {})
 	if not modules.get("typescript") or ts.get("preset") != "inline":
 		return
@@ -781,7 +781,7 @@ def check_preset(app: context.App, cfg: dict, modules: dict) -> None:
 			)
 	if "types/doctypes.d.ts" in app.tracked:
 		raise ConfigError(
-			'types/doctypes.d.ts is checked with frappe-types gen-doctypes, which needs typescript.preset = "frappe-types"'
+			'types/doctypes.d.ts is checked with frappe-types gen-registry, which needs typescript.preset = "frappe-types"'
 		)
 
 

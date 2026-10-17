@@ -52,7 +52,7 @@ Every step runs, and the gate fails after the last one if any failed. A step who
 | unchecked-js | `typescript` with `check-js` | `frappe-nix unchecked-js --stale`, while `[[tool.frappe-nix.unchecked-js]]` lists anything. |
 | js-unit | `tests` with `js-unit` | At least one `test/unit/**/*.test.ts` is tracked, then `yarn -s test:unit`. |
 | nested | | `yarn install` and `typecheck` in each nested frontend that has that script. |
-| doctypes | `typescript` | When `types/doctypes.d.ts` is tracked: a doctypes mini-bench, then `frappe-types gen-doctypes … --check`. |
+| doctypes | `typescript` | When `types/doctypes.d.ts` is tracked: a doctypes mini-bench, then `frappe-types gen-registry … --check`. |
 | audit-consumer | `typescript` | `frappe-types audit-consumer`: `--strict` with `typescript.audit-consumer = true`, otherwise an advisory notice. |
 | ci-typecheck | | `yarn -s ci:typecheck`, when present. |
 

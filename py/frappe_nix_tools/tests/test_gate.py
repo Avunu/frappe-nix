@@ -193,6 +193,19 @@ class TestTypecheck(GateCase):
 			self.assertIn("typescript is off", steps[name]["reason"])
 		self.assertNotIn("yarn -s typecheck", self.calls())
 
+	def test_doctypes_checks_the_registry_with_gen_registry(self) -> None:
+		"""frappe-types 16.5.0 ships ``gen-registry``; it has no ``gen-doctypes`` command."""
+		(self.root / "types").mkdir(exist_ok=True)
+		(self.root / "types" / "doctypes.d.ts").write_text("export {};\n")
+		self.commit()
+		with mock.patch.object(gate, "frappe_nix", side_effect=lambda *a: ["true"]):
+			_code, report, out = self.gate("typecheck")
+		self.assertEqual(self.steps(report)["doctypes"]["status"], "ok", out)
+		calls = [c for c in self.calls() if "frappe-types" in c]
+		self.assertTrue(calls, self.calls())
+		self.assertIn("yarn -s frappe-types gen-registry --bench", calls[0])
+		self.assertIn("--out types/doctypes.d.ts --check", calls[0])
+
 	def test_js_unit_without_tests_fails(self) -> None:
 		pkg = json.loads((self.root / "package.json").read_text())
 		pkg["scripts"]["test:unit"] = "vitest run"

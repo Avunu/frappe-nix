@@ -32,7 +32,7 @@ typecheck
                  tracked, then ``yarn -s test:unit``
   nested         each nested frontend with a ``typecheck`` script: install and typecheck it
   doctypes       [typescript, ``types/doctypes.d.ts`` tracked] minibench doctypes, then
-                 ``frappe-types gen-doctypes … --check``
+                 ``frappe-types gen-registry … --check``
   audit-consumer [typescript] ``frappe-types audit-consumer``: ``--strict`` with
                  ``typescript.audit-consumer``, else advisory when the subcommand exists
   ci-typecheck   ``yarn -s ci:typecheck`` when present
@@ -412,7 +412,7 @@ def typecheck(g: Gate) -> None:
 					"yarn",
 					"-s",
 					"frappe-types",
-					"gen-doctypes",
+					"gen-registry",
 					"--bench",
 					str(dest),
 					"--app",
