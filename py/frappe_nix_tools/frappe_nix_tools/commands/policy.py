@@ -8,10 +8,11 @@ opted in, it rejects nothing (``committed`` checks the rest).
 
 ``--pr`` runs in CI (``app-pr-policy.yml``), from the environment the reusable workflow
 passes: ``INTEGRATION``, ``EVENT_NAME``, ``BASE_REF``, ``HEAD_SHA``, ``PR_TITLE``,
-``REF_NAME`` (and ``GH_TOKEN`` for ``gh``; ``HEAD_REF`` or ``GITHUB_HEAD_REF`` names the head
-branch on a ``pull_request``). On a ``workflow_dispatch`` the PR is looked up with
-``gh pr list --head $REF_NAME``; its ``headRefOid`` must equal ``HEAD_SHA``, and its title
-and base replace the empty ``PR_TITLE`` and ``BASE_REF``. No PR passes. Then:
+``REF_NAME``, ``PR_AUTHOR`` (and ``GH_TOKEN`` for ``gh``; ``HEAD_REF`` or ``GITHUB_HEAD_REF``
+names the head branch on a ``pull_request``). On a ``workflow_dispatch`` the PR is looked up
+with ``gh pr list --head $REF_NAME``; its ``headRefOid`` must equal ``HEAD_SHA``, and its
+title, base and author replace the empty ``PR_TITLE``, ``BASE_REF`` and ``PR_AUTHOR``. No PR
+passes. Then:
 
 1. the base is allowed: the integration branch, a ``commits.pr-allowed-bases`` glob, or
    (with ``commits.allow-stacked``) the head branch of another open PR;
@@ -19,6 +20,11 @@ and base replace the empty ``PR_TITLE`` and ``BASE_REF``. No PR passes. Then:
 3. every commit in ``git rev-list --no-merges base..head`` passes ``committed <sha>`` and the
    rules above, the ``Release-As`` major rule included;
 4. on a ``release-please--*`` branch: ``frappe-nix compat``.
+
+A Dependabot PR (``PR_AUTHOR``, from ``github.event.pull_request.user.login``, or the
+looked-up PR's ``author.login``, is Dependabot) is exempt from ``committed``'s
+``subject_length`` alone, for its title and for its commits whose author is Dependabot: its
+generated subjects name SHA pins and run past any length. Every other rule still applies.
 
 ``--major-free`` (frappe-nix itself, §4.10, which has no ``[tool.frappe-nix]``) drops the
 ``Release-As`` major rule and check 4, keeps the refusal of ``!`` and ``BREAKING CHANGE`` (a
@@ -45,6 +51,14 @@ from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError
 _BANG = re.compile(r"^[a-z]+(\([^)]*\))?!:")
 _BREAKING = re.compile(r"^BREAKING[ -]CHANGE:", re.M)
 _RELEASE_AS = re.compile(r"^Release-As:\s*v?(\d+)\.\d+\.\d+\S*\s*$", re.M | re.I)
+_SUBJECT_LENGTH = re.compile(r"^subject_length\s*=.*$", re.M)
+# The PR author as `github.event.pull_request.user.login` names it, and as `gh --json author` does.
+_DEPENDABOT_LOGINS = frozenset({"dependabot[bot]", "app/dependabot"})
+_DEPENDABOT_EMAIL = "49699333+dependabot[bot]@users.noreply.github.com"
+
+
+def is_dependabot(login: str) -> bool:
+	return login in _DEPENDABOT_LOGINS
 
 
 @dataclass
@@ -111,13 +125,38 @@ def committed_cmd(root: Path) -> list[str]:
 	return ["committed"]
 
 
-def run_committed(root: Path, *args: str) -> tuple[bool, str]:
+def any_subject_length(dumped: str) -> str:
+	"""``committed --dump-config`` output with ``subject_length`` off (0) and the rest kept."""
+	if _SUBJECT_LENGTH.search(dumped):
+		return _SUBJECT_LENGTH.sub("subject_length = 0", dumped)
+	return f"subject_length = 0\n{dumped}"
+
+
+def _committed(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 	try:
-		proc = subprocess.run(
+		return subprocess.run(
 			[*committed_cmd(root), *args], cwd=root, capture_output=True, text=True, check=False
 		)
 	except FileNotFoundError as e:
 		raise EnvError(f"committed is not available: {e}") from e
+
+
+def run_committed(root: Path, *args: str, long_subject: bool = False) -> tuple[bool, str]:
+	"""``committed <args>``; with ``long_subject``, under the repository's own configuration
+	with ``subject_length`` alone turned off (a Dependabot title or commit)."""
+	if not long_subject:
+		proc = _committed(root, *args)
+		return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
+	dump = _committed(root, "--dump-config", "-")
+	if dump.returncode != 0:
+		raise EnvError(f"committed --dump-config: {(dump.stdout + dump.stderr).strip()}")
+	with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+		f.write(any_subject_length(dump.stdout))
+		name = f.name
+	try:
+		proc = _committed(root, "--config", name, *args)
+	finally:
+		os.unlink(name)
 	return proc.returncode == 0, (proc.stdout + proc.stderr).strip()
 
 
@@ -164,8 +203,8 @@ def _base_ref(root: Path, base: str) -> str:
 	raise EnvError(f"the base branch {base!r} is not fetched (actions/checkout: fetch-depth: 0)")
 
 
-def commit_problems(root: Path, base: str, head: str, rules: Rules) -> list[str]:
-	"""Check 3."""
+def commit_problems(root: Path, base: str, head: str, rules: Rules, *, dependabot: bool = False) -> list[str]:
+	"""Check 3. In a Dependabot PR, a commit Dependabot authored may have any subject length."""
 	out = []
 	try:
 		ref = _base_ref(root, base)
@@ -173,7 +212,10 @@ def commit_problems(root: Path, base: str, head: str, rules: Rules) -> list[str]
 		return [str(e)]
 	shas = repo.git(root, "rev-list", "--no-merges", head, f"^{ref}").split()
 	for sha in shas:
-		ok, msg = run_committed(root, sha)
+		long_subject = (
+			dependabot and repo.git(root, "log", "-1", "--format=%ae", sha).strip() == _DEPENDABOT_EMAIL
+		)
+		ok, msg = run_committed(root, sha, long_subject=long_subject)
 		if not ok:
 			out.append(f"commit {sha[:12]}: committed: {msg}")
 		text = repo.git(root, "log", "-1", "--format=%B", sha)
@@ -181,14 +223,14 @@ def commit_problems(root: Path, base: str, head: str, rules: Rules) -> list[str]
 	return out
 
 
-def title_problems(root: Path, title: str, rules: Rules) -> list[str]:
-	"""Check 2."""
+def title_problems(root: Path, title: str, rules: Rules, *, dependabot: bool = False) -> list[str]:
+	"""Check 2. A Dependabot PR's title may have any subject length."""
 	out = []
 	with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
 		f.write(title + "\n")
 		name = f.name
 	try:
-		ok, msg = run_committed(root, "--commit-file", name)
+		ok, msg = run_committed(root, "--commit-file", name, long_subject=dependabot)
 	finally:
 		os.unlink(name)
 	if not ok:
@@ -203,11 +245,19 @@ def check_pr(root: Path, rules: Rules, env: dict[str, str]) -> list[str]:
 	title = env.get("PR_TITLE", "")
 	base = env.get("BASE_REF", "")
 	head_ref = env.get("HEAD_REF") or env.get("GITHUB_HEAD_REF") or ""
+	author = env.get("PR_AUTHOR", "")
 	number = pr_number()
 	if event == "workflow_dispatch":
 		ref = env.get("REF_NAME", "")
 		prs = gh_json(
-			"pr", "list", "--head", ref, "--state", "open", "--json", "number,title,baseRefName,headRefOid"
+			"pr",
+			"list",
+			"--head",
+			ref,
+			"--state",
+			"open",
+			"--json",
+			"number,title,baseRefName,headRefOid,author",
 		)
 		if not prs:
 			print(f"frappe-nix policy: no open PR for {ref!r}; nothing to check")
@@ -217,11 +267,12 @@ def check_pr(root: Path, rules: Rules, env: dict[str, str]) -> list[str]:
 			return [
 				f"stale dispatch: PR #{pr.get('number')} is at {pr.get('headRefOid')}, this run at {head_sha}"
 			]
-		title, base, number, head_ref = (
+		title, base, number, head_ref, author = (
 			pr.get("title") or "",
 			pr.get("baseRefName") or "",
 			str(pr.get("number")),
 			ref,
+			(pr.get("author") or {}).get("login") or "",
 		)
 		if not title or not base:
 			return [f"PR #{number}: the lookup returned no title or base; refusing to check an empty value"]
@@ -233,8 +284,9 @@ def check_pr(root: Path, rules: Rules, env: dict[str, str]) -> list[str]:
 	problem = base_problem(base, rules, number)
 	if problem:
 		out.append(problem)
-	out += title_problems(root, title, rules)
-	out += commit_problems(root, base, head_sha, rules)
+	dependabot = is_dependabot(author)
+	out += title_problems(root, title, rules, dependabot=dependabot)
+	out += commit_problems(root, base, head_sha, rules, dependabot=dependabot)
 	if rules.compat and head_ref.startswith("release-please--"):
 		from frappe_nix_tools.commands import compat
 

@@ -236,5 +236,125 @@ class TestMajorFree(PolicyCase):
 		self.assertEqual(policy.message_problems("chore: x\n\nRelease-As: 2.0.0", None, no_bang=True), [])
 
 
+LONG = (
+	"fix(deps): bump Avunu/site-docs/.github/workflows/check-docs.yml from "
+	"06562bcc4dfe0081a7ad3838a7862b421d0e90eb to c9e636d8f316af89afc0c4d97ac9e5aef5b62f4e "
+	"in the github-actions group"
+)
+TYPES = ("build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test")
+
+
+class TestDependabotSubjectLength(PolicyCase):
+	"""A Dependabot PR's generated subjects (SHA pins) may exceed ``subject_length``; nothing else."""
+
+	def setUp(self) -> None:
+		super().setUp()
+		self.committed.side_effect = self.fake_committed
+
+	def fake_committed(self, root, *args: str, long_subject: bool = False) -> tuple[bool, str]:
+		"""``committed`` under a conventional, subject_length = 100 configuration."""
+		if args[0] == "--commit-file":
+			text = open(args[1]).read()
+		else:
+			text = git(root, "log", "-1", "--format=%B", args[0])
+		subject = text.splitlines()[0]
+		if subject.split(":", 1)[0].split("(", 1)[0].rstrip("!") not in TYPES:
+			return False, "Disallowed type"
+		if len(subject) > 100 and not long_subject:
+			return False, f"Commit subject is too long, {len(subject)} exceeds the max length of 100"
+		return True, ""
+
+	def dependabot_branch(self, subject: str) -> str:
+		git(self.root, "checkout", "-q", "-b", "dependabot/x")
+		self.write("demo_app/x.py", "# bump\n")
+		git(self.root, "add", "-A")
+		git(
+			self.root,
+			"-c",
+			"user.name=dependabot[bot]",
+			"-c",
+			"user.email=49699333+dependabot[bot]@users.noreply.github.com",
+			"commit",
+			"-q",
+			"-m",
+			subject,
+		)
+		return git(self.root, "rev-parse", "HEAD").strip()
+
+	def test_long_dependabot_title_and_commit_pass(self) -> None:
+		self.assertGreater(len(LONG), 100)
+		sha = self.dependabot_branch(LONG)
+		code, out, err = self.pr("develop", LONG, sha, PR_AUTHOR="dependabot[bot]")
+		self.assertEqual(code, 0, out + err)
+
+	def test_long_title_from_a_human_fails(self) -> None:
+		sha = self.branch("feature", "fix: short")
+		code, _out, err = self.pr("develop", LONG, sha, PR_AUTHOR="someone")
+		self.assertEqual(code, 1)
+		self.assertIn("title: committed: Commit subject is too long", err)
+
+	def test_long_human_commit_in_a_dependabot_pr_fails(self) -> None:
+		sha = self.branch("feature", LONG)
+		code, _out, err = self.pr("develop", "fix(deps): bump x", sha, PR_AUTHOR="dependabot[bot]")
+		self.assertEqual(code, 1)
+		self.assertIn("too long", err)
+
+	def test_dependabot_bang_title_fails(self) -> None:
+		git(self.root, "branch", "main")
+		sha = self.dependabot_branch("fix(deps): bump x")
+		values = {
+			"EVENT_NAME": "pull_request",
+			"BASE_REF": "main",
+			"PR_TITLE": "fix(deps)!: bump x",
+			"HEAD_SHA": sha,
+			"PR_AUTHOR": "dependabot[bot]",
+		}
+		with mock.patch.dict(os.environ, values):
+			code, _out, err = self.fn("policy", "--pr", "--major-free")
+		self.assertEqual(code, 1)
+		self.assertIn("`!` marks a major bump", err)
+
+	def test_dependabot_commit_with_bad_type_fails(self) -> None:
+		sha = self.dependabot_branch("bump: x from 1 to 2")
+		code, _out, err = self.pr("develop", "fix(deps): bump x", sha, PR_AUTHOR="dependabot[bot]")
+		self.assertEqual(code, 1)
+		self.assertIn("Disallowed type", err)
+
+	def test_dispatch_reads_the_author_from_the_lookup(self) -> None:
+		sha = self.dependabot_branch(LONG)
+		self.prs = [
+			{
+				"number": 3,
+				"title": LONG,
+				"baseRefName": "develop",
+				"headRefOid": sha,
+				"author": {"login": "app/dependabot", "is_bot": True},
+			}
+		]
+		env = {"EVENT_NAME": "workflow_dispatch", "REF_NAME": "dependabot/x", "HEAD_SHA": sha}
+		env |= {"BASE_REF": "", "PR_TITLE": "", "PR_AUTHOR": ""}
+		with mock.patch.dict(os.environ, env):
+			code, out, err = self.fn("policy", "--pr")
+		self.assertEqual(code, 0, out + err)
+		self.prs[0]["author"] = {"login": "someone"}
+		with mock.patch.dict(os.environ, env):
+			self.assertEqual(self.fn("policy", "--pr")[0], 1)
+
+
+class TestAnySubjectLength(unittest.TestCase):
+	def test_turns_off_subject_length_only(self) -> None:
+		dumped = 'subject_length = 100\nstyle = "conventional"\nline_length = 0\n'
+		self.assertEqual(
+			policy.any_subject_length(dumped), 'subject_length = 0\nstyle = "conventional"\nline_length = 0\n'
+		)
+		self.assertEqual(policy.any_subject_length('style = "x"\n'), 'subject_length = 0\nstyle = "x"\n')
+
+	def test_dependabot_logins(self) -> None:
+		self.assertTrue(policy.is_dependabot("dependabot[bot]"))
+		self.assertTrue(policy.is_dependabot("app/dependabot"))
+		self.assertFalse(policy.is_dependabot("dependabot-impostor"))
+		self.assertFalse(policy.is_dependabot(""))
+
+
 if __name__ == "__main__":
 	unittest.main()
