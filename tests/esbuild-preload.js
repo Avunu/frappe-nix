@@ -433,16 +433,36 @@ check(
 );
 check("a manifest that does not parse is skipped with a note, the others still count", true, first.stdout.includes("vite-register: skipping") && first.stdout.includes("broken/manifest.json"));
 check("assets.json keeps frappe's format: four spaces, no final newline", JSON.stringify(expected, null, 4), assetsOf(vb));
-check("assets-rtl.json is left alone", RTL, fs.readFileSync(path.join(vb, "sites/assets/assets-rtl.json"), "utf8"));
+// frappe asks for rtl_<name>.bundle.css in an ar, he, fa or ps session, from
+// assets-rtl.json (read over assets.json). With no right-to-left build, each
+// Vite stylesheet's own file stands in.
+const rtlOf = (bench) => fs.readFileSync(path.join(bench, "sites/assets/assets-rtl.json"), "utf8");
+const expectedRtl = {
+  ...JSON.parse(RTL),
+  "rtl_foo.bundle.css": expected["foo.bundle.css"],
+  "rtl_old.bundle.css": expected["old.bundle.css"],
+};
+check(
+  "each Vite stylesheet gets its rtl_ key in assets-rtl.json, naming the left-to-right file, beside frappe's own and in frappe's format",
+  JSON.stringify(expectedRtl, null, 4),
+  rtlOf(vb)
+);
+check("no rtl_ key lands in assets.json", [], Object.keys(keysOf(vb)).filter((key) => key.startsWith("rtl_")));
+check(
+  "a left-to-right stand-in is logged as one",
+  true,
+  first.stdout.includes("vite-register: spa: rtl_foo.bundle.css -> /assets/spa/dist/css/foo.bundle.XyZ789.css (vite, no rtl build)")
+);
 check("a linked app (the dev shell's) registers under its apps/ name", expected["linked.bundle.js"], keysOf(vb)["linked.bundle.js"]);
 
-const before = assetsOf(vb);
-const mtime = fs.statSync(path.join(vb, "sites/assets/assets.json")).mtimeMs;
+const before = [assetsOf(vb), rtlOf(vb)];
+const mtimes = () => ["assets.json", "assets-rtl.json"].map((name) => fs.statSync(path.join(vb, "sites/assets", name)).mtimeMs);
+const mtime = mtimes();
 const second = viteRun(vb, { apps: ["frappe", "spa", "linked"] });
 check(
-  "a second build changes no byte, rewrites nothing and logs no key",
+  "a second build changes no byte of either file, rewrites nothing and logs no key",
   [before, mtime, false],
-  [assetsOf(vb), fs.statSync(path.join(vb, "sites/assets/assets.json")).mtimeMs, second.stdout.includes("(vite)")]
+  [[assetsOf(vb), rtlOf(vb)], mtimes(), second.stdout.includes("(vite")]
 );
 check("a symlinked sites/assets/<app> (bench build's default) gets no copy", false, fs.existsSync(path.join(vb, "sites/assets/spa")));
 
@@ -620,6 +640,33 @@ check(
     keysOf(v4wins)["foo.bundle.js"],
     keysOf(v4wins)["foo.bundle.css"],
     v4run.stdout.includes("vite-register: spa: skipping js/foo.bundle.AbC123.js: js/foo.bundle.V4old1.js is newer"),
+  ]
+);
+
+// An app that builds a right-to-left stylesheet as frappe does, under a
+// css-rtl/ (any *-rtl/) directory, registers that one; the JS that build
+// also emits never takes the entry's key, and assets.json is unchanged.
+const rtlBench = makeBench("bench-rtl");
+vwrite(
+  "bench-rtl/apps/spa/spa/public/dist/build-rtl/manifest.json",
+  manifest({ "src/foo.entry.ts": { file: "js/foo.bundle.RtLjs1.js", isEntry: true, css: ["css-rtl/foo.bundle.RtL123.css"] } })
+);
+vwrite("bench-rtl/apps/spa/spa/public/dist/build-rtl/js/foo.bundle.RtLjs1.js", "rtl();\n");
+vwrite("bench-rtl/apps/spa/spa/public/dist/build-rtl/css-rtl/foo.bundle.RtL123.css", ".foo{}\n");
+const rtlRun = viteRun(rtlBench, { apps: ["frappe", "spa", "linked"] });
+check(
+  "a right-to-left build under a *-rtl/ directory takes the rtl_ key; a stylesheet without one still gets the stand-in; the build's JS is ignored",
+  [
+    "/assets/spa/dist/build-rtl/css-rtl/foo.bundle.RtL123.css",
+    expected["old.bundle.css"],
+    expected,
+    true,
+  ],
+  [
+    JSON.parse(rtlOf(rtlBench))["rtl_foo.bundle.css"],
+    JSON.parse(rtlOf(rtlBench))["rtl_old.bundle.css"],
+    keysOf(rtlBench),
+    rtlRun.stdout.includes("vite-register: spa: rtl_foo.bundle.css -> /assets/spa/dist/build-rtl/css-rtl/foo.bundle.RtL123.css (vite)"),
   ]
 );
 
