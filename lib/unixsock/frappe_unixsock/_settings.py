@@ -49,7 +49,7 @@ def enabled():
 
 
 #: The variables' names before CONVENTIONS.md's FRAPPE_NIX_* rule (python-devops-nix,
-#: Tool-owned variables), still read, with a warning, until the next minor release.
+#: Tool-owned variables), still read, with a warning, through 1.x, until frappe-nix 2.0.0.
 RENAMED = {
 	"FRAPPE_NIX_WEB_SOCKET": "FRAPPE_WEB_SOCKET",
 	"FRAPPE_NIX_REPLICA_DB_SOCKET": "FRAPPE_REPLICA_DB_SOCKET",
@@ -68,7 +68,7 @@ def getenv(name):
 	if value is None and old is not None and old in os.environ:
 		if old not in _warned:
 			_warned.add(old)
-			warn(f"{old} is deprecated; set {name} instead")
+			warn(f"{old} is deprecated; set {name} instead (the old name goes in frappe-nix 2.0.0)")
 		value = os.environ[old]
 	return value
 

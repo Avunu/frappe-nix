@@ -38,9 +38,9 @@ The shell hook does not register submodules, vendor apps, edit `.gitignore` or `
 nix run github:Avunu/frappe-nix -- -y
 ```
 
-The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, until the next minor release; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
+The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, through 1.x, until frappe-nix 2.0.0; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
 
-Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, until the next minor release:
+Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, through 1.x, until frappe-nix 2.0.0:
 
 | Old                                     | New                                |
 | --------------------------------------- | ---------------------------------- |
@@ -54,9 +54,9 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 
 The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED` (was `FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS`), `FRAPPE_DEVGUARD_JOBS_BLOCK_SERVER_SCRIPTS`, `FRAPPE_DEVGUARD_JOBS_ENABLE` and `FRAPPE_DEVGUARD_DISABLE=jobs`. The old ones are read, with a warning, for the same period. Its log lines still read `frappe_devguard[scheduler]`.
 
-The NixOS module moved the same way: `services.frappe` is now `services.frappe-nix`, and a site's `extraConfig` and `extraConfigFiles` are now `settings` and `settingsFiles`, the nixpkgs name for a block that becomes the framework's config file (`site_config.json`). The old names still work, with a NixOS warning, until the next minor release.
+The NixOS module moved the same way: `services.frappe` is now `services.frappe-nix`, and a site's `extraConfig` and `extraConfigFiles` are now `settings` and `settingsFiles`, the nixpkgs name for a block that becomes the framework's config file (`site_config.json`). The old names still work, with a NixOS warning, through 1.x, until frappe-nix 2.0.0.
 
-The environment variables frappe-nix's own tools read are all `FRAPPE_NIX_*` now. The old names are still read, with a warning, until the next minor release:
+The environment variables frappe-nix's own tools read are all `FRAPPE_NIX_*` now. The old names are still read, with a warning, through 1.x, until frappe-nix 2.0.0:
 
 | Old                                    | New                                        |
 | -------------------------------------- | ------------------------------------------ |

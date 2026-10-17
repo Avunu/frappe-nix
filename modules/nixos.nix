@@ -151,7 +151,7 @@ let
       # Its name before (CONVENTIONS.md, Tool-owned variables), for a bench
       # package built from an older frappe-nix than this module, whose graft
       # reads only that. The graft prefers the new name. Removed with the
-      # aliases in the next minor release.
+      # aliases in frappe-nix 2.0.0.
       FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
       # A block-buffered stdout holds print() output back until the buffer fills
       # or the process exits, so a crash loses exactly the lines that explain it,
@@ -1388,7 +1388,7 @@ let
   # lib.mkRenamedOptionModule: a submodule has no `warnings` to report through,
   # so doRename does the aliasing and the warning goes on the site's
   # `deprecations`, which the module's top level turns into `warnings`.
-  # Removed in the next minor release.
+  # Removed in frappe-nix 2.0.0, never within 1.x.
   renamedSiteOption =
     from: to:
     { name, options, ... }:
@@ -1406,7 +1406,7 @@ let
         lib.optional options.${from}.isDefined
           "The option `services.frappe-nix.sites.\"${name}\".${from}' defined in ${
             lib.showFiles options.${from}.files
-          } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'.";
+          } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
     };
 
   # Site submodule option definition.
@@ -1629,7 +1629,7 @@ in
   # The module was services.frappe. It matches the devenv and flake-parts roots
   # (frappe-nix.*) now, and cannot collide with a future nixpkgs module
   # (python-devops-nix CONVENTIONS.md, NixOS module path). The whole tree is
-  # aliased, with NixOS's own warning, until the next minor release.
+  # aliased, with NixOS's own warning, through 1.x, until frappe-nix 2.0.0.
   #
   # lib.mkRenamedOptionModule, but withPriority = false: its priority wrapper
   # puts a whole tree's definitions under one mkOverride, which leaves a nested
@@ -1647,7 +1647,7 @@ in
       ];
       visible = false;
       warn = true;
-      use = lib.trace "Obsolete option `services.frappe' is used. It was renamed to `services.frappe-nix'.";
+      use = lib.trace "Obsolete option `services.frappe' is used. It was renamed to `services.frappe-nix', and the old name goes in frappe-nix 2.0.0.";
       withPriority = false;
     })
   ];

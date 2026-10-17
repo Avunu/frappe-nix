@@ -32,7 +32,7 @@ NAME = "jobs"
 LOG = "scheduler"
 
 #: FRAPPE_DEVGUARD_SCHEDULER_<old> -> FRAPPE_DEVGUARD_JOBS_<new>. Read, with a
-#: warning, until frappe-nix's next minor release.
+#: warning, through 1.x, until frappe-nix 2.0.0.
 _RENAMED = {
 	"enable": "enable",
 	"block_server_scripts": "block_server_scripts",

@@ -259,8 +259,7 @@ fi
 
 # ── 13. the old variable names still work, and say so ────────────────────
 # FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (CONVENTIONS.md,
-# Tool-owned variables); the old name is read, with a warning, until the next
-# minor release.
+# Tool-owned variables); the old name is read, with a warning, through 1.x, until frappe-nix 2.0.0.
 FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
   printf '%s' "$OUT" | grep -q 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
@@ -407,7 +406,7 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
   fi
 
   # The name it had before (CONVENTIONS.md, Tool-owned variables), read with a
-  # warning until the next minor release.
+  # warning through 1.x, until frappe-nix 2.0.0.
   FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
   if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
     ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"

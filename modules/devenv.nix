@@ -25,7 +25,7 @@ let
   # it reports through a `warnings` option, which perSystem has none of, so the
   # rename went unannounced (odoo-nix#54 found the same). doRename does the
   # aliasing, priorities kept; the warning goes on `deprecations`, which the
-  # config below folds into lib.warn. Removed in the next minor release.
+  # config below folds into lib.warn. Removed in frappe-nix 2.0.0, never within 1.x.
   renamed =
     fromPath: toPath:
     { options, ... }:
@@ -43,7 +43,7 @@ let
           use = lib.id;
         })
       ];
-      config.frappe-nix.deprecations = lib.optional fromOpt.isDefined "The option `${lib.showOption from}' defined in ${lib.showFiles fromOpt.files} has been renamed to `${lib.showOption to}'.";
+      config.frappe-nix.deprecations = lib.optional fromOpt.isDefined "The option `${lib.showOption from}' defined in ${lib.showFiles fromOpt.files} has been renamed to `${lib.showOption to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
     };
 
   # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
@@ -111,7 +111,7 @@ in
       ...
     }:
     {
-      # Renames, each kept until the next minor release (PLAN.md, design
+      # Renames, each kept through 1.x, until frappe-nix 2.0.0 (PLAN.md, design
       # rule 2; CONVENTIONS.md, Identity options, Restore and devguard).
       imports = map (pair: renamed (builtins.elemAt pair 0) (builtins.elemAt pair 1)) [
         [

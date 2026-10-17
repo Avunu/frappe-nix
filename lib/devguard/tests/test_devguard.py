@@ -482,8 +482,7 @@ os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
 
 check("the guard's settings key is jobs", scheduler.NAME == "jobs")
 
-# The pre-rename variables are carried over, with a warning, until the next
-# minor release.
+# The pre-rename variables are carried over, with a warning, through 1.x, until frappe-nix 2.0.0.
 os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.legacy"
 _log, _ = stderr_of(scheduler._adopt_renamed)
 check(

@@ -104,8 +104,8 @@ let
   # What lib/offline-migrate.py reads, defaulted rather than exported by the
   # shell so a caller's own FRAPPE_NIX_OFFLINE_MIGRATE_* — `=0` for one migrate
   # that must run stock — still wins. So does one under its old name
-  # (FRAPPE_OFFLINE_MIGRATE_*), which the tool reads with a warning until the
-  # next minor release.
+  # (FRAPPE_OFFLINE_MIGRATE_*), which the tool reads with a warning through 1.x,
+  # until frappe-nix 2.0.0.
   offlineMigrateEnv =
     let
       default = name: value: ''
@@ -779,7 +779,7 @@ secretScripts
               # this submodule carries commits that are not in what we just fetched.
               if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
                 if [ -z "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ] && [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
-                  echo "     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead" >&2
+                  echo "     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead (the old name goes in frappe-nix 2.0.0)" >&2
                   FRAPPE_NIX_BENCH_UPDATE_FORCE=$FRAPPE_BENCH_UPDATE_FORCE
                 fi
                 if [ -n "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ]; then

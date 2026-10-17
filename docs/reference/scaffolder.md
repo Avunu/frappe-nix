@@ -47,7 +47,7 @@ New benches default to the site `frappe.localhost`. App mode defaults to `<BENCH
 
 ### Renamed flags
 
-`--version` was `--frappe-version`, and `--default-site` was `--site`, before frappe-nix and odoo-nix agreed on one set of scaffolder flags. The old names still work, with a warning, until the next minor release. Under `--sync` and `--check` they reach `frappe-nix sync` as its own `--frappe-version` and `--site`, which keep their names.
+`--version` was `--frappe-version`, and `--default-site` was `--site`, before frappe-nix and odoo-nix agreed on one set of scaffolder flags. The old names still work, with a warning, through 1.x, until frappe-nix 2.0.0. Under `--sync` and `--check` they reach `frappe-nix sync` as its own `--frappe-version` and `--site`, which keep their names.
 
 ## App standards
 

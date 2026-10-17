@@ -51,7 +51,7 @@ ENV_THRESHOLD = "FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD"
 #: Absolute path of pt-online-schema-change, where it is not on PATH.
 ENV_PT_OSC = "FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC"
 #: Each variable's name before CONVENTIONS.md's FRAPPE_NIX_* rule (python-devops-nix,
-#: Tool-owned variables), still read, with a warning, until the next minor release.
+#: Tool-owned variables), still read, with a warning, through 1.x, until frappe-nix 2.0.0.
 RENAMED = {
 	ENV_ENABLED: "FRAPPE_OFFLINE_MIGRATE",
 	ENV_THRESHOLD: "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD",
@@ -382,7 +382,10 @@ def getenv(name):
 	value = os.environ.get(name)
 	old = RENAMED.get(name)
 	if value is None and old is not None and old in os.environ:
-		print(f"offline-migrate: {old} is deprecated; set {name} instead", file=sys.stderr)
+		print(
+			f"offline-migrate: {old} is deprecated; set {name} instead (the old name goes in frappe-nix 2.0.0)",
+			file=sys.stderr,
+		)
 		value = os.environ[old]
 	return value
 

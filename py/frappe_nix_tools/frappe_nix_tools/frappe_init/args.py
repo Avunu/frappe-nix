@@ -13,8 +13,7 @@ documented ones (docs/reference/scaffolder.md) and neither parser can say them:
 
 ``--frappe-version`` and ``--site`` are the names ``--version`` and
 ``--default-site`` had before CONVENTIONS.md (Scaffolder: version flag;
-Identity options). They are still read, with a warning, until the next minor
-release, and are not in the help.
+Identity options). They are still read, with a warning, through 1.x, until frappe-nix 2.0.0, and are not in the help.
 """
 
 from dataclasses import dataclass, field

@@ -12,8 +12,7 @@
 #
 # The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_MC and
 # FRAPPE_NIX_BACKUP_CACHE (CONVENTIONS.md, Tool-owned variables). The names
-# frappe-nix used before are read too, with a warning, until the next minor
-# release.
+# frappe-nix used before are read too, with a warning, through 1.x, until frappe-nix 2.0.0.
 { pkgs, python-devops-nix }:
 
 python-devops-nix.lib.backups.fetch {

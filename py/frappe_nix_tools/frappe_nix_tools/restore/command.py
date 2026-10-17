@@ -32,8 +32,7 @@ from frappe_nix_tools.restore.config import ConfigError, RestoreConfig, load
 PREFIX = "bench restore"
 
 #: The override for an unguarded restore, and the name it had before
-#: (CONVENTIONS.md, Tool-owned variables), read with a warning until the next
-#: minor release.
+#: (CONVENTIONS.md, Tool-owned variables), read with a warning through 1.x, until frappe-nix 2.0.0.
 ALLOW_UNGUARDED = "FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"
 ALLOW_UNGUARDED_LEGACY = "FRAPPE_RESTORE_ALLOW_UNGUARDED"
 
@@ -348,7 +347,7 @@ def restore_fetched(args: RestoreArgs, cfg: RestoreConfig, site: str) -> None:
 		fetch.append("--no-cache")
 	if not env.get("FRAPPE_NIX_BACKUP_CACHE") and not env.get("FRAPPE_BACKUP_CACHE"):
 		# The legacy FRAPPE_BACKUP_CACHE is still honoured, by the fetch command
-		# itself, until the next minor release.
+		# itself, through 1.x, until frappe-nix 2.0.0.
 		env["FRAPPE_NIX_BACKUP_CACHE"] = os.path.join(
 			os.environ.get("DEVENV_STATE", ".devenv/state"), "frappe-nix", "restore"
 		)
