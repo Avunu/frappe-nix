@@ -40,6 +40,30 @@ class TestRepoPolicy(unittest.TestCase):
 			["integration-provisional.json", "integration.json", "release-branch.json", "tags.json"],
 		)
 
+	def test_self_policy(self):
+		"""frappe-nix's own repo-policy/self (spec §4.10, §7 N6): concrete, and valid for the API."""
+		policy = repo_policy.from_dir(repo_policy.self_dir())
+		self.assertEqual(
+			[rs["name"] for rs in policy.rulesets],
+			["main", "release-* (release automation only)", "v* tags"],
+		)
+		for rs in policy.rulesets:
+			self.validate(rs)
+		self.assertEqual(contexts(policy), ["lint", "flake", "pr-policy"])
+		self.assertEqual(policy.repository["default_branch"], "main")
+		self.assertEqual(policy.labels, [])
+		main, release, tags = policy.rulesets
+		self.assertEqual(main["conditions"]["ref_name"]["include"], ["refs/heads/main"])
+		pr = next(r for r in main["rules"] if r["type"] == "pull_request")
+		self.assertEqual(pr["parameters"]["required_approving_review_count"], 0)
+		self.assertEqual(release["conditions"]["ref_name"]["include"], ["refs/heads/release-*"])
+		self.assertEqual(release["bypass_actors"], repo_policy.bypass_actors("github-actions"))
+		self.assertEqual(tags["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
+		# The same rules as the app defaults they derive from.
+		default = repo_policy.default_dir() / "rulesets"
+		for mine, theirs in ((release, "release-branch.json"), (tags, "tags.json")):
+			self.assertEqual(mine["rules"], json.loads((default / theirs).read_text())["rules"])
+
 	def test_full_rulesets_validate_against_the_api_schema(self):
 		c, m = cfg()
 		policy = repo_policy.for_app(c, m, ALL_GATES, phase="full", release_branch="version-16")

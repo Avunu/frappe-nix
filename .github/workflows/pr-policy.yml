@@ -1,0 +1,58 @@
+name: pr-policy
+
+# frappe-nix's own pr-policy check (docs/app-standards/versioning.md, spec §4.10): the base is
+# main, and the title and every commit pass `committed` (committed.toml) and refuse `!` and
+# BREAKING CHANGE, because a frappe-nix major is a deliberate `Release-As: <N>.0.0` footer.
+# `--major-free` drops what only an app has: the Frappe-major `Release-As` rule and compat.
+#
+# Its own file, not a check.yml job, so a retitle (`edited`) re-runs this alone and never
+# rebuilds `flake`. release.yml dispatches it on the release PR, whose GITHUB_TOKEN push
+# raises no event. frappe-nix's flake.lock has no frappe-nix node, so the tools come from
+# this checkout.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # the checkout
+      pull-requests: read # the PR's title and base (a dispatch looks the PR up)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # committed's version is the one the app standards fixture's tools/uv.lock pins.
+      - name: Install frappe-nix-tools from this checkout, and committed
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 ./py/frappe_nix_tools
+          uv tool install --python 3.14 committed==1.1.11
+
+      - name: frappe-nix policy --pr --major-free
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF_NAME: ${{ github.ref_name }}
+        run: frappe-nix policy --pr --major-free --base-branch main

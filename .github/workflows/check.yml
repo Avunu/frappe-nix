@@ -15,11 +15,13 @@ name: check
 # it is in `checks`.
 #
 # The `vm-tests` job builds the NixOS VM tests, one matrix entry each, on every
-# pull request. Which checks those are is also read from the flake (a
+# pull request and push. Which checks those are is also read from the flake (a
 # runNixOSTest result carries a `driver`), and the `flake` job hands the list
 # over. None of them builds Frappe: each stubs the bench and tests what the
 # NixOS module generates, so a VM test is a NixOS closure from cache.nixos.org
-# and a few minutes of KVM, which hosted runners have.
+# and a few minutes of KVM, which hosted runners have. A `workflow_dispatch`
+# runs them only with `vm-tests: true`: the release flow (release.yml) dispatches
+# this workflow on its release PR without inputs, and gets `lint` and `flake` alone.
 #
 # Every job that uses nix sets up magic-nix-cache, so a run reuses what earlier runs built.
 
@@ -28,12 +30,23 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      vm-tests:
+        description: Also build the NixOS VM tests
+        type: boolean
+        default: false
+
+permissions: {}
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # `prek run --all-files --show-diff-on-failure`: a hook that rewrites a file fails the
       # job, so what merges is what the hooks would have left.
@@ -41,10 +54,14 @@ jobs:
 
   flake:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout
     outputs:
       vm-tests: ${{ steps.split.outputs.vm-tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
@@ -100,13 +117,18 @@ jobs:
 
   vm-tests:
     needs: flake
+    if: github.event_name != 'workflow_dispatch' || inputs.vm-tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read # the checkout
     strategy:
       fail-fast: false
       matrix:
         test: ${{ fromJSON(needs.flake.outputs.vm-tests) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # `kvm` stays at its default (on): the installer adds the udev rule so the
       # daemon advertises the `kvm` system feature the VM tests need.
@@ -120,4 +142,6 @@ jobs:
           use-flakehub: false
 
       - name: Run the ${{ matrix.test }} NixOS test
-        run: nix build .#checks.x86_64-linux.${{ matrix.test }} -L --show-trace
+        env:
+          TEST: ${{ matrix.test }}
+        run: nix build ".#checks.x86_64-linux.$TEST" -L --show-trace

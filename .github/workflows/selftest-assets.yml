@@ -63,7 +63,7 @@ jobs:
       matrix:
         frappe: [pinned, develop]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -79,9 +79,10 @@ jobs:
           node-version: "24"
 
       - name: Install Python 3.14, the bench CLI and yarn
-        run: |
+        run: | # zizmor: ignore[adhoc-packages]
           uv python install 3.14
           uv tool install frappe-bench
+          # yarn classic, pinned: what the stock bench builds with.
           npm install -g yarn@1.22.22
           git config --global user.name selftest
           git config --global user.email selftest@localhost
@@ -91,7 +92,7 @@ jobs:
           FRAPPE_REF: ${{ matrix.frappe == 'develop' && 'develop' || '' }}
         run: PYTHON="$(uv python find 3.14)" tests/standards/selftest-assets/run.sh stock
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: selftest-assets-stock-${{ matrix.frappe }}
@@ -105,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # run.sh dates the PyPI resolution by the last change to the pins.
@@ -127,7 +128,7 @@ jobs:
       - name: Run builtbench
         run: tests/standards/selftest-assets/run.sh builtbench
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: selftest-assets-builtbench

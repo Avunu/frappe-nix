@@ -1,0 +1,23 @@
+{
+	"$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+	"release-type": "simple",
+	"include-v-in-tag": true,
+	"include-component-in-tag": false,
+	"packages": {
+		".": {
+			"package-name": "frappe-nix",
+			"changelog-path": "CHANGELOG.md",
+			"extra-files": [
+				{
+					"type": "generic",
+					"path": "py/frappe_nix_tools/frappe_nix_tools/__init__.py"
+				},
+				{
+					"type": "toml",
+					"path": "py/frappe_nix_tools/pyproject.toml",
+					"jsonpath": "$.project.version"
+				}
+			]
+		}
+	}
+}

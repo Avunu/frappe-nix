@@ -1,0 +1,22 @@
+{
+	"repository": {
+		"default_branch": "main",
+		"allow_squash_merge": true,
+		"allow_merge_commit": false,
+		"allow_rebase_merge": false,
+		"allow_auto_merge": true,
+		"allow_update_branch": true,
+		"delete_branch_on_merge": true,
+		"squash_merge_commit_title": "PR_TITLE",
+		"squash_merge_commit_message": "COMMIT_MESSAGES",
+		"has_wiki": false,
+		"has_projects": false,
+		"security_and_analysis": {
+			"secret_scanning": { "status": "enabled" },
+			"secret_scanning_push_protection": { "status": "enabled" }
+		}
+	},
+	"actions_workflow_permissions": { "default_workflow_permissions": "read", "can_approve_pull_request_reviews": true },
+	"vulnerability_alerts": true,
+	"automated_security_fixes": true
+}

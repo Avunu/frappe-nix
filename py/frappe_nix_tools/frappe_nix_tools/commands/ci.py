@@ -141,8 +141,19 @@ def run_refuse(args: argparse.Namespace) -> int:
 	return CLEAN
 
 
+def _contexts(pairs: list[str]) -> tuple[tuple[str, str], ...]:
+	out = []
+	for pair in pairs:
+		context, sep, workflow = pair.partition("=")
+		if not sep or not context.strip() or not workflow.strip():
+			raise ConfigError(f"--context {pair!r}: give <check name>=<workflow file>")
+		out.append((context.strip(), workflow.strip()))
+	return tuple(out)
+
+
 def run_dispatch(args: argparse.Namespace) -> int:
-	done = release.dispatch_ci(_repo(args), args.integration, args.package)
+	contexts = _contexts(args.context) if args.context else release.CI_CONTEXTS
+	done = release.dispatch_ci(_repo(args), args.integration, args.package, contexts)
 	output(dispatched=",".join(done))
 	return CLEAN
 
@@ -246,6 +257,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 	q.add_argument("--repo", default="")
 	q.add_argument("--integration", required=True)
 	q.add_argument("--package", default="", help="release-please's component name")
+	q.add_argument(
+		"--context",
+		action="append",
+		default=[],
+		metavar="CHECK=WORKFLOW",
+		help="a required check and the workflow that reports it (repeatable; default:"
+		" 'ci / lint=ci.yml' and 'ci / pr-policy=pr-policy.yml')",
+	)
 	q.set_defaults(func=run_dispatch)
 
 	q = sub.add_parser("sweep", help="dispatch CI on bot PRs whose head has no ci runs (§4.5)")
