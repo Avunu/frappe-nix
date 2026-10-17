@@ -106,13 +106,13 @@ Setting `package` on a site lets you run, for example, a staging site on a newer
 
 The module never puts secrets in the Nix store. On every start, the `frappe-init-<SITE>` unit builds `site_config.json` in three layers:
 
-1. A base file generated from your Nix options: database and Redis settings, plus `extraConfig`. It is written to the store from Nix-declared values and holds no secrets.
+1. A base file generated from your Nix options: database and Redis settings, plus `settings`. It is written to the store from Nix-declared values and holds no secrets.
 2. The database password and encryption key, read from `database.passwordFile` and `encryptionKeyFile` into `db_password` and `encryption_key`.
-3. Each file in `extraConfigFiles`, deep-merged last with `jq`, so it can override earlier values.
+3. Each file in `settingsFiles`, deep-merged last with `jq`, so it can override earlier values.
 
 systemd's `LoadCredential` hands the secret files to the unit, so the service account never needs read access to the originals. The result is written to `<siteDir>/sites/<SITE>/site_config.json` with mode `0600`.
 
-Use `extraConfigFiles` for anything else sensitive, such as object-storage credentials. The file must contain a JSON object:
+Use `settingsFiles` for anything else sensitive, such as object-storage credentials. The file must contain a JSON object:
 
 ```json
 {
@@ -121,7 +121,7 @@ Use `extraConfigFiles` for anything else sensitive, such as object-storage crede
 ```
 
 > [!WARNING]
-> `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `extraConfig` and secrets in `extraConfigFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
+> `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `settings` and secrets in `settingsFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
 
 If your bench declares its secrets with [frappe-nix.secrets](../development/secrets.md), a deployment can read the same ciphertext through `lib.secrets` instead of keeping a second copy.
 

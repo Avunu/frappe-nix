@@ -34,7 +34,7 @@ With one site, that declaration names four secrets on a fixed layout:
 | `secrets/backup-access.age`         | env-file    | `bench restore`'s fetch                 |
 | `secrets/<SITE>/encryption-key.age` | one line    | `services.frappe-nix`'s `encryptionKeyFile` |
 | `secrets/<SITE>/db-password.age`    | one line    | `database.passwordFile`                 |
-| `secrets/<SITE>/site-config.age`    | JSON object | `extraConfigFiles`                      |
+| `secrets/<SITE>/site-config.age`    | JSON object | `settingsFiles`                      |
 
 Each additional site adds its own three. The shapes are the ones `services.frappe-nix` already consumes, so the same ciphertext can serve the deployment. For anything else, `frappe-nix.secrets.extra.<NAME>` declares `secrets/<NAME>.age` in the `env`, `raw` or `json` format.
 

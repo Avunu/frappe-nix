@@ -141,7 +141,7 @@ The unit restored the pre-migrate snapshot and left the site in maintenance mode
 
 ### Edits to `site_config.json` disappear
 
-The init unit regenerates it on every start. Put non-secret settings in `extraConfig` and secrets in `extraConfigFiles`. See [Secrets](../production/nixos-service.md#secrets).
+The init unit regenerates it on every start. Put non-secret settings in `settings` and secrets in `settingsFiles`. See [Secrets](../production/nixos-service.md#secrets).
 
 ### The module warns that `socketio.socketPath` or `web.workers` is ignored
 

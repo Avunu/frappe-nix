@@ -5,9 +5,10 @@
 #   renames-devenv   frappe-nix.benchName → name, siteName → defaultSite; the
 #                    new names set devenv's `name` and FRAPPE_SITE, and the old
 #                    ones are listed in frappe-nix.deprecations (lib.warn).
-#   renames-nixos    services.frappe → services.frappe-nix, as a whole tree: the
-#                    old path sets the same units (nested mkIf and mkDefault
-#                    included) and adds NixOS's rename warning.
+#   renames-nixos    services.frappe → services.frappe-nix, as a whole tree, and
+#                    sites.<site>.extraConfig{,Files} → settings{,Files}: the
+#                    old names set the same units (nested mkIf and mkDefault
+#                    included) and each adds a NixOS warning.
 {
   self,
   pkgs,
@@ -84,11 +85,24 @@ let
         ExecStart = config.systemd.services.${n}.serviceConfig.ExecStart or null;
       });
       # "<old> -> <new>", for each rename warning.
-      warnings = map (
-        w: lib.concatStringsSep " -> " (builtins.match "The option `([^']*)'.* renamed to `([^']*)'.*" w)
-      ) (lib.filter (lib.hasInfix "has been renamed") config.warnings);
+      warnings = lib.sort builtins.lessThan (
+        map (
+          w: lib.concatStringsSep " -> " (builtins.match "The option `([^']*)'.* renamed to `([^']*)'.*" w)
+        ) (lib.filter (lib.hasInfix "has been renamed") config.warnings)
+      );
     };
-  production = {
+  production = productionWith {
+    settings.host_name = "https://${site}";
+    settings.workers.custom.timeout = 8000;
+    settingsFiles = [ "/run/secrets/site-config" ];
+  };
+  # The names before, defined twice as a consumer does, so the alias merges.
+  productionBefore = productionWith {
+    extraConfig.host_name = "https://${site}";
+    extraConfig.workers.custom.timeout = 8000;
+    extraConfigFiles = [ "/run/secrets/site-config" ];
+  };
+  productionWith = siteSettings: {
     enable = true;
     package = stubBench;
     redis.createLocally = true;
@@ -100,7 +114,8 @@ let
       database.createLocally = true;
       database.passwordFile = "/run/secrets/db-password";
       nginx.enable = true;
-    };
+    }
+    // siteSettings;
   };
 
   identity = config: {
@@ -146,16 +161,30 @@ in
   renames-nixos = checks.eval "renames-nixos" {
     expected = {
       inherit (units (nixosWith [ "services" "frappe-nix" ] production)) units;
-      warnings = [ "services.frappe -> services.frappe-nix" ];
+      warnings = [
+        "services.frappe -> services.frappe-nix"
+        ''services.frappe-nix.sites."${site}".extraConfig -> services.frappe-nix.sites."${site}".settings''
+        ''services.frappe-nix.sites."${site}".extraConfigFiles -> services.frappe-nix.sites."${site}".settingsFiles''
+      ];
+      siteConfig = {
+        host_name = "https://${site}";
+        workers.custom.timeout = 8000;
+      };
+      credentials = [ "extra_config_1:/run/secrets/site-config" ];
       webThreads = 3;
       level = "info";
     };
     actual =
       let
-        old = nixosWith [ "services" "frappe" ] production;
+        old = nixosWith [ "services" "frappe" ] productionBefore;
+        oldSite = old.services.frappe-nix.sites.${site};
       in
       units old
       // {
+        siteConfig = { inherit (oldSite.settings) host_name workers; };
+        credentials = lib.filter (lib.hasPrefix "extra_config") (
+          lib.toList old.systemd.services."frappe-init-${site}".serviceConfig.LoadCredential
+        );
         webThreads = old.services.frappe-nix.runtime.webThreads;
         level = old.services.frappe-nix.logging.level;
       };

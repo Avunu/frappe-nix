@@ -283,7 +283,7 @@ let
     ++ lib.imap1 (i: f: {
       file = f;
       key = "extra_config_${toString i}";
-    }) siteCfg.extraConfigFiles;
+    }) siteCfg.settingsFiles;
 
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
   # cwd is left to systemd's WorkingDirectory= (set per-service in
@@ -400,7 +400,7 @@ let
       // optionalAttrs (siteCfg.database.socket != "") {
         db_socket = siteCfg.database.socket;
       }
-      // siteCfg.extraConfig;
+      // siteCfg.settings;
 
       baseConfigFile = pkgs.writeText "site-config-${name}.json" (builtins.toJSON baseConfig);
 
@@ -511,14 +511,14 @@ let
               # --slurpfile binds $extraN to an array of every JSON value in the
               # file, even when the file holds a single object — index [0] to get
               # the object itself before merging.
-              extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.extraConfigFiles;
+              extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.settingsFiles;
             in
             concatStringsSep " | " ([ base ] ++ lib.optional (secretFiles != [ ]) withSecrets ++ extraMerges);
 
           extraSlurpArgs = concatStringsSep " " (
             lib.imap1 (
               i: _f: ''--slurpfile extra${toString i} "$CREDENTIALS_DIRECTORY/extra_config_${toString i}"''
-            ) siteCfg.extraConfigFiles
+            ) siteCfg.settingsFiles
           );
         in
         ''
@@ -1377,9 +1377,40 @@ let
       };
     };
 
+  # sites.<name>.<from> renamed to <to>, inside the site submodule. Not
+  # lib.mkRenamedOptionModule: a submodule has no `warnings` to report through,
+  # so doRename does the aliasing and the warning goes on the site's
+  # `deprecations`, which the module's top level turns into `warnings`.
+  # Removed in the next minor release.
+  renamedSiteOption =
+    from: to:
+    { name, options, ... }:
+    {
+      imports = [
+        (lib.doRename {
+          from = [ from ];
+          to = [ to ];
+          visible = false;
+          warn = false;
+          use = lib.id;
+        })
+      ];
+      config.deprecations =
+        lib.optional options.${from}.isDefined
+          "The option `services.frappe-nix.sites.\"${name}\".${from}' defined in ${
+            lib.showFiles options.${from}.files
+          } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'.";
+    };
+
   # Site submodule option definition.
   siteModule = types.submodule (
     { name, ... }: {
+      # python-devops-nix CONVENTIONS.md, Framework config blocks.
+      imports = [
+        (renamedSiteOption "extraConfig" "settings")
+        (renamedSiteOption "extraConfigFiles" "settingsFiles")
+      ];
+
       options = {
         enable = mkEnableOption "this Frappe site";
 
@@ -1501,16 +1532,32 @@ let
           description = "File containing the Frappe encryption key. Merged into site_config.json at activation.";
         };
 
-        extraConfig = mkOption {
+        settings = mkOption {
           type = types.attrsOf types.anything;
           default = { };
-          description = "Extra keys merged into the base site_config.json (Nix values, no secrets).";
+          example = lib.literalExpression ''{ host_name = "https://erp.example.com"; monitor = 1; }'';
+          description = ''
+            Keys merged into the site's site_config.json, under Frappe's own
+            spelling (Nix values, no secrets: they land in the store). Was
+            `extraConfig`.
+          '';
         };
 
-        extraConfigFiles = mkOption {
+        settingsFiles = mkOption {
           type = types.listOf types.path;
           default = [ ];
-          description = "JSON files deep-merged into site_config.json at activation (for secrets).";
+          description = ''
+            JSON files deep-merged into site_config.json at activation, for
+            secrets: each is read through LoadCredential, never copied to the
+            store. Was `extraConfigFiles`.
+          '';
+        };
+
+        deprecations = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          internal = true;
+          description = "Renamed options this site sets, each a warning at the top level.";
         };
 
         renamedApps = mkOption {
@@ -1972,23 +2019,25 @@ in
       # The unified runtime has no separate realtime process and no gunicorn, so
       # these configure nothing. Say so rather than letting a set value quietly
       # do nothing.
-      warnings = lib.optionals cfg.runtime.enable (
-        lib.concatLists (
-          mapAttrsToList (
-            name: siteCfg:
-            lib.optional (siteCfg.socketio.socketPath != "") (
-              "services.frappe-nix.sites.\"${name}\".socketio.socketPath is ignored when"
-              + " services.frappe-nix.runtime.enable is true: the runtime serves /socket.io"
-              + " on web.socketPath. Remove it, or set runtime.enable = false."
-            )
-          ) enabledSites
-        )
-        ++ lib.optional (cfg.web.workers != 4) (
-          "services.frappe-nix.web.workers is ignored when services.frappe-nix.runtime.enable"
-          + " is true: the runtime sizes web concurrency with"
-          + " services.frappe-nix.runtime.webThreads instead."
-        )
-      );
+      warnings =
+        lib.concatMap (siteCfg: siteCfg.deprecations) (lib.attrValues cfg.sites)
+        ++ lib.optionals cfg.runtime.enable (
+          lib.concatLists (
+            mapAttrsToList (
+              name: siteCfg:
+              lib.optional (siteCfg.socketio.socketPath != "") (
+                "services.frappe-nix.sites.\"${name}\".socketio.socketPath is ignored when"
+                + " services.frappe-nix.runtime.enable is true: the runtime serves /socket.io"
+                + " on web.socketPath. Remove it, or set runtime.enable = false."
+              )
+            ) enabledSites
+          )
+          ++ lib.optional (cfg.web.workers != 4) (
+            "services.frappe-nix.web.workers is ignored when services.frappe-nix.runtime.enable"
+            + " is true: the runtime sizes web concurrency with"
+            + " services.frappe-nix.runtime.webThreads instead."
+          )
+        );
 
       environment.systemPackages = [
         benchCli

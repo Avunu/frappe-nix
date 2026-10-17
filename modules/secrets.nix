@@ -40,7 +40,7 @@
 
           The same ciphertext feeds the dev shell and, through
           `flake.lib.secrets`, `services.frappe-nix`'s `encryptionKeyFile` /
-          `database.passwordFile` / `extraConfigFiles`. One declaration, one
+          `database.passwordFile` / `settingsFiles`. One declaration, one
           file, both ends.
         '';
         example = {
@@ -56,7 +56,7 @@
           inside it.
         '';
         # The shapes mirror what services.frappe-nix consumes in production
-        # (encryptionKeyFile, database.passwordFile, extraConfigFiles), and the
+        # (encryptionKeyFile, database.passwordFile, settingsFiles), and the
         # deployment host reads all three, so host keys always apply.
         roles = [
           {
@@ -89,7 +89,7 @@
             description = ''
               Declare `<dir>/<site>/site-config.age`, a JSON object deep-merged
               into `site_config.json`: the counterpart of
-              `services.frappe-nix.sites.<name>.extraConfigFiles`. Object-storage and
+              `services.frappe-nix.sites.<name>.settingsFiles`. Object-storage and
               third-party credentials belong here.
             '';
           }
