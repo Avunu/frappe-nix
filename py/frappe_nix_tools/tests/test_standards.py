@@ -343,9 +343,14 @@ class TestOriginMove(ProfileSideCase):
 		self.assertTrue((self.root / ".github/workflows/custom.yml").exists())
 
 	def test_origin_moving_off_github_without_a_github_dir(self):
-		"""With N3 alone no profile renders .github/: release-please-config.json, which only
-		releases (GitHub-only) renders, marks the state as on GitHub just the same."""
-		self.assertFalse((self.root / ".github").exists())
+		"""With the modules that render .github/ off (ci, dependabot, workflow-lint),
+		release-please-config.json, which only releases (GitHub-only) renders, marks the state
+		as on GitHub just the same."""
+		self.table("ci.enable = false\ndependabot.enable = false\nworkflow-lint.enable = false\n")
+		code, out = self.resync()
+		self.assertEqual(code, 0, out)
+		self.commit()
+		self.assertEqual(git(self.root, "ls-files", ".github"), "")
 		git(self.root, "remote", "add", "origin", "https://github.com/example/demo_app.git")
 		self.assertEqual(self.check()[0], 0)
 		git(self.root, "remote", "set-url", "origin", "https://gitlab.com/example/demo_app.git")
@@ -624,13 +629,13 @@ class TestRetireByFunction(AppCase):
 
 	def _rules_follow_their_module(self):
 		self.synced()
-		self.write(".github/workflows/release.yml", self.RELEASE)
+		self.write(".github/workflows/release-please.yml", self.RELEASE)
 		self.write(".github/workflows/automerge.yml", self.MERGE)
 		self.write(".github/workflows/check.yml", "name: check\n")
 		self.commit()
 		code, out = self.check()
 		self.assertEqual(code, 1, out)
-		self.assertIn(".github/workflows/release.yml (retire): legacy file", out)
+		self.assertIn(".github/workflows/release-please.yml (retire): legacy file", out)
 		self.assertIn(".github/workflows/automerge.yml (retire): legacy file", out)
 		self.assertNotIn("check.yml", out, "name-only rules are the profile's, not frappe-nix's")
 		self.table("releases.enable = false\ndependabot.enable = false\n")
@@ -647,8 +652,8 @@ class TestRetireByFunction(AppCase):
 
 	def test_retire_keep(self):
 		self.synced()
-		self.write(".github/workflows/release.yml", self.RELEASE)
-		self.table('retire-keep = [".github/workflows/release.yml"]\n')
+		self.write(".github/workflows/release-please.yml", self.RELEASE)
+		self.table('retire-keep = [".github/workflows/release-please.yml"]\n')
 		self.commit()
 		self.assertNotIn("(retire)", self.check()[1])
 

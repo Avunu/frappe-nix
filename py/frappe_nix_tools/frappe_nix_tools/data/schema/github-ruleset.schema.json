@@ -1,0 +1,135 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "github-ruleset.schema.json",
+	"title": "A repository ruleset as GitHub's REST API takes it (POST/PUT /repos/{owner}/{repo}/rulesets)",
+	"$comment": "Vendored subset of GitHub's repository-ruleset schema (api.github.com, 2022-11-28): the fields and rule types frappe-nix's repo-policy rulesets use, with the API's enums. Used by tests/test_repo_policy.py (spec §7 N4).",
+	"type": "object",
+	"required": ["name", "enforcement"],
+	"additionalProperties": false,
+	"properties": {
+		"name": { "type": "string", "minLength": 1 },
+		"target": { "enum": ["branch", "tag", "push"] },
+		"enforcement": { "enum": ["disabled", "active", "evaluate"] },
+		"bypass_actors": { "type": "array", "items": { "$ref": "#/$defs/bypass_actor" } },
+		"conditions": { "$ref": "#/$defs/conditions" },
+		"rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
+	},
+	"$defs": {
+		"bypass_actor": {
+			"type": "object",
+			"required": ["actor_type"],
+			"additionalProperties": false,
+			"properties": {
+				"actor_id": { "type": ["integer", "null"] },
+				"actor_type": {
+					"enum": ["Integration", "OrganizationAdmin", "RepositoryRole", "Team", "DeployKey", "User"]
+				},
+				"bypass_mode": { "enum": ["always", "pull_request", "exempt"] }
+			}
+		},
+		"conditions": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"ref_name": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"include": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+						"exclude": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+					}
+				}
+			}
+		},
+		"status_check": {
+			"type": "object",
+			"required": ["context"],
+			"additionalProperties": false,
+			"properties": {
+				"context": { "type": "string", "minLength": 1 },
+				"integration_id": { "type": "integer" }
+			}
+		},
+		"rule": {
+			"anyOf": [
+				{
+					"type": "object",
+					"required": ["type"],
+					"additionalProperties": false,
+					"properties": {
+						"type": {
+							"enum": ["creation", "deletion", "required_linear_history", "required_signatures", "non_fast_forward"]
+						}
+					}
+				},
+				{
+					"type": "object",
+					"required": ["type"],
+					"additionalProperties": false,
+					"properties": {
+						"type": { "const": "update" },
+						"parameters": {
+							"type": "object",
+							"required": ["update_allows_fetch_and_merge"],
+							"additionalProperties": false,
+							"properties": { "update_allows_fetch_and_merge": { "type": "boolean" } }
+						}
+					}
+				},
+				{
+					"type": "object",
+					"required": ["type", "parameters"],
+					"additionalProperties": false,
+					"properties": {
+						"type": { "const": "pull_request" },
+						"parameters": {
+							"type": "object",
+							"required": [
+								"dismiss_stale_reviews_on_push",
+								"require_code_owner_review",
+								"require_last_push_approval",
+								"required_approving_review_count",
+								"required_review_thread_resolution"
+							],
+							"additionalProperties": false,
+							"properties": {
+								"allowed_merge_methods": {
+									"type": "array",
+									"minItems": 1,
+									"uniqueItems": true,
+									"items": { "enum": ["merge", "squash", "rebase"] }
+								},
+								"dismiss_stale_reviews_on_push": { "type": "boolean" },
+								"require_code_owner_review": { "type": "boolean" },
+								"require_last_push_approval": { "type": "boolean" },
+								"required_approving_review_count": { "type": "integer", "minimum": 0, "maximum": 10 },
+								"required_review_thread_resolution": { "type": "boolean" }
+							}
+						}
+					}
+				},
+				{
+					"type": "object",
+					"required": ["type", "parameters"],
+					"additionalProperties": false,
+					"properties": {
+						"type": { "const": "required_status_checks" },
+						"parameters": {
+							"type": "object",
+							"required": ["required_status_checks", "strict_required_status_checks_policy"],
+							"additionalProperties": false,
+							"properties": {
+								"do_not_enforce_on_create": { "type": "boolean" },
+								"required_status_checks": {
+									"type": "array",
+									"items": { "$ref": "#/$defs/status_check" }
+								},
+								"strict_required_status_checks_policy": { "type": "boolean" }
+							}
+						}
+					}
+				}
+			]
+		}
+	}
+}

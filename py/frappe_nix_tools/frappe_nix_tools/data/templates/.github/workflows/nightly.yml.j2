@@ -1,0 +1,60 @@
+# Nightly (docs: ci.md, §4.6): the integration suites, and the reminders that the pinned
+# frappe-nix or standards profile is behind. Never a required check.
+{% set publish = modules.listing and cfg.listing.publish %}
+{# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
+   lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
+{% macro uses(workflow) %}
+{% set at = frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" %}
+{% if frappe_nix.rev %}
+{{ at ~ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+{%- else %}
+{% set kept = pin(at ~ workflow, "", "v" ~ frappe_nix.version) %}
+{% if "@ #" in kept %}
+{% set kept = pin(at ~ "app-lint.yml", "", "v" ~ frappe_nix.version).replace("app-lint.yml", workflow) %}
+{% endif %}
+{{ kept }}
+{%- endif %}
+{% endmacro %}
+name: nightly
+on:
+{% if cfg.ci.schedules.nightly %}
+  schedule:
+    - cron: "{{ cfg.ci.schedules.nightly }}"
+{% endif %}
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+jobs:
+  nightly:
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      issues: write
+    uses: {{ uses("app-nightly.yml") }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+      nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
+
+      run-integration: {{ "true" if modules.tests else "false" }}
+      run-shots: {{ "true" if modules.screenshots else "false" }}
+      run-links: {{ "true" if modules.listing else "false" }}
+      run-duplication: {{ "true" if modules["test-utils"] and "check_code_duplication" in cfg["test-utils"].hooks else "false" }}
+{% if publish %}
+      publish: {% raw %}${{ vars.MARKETPLACE_PUBLISH == 'true' }}{% endraw %}
+
+{% endif %}
+    secrets:
+      NIX_CACHE_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}{% endraw %}
+
+      NIX_CACHE_READ_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_READ_TOKEN }}{% endraw %}
+
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+
+{% if publish %}
+      REGISTRY_TOKEN: {% raw %}${{ secrets.REGISTRY_TOKEN }}{% endraw %}
+
+{% endif %}

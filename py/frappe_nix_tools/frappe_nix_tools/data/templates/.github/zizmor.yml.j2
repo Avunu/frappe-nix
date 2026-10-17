@@ -1,0 +1,11 @@
+# Every `uses:` is hash-pinned with a version comment. dependabot moves third-party pins;
+# `frappe-init --sync` moves {{ frappe_nix.owner }}/{{ frappe_nix.name }}'s.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # Every dependabot entry needs a cooldown of at least dependabot.cooldown-days.
+  dependabot-cooldown:
+    config:
+      days: {{ cfg.dependabot["cooldown-days"] }}

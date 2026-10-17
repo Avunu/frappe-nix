@@ -1,0 +1,60 @@
+# The quality gates (docs: ci.md). One caller job per enabled gate, each named `ci`, so the
+# checks are `ci / <gate>` (S3, S39). frappe-nix's reusable workflows move only through
+# `frappe-nix repo rollout` or `frappe-init --sync` (S5).
+{# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
+   lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
+{% macro uses(workflow) %}
+{% set at = frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" %}
+{% if frappe_nix.rev %}
+{{ at ~ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+{%- else %}
+{% set kept = pin(at ~ workflow, "", "v" ~ frappe_nix.version) %}
+{% if "@ #" in kept %}
+{% set kept = pin(at ~ "app-lint.yml", "", "v" ~ frappe_nix.version).replace("app-lint.yml", workflow) %}
+{% endif %}
+{{ kept }}
+{%- endif %}
+{% endmacro %}
+name: ci
+on:
+  push:
+    branches: [{{ branches.integration }}]
+  pull_request:
+{% if cfg.ci.schedules.ci %}
+  schedule:
+    # The integration branch, daily: a GITHUB_TOKEN auto-merge raises no push.
+    - cron: "{{ cfg.ci.schedules.ci }}"
+{% endif %}
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: {% raw %}ci-${{ github.event.pull_request.number || github.ref }}{% endraw %}
+
+  cancel-in-progress: {% raw %}${{ github.event_name == 'pull_request' }}{% endraw %}
+
+jobs:
+{% for gate in gates if gate != "pr-policy" %}
+  {{ gate }}:
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: {{ uses("app-" ~ gate ~ ".yml") }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+{% if gate == "test" %}
+      nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
+
+      test-timeout-minutes: {{ cfg.ci["test-timeout-minutes"] }}
+{% endif %}
+    secrets:
+{% if gate == "test" %}
+      NIX_CACHE_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}{% endraw %}
+
+      NIX_CACHE_READ_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_READ_TOKEN }}{% endraw %}
+
+{% endif %}
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+
+{% endfor %}

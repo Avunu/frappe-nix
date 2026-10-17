@@ -1,0 +1,13 @@
+{
+	"name": "version-* (release automation only)",
+	"target": "branch",
+	"enforcement": "active",
+	"conditions": { "ref_name": { "include": ["refs/heads/version-*"], "exclude": [] } },
+	"bypass_actors": "{release_bypass}",
+	"rules": [
+		{ "type": "creation" },
+		{ "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
+		{ "type": "deletion" },
+		{ "type": "non_fast_forward" }
+	]
+}

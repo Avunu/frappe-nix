@@ -1,0 +1,74 @@
+name: fleet-audit
+
+# The fleet scorecard (docs/app-standards/github.md, spec §5.7), reusable only: an
+# organisation schedules it from its own profile repository, which holds the fleet list
+# and the read-only FRAPPE_NIX_AUDIT_TOKEN (Administration and Contents read on the
+# fleet's repositories). Without that token the settings and ruleset rows are `unknown`.
+
+on:
+  workflow_call:
+    inputs:
+      fleet:
+        description: the fleet list, a path in the caller's checkout (fleet.json)
+        type: string
+        required: true
+      issue-repo:
+        description: "the repository (<owner>/<repo>) that holds the scorecard issues; empty for none"
+        type: string
+        default: ""
+      frappe-nix-version:
+        description: the frappe-nix release (vX.Y.Z) or revision whose frappe-nix-tools runs the audit
+        type: string
+        required: true
+    secrets:
+      FRAPPE_NIX_AUDIT_TOKEN:
+        required: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # the caller's checkout, with the fleet list
+      issues: write # the scorecard issues in the caller's repository
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools
+        env:
+          VERSION: ${{ inputs.frappe-nix-version }}
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/Avunu/frappe-nix@${VERSION}#subdirectory=py/frappe_nix_tools"
+
+      - name: frappe-nix repo audit
+        env:
+          AUDIT_TOKEN: ${{ secrets.FRAPPE_NIX_AUDIT_TOKEN }}
+          ISSUE_TOKEN: ${{ github.token }}
+          FLEET: ${{ inputs.fleet }}
+          ISSUE_REPO: ${{ inputs.issue-repo }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUDIT_TOKEN" ]; then
+            echo "::notice::FRAPPE_NIX_AUDIT_TOKEN is not set: rows that need it read as unknown"
+            AUDIT_TOKEN="$ISSUE_TOKEN"
+          fi
+          args=(--all --fleet "$FLEET" --format md --out "$RUNNER_TEMP/scorecard.md")
+          if [ -n "$ISSUE_REPO" ]; then
+            args+=(--issue --issue-repo "$ISSUE_REPO")
+          fi
+          rc=0
+          GH_TOKEN="$AUDIT_TOKEN" FRAPPE_NIX_ISSUE_TOKEN="$ISSUE_TOKEN" frappe-nix repo audit "${args[@]}" || rc=$?
+          if [ -f "$RUNNER_TEMP/scorecard.md" ]; then
+            cat "$RUNNER_TEMP/scorecard.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"

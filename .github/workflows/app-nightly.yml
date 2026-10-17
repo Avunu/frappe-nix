@@ -1,0 +1,515 @@
+name: app-nightly
+
+# Nightly (docs/app-standards/ci.md, spec §4.6), reusable. Never a required check, so each
+# optional job is a `run-*` input the caller renders from its module switch: the integration
+# suites (tests), screenshots (screenshots), the listing links (listing), code duplication
+# (test-utils) and the registry refresh (listing.publish). `drift` always runs: it keeps the
+# "frappe-nix vX.Y.Z available" and "standards profile update available" issues.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      integration-branch:
+        type: string
+        default: develop
+      nix-cache:
+        description: '"", "cachix:<name>" or "attic:<endpoint>/<cache>"'
+        type: string
+        default: ""
+      publish:
+        type: boolean
+        default: false
+      run-integration:
+        type: boolean
+        default: true
+      run-shots:
+        type: boolean
+        default: false
+      run-links:
+        type: boolean
+        default: false
+      run-duplication:
+        type: boolean
+        default: false
+      frappe-nix-override:
+        description: frappe-nix's self-test only (a path in the workspace)
+        type: string
+        default: ""
+    secrets:
+      NIX_CACHE_TOKEN:
+        required: false
+      NIX_CACHE_READ_TOKEN:
+        required: false
+      FETCH_TOKEN:
+        required: false
+      REGISTRY_TOKEN:
+        required: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+  # The tools/ project's Python: uv would take its newest, which semgrep 1.179.0 crashes on.
+  UV_PYTHON: "3.14"
+
+jobs:
+  integration:
+    if: inputs.run-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
+      # push or schedule on the integration branch ever sees the write token.
+      - id: cache
+        name: Binary cache and private sources
+        env:
+          CACHE: ${{ inputs.nix-cache }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CACHE" in
+            "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
+            cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
+            attic:*/*)
+              rest="${CACHE#attic:}"
+              echo "kind=attic" >> "$GITHUB_OUTPUT"
+              echo "endpoint=${rest%/*}" >> "$GITHUB_OUTPUT"
+              echo "name=${rest##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
+          esac
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            # frappe-nix's self-test: every nix call uses this checkout of frappe-nix.
+            echo "NIX_OVERRIDE=--override-input frappe-nix path:$GITHUB_WORKSPACE/$OVERRIDE" >> "$GITHUB_ENV"
+          else
+            echo "NIX_OVERRIDE=" >> "$GITHUB_ENV"
+          fi
+
+      - if: steps.cache.outputs.kind == 'cachix'
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ steps.cache.outputs.name }}
+          authToken: ${{ (github.ref == format('refs/heads/{0}', inputs.integration-branch) && (github.event_name == 'push' || github.event_name == 'schedule')) && secrets.NIX_CACHE_TOKEN || secrets.NIX_CACHE_READ_TOKEN }}
+          skipPush: ${{ !(github.ref == format('refs/heads/{0}', inputs.integration-branch) && (github.event_name == 'push' || github.event_name == 'schedule')) }}
+
+      - if: steps.cache.outputs.kind == 'attic'
+        name: attic
+        env:
+          TOKEN: ${{ (github.ref == format('refs/heads/{0}', inputs.integration-branch) && (github.event_name == 'push' || github.event_name == 'schedule')) && secrets.NIX_CACHE_TOKEN || secrets.NIX_CACHE_READ_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
+          attic use "ci:$NAME"
+
+      # No FRAPPE_NIX_CI: `bench build` needs the node modules the shell installs.
+      - name: frappe-test, bench build and the nightly suites
+        run: |
+          set -euo pipefail
+          read -ra override <<< "$NIX_OVERRIDE"
+          mkdir -p .dev-dist
+          # shellcheck disable=SC2016 # the dev shell's frappe-nix expands it
+          nix develop --no-pure-eval "${override[@]}" --profile .dev-dist/devshell-profile \
+            -c bash -c 'bash "$(frappe-nix data-path ci/nightly.sh)"'
+
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nightly
+          path: .dev-dist/
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+      - if: success() && steps.cache.outputs.kind == 'attic' && github.ref == format('refs/heads/{0}', inputs.integration-branch) && (github.event_name == 'push' || github.event_name == 'schedule')
+        name: Push to the attic cache
+        env:
+          TOKEN: ${{ secrets.NIX_CACHE_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          attic login ci "$ENDPOINT" "$TOKEN"
+          paths=()
+          for p in ./result .dev-dist/devshell-profile; do
+            if [ -e "$p" ]; then
+              paths+=("$p")
+            fi
+          done
+          if [ "${#paths[@]}" -gt 0 ]; then
+            attic push "ci:$NAME" "${paths[@]}"
+          fi
+
+  shots:
+    if: inputs.run-shots
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write # push standards/screenshots
+      pull-requests: write # open or update its PR
+      actions: write # dispatch ci.yml and pr-policy.yml on it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - id: spec
+        run: |
+          set -euo pipefail
+          if git ls-files --error-unmatch marketplace/screenshots.ts > /dev/null 2>&1; then
+            echo "tracked=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tracked=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::marketplace/screenshots.ts is not tracked; no screenshots to refresh"
+          fi
+
+      - if: steps.spec.outputs.tracked == 'true'
+        name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - if: steps.spec.outputs.tracked == 'true'
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
+      # push or schedule on the integration branch ever sees the write token.
+      - if: steps.spec.outputs.tracked == 'true'
+        id: cache
+        name: Binary cache and private sources
+        env:
+          CACHE: ${{ inputs.nix-cache }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CACHE" in
+            "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
+            cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
+            attic:*/*)
+              rest="${CACHE#attic:}"
+              echo "kind=attic" >> "$GITHUB_OUTPUT"
+              echo "endpoint=${rest%/*}" >> "$GITHUB_OUTPUT"
+              echo "name=${rest##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
+          esac
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            # frappe-nix's self-test: every nix call uses this checkout of frappe-nix.
+            echo "NIX_OVERRIDE=--override-input frappe-nix path:$GITHUB_WORKSPACE/$OVERRIDE" >> "$GITHUB_ENV"
+          else
+            echo "NIX_OVERRIDE=" >> "$GITHUB_ENV"
+          fi
+
+      - if: steps.spec.outputs.tracked == 'true' && (steps.cache.outputs.kind == 'cachix')
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ steps.cache.outputs.name }}
+          authToken: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          skipPush: true
+
+      - if: steps.spec.outputs.tracked == 'true' && (steps.cache.outputs.kind == 'attic')
+        name: attic
+        env:
+          TOKEN: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
+          attic use "ci:$NAME"
+
+      - if: steps.spec.outputs.tracked == 'true'
+        name: frappe-shots --update
+        run: |
+          set -euo pipefail
+          read -ra override <<< "$NIX_OVERRIDE"
+          nix develop --no-pure-eval "${override[@]}" -c frappe-shots --update
+
+      - if: always() && steps.spec.outputs.tracked == 'true'
+        id: diffs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshot-diffs
+          path: .dev-dist/shots/
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+      - if: steps.spec.outputs.tracked == 'true'
+        name: Open or update the screenshots PR (never merged automatically)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          DIFFS: ${{ steps.diffs.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain docs/screenshots)" ]; then
+            echo "The committed screenshots match."
+            exit 0
+          fi
+          branch=standards/screenshots
+          git switch -c "$branch"
+          git add docs/screenshots
+          if git diff --cached --name-only | grep -E '(^|/)\.github/workflows/'; then
+            echo "::error::the screenshot refresh would change a workflow"
+            exit 1
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "docs: refresh screenshots"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
+          gh label create screenshots --repo "$GITHUB_REPOSITORY" --color c5def5 --description "Screenshot refresh from nightly" --force
+          url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+          if [ -z "$url" ]; then
+            url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$INTEGRATION" --head "$branch" --label screenshots \
+              --title "docs: refresh screenshots" \
+              --body "The nightly frappe-shots run found changed screenshots. Review the diff images before merging: ${DIFFS:-the screenshot-diffs artifact}")"
+          fi
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          if [ -f .github/workflows/pr-policy.yml ]; then
+            gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          fi
+          echo "Screenshots changed: $url (diff images: ${DIFFS:-the screenshot-diffs artifact})" >> "$GITHUB_STEP_SUMMARY"
+
+  links:
+    if: inputs.run-links
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - id: cfg
+        run: frappe-nix config --github-output modules
+
+      - name: The listing's website and documentation answer 200
+        run: frappe-nix listing check --links-only --format github
+
+      - if: steps.cfg.outputs.icons == 'true'
+        name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - if: steps.cfg.outputs.icons == 'true'
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
+      # push or schedule on the integration branch ever sees the write token.
+      - if: steps.cfg.outputs.icons == 'true'
+        id: cache
+        name: Binary cache and private sources
+        env:
+          CACHE: ${{ inputs.nix-cache }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CACHE" in
+            "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
+            cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
+            attic:*/*)
+              rest="${CACHE#attic:}"
+              echo "kind=attic" >> "$GITHUB_OUTPUT"
+              echo "endpoint=${rest%/*}" >> "$GITHUB_OUTPUT"
+              echo "name=${rest##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
+          esac
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            # frappe-nix's self-test: every nix call uses this checkout of frappe-nix.
+            echo "NIX_OVERRIDE=--override-input frappe-nix path:$GITHUB_WORKSPACE/$OVERRIDE" >> "$GITHUB_ENV"
+          else
+            echo "NIX_OVERRIDE=" >> "$GITHUB_ENV"
+          fi
+
+      - if: steps.cfg.outputs.icons == 'true' && (steps.cache.outputs.kind == 'cachix')
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ steps.cache.outputs.name }}
+          authToken: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          skipPush: true
+
+      - if: steps.cfg.outputs.icons == 'true' && (steps.cache.outputs.kind == 'attic')
+        name: attic
+        env:
+          TOKEN: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
+          attic use "ci:$NAME"
+
+      - if: steps.cfg.outputs.icons == 'true'
+        name: The icon raster checks, with the app's locked resvg
+        run: |
+          set -euo pipefail
+          read -ra override <<< "$NIX_OVERRIDE"
+          nix run --no-pure-eval "${override[@]}" .#frappe-icon -- check
+
+  duplication:
+    if: inputs.run-duplication
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # Informational: jscpd through npx, with the network.
+      - name: check_code_duplication
+        run: |
+          set -euo pipefail
+          uv sync --frozen --project tools
+          uv run --frozen --project tools prek run --hook-stage manual check_code_duplication --all-files
+
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # the checkout
+      issues: write # the reminder issues
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: The latest frappe-nix release, and the app's drift against it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+        run: |
+          set -euo pipefail
+          src="$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)"
+          latest="$(gh api "repos/$src/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          if [ -z "$latest" ]; then
+            echo "::notice::$src has no release yet; nothing to compare"
+            exit 0
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${latest}#subdirectory=py/frappe_nix_tools"
+          fi
+          FRAPPE_NIX_ALLOW_SKEW=1 frappe-nix sync --check --format json > "$RUNNER_TEMP/drift.json" || true
+          frappe-nix ci drift --repo "$GITHUB_REPOSITORY" --latest "$latest" --summary-file "$RUNNER_TEMP/drift.json"
+
+  registry-refresh:
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: Rebuild the open registry PR on upstream main
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::notice::REGISTRY_TOKEN is not set; no registry PR to refresh"
+            exit 0
+          fi
+          GH_TOKEN="$REGISTRY_TOKEN" frappe-nix listing registry --refresh --yes

@@ -1,0 +1,516 @@
+name: app-deps
+
+# Dependency PRs (docs/app-standards/ci.md, spec §4.5), reusable. A Dependabot nix PR is
+# relocked and synced (relock-plan runs the PR's code with no write token; relock-push only
+# applies its patch); every Dependabot PR gets the decision table's verdict (auto-merge or
+# needs-review); the sweep re-dispatches CI for bot PRs; relock-upgrade refreshes nix/uv.lock
+# weekly. Auto-merge is enabled only where required checks protect the integration branch.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      integration-branch:
+        type: string
+        default: develop
+      nix-cache:
+        description: '"", "cachix:<name>" or "attic:<endpoint>/<cache>"'
+        type: string
+        default: ""
+      auto-merge:
+        description: dependabot.auto-merge
+        type: boolean
+        default: true
+      merge-method:
+        description: the first of repo-policy.merge-methods
+        type: string
+        default: squash
+      relock-cron:
+        description: ci.schedules.deps-relock; "" for no weekly relock
+        type: string
+        default: "0 8 * * 1"
+      frappe-nix-override:
+        description: frappe-nix's self-test only (a path in the workspace)
+        type: string
+        default: ""
+    secrets:
+      NIX_CACHE_TOKEN:
+        required: false
+      NIX_CACHE_READ_TOKEN:
+        required: false
+      FETCH_TOKEN:
+        required: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  relock-plan:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # the checkout; this job runs the PR's code and holds no write token
+    outputs:
+      state: ${{ steps.inputs.outputs.state }}
+      moved: ${{ steps.inputs.outputs.moved }}
+      empty: ${{ steps.patch.outputs.empty }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      - id: inputs
+        name: Does the PR move frappe-nix or the standards profile?
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: frappe-nix ci relock-inputs --base "$BASE_SHA"
+
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
+      # push or schedule on the integration branch ever sees the write token.
+      - id: cache
+        name: Binary cache and private sources
+        env:
+          CACHE: ${{ inputs.nix-cache }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CACHE" in
+            "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
+            cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
+            attic:*/*)
+              rest="${CACHE#attic:}"
+              echo "kind=attic" >> "$GITHUB_OUTPUT"
+              echo "endpoint=${rest%/*}" >> "$GITHUB_OUTPUT"
+              echo "name=${rest##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
+          esac
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            # frappe-nix's self-test: every nix call uses this checkout of frappe-nix.
+            echo "NIX_OVERRIDE=--override-input frappe-nix path:$GITHUB_WORKSPACE/$OVERRIDE" >> "$GITHUB_ENV"
+          else
+            echo "NIX_OVERRIDE=" >> "$GITHUB_ENV"
+          fi
+
+      - if: steps.cache.outputs.kind == 'cachix'
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ steps.cache.outputs.name }}
+          authToken: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          skipPush: true
+
+      - if: steps.cache.outputs.kind == 'attic'
+        name: attic
+        env:
+          TOKEN: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
+          attic use "ci:$NAME"
+
+      - if: steps.inputs.outputs.state == 'ok'
+        name: Relock and sync
+        env:
+          FRAPPE_NIX_CI: "1"
+        run: |
+          set -euo pipefail
+          read -ra override <<< "$NIX_OVERRIDE"
+          nix run --no-pure-eval "${override[@]}" .#relock
+          nix develop --no-pure-eval "${override[@]}" -c frappe-init --sync --skip-lock
+          if ! git diff --quiet HEAD -- pyproject.toml; then
+            nix run --no-pure-eval "${override[@]}" .#relock
+          fi
+
+      - if: steps.inputs.outputs.state == 'ok'
+        id: patch
+        run: frappe-nix ci relock-patch --out "$RUNNER_TEMP/relock.patch"
+
+      - if: steps.patch.outputs.empty == 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: relock-patch
+          path: ${{ runner.temp }}/relock.patch
+
+  relock-push:
+    needs: relock-plan
+    if: needs.relock-plan.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the relock commit to the Dependabot branch
+      actions: write # dispatch ci.yml and pr-policy.yml on it
+      pull-requests: write # enable auto-merge, or label needs-review
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relock-patch
+          path: ${{ runner.temp }}/relock
+
+      - name: Apply the relock patch (nothing else runs)
+        run: |
+          set -euo pipefail
+          git apply --index "$RUNNER_TEMP/relock/relock.patch"
+          if git diff --cached --name-only | grep -E '(^|/)\.github/workflows/'; then
+            echo "::error::relock would change a workflow; run frappe-nix repo rollout"
+            exit 1
+          fi
+
+      - name: Commit and push to the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "chore(deps): relock and sync after flake bump [dependabot skip]"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$HEAD_REF"
+
+      - name: CI on the new head (a GITHUB_TOKEN push raises no event)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"
+          if gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/pr-policy.yml?ref=$HEAD_REF" > /dev/null 2>&1; then
+            gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"
+          fi
+
+      - if: inputs.auto-merge
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - if: inputs.auto-merge
+        name: Base checkout, for the gates the integration branch requires
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          path: .base
+          persist-credentials: false
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - if: inputs.auto-merge
+        name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        working-directory: .base
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      - if: inputs.auto-merge
+        name: Auto-merge, where required checks protect the integration branch
+        working-directory: .base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          METHOD: ${{ inputs.merge-method }}
+        run: frappe-nix ci enable-automerge --pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
+
+  auto-merge:
+    needs: relock-plan
+    if: always() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && inputs.auto-merge && (needs.relock-plan.result == 'success' || needs.relock-plan.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # gh pr merge --auto
+      pull-requests: write # enable auto-merge, label or close the PR
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ github.token }}
+
+      # The integration branch, never the PR: its configuration says which gates are required.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      - name: The decision table
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          METHOD: ${{ inputs.merge-method }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+          NAMES: ${{ steps.meta.outputs.dependency-names }}
+          DIRECTORY: ${{ steps.meta.outputs.directory }}
+          RELOCK_STATE: ${{ needs.relock-plan.outputs.state }}
+          RELOCK_EMPTY: ${{ needs.relock-plan.outputs.empty }}
+          MOVED: ${{ needs.relock-plan.outputs.moved }}
+        run: |
+          set -euo pipefail
+          args=(--pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
+            --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE" --dependency-group "$GROUP"
+            --dependency-names "$NAMES" --directory "$DIRECTORY"
+            --frappe-nix-repo "$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)")
+          if [ "$(frappe-nix config modules.docs-site)" = true ]; then
+            args+=(--docs-patterns "$(frappe-nix config docs-site.action-patterns --json)")
+          fi
+          if [ "$ECOSYSTEM" = nix ]; then
+            if [ "$RELOCK_STATE" = rollout-input-moved ]; then
+              args+=(--relock rollout-input-moved --moved "$MOVED")
+            elif [ "$RELOCK_EMPTY" = true ]; then
+              args+=(--relock empty)
+            else
+              args+=(--relock patch)
+            fi
+          fi
+          frappe-nix ci automerge "${args[@]}"
+
+  sweep:
+    if: (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, and which workflows exist on each PR head
+      actions: write # gh workflow run
+      checks: read # which ci / * checks ran on each head
+      pull-requests: read # the open bot PRs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      - name: Re-dispatch CI for bot PRs without ci / * runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: frappe-nix ci sweep --repo "$GITHUB_REPOSITORY"
+
+  relock-upgrade:
+    if: (inputs.relock-cron != '' && github.event.schedule == inputs.relock-cron) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # push standards/relock-python
+      pull-requests: write # open or update its PR, enable auto-merge
+      actions: write # dispatch ci.yml and pr-policy.yml on it
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      # A schedule, but it resolves new third-party packages: the read token only.
+      - name: Free disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
+      # push or schedule on the integration branch ever sees the write token.
+      - id: cache
+        name: Binary cache and private sources
+        env:
+          CACHE: ${{ inputs.nix-cache }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CACHE" in
+            "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
+            cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
+            attic:*/*)
+              rest="${CACHE#attic:}"
+              echo "kind=attic" >> "$GITHUB_OUTPUT"
+              echo "endpoint=${rest%/*}" >> "$GITHUB_OUTPUT"
+              echo "name=${rest##*/}" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
+          esac
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            # frappe-nix's self-test: every nix call uses this checkout of frappe-nix.
+            echo "NIX_OVERRIDE=--override-input frappe-nix path:$GITHUB_WORKSPACE/$OVERRIDE" >> "$GITHUB_ENV"
+          else
+            echo "NIX_OVERRIDE=" >> "$GITHUB_ENV"
+          fi
+
+      - if: steps.cache.outputs.kind == 'cachix'
+        uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: ${{ steps.cache.outputs.name }}
+          authToken: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          skipPush: true
+
+      - if: steps.cache.outputs.kind == 'attic'
+        name: attic
+        env:
+          TOKEN: ${{ secrets.NIX_CACHE_READ_TOKEN }}
+          ENDPOINT: ${{ steps.cache.outputs.endpoint }}
+          NAME: ${{ steps.cache.outputs.name }}
+        run: |
+          set -euo pipefail
+          nix profile install --inputs-from . nixpkgs#attic-client
+          attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
+          attic use "ci:$NAME"
+
+      - name: Relock Python with upgrades
+        run: |
+          set -euo pipefail
+          read -ra override <<< "$NIX_OVERRIDE"
+          nix run --no-pure-eval "${override[@]}" .#relock -- --upgrade
+
+      - name: Commit, push and open the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          AUTO_MERGE: ${{ inputs.auto-merge }}
+          METHOD: ${{ inputs.merge-method }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to relock."
+            exit 0
+          fi
+          frappe-nix ci refuse-workflows --cached
+          branch=standards/relock-python
+          git switch -c "$branch"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "chore(deps): relock python"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
+          url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+          if [ -z "$url" ]; then
+            url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$INTEGRATION" --head "$branch" \
+              --title "chore(deps): relock python" \
+              --body "The weekly \`nix run .#relock -- --upgrade\` of nix/uv.lock, opened by the deps workflow.")"
+          fi
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          if [ -f .github/workflows/pr-policy.yml ]; then
+            gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          fi
+          if [ "$AUTO_MERGE" = true ]; then
+            frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD"
+          fi

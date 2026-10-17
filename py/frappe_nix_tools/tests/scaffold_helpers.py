@@ -128,6 +128,8 @@ class AppCase(unittest.TestCase):
 	required: ClassVar[list[str]] = []
 	extra_pyproject = ""
 	profile = "recommended"
+	# Whether the app starts with a flake.lock (the bootstrap tests start without one).
+	lock_at_setup = True
 
 	def setUp(self) -> None:
 		self._tmp = tempfile.TemporaryDirectory()
@@ -146,6 +148,10 @@ class AppCase(unittest.TestCase):
 		self.write("demo_app/__init__.py", INIT)
 		self.write("demo_app/hooks.py", HOOKS.format(required=json.dumps(self.required)))
 		self.write("demo_app/modules.txt", "Demo App\n")
+		# Phase A's lock exists before phase B renders the caller workflows from its frappe-nix
+		# revision (spec S32, §4.7); an offline sync can't make it.
+		if self.lock_at_setup:
+			self.write("flake.lock", json.dumps(flake_lock(["frappe", *self.required])))
 		self.commit()
 
 	def tearDown(self) -> None:
@@ -205,6 +211,9 @@ class AppCase(unittest.TestCase):
 
 	def synced(self) -> None:
 		"""Sync, add the locks offline sync can't make, and commit: a clean starting point."""
+		if not (self.root / "flake.lock").exists():
+			# The lock phase A makes before phase B renders the callers from it (S32, §4.7).
+			self.write("flake.lock", json.dumps(flake_lock(["frappe", *self.required])))
 		code, _, err = self.fn("sync", "--write")
 		self.assertEqual(code, 0, err)
 		self.fake_locks()

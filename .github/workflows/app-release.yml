@@ -1,0 +1,254 @@
+name: app-release
+
+# Releases without an App (docs/app-standards/ci.md, spec §4.4, S13), reusable. release-please
+# runs with GITHUB_TOKEN on the integration branch; `dispatch-ci` runs ci.yml and pr-policy.yml
+# on its release PR (a GITHUB_TOKEN push raises no event); `fast-forward` moves the release
+# branch to the new tag by a REST PATCH and checks it (D8); `publish` opens the registry PR.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      integration-branch:
+        type: string
+        default: develop
+      release-branch:
+        description: branches.release ("version-16"), or "" under main+tags
+        type: string
+        default: ""
+      publish:
+        description: listing.publish, and the repository variable MARKETPLACE_PUBLISH is "true"
+        type: boolean
+        default: false
+      pilot-assets:
+        type: boolean
+        default: false
+      registry-fork:
+        description: listing.registry-fork; required when publish is true
+        type: string
+        default: ""
+      frappe-nix-override:
+        description: frappe-nix's self-test only (a path in the workspace)
+        type: string
+        default: ""
+    secrets:
+      REGISTRY_TOKEN:
+        required: false
+      FETCH_TOKEN:
+        required: false
+    outputs:
+      released:
+        value: ${{ jobs.release-please.outputs.releases_created }}
+      tag:
+        value: ${{ jobs.release-please.outputs.tag_name }}
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  release-please:
+    if: github.ref == format('refs/heads/{0}', inputs.integration-branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags and releases
+      pull-requests: write # the release PR
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+      sha: ${{ steps.rp.outputs.sha }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        continue-on-error: true
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: ${{ inputs.integration-branch }}
+
+      - if: steps.rp.outcome == 'failure'
+        run: |
+          echo "::error::release-please failed. If the log says GitHub Actions is not permitted to create pull requests, allow it under Settings > Actions > General > Workflow permissions (can_approve_pull_request_reviews); \`frappe-nix repo doctor\` lists every setting the release flow needs."
+          exit 1
+
+  dispatch-ci:
+    needs: release-please
+    if: always() && needs.release-please.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout, for the frappe-nix-tools revision
+      actions: write # gh workflow run
+      checks: read # which ci / * checks already ran on the release PR head
+      pull-requests: read # the open release PR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run CI on the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+        run: |
+          set -euo pipefail
+          package="$(jq -r '.packages["."]["package-name"] // ""' release-please-config.json)"
+          frappe-nix ci dispatch-ci --repo "$REPO" --integration "$INTEGRATION" --package "$package"
+
+  fast-forward:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # move the release branch (the ruleset's bypass actor is GitHub Actions)
+      actions: write # dispatch assets.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fast-forward the release branch to the new tag, and check it (D8)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VB: ${{ inputs.release-branch }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          PILOT_ASSETS: ${{ inputs.pilot-assets }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$REPO" --release-branch "$VB" --sha "$SHA" --tag "$TAG")
+          if [ "$PILOT_ASSETS" = true ]; then
+            args+=(--pilot-assets)
+          fi
+          frappe-nix ci fast-forward "${args[@]}"
+
+  assets-on-tag:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch == '' && inputs.pilot-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write # dispatch assets.yml
+    steps:
+      - name: pilot's assets for the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh workflow run assets.yml --repo "$REPO" --ref "$TAG"
+
+  publish:
+    needs: [release-please, fast-forward]
+    if: always() && inputs.publish && needs.release-please.outputs.releases_created == 'true' && (needs.fast-forward.result == 'success' || (inputs.release-branch == '' && needs.fast-forward.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # append the registry PR to the release notes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: The registry pull request
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          FORK: ${{ inputs.registry-fork }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          VB: ${{ inputs.release-branch }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$REGISTRY_TOKEN" ]; then
+            echo "::error::publish is on, but the REGISTRY_TOKEN secret is empty"
+            exit 1
+          fi
+          if [ -z "$FORK" ]; then
+            echo "::error::publish is on, but listing.registry-fork is empty"
+            exit 1
+          fi
+          out="$(GH_TOKEN="$REGISTRY_TOKEN" frappe-nix listing registry --yes --tag "$TAG" --branch "${VB:-$INTEGRATION}" --fork "$FORK")"
+          echo "$out"
+          url="$(grep -Eo 'https://github\.com/[^ ]+/pull/[0-9]+' <<<"$out" | tail -n 1 || true)"
+          if [ -n "$url" ]; then
+            notes="$(gh release view "$TAG" --repo "$REPO" --json body --jq .body)"
+            printf '%s\n\nMarketplace: %s\n' "$notes" "$url" > "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --repo "$REPO" --notes-file "$RUNNER_TEMP/notes.md"
+          fi

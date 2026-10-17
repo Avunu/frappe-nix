@@ -54,6 +54,8 @@ def main_locked(apps: list[str]) -> dict:
 class FakeNix(AppCase):
 	"""An app with a fake ``nix`` (and ``git``, nothing else) on PATH, online."""
 
+	lock_at_setup = False
+
 	def setUp(self) -> None:
 		super().setUp()
 		os.environ.pop("FRAPPE_NIX_OFFLINE", None)

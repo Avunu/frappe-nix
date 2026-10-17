@@ -1,0 +1,109 @@
+name: app-marketplace
+
+# The `marketplace` gate (docs/app-standards/ci.md, spec §4.2), reusable: the caller job is
+# named `ci`, so the check reads `ci / marketplace`. Setup only; the steps are
+# `frappe-nix gate marketplace` (S43): `frappe-nix listing check`, L1 to L12.
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      app-root:
+        type: string
+        default: "."
+      integration-branch:
+        type: string
+        default: develop
+      frappe-nix-override:
+        description: frappe-nix's self-test only (a path in the workspace)
+        type: string
+        default: ""
+    secrets:
+      FETCH_TOKEN:
+        required: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+  # The tools/ project's Python: uv would take its newest, which semgrep 1.179.0 crashes on.
+  UV_PYTHON: "3.14"
+
+jobs:
+  marketplace:
+    name: marketplace
+    if: ${{ !startsWith(github.ref, 'refs/heads/version-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # the checkout
+      pull-requests: read # the dispatch guard looks up the open PR
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app-root }}
+    steps:
+      - name: Dispatch guard (a dispatched run must be on the PR head)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          head="$(gh pr list --repo "$REPO" --head "$REF_NAME" --state open --json headRefOid --jq '.[0].headRefOid // ""')"
+          if [ -n "$head" ] && [ "$head" != "$SHA" ]; then
+            echo "::error::stale dispatch: $REF_NAME is at $head, this run is for $SHA"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # mysqlclient has no Linux wheel, and the get-app validation bench installs frappe from source.
+      - run: sudo apt-get install -y --no-install-recommends pkg-config libmysqlclient-dev
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ inputs.app-root }}/flake.lock
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: frappe-nix gate marketplace
+        env:
+          EIO_BACKEND: posix
+        run: frappe-nix gate marketplace --format github
+
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: marketplace-report
+          path: |
+            ${{ inputs.app-root }}/.dev-dist/marketplace/
+            ${{ inputs.app-root }}/.dev-dist/gate/
+          if-no-files-found: ignore

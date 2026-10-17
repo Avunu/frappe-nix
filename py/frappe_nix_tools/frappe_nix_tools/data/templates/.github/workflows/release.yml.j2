@@ -1,0 +1,56 @@
+# Releases without an App (docs: ci.md, S13): release-please, CI on the release PR, the
+# fast-forward of the release branch (develop+version) and, when enabled, the registry PR.
+{% set publish = modules.listing and cfg.listing.publish %}
+{# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
+   lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
+{% macro uses(workflow) %}
+{% set at = frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" %}
+{% if frappe_nix.rev %}
+{{ at ~ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+{%- else %}
+{% set kept = pin(at ~ workflow, "", "v" ~ frappe_nix.version) %}
+{% if "@ #" in kept %}
+{% set kept = pin(at ~ "app-lint.yml", "", "v" ~ frappe_nix.version).replace("app-lint.yml", workflow) %}
+{% endif %}
+{{ kept }}
+{%- endif %}
+{% endmacro %}
+name: release
+on:
+  push:
+    branches: [{{ branches.integration }}]
+{% if cfg.ci.schedules.release %}
+  schedule:
+    # Auto-merged commits raise no push.
+    - cron: "{{ cfg.ci.schedules.release }}"
+{% endif %}
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
+    uses: {{ uses("app-release.yml") }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+      release-branch: "{{ branches.release or "" }}"
+{% if publish %}
+      publish: {% raw %}${{ vars.MARKETPLACE_PUBLISH == 'true' }}{% endraw %}
+
+      registry-fork: {{ cfg.listing["registry-fork"] }}
+{% endif %}
+      pilot-assets: {{ "true" if modules["pilot-assets"] else "false" }}
+    secrets:
+{% if publish %}
+      REGISTRY_TOKEN: {% raw %}${{ secrets.REGISTRY_TOKEN }}{% endraw %}
+
+{% endif %}
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+

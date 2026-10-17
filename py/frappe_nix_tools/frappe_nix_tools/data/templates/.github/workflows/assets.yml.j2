@@ -1,0 +1,16 @@
+# pilot's release assets (docs: ci.md, S14), dispatched by the release workflow on the release
+# branch after its fast-forward, or on the new tag under main+tags. The pilot pin is a floor dependabot moves.
+name: assets
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  assets:
+{% if branches.release %}
+    if: startsWith(github.ref, 'refs/heads/version-')
+{% else %}
+    if: startsWith(github.ref, 'refs/tags/{{ cfg.releases["tag-prefix"] }}')
+{% endif %}
+    permissions:
+      contents: write
+    uses: {{ pin("frappe/pilot/.github/workflows/app-assets.yml", "e2364936eb0a4f89a5309d22fb198056f14ff86a", "develop") }}
