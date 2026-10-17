@@ -6,7 +6,8 @@ release-please) and bot PRs (Dependabot, relock, screenshots) get their checks b
 - ``ensure_ci`` checks each required context on the head SHA on its own: when ``ci / lint``
   is absent it dispatches ``ci.yml``, when ``ci / pr-policy`` is absent (and ``pr-policy.yml``
   exists there) ``pr-policy.yml``. A dispatch that failed or a concurrency group cancelled is
-  therefore retried by the next run;
+  therefore retried by the next run. ``contexts`` replaces those pairs (frappe-nix's own release
+  flow: ``lint`` → ``check.yml``, ``pr-policy`` → ``pr-policy.yml``, §4.10);
 - ``dispatch_ci`` does that for the open release PR (``autorelease: pending``), accepting only
   release-please's own branch names;
 - ``sweep`` does it for every open PR whose author is Dependabot or GitHub Actions;
@@ -14,7 +15,8 @@ release-please) and bot PRs (Dependabot, relock, screenshots) get their checks b
   creates it on the first release), which GitHub refuses unless it is a fast-forward, then
   reads it back and fails unless it equals the tag this run created, peeled (the D8 guard).
   Under ``frappe-major`` the tag must also start with ``<tag-prefix><major>.``; that is checked
-  before anything is written.
+  before anything is written. ``dry_run`` prints the REST calls instead of making them and
+  checks the commit the write would leave (``sha``) against the tag.
 """
 
 import json
@@ -44,10 +46,12 @@ def _workflow_exists(repo: str, workflow: str, sha: str) -> bool:
 	return github.get_or_none(f"repos/{repo}/contents/.github/workflows/{workflow}?ref={sha}") is not None
 
 
-def ensure_ci(repo: str, ref: str, sha: str) -> list[str]:
+def ensure_ci(
+	repo: str, ref: str, sha: str, contexts: tuple[tuple[str, str], ...] = CI_CONTEXTS
+) -> list[str]:
 	"""Dispatch each workflow whose context is absent on ``sha``; returns what was dispatched."""
 	out = []
-	for context, workflow in CI_CONTEXTS:
+	for context, workflow in contexts:
 		if _has_check(repo, sha, context):
 			continue
 		if not _workflow_exists(repo, workflow, sha):
@@ -68,7 +72,9 @@ def _pr_list(*args: str) -> list[dict]:
 	return json.loads(res.stdout or "[]")
 
 
-def dispatch_ci(repo: str, integration: str, package: str = "") -> list[str]:
+def dispatch_ci(
+	repo: str, integration: str, package: str = "", contexts: tuple[tuple[str, str], ...] = CI_CONTEXTS
+) -> list[str]:
 	prs = _pr_list(
 		"--repo", repo, "--base", integration, "--label", "autorelease: pending", "--state", "open",
 		"--json", "number,headRefName,headRefOid",
@@ -81,7 +87,7 @@ def dispatch_ci(repo: str, integration: str, package: str = "") -> list[str]:
 			print(f"skipping #{pr.get('number')}: {pr.get('headRefName')} is not release-please's branch")
 			continue
 		found = True
-		out += ensure_ci(repo, pr["headRefName"], pr["headRefOid"])
+		out += ensure_ci(repo, pr["headRefName"], pr["headRefOid"], contexts)
 	if not found:
 		print("no open release PR")
 	return out
@@ -150,7 +156,10 @@ class FastForward:
 			self._write(
 				"POST", f"repos/{self.repo}/git/refs", {"ref": f"refs/heads/{self.branch}", "sha": self.sha}
 			)
-		head = ((github.get_or_none(endpoint) or {}).get("object") or {}).get("sha", "")
+		if self.dry_run:
+			head = self.sha  # what the write would leave
+		else:
+			head = ((github.get_or_none(endpoint) or {}).get("object") or {}).get("sha", "")
 		tagged = self.peeled(self.tag)
 		if not head or head != tagged:
 			error(

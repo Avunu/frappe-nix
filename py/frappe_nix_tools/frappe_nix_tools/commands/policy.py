@@ -21,7 +21,9 @@ and base replace the empty ``PR_TITLE`` and ``BASE_REF``. No PR passes. Then:
 4. on a ``release-please--*`` branch: ``frappe-nix compat``.
 
 ``--major-free`` (frappe-nix itself, §4.10, which has no ``[tool.frappe-nix]``) drops the
-major rules and check 4 and takes the integration branch from ``--base-branch``.
+``Release-As`` major rule and check 4, keeps the refusal of ``!`` and ``BREAKING CHANGE`` (a
+frappe-nix major is a deliberate ``Release-As: <N>.0.0`` footer, §6.3), and takes the
+integration branch from ``--base-branch``.
 
 Exit 0 or 1; 2 for a bad argument.
 """
@@ -50,26 +52,33 @@ class Rules:
 	"""What the resolved configuration says the policy checks."""
 
 	major: int | None = None  # set under version-scheme = "frappe-major"
+	no_bang: bool = False  # frappe-nix itself (--major-free): `!` and BREAKING CHANGE refused
 	integration: str = "main"
 	allow_stacked: bool = True
 	allowed_bases: list[str] = field(default_factory=list)
 	compat: bool = False
 
 
-def message_problems(text: str, major: int | None) -> list[str]:
-	"""The major rules (S12) a commit message or PR title breaks; none without a major."""
-	if major is None:
+def message_problems(text: str, major: int | None, *, no_bang: bool = False) -> list[str]:
+	"""The major rules (S12) a commit message or PR title breaks: none without a major, except
+	that ``no_bang`` (frappe-nix itself) refuses ``!`` and ``BREAKING CHANGE`` on their own."""
+	if major is None and not no_bang:
 		return []
 	lines = [line for line in text.splitlines() if not line.startswith("#")]
 	subject = next((line for line in lines if line.strip()), "")
 	body = "\n".join(lines)
+	why = (
+		f"the major is the Frappe major ({major})"
+		if major is not None
+		else "a frappe-nix major is made only with a `Release-As: <N>.0.0` footer"
+	)
 	out = []
 	if _BANG.match(subject):
-		out.append(f"{subject!r}: `!` marks a major bump, and the major is the Frappe major ({major})")
+		out.append(f"{subject!r}: `!` marks a major bump, and {why}")
 	if _BREAKING.search(body):
-		out.append(
-			f"a BREAKING CHANGE footer marks a major bump, and the major is the Frappe major ({major})"
-		)
+		out.append(f"a BREAKING CHANGE footer marks a major bump, and {why}")
+	if major is None:
+		return out
 	for m in _RELEASE_AS.finditer(body):
 		if int(m[1]) != major:
 			out.append(f"Release-As: {m[0].split(':', 1)[1].strip()} — its major must be {major}")
@@ -79,7 +88,7 @@ def message_problems(text: str, major: int | None) -> list[str]:
 def rules_for(root: Path, *, major_free: bool, base_branch: str) -> Rules:
 	"""The rules for the app at ``root``; with ``major_free``, frappe-nix's own (no table)."""
 	if major_free:
-		return Rules(integration=base_branch)
+		return Rules(integration=base_branch, no_bang=True)
 	resolved = config.resolve(root / "pyproject.toml")
 	cfg, modules = resolved.cfg, resolved.modules
 	major = None
@@ -168,7 +177,7 @@ def commit_problems(root: Path, base: str, head: str, rules: Rules) -> list[str]
 		if not ok:
 			out.append(f"commit {sha[:12]}: committed: {msg}")
 		text = repo.git(root, "log", "-1", "--format=%B", sha)
-		out += [f"commit {sha[:12]}: {p}" for p in message_problems(text, rules.major)]
+		out += [f"commit {sha[:12]}: {p}" for p in message_problems(text, rules.major, no_bang=rules.no_bang)]
 	return out
 
 
@@ -184,7 +193,7 @@ def title_problems(root: Path, title: str, rules: Rules) -> list[str]:
 		os.unlink(name)
 	if not ok:
 		out.append(f"title: committed: {msg}")
-	out += [f"title: {p}" for p in message_problems(title, rules.major)]
+	out += [f"title: {p}" for p in message_problems(title, rules.major, no_bang=rules.no_bang)]
 	return out
 
 
@@ -248,7 +257,7 @@ def run(args: argparse.Namespace) -> int:
 			rules = rules_for(root, major_free=args.major_free, base_branch=args.base_branch)
 		except config.NotOptedIn:
 			return CLEAN
-		found = message_problems(Path(args.commit_msg_file).read_text(), rules.major)
+		found = message_problems(Path(args.commit_msg_file).read_text(), rules.major, no_bang=rules.no_bang)
 	elif args.pr:
 		rules = rules_for(root, major_free=args.major_free, base_branch=args.base_branch)
 		found = check_pr(root, rules, dict(os.environ))
@@ -272,7 +281,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 	mode.add_argument("--commit-msg-file", metavar="F", help="check one commit message (the commit-msg hook)")
 	mode.add_argument("--pr", action="store_true", help="check the pull request (CI)")
 	p.add_argument(
-		"--major-free", action="store_true", help="no major rules and no compat (frappe-nix itself)"
+		"--major-free",
+		action="store_true",
+		help="frappe-nix itself: no Release-As major rule and no compat; `!` still refused",
 	)
 	p.add_argument(
 		"--base-branch", default="main", help="the integration branch with --major-free (default: main)"

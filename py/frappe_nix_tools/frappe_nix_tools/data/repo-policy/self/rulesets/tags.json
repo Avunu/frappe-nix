@@ -1,0 +1,12 @@
+{
+	"name": "v* tags",
+	"target": "tag",
+	"enforcement": "active",
+	"conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+	"bypass_actors": [],
+	"rules": [
+		{ "type": "deletion" },
+		{ "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
+		{ "type": "non_fast_forward" }
+	]
+}

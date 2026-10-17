@@ -1,5 +1,9 @@
 version: 2
 
+# Commit prefixes (docs/app-standards/versioning.md, spec §6.3): `fix(deps)` for what apps
+# run (nix, github-actions, pre-commit), so each such bump ships as a frappe-nix patch
+# release; `chore(deps)` for frappe-nix's own dev environment, which releases nothing.
+#
 # Keeps this repo's dependencies up to date. PRs auto-merge once the required checks go
 # green — see .github/workflows/dependabot-auto-merge.yml.
 #
@@ -24,7 +28,7 @@ updates:
     schedule:
       interval: weekly
     commit-message:
-      prefix: chore
+      prefix: "fix(deps)"
     groups:
       nix:
         patterns: ["*"]
@@ -39,7 +43,8 @@ updates:
     schedule:
       interval: weekly
     commit-message:
-      prefix: chore
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps)"
     ignore:
       - dependency-name: frappe
       - dependency-name: ruff
@@ -58,7 +63,7 @@ updates:
     schedule:
       interval: weekly
     commit-message:
-      prefix: chore
+      prefix: "fix(deps)"
     ignore:
       - dependency-name: https://github.com/astral-sh/ruff-pre-commit
     groups:
@@ -71,7 +76,7 @@ updates:
     schedule:
       interval: daily
     commit-message:
-      prefix: chore
+      prefix: "fix(deps)"
     groups:
       github-actions:
         patterns: ["*"]

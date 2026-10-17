@@ -199,20 +199,41 @@ class TestDispatch(PolicyCase):
 
 
 class TestMajorFree(PolicyCase):
-	def test_major_free_uses_base_branch(self) -> None:
+	"""frappe-nix's own pr-policy (spec §4.10, §5.9, §6.3)."""
+
+	def setUp(self) -> None:
+		super().setUp()
 		git(self.root, "branch", "main")
-		sha = self.branch("feature", "feat!: allowed here")
-		code, _o, err = self.pr("main", "feat!: allowed", sha)
-		# Without --major-free the app's integration branch is develop.
-		self.assertEqual(code, 1, err)
-		values = {
-			"EVENT_NAME": "pull_request",
-			"BASE_REF": "main",
-			"PR_TITLE": "feat!: allowed",
-			"HEAD_SHA": sha,
-		}
+
+	def major_free(self, title: str, sha: str) -> tuple[int, str, str]:
+		values = {"EVENT_NAME": "pull_request", "BASE_REF": "main", "PR_TITLE": title, "HEAD_SHA": sha}
 		with mock.patch.dict(os.environ, values):
-			self.assertEqual(self.fn("policy", "--pr", "--major-free")[0], 0)
+			return self.fn("policy", "--pr", "--major-free")
+
+	def test_major_free_uses_base_branch(self) -> None:
+		sha = self.branch("feature", "feat: fine")
+		# Without --major-free the app's integration branch is develop.
+		self.assertEqual(self.pr("main", "feat: fine", sha)[0], 1)
+		code, out, err = self.major_free("feat: fine", sha)
+		self.assertEqual(code, 0, out + err)
+
+	def test_bang_title_fails(self) -> None:
+		sha = self.branch("feature", "feat: fine")
+		code, _out, err = self.major_free("feat!: break it", sha)
+		self.assertEqual(code, 1)
+		self.assertIn("Release-As", err)
+
+	def test_bang_commit_and_breaking_footer_fail(self) -> None:
+		sha = self.branch("feature", "fix(api)!: break it")
+		self.assertEqual(self.major_free("fix: fine", sha)[0], 1)
+		git(self.root, "checkout", "-q", "main")
+		sha = self.branch("other", "fix: x\n\nBREAKING CHANGE: y")
+		self.assertEqual(self.major_free("fix: x", sha)[0], 1)
+
+	def test_release_as_any_major_passes(self) -> None:
+		sha = self.branch("feature", "feat: first release\n\nRelease-As: 1.0.0")
+		self.assertEqual(self.major_free("feat: first release", sha)[0], 0)
+		self.assertEqual(policy.message_problems("chore: x\n\nRelease-As: 2.0.0", None, no_bang=True), [])
 
 
 if __name__ == "__main__":

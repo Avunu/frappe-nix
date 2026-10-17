@@ -4,12 +4,15 @@
 # build every check here depends on. What needs GitHub or the network (the gates themselves,
 # their check-run names, the mini-bench's sparse clones) is .github/workflows/selftest-ci.yml.
 #
-#   standards-ci-workflows  actionlint (with shellcheck) on frappe-nix's .github/workflows,
-#                           and zizmor (strict hash-pin, the zizmor.yml apps get) on the
-#                           reusable app-*.yml, fleet-audit.yml and selftest-ci.yml; the
-#                           fixture's callers rendered under recommended, example-org and the
-#                           gate matrix (tests/standards/ci_render.py) through both; and
-#                           fleet-audit.yml is triggered by workflow_call only
+#   standards-ci-workflows  actionlint (with shellcheck) and zizmor (strict hash-pin, the
+#                           zizmor.yml apps get) on every one of frappe-nix's
+#                           .github/workflows (N6: every `uses:` SHA-pinned); the fixture's
+#                           callers rendered under recommended, example-org and the gate matrix
+#                           (tests/standards/ci_render.py) through both; fleet-audit.yml is
+#                           triggered by workflow_call only; and frappe-nix's own release
+#                           wiring (§4.10, §7 N6): pr-policy.yml has one job, `pr-policy`, and
+#                           re-runs on a retitle that check.yml ignores; check.yml's VM tests
+#                           run on a dispatch only with `vm-tests: true`
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -60,13 +63,38 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         cd repo
         git init -q
         actionlint
-        zizmor --offline --config "$config" .github/workflows/app-*.yml \
-          .github/workflows/fleet-audit.yml .github/workflows/selftest-ci.yml
+        zizmor --offline --config "$config" .github/workflows
         python - <<'EOF'
         import yaml
-        doc = yaml.safe_load(open(".github/workflows/fleet-audit.yml"))
-        triggers = doc.get("on", doc.get(True))
+
+        def load(name):
+            doc = yaml.safe_load(open(f".github/workflows/{name}"))
+            return doc, doc.get("on", doc.get(True))
+
+        _, triggers = load("fleet-audit.yml")
         assert list(triggers) == ["workflow_call"], list(triggers)
+
+        doc, triggers = load("pr-policy.yml")
+        assert list(doc["jobs"]) == ["pr-policy"], list(doc["jobs"])
+        job = doc["jobs"]["pr-policy"]
+        assert job["name"] == "pr-policy" and "uses" not in job, job
+        assert "edited" in triggers["pull_request"]["types"], triggers
+        run = " ".join(step.get("run", "") for step in job["steps"])
+        assert "uv tool install --python 3.14 ./py/frappe_nix_tools" in run, run
+        assert "frappe-nix policy --pr --major-free" in run, run
+
+        doc, triggers = load("check.yml")
+        pull = triggers["pull_request"] or {}
+        assert "edited" not in pull.get("types", []), pull
+        dispatch = triggers["workflow_dispatch"]["inputs"]["vm-tests"]
+        assert dispatch["type"] == "boolean" and dispatch["default"] is False, dispatch
+        gate = doc["jobs"]["vm-tests"]["if"]
+        assert gate == "github.event_name != 'workflow_dispatch' || inputs.vm-tests", gate
+        assert {"lint", "flake"} <= set(doc["jobs"]), list(doc["jobs"])
+
+        doc, _ = load("release.yml")
+        steps = " ".join(s.get("run", "") for s in doc["jobs"]["dispatch-ci"]["steps"])
+        assert "--context lint=check.yml --context pr-policy=pr-policy.yml" in steps, steps
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout

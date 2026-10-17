@@ -9,18 +9,20 @@ name: Dependabot auto-merge
 #   • Settings → Branches → protect `main`, require the "flake" status check
 on: pull_request
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    if: ${{ github.actor == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/github_actions/') }}
+    permissions:
+      contents: write # gh pr merge --auto
+      pull-requests: write # gh pr merge --auto
+    # The PR's author, not github.actor (which a re-run by a person changes).
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && !startsWith(github.head_ref, 'dependabot/github_actions/')
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v3
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 

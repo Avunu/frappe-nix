@@ -381,6 +381,35 @@ class TestDispatch(FakeCase):
 			runs, [("workflow", "run", "pr-policy.yml", "--repo", REPO, "--ref", prs[0]["headRefName"])]
 		)
 
+	def test_frappe_nix_own_contexts(self):
+		"""frappe-nix's release flow: `lint` from check.yml, `pr-policy` from pr-policy.yml (§4.10)."""
+		sha = "a" * 40
+		head = "release-please--branches--main--components--frappe-nix"
+		prs = [{"number": 9, "headRefName": head, "headRefOid": sha}]
+		routes = {
+			("GET", f"repos/{REPO}/commits/{sha}/check-runs?check_name=lint"): {"total_count": 0},
+			("GET", f"repos/{REPO}/commits/{sha}/check-runs?check_name=pr-policy"): {"total_count": 1},
+			("GET", f"repos/{REPO}/contents/.github/workflows/check.yml?ref={sha}"): {"name": "check.yml"},
+			("GET", f"repos/{REPO}/contents/.github/workflows/pr-policy.yml?ref={sha}"): {
+				"name": "pr-policy.yml"
+			},
+		}
+		fake = self.use(Fake(routes, {("pr", "list"): Result(0, json.dumps(prs))}))
+		code, out, err = run_cli(
+			"ci", "dispatch-ci", "--repo", REPO, "--integration", "main", "--package", "frappe-nix",
+			"--context", "lint=check.yml", "--context", "pr-policy=pr-policy.yml",
+		)  # fmt: skip
+		self.assertEqual(code, 0, out + err)
+		runs = [c for c in fake.clis if c[:2] == ("workflow", "run")]
+		self.assertEqual(runs, [("workflow", "run", "check.yml", "--repo", REPO, "--ref", head)])
+
+	def test_bad_context_is_exit_2(self):
+		self.use(Fake())
+		code, _out, err = run_cli(
+			"ci", "dispatch-ci", "--repo", REPO, "--integration", "main", "--context", "lint"
+		)
+		self.assertEqual(code, 2, err)
+
 	def test_sweep_bots_only(self):
 		sha = "c" * 40
 		prs = [
@@ -432,7 +461,7 @@ class TestFastForward(FakeCase):
 	def test_semver_read_back_differs(self):
 		self.use(Fake(self.routes("0" * 40)))
 		with mock.patch("builtins.print") as p:
-			self.assertEqual(self.ff(dry_run=True).run(), 1)
+			self.assertEqual(self.ff().run(), 1)
 		self.assertIn("::error::", " ".join(str(a) for call in p.call_args_list for a in call.args))
 
 	def test_frappe_major_refuses_v1(self):
@@ -466,6 +495,46 @@ class TestFastForward(FakeCase):
 			self.assertEqual(self.ff(pilot_assets=True).run(), 0)
 		self.assertEqual([w[:2] for w in fake.writes()], [("POST", f"repos/{REPO}/git/refs")])
 		self.assertIn(("workflow", "run", "assets.yml", "--repo", REPO, "--ref", "version-16"), fake.clis)
+
+	def test_dry_run_refuses_a_commit_that_is_not_the_tag(self):
+		fake = self.use(Fake(self.routes(self.SHA, tag_at="0" * 40)))
+		with mock.patch("builtins.print"):
+			self.assertEqual(self.ff(dry_run=True).run(), 1)
+		self.assertEqual(fake.writes(), [])
+
+	def test_frappe_nix_first_release_dry_run(self):
+		"""frappe-nix's release.yml: release-1 does not exist yet, v1.0.0 creates it (§6.2, §7 N6)."""
+		routes = {
+			("GET", f"repos/{REPO}/git/ref/tags/v1.0.0"): {"object": {"type": "commit", "sha": self.SHA}},
+			("GET", f"repos/{REPO}/git/ref/heads/release-1"): 404,
+		}
+		fake = self.use(Fake(routes))
+		code, out, err = run_cli(
+			"ci", "fast-forward", "--repo", REPO, "--release-branch", "release-1", "--sha", self.SHA,
+			"--tag", "v1.0.0", "--version-scheme", "semver", "--tag-prefix", "v", "--dry-run",
+		)  # fmt: skip
+		self.assertEqual(code, 0, out + err)
+		self.assertEqual(fake.writes(), [])
+		self.assertIn(
+			f'dry run: POST repos/{REPO}/git/refs {{"ref": "refs/heads/release-1", "sha": "{self.SHA}"}}', out
+		)
+		self.assertIn(f"release-1 = v1.0.0 = {self.SHA}", out)
+
+	def test_frappe_nix_next_release_dry_run_patches(self):
+		routes = {
+			("GET", f"repos/{REPO}/git/ref/tags/v1.1.0"): {"object": {"type": "commit", "sha": self.SHA}},
+			("GET", f"repos/{REPO}/git/ref/heads/release-1"): {"object": {"sha": "1" * 40}},
+		}
+		self.use(Fake(routes))
+		code, out, err = run_cli(
+			"ci", "fast-forward", "--repo", REPO, "--release-branch", "release-1", "--sha", self.SHA,
+			"--tag", "v1.1.0", "--version-scheme", "semver", "--tag-prefix", "v", "--dry-run",
+		)  # fmt: skip
+		self.assertEqual(code, 0, out + err)
+		self.assertIn(
+			f'dry run: PATCH repos/{REPO}/git/refs/heads/release-1 {{"force": false, "sha": "{self.SHA}"}}',
+			out,
+		)
 
 	def test_cli(self):
 		self.use(Fake(self.routes(self.SHA)))

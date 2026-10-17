@@ -1,0 +1,13 @@
+{
+	"name": "release-* (release automation only)",
+	"target": "branch",
+	"enforcement": "active",
+	"conditions": { "ref_name": { "include": ["refs/heads/release-*"], "exclude": [] } },
+	"bypass_actors": [{ "actor_type": "Integration", "actor_id": 15368, "bypass_mode": "always" }],
+	"rules": [
+		{ "type": "creation" },
+		{ "type": "update", "parameters": { "update_allows_fetch_and_merge": false } },
+		{ "type": "deletion" },
+		{ "type": "non_fast_forward" }
+	]
+}

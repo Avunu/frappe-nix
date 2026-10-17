@@ -1,0 +1,123 @@
+name: release
+
+# frappe-nix's own releases (docs/app-standards/versioning.md, spec §6.2, §6.3, S6, S13), with
+# no App:
+#
+#   release-please  opens or updates the release PR on main with GITHUB_TOKEN, and on its merge
+#                   tags vX.Y.Z (version.txt and both frappe-nix-tools version locations move
+#                   together, release-please-config.json);
+#   dispatch-ci     a GITHUB_TOKEN push raises no event, so it dispatches check.yml (without
+#                   inputs: `lint` and `flake`, no VM tests) and pr-policy.yml on the release
+#                   PR, each only while its check is absent on the PR's head;
+#   fast-forward    moves release-<major> (release-1 for every v1.* tag) to the new tag by a
+#                   REST PATCH with force=false, or creates it on a major's first release, and
+#                   fails unless it then equals the tag. The release-* ruleset
+#                   (repo-policy/self/rulesets/release.json) lets only GitHub Actions move it.
+#
+# The daily cron catches merges that raise no push (an auto-merge enabled with GITHUB_TOKEN)
+# and retries a dispatch that failed or a concurrency group cancelled. frappe-nix's flake.lock
+# has no frappe-nix node, so the tools come from this checkout.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "30 5 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  release-please:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags and releases
+      pull-requests: write # the release PR
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+      sha: ${{ steps.rp.outputs.sha }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - id: rp
+        continue-on-error: true
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: main
+
+      - if: steps.rp.outcome == 'failure'
+        run: |
+          echo "::error::release-please failed. If the log says GitHub Actions is not permitted to create pull requests, allow it under Settings > Actions > General > Workflow permissions (repo-policy/self/repo-settings.json sets can_approve_pull_request_reviews)."
+          exit 1
+
+  dispatch-ci:
+    needs: release-please
+    if: always() && needs.release-please.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # the checkout
+      actions: write # gh workflow run
+      checks: read # which checks already ran on the release PR head
+      pull-requests: read # the open release PR
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools from this checkout
+        run: uv tool install --python 3.14 ./py/frappe_nix_tools
+
+      - name: Run check.yml and pr-policy.yml on the release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          frappe-nix ci dispatch-ci --repo "$REPO" --integration main --package frappe-nix \
+            --context lint=check.yml --context pr-policy=pr-policy.yml
+
+  fast-forward:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # move release-<major> (the ruleset's bypass actor is GitHub Actions)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: Install frappe-nix-tools from this checkout
+        run: uv tool install --python 3.14 ./py/frappe_nix_tools
+
+      - name: Fast-forward release-<major> to the new tag, and check it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          major="${TAG#v}"
+          major="${major%%.*}"
+          if ! [[ "$major" =~ ^[0-9]+$ ]]; then
+            echo "::error::release-please's tag ${TAG@Q} is not vX.Y.Z"
+            exit 1
+          fi
+          frappe-nix ci fast-forward --repo "$REPO" --release-branch "release-$major" \
+            --sha "$SHA" --tag "$TAG" --version-scheme semver --tag-prefix v
