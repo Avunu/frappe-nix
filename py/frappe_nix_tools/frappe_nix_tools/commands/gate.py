@@ -142,8 +142,19 @@ class Gate:
 
 
 def frappe_nix(*args: str) -> list[str]:
-	"""This frappe-nix-tools' own CLI, whatever ``frappe-nix`` is on PATH."""
-	return [sys.executable, "-m", "frappe_nix_tools.cli", *args]
+	"""This frappe-nix-tools' own CLI, whatever ``frappe-nix`` is on PATH.
+
+	The child gets this process's ``sys.path``, not just its interpreter: Nix's
+	console script sets ``sys.path`` inside the script, so the bare
+	``sys.executable`` it runs on can't import frappe_nix_tools (the dev shell's
+	``frappe-nix``). ``-I`` keeps a dev shell's PYTHONPATH and the working
+	directory from putting a module ahead of ours.
+	"""
+	boot = (
+		f"import sys; sys.path[:0] = {[p for p in sys.path if p]!r}; "
+		"from frappe_nix_tools.cli import main; sys.exit(main(sys.argv[1:]))"
+	)
+	return [sys.executable, "-I", "-c", boot, *args]
 
 
 def gen_registry(app: AppConfig, bench: Path) -> list[str]:

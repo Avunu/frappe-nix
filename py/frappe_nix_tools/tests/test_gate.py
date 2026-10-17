@@ -10,6 +10,7 @@ directory, so no test needs the network; ``sync --check`` runs for real.
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -248,6 +249,30 @@ class TestSummary(unittest.TestCase):
 	def test_step_summary_table(self) -> None:
 		table = gate.summary("lint", [gate.Step("prek", "", "failed", "exit 1 | x")])
 		self.assertIn("| prek | — | failed: exit 1 \\| x |", table)
+
+
+class TestSelfInvocation(unittest.TestCase):
+	"""The steps that run frappe-nix itself (sync-check, ratchet, minibench, listing)."""
+
+	def test_runs_this_package_whatever_the_environment(self) -> None:
+		# A dev shell's PYTHONPATH and the working directory can't put a module ahead of
+		# ours, and the child carries this process's sys.path (Nix's console script sets
+		# it inside the script, so its bare interpreter can't import the package).
+		with tempfile.TemporaryDirectory() as tmp:
+			shadow = Path(tmp) / "frappe_nix_tools"
+			shadow.mkdir()
+			(shadow / "__init__.py").write_text("raise SystemExit('shadowed')\n")
+			env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": tmp}
+			done = subprocess.run(
+				gate.frappe_nix("ratchet", "--help"),
+				cwd=tmp,
+				env=env,
+				capture_output=True,
+				text=True,
+				check=False,
+			)
+		self.assertEqual(done.returncode, 0, done.stderr)
+		self.assertIn("frappe-nix ratchet", done.stdout)
 
 
 if __name__ == "__main__":
