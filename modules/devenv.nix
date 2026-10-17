@@ -2186,8 +2186,13 @@ in
           # The bench commands written in Python (py/frappe_nix_tools,
           # bench_cli.py), on frappe-nix's tool interpreter. Exec'd by path,
           # not put on PATH: a Python package in the shell's packages would put
-          # its site-packages on PYTHONPATH ahead of the bench venv's.
-          benchCli = lib.getExe' standardsOutputs.frappeNixTools "frappe-nix-bench";
+          # its site-packages on PYTHONPATH ahead of the bench venv's. Not the
+          # console script either, whose wrapper prepends its own PATH (see
+          # lib/bench-cli.nix).
+          benchCli = import ../lib/bench-cli.nix {
+            inherit pkgs;
+            inherit (standardsOutputs) frappeNixTools;
+          };
           # edit-secret, rekey-secrets, check-secrets, and setup-backup-access
           # when restoring can fetch. Empty when secrets are off.
           secretScripts = secretsTools.scripts (
