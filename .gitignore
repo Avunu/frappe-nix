@@ -5,4 +5,5 @@ env
 logs
 patches.txt
 result
+result-*
 .direnv
