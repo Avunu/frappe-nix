@@ -75,6 +75,6 @@ Every bench gets python-devops-nix's `lib.python.overrides`, the fixes frappe-ni
 
 `lib.overrides.mysqlclient` is frappe-nix's own, wired in automatically from `mariadb.package`. A bench's `pythonOverrides` layer on top of both.
 
-`lib.overrides.pycups`, `python-ldap`, `pyvips` and `cairocffi` are kept for benches that still list them: each is now a no-op with a warning, since the fix is already applied. Remove them from `pythonOverrides`.
+`lib.overrides.pycups`, `python-ldap`, `pyvips` and `cairocffi` are kept for benches that still list them: each is now a no-op with a warning, since the fix is already applied. Remove them from `pythonOverrides`: the aliases are kept for all of 1.x, removed in 2.0.0.
 
 Pure-Python build dependencies (setuptools and the like) belong in `pyproject.toml` under `[tool.uv.extra-build-dependencies]`, which frappe-nix derives from `uv.lock`; a bench adds its own with `pythonBuildDependencies`. See [Build dependencies](../development/locks.md#build-dependencies). The overlays are only for packages that need C headers or system libraries.

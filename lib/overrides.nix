@@ -17,12 +17,12 @@ let
   # base's set now applies them to every bench, so a bench that still lists one
   # in its pythonOverrides gets a no-op and a warning rather than the fix twice
   # (the dlopen patches would fail the second time: the bare name is gone).
-  # Remove at the next minor release.
+  # Kept for all of 1.x, removed in 2.0.0.
   applied =
     name:
     { pkgs, ... }:
     pkgs.lib.warn
-      "frappe-nix: lib.overrides.${name} is applied to every bench already (python-devops-nix's lib.python.overrides); remove it from pythonOverrides."
+      "frappe-nix: lib.overrides.${name} is applied to every bench already (python-devops-nix's lib.python.overrides); remove it from pythonOverrides (the alias is kept for all of 1.x, removed in 2.0.0)."
       (_final: _prev: { });
 in
 {
