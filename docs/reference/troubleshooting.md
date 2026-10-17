@@ -163,7 +163,7 @@ With `web.port` the runtime binds `0.0.0.0`. Keep the port closed in the firewal
 
 ### Can I use it on macOS?
 
-The scaffolded flake lists `aarch64-darwin` and `x86_64-darwin` among its systems, and features such as the memory scope are written to do nothing where they do not apply. Production needs a NixOS host for the module, or any host that runs OCI images.
+The scaffolded flake lists `aarch64-darwin` among its systems (not `x86_64-darwin`, which nixpkgs 26.11 dropped), and features such as the memory scope are written to do nothing where they do not apply. Production needs a NixOS host for the module, or any host that runs OCI images.
 
 ### Do I have to adopt it for production too?
 

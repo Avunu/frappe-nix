@@ -434,7 +434,7 @@ enable = true                                # example: switch on a module the p
 publisher = "Example Apps Ltd"               # example: an org value for this app only (S37)
 
 [tool.frappe-nix.dev-shell]                  # app-only flake parameters (§2.5); custom inputs go in its local region
-systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"]   # flake systems
+systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]   # flake systems
 extra-substituters = []                      # appended to nixConfig.extra-substituters
 extra-trusted-public-keys = []               # appended to nixConfig.extra-trusted-public-keys
 frappe-nix-url = ""                          # "" = github:Avunu/frappe-nix/release-<N>. Any flake URL (a fork, a

@@ -99,7 +99,7 @@ This is the **bench** shape — a repository that holds `apps/*`. For a single a
       { inputs, self, ... }:
       {
         imports = [ frappe-nix.flakeModules.default ];
-        systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
+        systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
 
         perSystem =
           { pkgs, ... }:

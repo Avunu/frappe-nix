@@ -70,11 +70,11 @@ let
   '';
 
   # templates/app as frappe-nix `main` has it: the opt-in leaves it alone (S35).
-  # flake.nix moved with Track B's renames (defaultSite); the one before them
+  # flake.nix moved with Track B's renames (defaultSite, no x86_64-darwin); the one before them
   # (9e63c96, d09a35c) ships as app-template/flake.nix.v0.in, which an opt-in
   # still replaces without --force.
   mainTemplate = {
-    "flake.nix" = "15a5ef3cadb11d15cc52c66eecc21deffeb6f139";
+    "flake.nix" = "ccdf4910a50e81d882b24e41cae945ca7cc8a1db";
     ".envrc" = "a41f435fb8be098715df478ec5e78da83661d45d";
     ".gitignore" = "c2de0b11e743206b8c81c77603a36c58fa72c5e2";
   };
