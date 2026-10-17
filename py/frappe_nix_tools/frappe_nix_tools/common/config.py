@@ -22,6 +22,7 @@ frappe-test, the CI ``cfg`` step, ``repo apply`` and ``repo audit``.
 """
 
 import copy
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from functools import cache
@@ -422,12 +423,33 @@ def _repo(cfg: dict, root: Path | None, app: str | None) -> tuple[str | None, st
 	return None, None
 
 
+UNRELEASED = "0.0.0"
+
+
+@cache
+def _warn_unreleased(label: str, spec: str) -> None:
+	print(
+		f"frappe-nix: warning: {label} requires frappe-nix {spec}; this is an unreleased build"
+		f" (frappe-nix-tools {UNRELEASED}), so the range is not checked",
+		file=sys.stderr,
+	)
+
+
 def check_requires(spec: str | None, label: str) -> None:
 	"""``requires-frappe-nix`` must admit the running frappe-nix-tools (exit 3 otherwise, §6.4)."""
 	if not spec:
 		return
 	try:
-		admits = SpecifierSet(spec).contains(Version(__version__), prereleases=True)
+		specifier = SpecifierSet(spec)
+	except InvalidSpecifier as e:
+		raise ConfigError(f"{label}: requires-frappe-nix {spec!r} is not a version specifier: {e}") from e
+	if __version__ == UNRELEASED:
+		# A build from a revision before the first release (an app pinned to a frappe-nix commit
+		# until release-<N> exists) has no version to compare: admit it, and say so.
+		_warn_unreleased(label, spec)
+		return
+	try:
+		admits = specifier.contains(Version(__version__), prereleases=True)
 	except (InvalidSpecifier, InvalidVersion) as e:
 		raise ConfigError(f"{label}: requires-frappe-nix {spec!r} is not a version specifier: {e}") from e
 	if not admits:

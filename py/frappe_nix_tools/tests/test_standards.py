@@ -918,7 +918,8 @@ class TestOrgProfile(ProfileCase):
 			),
 		)
 		self.commit()
-		self.assertEqual(self.check()[0], 3)
+		with mock.patch.object(config, "__version__", "1.0.0"):
+			self.assertEqual(self.check()[0], 3)
 
 	def test_profile_validate(self):
 		code, out, err = self.fn("profile", "validate", str(self.root / ".standards-profile/profile.toml"))

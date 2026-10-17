@@ -240,13 +240,25 @@ class TestResolve(unittest.TestCase):
 				'extends = "recommended@1.0"\nrequires-frappe-nix = ">=1.2,<2"\n',
 			)
 		)
-		self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 3)
+		with mock.patch.object(config, "__version__", "1.1.0"):
+			self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 3)
+		# An unreleased build (0.0.0, a pinned frappe-nix commit before release-1) has no version
+		# to compare: the range is admitted with a warning.
+		with mock.patch.object(config, "__version__", config.UNRELEASED):
+			self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 0)
 		profile.write_text(
 			ORG_PROFILE.replace(
 				'extends = "recommended@1.0"\n', 'extends = "recommended@1.0"\nrequires-frappe-nix = ">=0"\n'
 			)
 		)
 		self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 0)
+		profile.write_text(
+			ORG_PROFILE.replace(
+				'extends = "recommended@1.0"\n',
+				'extends = "recommended@1.0"\nrequires-frappe-nix = "nonsense"\n',
+			)
+		)
+		self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 2)
 
 	def test_org_profile_rules(self):
 		profile = self.root / ".standards-profile" / "profile.toml"
