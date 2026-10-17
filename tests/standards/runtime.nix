@@ -725,6 +725,10 @@ in
         [ "$(stage nix-lint)" = ok ] && [ "$(stage ty)" = skipped ] || fail "recommended: nix-lint $(stage nix-lint), ty $(stage ty)"
         echo "ok   an app that has not opted in gets the recommended stages and the default setup"
 
+        # The dev bench and the runtime directories exist and are ignored, as in a real app;
+        # naming an ignored path in `git add` used to make every snapshot fail.
+        mkdir -p repo/.frappe-nix/bench repo/.dev-dist
+        printf '/.frappe-nix/\n/.dev-dist/\n' >> repo/.gitignore
         pyproject 'shell-checks = ["echo v1 > gen/types.ts; echo scratch > gen/other"]'
         run 0 "a clean shell check" --ci --reuse-site --no-composition --no-coverage
         [ "$(stage shell-checks)" = ok ] || fail "the clean shell check is $(stage shell-checks)"
