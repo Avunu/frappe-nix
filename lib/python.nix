@@ -13,6 +13,7 @@
 #     pyproject-nix = inputs.pyproject-nix;
 #     pyproject-build-systems = inputs.pyproject-build-systems;
 #     uv2nix = inputs.uv2nix;
+#     python-devops-nix = inputs.python-devops-nix;
 #     extraOverrides = final: prev: { ... };
 #   }
 
@@ -25,21 +26,16 @@
   pyproject-nix,
   pyproject-build-systems,
   uv2nix,
+  # lib.python.withGrafts, the `.pth` graft.
+  python-devops-nix,
   extraOverrides ? (_final: _prev: { }),
-  # Derivation containing a `frappe_devguard/` package to graft into the
-  # development virtualenv, or null. See lib/devguard.
+  # The packages to graft, each from lib/grafts.nix, or null. devguard (the
+  # frappe_devguard package) and benchcli go into the *development* virtualenv
+  # only; unixsock, journald and nodebuild into *both*.
   devguard ? null,
-  # Derivation containing a `frappe_unixsock/` package to graft into *both*
-  # virtualenvs, or null. See lib/unixsock.
   unixsock ? null,
-  # Derivation containing a `frappe_journald/` package to graft into *both*
-  # virtualenvs, or null. See lib/journald.
   journald ? null,
-  # Derivation containing a `frappe_nodebuild/` package to graft into *both*
-  # virtualenvs, or null. See lib/nodebuild.
   nodebuild ? null,
-  # Derivation containing a `frappe_benchcli/` package to graft into the
-  # *development* virtualenv, or null. See lib/benchcli.
   benchcli ? null,
   # Overrides the "how to re-lock" half of the stale-lock message. See
   # lib/lock-audit.nix; null keeps its bench-mode default.
@@ -139,80 +135,50 @@ let
   # containers, the NixOS module — reaches uv2nix's resolver through one of them.
   assertLockCurrent = env: if lockAudit.missing == [ ] then env else throw lockAudit.message;
 
-  # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap,
-  # so the interpreter runs them at startup — *below* the Frappe app layer, and
-  # without an app install or a site_config.json edit.
-  #
-  # Grafted rather than put on PYTHONPATH because `apps/*` reach sys.path through
-  # uv2nix's editable `.pth` files inside the same venv: an interpreter started
-  # outside the devenv environment (an editor terminal, `nix run`, CI, a stray
-  # `sudo -u`) still imports Frappe, and would otherwise run unpatched.
-  #
-  # `zzz-` orders them last. install() is called from the `.pth` line rather than
-  # the package body so that importing a single submodule cannot re-enter a
-  # partially initialised package.
+  # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap
+  # (python-devops-nix's lib.python.withGrafts, which writes
+  # zzz-<module, _ as ->.pth), so the interpreter runs them at startup: *below*
+  # the Frappe app layer, and without an app install or a site_config.json edit.
+  # Grafted rather than put on PYTHONPATH because `apps/*` reach sys.path
+  # through uv2nix's editable `.pth` files inside the same venv: an interpreter
+  # started outside the devenv environment (an editor terminal, `nix run`, CI,
+  # a stray `sudo -u`) still imports Frappe, and would otherwise run unpatched.
   graftFor =
     kind:
     # frappe_devguard is DEVELOPMENT ONLY, by construction: it stops a dev bench
     # reaching production services, so reaching production is exactly what it
     # must never be able to do. Do not add it to the prod list.
-    lib.optional (kind == "dev" && devguard != null) {
-      src = devguard;
-      module = "frappe_devguard";
-    }
+    # checks.devguard-production asserts prodPythonEnv has none of it.
+    lib.optional (kind == "dev" && devguard != null) devguard
     # frappe_unixsock ships to BOTH, deliberately. It carries no policy — only
     # transport corrections for sockets Frappe half-supports — and a socket-mode
     # deployment needs them precisely because it is production. It shares no code
-    # with devguard, so this does not weaken the rule above.
-    ++ lib.optional (unixsock != null) {
-      src = unixsock;
-      module = "frappe_unixsock";
-    }
+    # with devguard (each graft carries its own copy of _hook.py), so this does
+    # not weaken the rule above.
+    ++ lib.optional (unixsock != null) unixsock
     # frappe_journald ships to BOTH as well, and is inert in development by
     # construction: it does nothing unless stderr is the journal, which only a
     # systemd unit arranges. Production is where it matters — services.frappe's
     # units log to the journal, and without it every Frappe line lands there at
     # the unit's default priority and bench keeps appending to logs/bench.log.
-    ++ lib.optional (journald != null) {
-      src = journald;
-      module = "frappe_journald";
-    }
+    ++ lib.optional (journald != null) journald
     # frappe_nodebuild ships to BOTH because builtBench builds its assets with
     # prodPythonEnv's bench. It acts only where FRAPPE_NIX_ESBUILD_PRELOAD is
     # set — the dev shell and builtBench's build phase — and a deployed host
     # never builds, so there it does nothing.
-    ++ lib.optional (nodebuild != null) {
-      src = nodebuild;
-      module = "frappe_nodebuild";
-    }
+    ++ lib.optional (nodebuild != null) nodebuild
     # frappe_benchcli is DEVELOPMENT ONLY: it hands `bench update` and `bench
     # build` to the dev shell's bench-update and bench-build, which a deployed
     # host does not have, and whose units call this venv's bench for workers
     # and the scheduler.
-    ++ lib.optional (kind == "dev" && benchcli != null) {
-      src = benchcli;
-      module = "frappe_benchcli";
-    };
+    ++ lib.optional (kind == "dev" && benchcli != null) benchcli;
 
   withGrafts =
     kind: env:
-    let
+    python-devops-nix.lib.python.withGrafts {
+      inherit python env;
       grafts = graftFor kind;
-    in
-    if grafts == [ ] then
-      env
-    else
-      # postInstall, not postBuild: mkVirtualEnv sets dontBuild and creates the
-      # tree from pyprojectMakeVenvHook's installPhase.
-      env.overrideAttrs (old: {
-        postInstall =
-          (old.postInstall or "")
-          + lib.concatMapStrings (graft: ''
-            cp -r ${graft.src}/${graft.module} "$out/${python.sitePackages}/"
-            printf 'import %s; %s.install()\n' ${graft.module} ${graft.module} \
-              > "$out/${python.sitePackages}/zzz-${lib.replaceStrings [ "_" ] [ "-" ] graft.module}.pth"
-          '') grafts;
-      });
+    };
 
   # Production: workspace members + runtime deps, no dev tools
   prodPythonEnv = assertLockCurrent (

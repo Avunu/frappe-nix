@@ -1,115 +1,32 @@
-"""Shared patching helpers used by every guard.
+"""frappe-nix's own patching helpers, the ones that know Frappe.
 
-Nothing here imports Frappe at module scope: guards run from a post-import
-hook, so Frappe is only ever touched from inside a callback.
+The core's helpers (python-devops-nix's ``_patch``: warn, announce, block,
+mark, no_op, blocking, require, require_any, user_error) know no framework.
+These do, and so are kept apart from them. Nothing here imports Frappe at
+module scope: guards run from a post-import hook, so Frappe is only ever
+touched from inside a callback.
 """
 
 import functools
 import inspect
-import sys
 
-from ._settings import DevGuardBlocked, DevGuardPatchError, settings
-
-#: target -> "patched" | "not installed". Surfaced by `devguard-status` so an
-#: inert guard is visible; a module whose SDK is missing never reaches its
-#: post-import callback, which is fail-safe but otherwise indistinguishable
-#: from a guard that ran.
-STATUS = {}
-
-_ANNOUNCED = set()
-
-
-def warn(guard, message):
-	"""Announce loudly, by two routes.
-
-	Raising is not enough on the scheduler path: Frappe's backup integrations
-	catch Exception and turn it into a "backup failed" email,
-	ScheduledJobType.execute catches it and records status "Failed", and
-	Dropbox's upload_from_folder swallows per-file exceptions into a list. A
-	guard that only raised would be invisible.
-	"""
-	sys.stderr.write(f"WARNING frappe_devguard[{guard}] {message}\n")
-	try:
-		import frappe
-
-		frappe.logger("frappe_devguard").warning(f"[{guard}] {message}")
-	except Exception:  # logging must never be the thing that fails
-		pass
-
-
-def announce(guard, detail):
-	"""Emit a guard's activation banner once per process, on first use.
-
-	Deferred rather than printed at import so the many Python processes a bench
-	starts which never reach a guarded code path (`bench build`, tooling,
-	editor helpers) stay quiet.
-	"""
-	if guard in _ANNOUNCED:
-		return
-	_ANNOUNCED.add(guard)
-	warn(guard, f"ACTIVE — {detail}")
-
-
-def block(guard, message):
-	"""Announce and raise. For code paths where failing is the right answer."""
-	warn(guard, message)
-	raise DevGuardBlocked(f"frappe_devguard[{guard}]: {message}")
+from ._patch import announce, mark, user_error, warn
+from ._settings import settings
 
 
 def throw(guard, message):
-	"""Announce and surface the message in the desk UI.
+	"""Announce and surface the message in the desk UI (``frappe.throw``).
 
-	For deliberate user actions — a button, an API call — where a silent no-op
+	For deliberate user actions, a button or an API call, where a silent no-op
 	would leave someone believing an upload happened.
 	"""
-	import frappe
-
-	warn(guard, message)
-	frappe.throw(message, title="Blocked by frappe-devguard")
-
-
-def mark(fn, target):
-	"""Tag a replacement so it is identifiable after ``update_wrapper``.
-
-	``rewhitelist`` copies the original's ``__name__``/``__module__`` on
-	purpose, so introspection cannot otherwise tell a guarded endpoint from an
-	untouched one.
-	"""
-	fn.__devguard__ = target
-	return fn
-
-
-def no_op(guard, what, banner=None):
-	"""Replacement that logs and returns None.
-
-	For scheduler entry points, where manufacturing a failure would only fill
-	Scheduled Job Log with noise nobody reads.
-	"""
-
-	def replacement(*_args, **_kwargs):
-		if banner:
-			announce(guard, banner)
-		warn(guard, f"skipping {what}")
-		return None
-
-	return mark(replacement, what)
-
-
-def blocking(guard, what, message, banner=None):
-	"""Replacement that logs and raises. For the funnels that must not proceed."""
-
-	def replacement(*_args, **_kwargs):
-		if banner:
-			announce(guard, banner)
-		block(guard, f"{what}: {message}")
-
-	return mark(replacement, what)
+	user_error(guard, message)
 
 
 def throwing(guard, what, message, banner=None):
 	"""Replacement that surfaces the reason in the desk UI.
 
-	For deliberate user actions — a button, an API call — where a silent no-op
+	For deliberate user actions, a button or an API call, where a silent no-op
 	would leave someone believing the action succeeded.
 	"""
 
@@ -119,46 +36,6 @@ def throwing(guard, what, message, banner=None):
 		throw(guard, f"{what}: {message}")
 
 	return mark(replacement, what)
-
-
-def is_guarded(fn):
-	return getattr(fn, "__devguard__", None) is not None
-
-
-def require(owner, name):
-	"""Fetch a patch target, or fail the import loudly."""
-	value = getattr(owner, name, None)
-	if value is None:
-		label = getattr(owner, "__qualname__", None) or getattr(owner, "__name__", owner)
-		raise DevGuardPatchError(
-			f"frappe_devguard: {label}.{name} is missing — Frappe's internals have moved "
-			"and this guard can no longer be relied on. Update frappe-nix, or set "
-			"FRAPPE_DEVGUARD_ENABLED=0 to run without it."
-		)
-	STATUS[f"{getattr(owner, '__name__', owner)}.{name}"] = "patched"
-	return value
-
-
-def require_any(owner, *names):
-	"""Fetch the first surviving spelling of a renamed target, or fail loudly.
-
-	``require`` is right for an internal with one name. This is for one Frappe
-	has renamed across the branches frappe-nix's presets span: any known
-	spelling will do, but none of them surviving still has to be loud. Returns
-	the name as well as the value, so the caller patches back the spelling this
-	Frappe actually uses.
-	"""
-	for name in names:
-		value = getattr(owner, name, None)
-		if value is not None:
-			STATUS[f"{getattr(owner, '__name__', owner)}.{name}"] = "patched"
-			return name, value
-	label = getattr(owner, "__qualname__", None) or getattr(owner, "__name__", owner)
-	raise DevGuardPatchError(
-		f"frappe_devguard: {label} has none of {', '.join(names)} — Frappe's "
-		"internals have moved and this guard can no longer be relied on. Update "
-		"frappe-nix, or set FRAPPE_DEVGUARD_ENABLED=0 to run without it."
-	)
 
 
 def redirect_kwargs(func, self, args, kwargs, replacements):

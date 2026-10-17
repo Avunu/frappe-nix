@@ -9,7 +9,7 @@ updated: 2026-10-15
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe`](nixos-options.md).
 
 > [!NOTE]
-> `devguard.mail.smtpPort`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `benchName`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
+> `devguard.mail.port`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `benchName`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
 
 ## Core
 
@@ -133,7 +133,7 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | `devguard.egress.allowHosts`             | list of str       | `[ ]`                            | Hostnames (`*.` for subdomains), addresses or CIDRs to let through. Shared with `integrations.allowHosts`.   |
 | `devguard.mail.enable`                   | bool              | `true`                           | Route all outgoing mail to Mailpit, and refuse IMAP and POP3.                                                |
 | `devguard.mail.host`                     | str               | `"127.0.0.1"`                    | Interface Mailpit binds and Frappe is redirected to.                                                         |
-| `devguard.mail.smtpPort`                 | port              | 19000 plus a hash of `benchName` | Catcher SMTP port (per bench).                                                                               |
+| `devguard.mail.port`                     | port              | 19000 plus a hash of `benchName` | Catcher SMTP port (per bench). Formerly `devguard.mail.smtpPort`.                                            |
 | `devguard.mail.httpPort`                 | port              | 20000 plus a hash of `benchName` | Mailpit web UI port (per bench).                                                                             |
 | `devguard.mail.sender`                   | str               | `"notifications@example.com"`    | From address used only on sites with no outgoing Email Account at all.                                       |
 | `devguard.mail.unmute`                   | bool              | `true`                           | Ignore `mute_emails` in `site_config.json`.                                                                  |
@@ -150,9 +150,9 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | `devguard.google.enable`                 | bool              | `true`                           | Block Google Calendar, Contacts and Drive access.                                                            |
 | `devguard.webhooks.enable`               | bool              | `true`                           | Drop outbound Webhook requests.                                                                              |
 | `devguard.plaid.enable`                  | bool              | `true`                           | Block Plaid bank synchronization.                                                                            |
-| `devguard.scheduler.enable`              | bool              | `true`                           | Skip scheduled jobs that reach production services.                                                          |
-| `devguard.scheduler.blockServerScripts`  | bool              | `true`                           | Skip Scheduled Job Types backed by a Server Script.                                                          |
-| `devguard.scheduler.extraBlockedJobs`    | list of str       | `[ ]`                            | Extra `Scheduled Job Type.method` values to skip (exact match).                                              |
+| `devguard.jobs.enable`                   | bool              | `true`                           | Skip scheduled jobs that reach production services. Formerly `devguard.scheduler.enable`.                    |
+| `devguard.jobs.blockServerScripts`       | bool              | `true`                           | Skip Scheduled Job Types backed by a Server Script. Formerly `devguard.scheduler.blockServerScripts`.         |
+| `devguard.jobs.extraBlocked`             | list of str       | `[ ]`                            | Extra `Scheduled Job Type.method` values to skip (exact match). Formerly `devguard.scheduler.extraBlockedJobs`. |
 
 ## Restore
 

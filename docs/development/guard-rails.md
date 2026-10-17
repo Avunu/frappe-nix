@@ -3,7 +3,7 @@ title: Development guard rails
 description: The devguard options that stop a bench restored from production from mailing customers, calling payment gateways and other APIs, deleting production files or pushing backups, and the limits of that protection.
 order: 2
 tags: [devguard, safety, egress, mail, backups]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 A bench restored from a production backup carries working production credentials in its database and `site_config.json`. Left alone, `devenv up` will mail real customers within minutes, delete production files out of an object store within the hour, and, depending on what is configured, capture real payments, create real direct-debit mandates and subscriptions, push its dev-mutated database over the production backup rotation and delete real calendar events.
@@ -22,7 +22,7 @@ A bench restored from a production backup carries working production credentials
 | `google`       | Calendar, Contacts and Drive access, whose sync writes back and can delete real events | Blocks GoogleOAuth's service-object and token-refresh calls.                                                                                                                                                                                       |
 | `webhooks`     | Webhook rows firing at production endpoints                                            | No-ops `enqueue_webhook`.                                                                                                                                                                                                                          |
 | `plaid`        | Bank sync against the production Plaid item                                            | Blocks `PlaidConnector` and no-ops the hourly job.                                                                                                                                                                                                 |
-| `scheduler`    | Third-party backup jobs and Server Script scheduler events                             | Skips them in `ScheduledJobType.execute`. The denylist matches exact dotted paths: the seven Dropbox, S3 and Google Drive backup jobs in Frappe core up to version 15, and the same seven in the standalone `offsite_backups` app from version 16. |
+| `jobs`         | Third-party backup jobs and Server Script scheduler events                             | Skips them in `ScheduledJobType.execute`. The denylist matches exact dotted paths: the seven Dropbox, S3 and Google Drive backup jobs in Frappe core up to version 15, and the same seven in the standalone `offsite_backups` app from version 16. |
 
 Local backups are untouched by all of this. `bench backup`, `bench restore`, `trim-database`, `drop-site` and the desk Backups page keep working. Only the uploads are blocked.
 
@@ -37,7 +37,7 @@ Incoming mail is blocked by default. A dev bench polling production mailboxes ev
 The `egress` guard is the catch-all behind the others, which each know one integration. Every Python client, whether requests, httpx, aiohttp, urllib, botocore or smtplib, ends in `socket.socket.connect`, and the guard refuses any connection there that is not to this machine. A payment SDK such as `gocardless_pro` therefore cannot set up real mandates or subscriptions, and neither can the next integration nobody has written a guard for. The refusal happens before a packet leaves and is an `OSError`, so a client that already handles "the service is unreachable" fails the way it would offline. The first refusal in a process says how to let a destination through, and each one names the host the address was resolved from:
 
 ```text
-WARNING frappe_devguard[egress] ACTIVE — outbound connections from this process are refused (loopback only). Allow a destination with devguard.egress.allowHosts, …
+WARNING frappe_devguard[egress] ACTIVE -- outbound connections from this process are refused (loopback only). Allow a destination with devguard.egress.allowHosts, …
 WARNING frappe_devguard[egress] blocked connection to 104.16.246.239:443 (api-sandbox.gocardless.com)
 ```
 
@@ -96,9 +96,13 @@ Push mode is also what lets the bucket through the [egress guard](#outbound-conn
 
 ## How it works
 
-Frappe offers no config-only way to do this. `find_default_outgoing` consults the database before falling back to `frappe.conf`, and the backup integrations are gated by doctype rows that a production dump restores in the enabled state. The interception therefore lives below the app layer, in [`lib/devguard/frappe_devguard`](../../lib/devguard/frappe_devguard), grafted into the development virtualenv by a `.pth` file that Python executes at interpreter startup. It applies to `bench serve`, `worker`, `schedule`, `console` and any bare `./env/bin/python`.
+Frappe offers no config-only way to do this. `find_default_outgoing` consults the database before falling back to `frappe.conf`, and the backup integrations are gated by doctype rows that a production dump restores in the enabled state. The interception therefore lives below the app layer, in the `frappe_devguard` package, grafted into the development virtualenv by a `.pth` file that Python executes at interpreter startup. It applies to `bench serve`, `worker`, `schedule`, `console` and any bare `./env/bin/python`.
 
-It is deliberately **not** on `PYTHONPATH`. `apps/*` reach `sys.path` through the editable `.pth` files in the virtualenv, so an interpreter started outside the devenv environment would still import Frappe and still reach production. And it is development-only by construction: `prodPythonEnv`, the NixOS module and the containers never see it.
+The package is built from two trees. The core, which knows nothing about Frappe (the post-import hook, settings resolution, the patch helpers, and the `egress` and transport-level `mail` guards), is [python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `python/devguard`, shared with odoo-nix. Frappe's side, [`lib/devguard/frappe_devguard`](../../lib/devguard/frappe_devguard), holds `_product.py` (the settings prefix, frappe-nix's defaults and denylist, and the hooks into Frappe's logger and `frappe.throw`), `_frappe.py` (the helpers that know Frappe) and the guards that patch Frappe. `lib/grafts.nix` merges them, refusing a file both trees have, and bakes the Nix options in as `_baked.json`.
+
+It is deliberately **not** on `PYTHONPATH`. `apps/*` reach `sys.path` through the editable `.pth` files in the virtualenv, so an interpreter started outside the devenv environment would still import Frappe and still reach production. And it is development-only by construction: `prodPythonEnv`, the NixOS module and the containers never see it. The `devguard-production` check builds a bench's `prodPythonEnv` through the devenv module and fails if it carries `frappe_devguard` or a devguard `.pth` file.
+
+The dev shell exports `FRAPPE_NIX_DEVGUARD` (`1` or `0`, from `devguard.enable`) for frappe-nix's own tools. The guards do not read it.
 
 Each patch is checked as it is applied. If Frappe's internals move, the import fails loudly rather than leaving a silently inert guard behind.
 
@@ -129,7 +133,7 @@ Both cover the bench's Python and nothing else. Outside them are:
 - UDP sent with `sendto` rather than through a connected socket;
 - the browser, whose scripts reach whatever the page tells them to.
 
-Every other guard patches Frappe and app APIs, and is therefore one refactor or one unknown app away from being bypassed. The `scheduler` denylist covers exactly the dotted paths in it. What slips past an API-level guard, such as a document event in an app nobody has looked at, still meets `egress` at the socket, only with a less readable error.
+Every other guard patches Frappe and app APIs, and is therefore one refactor or one unknown app away from being bypassed. The `jobs` denylist (`frappe_devguard[scheduler]` in the log) covers exactly the dotted paths in it. What slips past an API-level guard, such as a document event in an app nobody has looked at, still meets `egress` at the socket, only with a less readable error.
 
 Two related notes for a restored bench. Frappe's telemetry is inert here only because `developer_mode: 1` is set, so re-check it if you ever clear that flag. And `check_for_update` and `fetch_changelog_feed` now fail as they would offline, because egress refuses github.com and frappe.io. Add those hosts to `egress.allowHosts` if you want the update notices back.
 

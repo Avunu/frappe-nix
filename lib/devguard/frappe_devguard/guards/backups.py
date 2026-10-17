@@ -24,8 +24,9 @@ Frappe 16 moved all three integrations out of core into the standalone
 presets span both: see ``_BACKUP_PREFIXES``.
 """
 
+from .._frappe import assert_not_overridden, rewhitelist, throwing
 from .._hook import on_import
-from .._patch import assert_not_overridden, blocking, no_op, require, rewhitelist, throwing
+from .._patch import blocking, no_op, require
 
 NAME = "backups"
 

@@ -38,6 +38,18 @@ nix run github:Avunu/frappe-nix -- -y
 
 The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, until the next minor release; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
 
+Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, until the next minor release:
+
+| Old                                     | New                                |
+| --------------------------------------- | ---------------------------------- |
+| `restore.withFiles`                     | `restore.files`                    |
+| `devguard.mail.smtpPort`                | `devguard.mail.port`               |
+| `devguard.scheduler.enable`             | `devguard.jobs.enable`             |
+| `devguard.scheduler.blockServerScripts` | `devguard.jobs.blockServerScripts` |
+| `devguard.scheduler.extraBlockedJobs`   | `devguard.jobs.extraBlocked`       |
+
+The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED` (was `FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS`), `FRAPPE_DEVGUARD_JOBS_BLOCK_SERVER_SCRIPTS`, `FRAPPE_DEVGUARD_JOBS_ENABLE` and `FRAPPE_DEVGUARD_DISABLE=jobs`. The old ones are read, with a warning, for the same period. Its log lines still read `frappe_devguard[scheduler]`.
+
 A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from inside the shell. `nodeOfflineHashes` was one such. It stays an evaluation error that names the edit.
 
 ## In app mode

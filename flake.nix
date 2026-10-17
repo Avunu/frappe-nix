@@ -158,26 +158,31 @@
 
       checks = forAllSystems (
         pkgs:
+        let
+          grafts = import ./lib/grafts.nix {
+            inherit pkgs;
+            inherit (inputs) python-devops-nix;
+          };
+          # lib/<x> with frappe_<x> as lib/grafts.nix builds it (the shared
+          # _hook.py merged in), so each suite tests the package that ships.
+          graftTree = x: ''
+            cp -r ${./lib + "/${x}"} ./${x}
+            chmod -R u+w ./${x}
+            rm -rf ./${x}/frappe_${x}
+            cp -r --no-preserve=mode ${grafts.${x}}/frappe_${x} ./${x}/
+          '';
+        in
         {
           # The Python runtime under runtime/ builds as a distribution. Its unit
           # suite needs a bench (it imports frappe), so that runs from
           # runtime/scripts/run-tests.sh rather than here.
           runtime = pkgs.python3Packages.callPackage ./runtime/package.nix { };
 
-          # Frappe-independent: stub SMTP/POP3 servers stand in for Mailpit and
-          # the assertions are about which socket the connection landed on.
-          devguard = pkgs.runCommand "frappe-devguard-check" { } ''
-            cp -r ${./lib/devguard} ./devguard
-            chmod -R u+w ./devguard
-            ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
-          '';
-
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
           # frappe.database and werkzeug.serving, and the assertions are about
           # which address the server was told to bind.
           unixsock = pkgs.runCommand "frappe-unixsock-check" { } ''
-            cp -r ${./lib/unixsock} ./unixsock
-            chmod -R u+w ./unixsock
+            ${graftTree "unixsock"}
             ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
           '';
 
@@ -187,8 +192,7 @@
           # and the bench.log that is never created. The runtime's copy of the
           # formatter is rendered against the graft's, so the two cannot drift.
           journald = pkgs.runCommand "frappe-journald-check" { } ''
-            cp -r ${./lib/journald} ./journald
-            chmod -R u+w ./journald
+            ${graftTree "journald"}
             ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
               ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
           '';
@@ -205,8 +209,7 @@
           # Frappe- and node-independent: a stub frappe.build stands in, and the
           # assertions are about the NODE_OPTIONS frappe's build hands node.
           nodebuild = pkgs.runCommand "frappe-nodebuild-check" { } ''
-            cp -r ${./lib/nodebuild} ./nodebuild
-            chmod -R u+w ./nodebuild
+            ${graftTree "nodebuild"}
             ${pkgs.python3}/bin/python ./nodebuild/tests/test_nodebuild.py | tee "$out"
           '';
 
@@ -214,8 +217,7 @@
           # stand in, and the assertions are about which command runs. Given
           # lib/scripts.nix, it also checks that the routes are the wrapper's.
           benchcli = pkgs.runCommand "frappe-benchcli-check" { } ''
-            cp -r ${./lib/benchcli} ./benchcli
-            chmod -R u+w ./benchcli
+            ${graftTree "benchcli"}
             ${pkgs.python3}/bin/python ./benchcli/tests/test_benchcli.py ${./lib/scripts.nix} | tee "$out"
           '';
 
@@ -390,6 +392,10 @@
         # The toolkit's own tests (agecheck, edit-secret, rekey-secrets,
         # check-secrets, the backup fetch layer) are python-devops-nix's.
         // import ./tests/secrets-module.nix { inherit self pkgs; }
+        # frappe_devguard: frappe-nix's guards against the package a bench
+        # grafts, python-devops-nix's core suite on the presets' interpreters,
+        # and its absence from the production virtualenv (design rule 7).
+        // import ./tests/devguard.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }
