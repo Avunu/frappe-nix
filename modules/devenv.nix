@@ -86,6 +86,15 @@ in
       ...
     }:
     {
+      # Renames, each kept until the next minor release (PLAN.md, design
+      # rule 2; CONVENTIONS.md, Restore).
+      imports = [
+        (lib.mkRenamedOptionModule
+          [ "frappe-nix" "restore" "withFiles" ]
+          [ "frappe-nix" "restore" "files" ]
+        )
+      ];
+
       options.frappe-nix = {
         enable = mkEnableOption "Frappe bench devenv shell";
 
@@ -1276,15 +1285,19 @@ in
             '';
           };
 
-          withFiles = mkOption {
-            type = types.enum [
-              "none"
-              "private"
-              "all"
-            ];
+          files = mkOption {
+            type = types.either types.bool (
+              types.enum [
+                "none"
+                "private"
+                "all"
+              ]
+            );
             default = "none";
             description = ''
-              Which file archives to pull down alongside the database.
+              Which file archives to pull down alongside the database: `"none"`,
+              `"private"` or `"all"`; `true` is `"all"` and `false` `"none"`.
+              Formerly `restore.withFiles`.
 
               Off by default because they are routinely tens of gigabytes,
               while the database that makes a bench usable is a fraction of
@@ -1320,24 +1333,43 @@ in
             description = "Run `bench migrate` after a successful restore.";
           };
 
+          neutralize = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Neutralize a database restored from the object store: pause its
+              scheduler (System Settings, as `bench disable-scheduler` does) and
+              switch off sending and receiving on every Email Account in it.
+
+              Defence in depth below devguard, which refuses the connections
+              those would make: this keeps the restored database itself inert,
+              so a bench that later runs without devguard does not start
+              production's jobs or send production's queued mail. `bench
+              enable-scheduler` turns the scheduler back on.
+
+              `bench restore --neutralize` / `--no-neutralize` override
+              per-invocation; a restore from an explicit file is neutralized
+              only with `--neutralize`.
+            '';
+          };
+
           requireDevguard = mkOption {
             type = types.bool;
             default = true;
             description = ''
-              Refuse to write production's `encryption_key` into a bench whose
-              guard rails are switched off.
+              Refuse to restore into a bench whose guard rails are switched
+              off (`devguard.enable = false`), from a fetched backup or an
+              explicit file alike. `FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1
+              bench restore` overrides it for one restore.
 
-              Carrying that key is what makes a restore a real clone, and it is
-              also what lets the bench decrypt every stored production
-              credential in the dump. `devguard` is what keeps a bench holding
-              those from mailing customers or deleting objects out of the
-              production bucket — the README is explicit that it is a large
-              reduction in blast radius, not an airgap. Failing closed here
-              costs nothing and is the difference between a considered
-              tradeoff and an accident.
-
-              `bench restore --no-site-config` restores without the key
-              instead; the site works, its stored credentials stay opaque.
+              A restored database carries production's customers, its queued
+              mail and its scheduled jobs, and with its site config the key
+              that decrypts every stored production credential. `devguard` is
+              what keeps a bench holding those from mailing customers or
+              deleting objects out of the production bucket — the README is
+              explicit that it is a large reduction in blast radius, not an
+              airgap. Failing closed here costs nothing and is the difference
+              between a considered tradeoff and an accident.
             '';
           };
         };
@@ -2151,6 +2183,11 @@ in
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           secrets = secretsTools;
+          # The bench commands written in Python (py/frappe_nix_tools,
+          # bench_cli.py), on frappe-nix's tool interpreter. Exec'd by path,
+          # not put on PATH: a Python package in the shell's packages would put
+          # its site-packages on PYTHONPATH ahead of the bench venv's.
+          benchCli = lib.getExe' standardsOutputs.frappeNixTools "frappe-nix-bench";
           # edit-secret, rekey-secrets, check-secrets, and setup-backup-access
           # when restoring can fetch. Empty when secrets are off.
           secretScripts = secretsTools.scripts (
@@ -2198,6 +2235,10 @@ in
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           inherit (cfg) renamedApps replacedApps;
         };
+
+        # The app standards outputs; here for frappe-nix-tools, the package the
+        # Python bench commands ship in.
+        standardsOutputs = import ../lib/standards/outputs.nix { inherit pkgs; };
 
         # The object-store half of `bench restore`: python-devops-nix's backup
         # fetch layer with frappe-nix's layout. See lib/backup-fetch.nix.

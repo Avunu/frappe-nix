@@ -162,10 +162,11 @@ How `bench restore` fetches a production backup. See [Restore a production backu
 | ------------------------- | -------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `restore.enable`          | bool                       | `frappe-nix.secrets.backupAccess.enable`       | Let `bench restore` fetch from the object store. See [Restore a production backup](../development/restore-from-production.md). |
 | `restore.prefix`          | str                        | `""`                                           | Path inside the bucket. Normally carried in the secret as `BACKUPS_PREFIX` instead.                                            |
-| `restore.withFiles`       | `none`, `private` or `all` | `"none"`                                       | File archives to pull by default. They are routinely tens of GB.                                                               |
+| `restore.files`           | `none`, `private`, `all`, or a bool | `"none"`                              | File archives to pull by default. They are routinely tens of GB. Formerly `restore.withFiles`.                                 |
+| `restore.neutralize`      | bool                       | `true`                                         | Pause the scheduler and switch mail off in a database fetched from the object store.                                           |
 | `restore.carryConfigKeys` | list of str                | `[ "encryption_key" "backup_encryption_key" ]` | Allowlist of keys copied from the backup's site config.                                                                        |
 | `restore.migrate`         | bool                       | `true`                                         | Run `bench migrate` after restoring.                                                                                           |
-| `restore.requireDevguard` | bool                       | `true`                                         | Refuse to write production's encryption key into an unguarded bench.                                                           |
+| `restore.requireDevguard` | bool                       | `true`                                         | Refuse to restore into an unguarded bench (`FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1` overrides once).                             |
 
 ## Offline migrate
 

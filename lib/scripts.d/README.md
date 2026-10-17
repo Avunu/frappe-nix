@@ -22,7 +22,7 @@ lib.optionalAttrs appMode {
 ```
 
 The arguments: `lib`, `pkgs`, `appsWithNode`, `benchBin`, `secrets`,
-`nodeModulesBin`, `nodeVerifyBin`, `pythonBin`, `nodeLocksBin`,
+`secretScripts`, `benchCli`, `nodeModulesBin`, `nodeVerifyBin`, `pythonBin`, `nodeLocksBin`,
 `nodeNestedFrontendExcludes`, `restore`, `offlineMigrate`, `appMode`, `lockDir`,
 and the snippets `atBench` (cd to the bench root), `atRepo` (cd to the
 repository), `siteFlag` (sets `$SITE_FLAG`), `offlineMigrateEnv`,

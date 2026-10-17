@@ -397,20 +397,94 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
     no "an unguarded bench refuses production's key" "rc=$RC out=$OUT"
   fi
 
-  FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
-  if [ "$RC" -eq 0 ] && [ "$(jq -r '.encryption_key // "-"' "$SITE_CFG")" = "EK1" ]; then
-    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 restores anyway, key and all"
+  FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 0 ] && [ "$(jq -r '.encryption_key // "-"' "$SITE_CFG")" = "EK1" ] && ! said "deprecated"; then
+    ok "FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1 restores anyway, key and all"
   else
     no "the unguarded override restores" "rc=$RC out=$OUT"
   fi
 
+  # The name it had before (CONVENTIONS.md, Tool-owned variables), read with a
+  # warning until the next minor release.
+  FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
+    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"
+  else
+    no "the legacy unguarded override still works" "rc=$RC out=$OUT"
+  fi
+
+  # Unguarded always refuses now (CONVENTIONS.md, Unguarded restore): not
+  # only when production's key would cross over, and an explicit file too.
   rm -rf "$ROOT/sites/$FRAPPE_SITE"
   run_with "$UNGUARDED_SCRIPT" --at 20260101_010101 --no-site-config
-  if [ "$RC" -eq 0 ] && [ "$(jq -r '.encryption_key // "-"' "$SITE_CFG")" = "-" ]; then
-    ok "an unguarded bench restores without production's key (--no-site-config)"
+  if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then
+    ok "an unguarded bench refuses even without production's key (--no-site-config)"
   else
-    no "an unguarded bench restores with --no-site-config" "rc=$RC out=$OUT"
+    no "an unguarded bench refuses with --no-site-config" "rc=$RC out=$OUT"
   fi
+  run_with "$UNGUARDED_SCRIPT" "$WORK/local.sql.gz"
+  if [ "$RC" -eq 1 ] && said "refusing" && [ ! -s "$WORK/bench.log" ]; then
+    ok "an unguarded bench refuses an explicit file too"
+  else
+    no "an unguarded bench refuses an explicit file" "rc=$RC out=$OUT"
+  fi
+  run_with "$UNGUARDED_SCRIPT" --list
+  if [ "$RC" -eq 0 ] && said 20260202_020202; then
+    ok "an unguarded bench can still list the backups"
+  else
+    no "an unguarded bench can list" "rc=$RC out=$OUT"
+  fi
+fi
+
+# ── 27. neutralizing ─────────────────────────────────────────────────────
+# A fetched restore pauses the scheduler and switches mail off in the restored
+# database (restore.neutralize, on by default in the dev shell).
+run --at 20260101_010101
+if [ "$RC" -eq 0 ] && logged "--site erp.example.com disable-scheduler" &&
+  logged "execute frappe.db.sql" && logged "enable_outgoing = 0, enable_incoming = 0"; then
+  ok "a fetched restore is neutralized: scheduler paused, Email Accounts off"
+else
+  no "a fetched restore is neutralized" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+if [ "$(grep -n 'disable-scheduler' "$WORK/bench.log" | cut -d: -f1)" -gt "$(grep -n ' restore ' "$WORK/bench.log" | cut -d: -f1)" ] &&
+  [ "$(grep -n 'disable-scheduler' "$WORK/bench.log" | cut -d: -f1)" -lt "$(grep -n ' migrate' "$WORK/bench.log" | cut -d: -f1)" ]; then
+  ok "it is neutralized after the restore and before the migrate"
+else
+  no "neutralize runs between restore and migrate" "$(cat "$WORK/bench.log")"
+fi
+run --at 20260101_010101 --no-neutralize
+if [ "$RC" -eq 0 ] && ! logged "disable-scheduler" && ! logged "execute frappe.db.sql"; then
+  ok "--no-neutralize leaves the restored database as production had it"
+else
+  no "--no-neutralize skips it" "$(cat "$WORK/bench.log")"
+fi
+run "$WORK/local.sql.gz"
+if [ "$RC" -eq 0 ] && ! logged "disable-scheduler"; then
+  ok "an explicit file is not neutralized unless asked"
+else
+  no "an explicit file is not neutralized by default" "$(cat "$WORK/bench.log")"
+fi
+run "$WORK/local.sql.gz" --neutralize
+if [ "$RC" -eq 0 ] && logged "local.sql.gz" && logged "disable-scheduler" && logged "execute frappe.db.sql"; then
+  ok "--neutralize neutralizes an explicit file's restore"
+else
+  no "--neutralize on an explicit file" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+
+# ── 28. --at takes ISO 8601 and any leading part of a time ───────────────
+for at in 2026-01-01T01:01:01 "2026-01-01 01:01" 2026-01 20260101_010101; do
+  run --at "$at"
+  if [ "$RC" -eq 0 ] && said "restored erp.example.com from 20260101_010101"; then
+    ok "--at $at picks 20260101_010101"
+  else
+    no "--at $at picks 20260101_010101" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+  fi
+done
+run --at yesterday
+if [ "$RC" -ne 0 ] && said "is not a point in time" && ! logged " restore "; then
+  ok "--at that is not a time is refused"
+else
+  no "--at yesterday is refused" "rc=$RC out=$OUT"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
