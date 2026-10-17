@@ -3,7 +3,7 @@ title: Profiles
 description: "How an app opts in, the built-in minimal and recommended profiles, org profiles, and how [tool.frappe-nix] layers over them."
 order: 1
 tags: [app-standards, profiles, configuration]
-updated: 2026-10-07
+updated: 2026-10-16
 ---
 
 The app standards are opt-in and profile-driven. A profile decides which modules are on (lint, types, tests, commits, releases, Dependabot, CI, …) and sets their parameters and the organisation's values. An app picks one in `[tool.frappe-nix] profile`, and can change any value for itself in the same table. The [interface spec](spec.md) (§8) is the contract this page summarises.
@@ -13,7 +13,7 @@ The app standards are opt-in and profile-driven. A profile decides which modules
 An app opts in by having a `[tool.frappe-nix]` table in its `pyproject.toml`. The quickest way is to let sync create it:
 
 ```sh
-nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --frappe-version version-16
+nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --version version-16
 ```
 
 or add it by hand and run `frappe-init --sync`:

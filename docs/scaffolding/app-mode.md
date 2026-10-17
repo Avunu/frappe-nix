@@ -3,7 +3,7 @@ title: Develop a single app
 description: Use frappe-nix from one Frappe app's own repository, where a small flake.nix is all you commit and the bench around the app is generated from flake inputs.
 order: 3
 tags: [scaffolding, app-mode, flake-inputs]
-updated: 2026-10-07
+updated: 2026-10-16
 ---
 
 A bench repository is the uv workspace: a committed `pyproject.toml`, a committed `uv.lock` and `apps/*` as git submodules. An app repository has none of that. It is one app, and the bench around it is an implementation detail of developing it.
@@ -27,9 +27,9 @@ It never touches the app's own `pyproject.toml`. That file is the app's packagin
 
 | Detail         | What the scaffolder does                                                                                              |
 | -------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Frappe version | Prompts for it, or takes `--frappe-version`, which is required without a terminal.                                    |
+| Frappe version | Prompts for it, or takes `--version`, which is required without a terminal.                                           |
 | Bench name     | Derived from the app's `[project].name`, normalized. An app repository has exactly one bench, so it is not asked for. |
-| Default site   | `<BENCH_NAME>.localhost`, or `--site`.                                                                                |
+| Default site   | `<BENCH_NAME>.localhost`, or `--default-site`.                                                                        |
 | Preview        | `--dry-run` prints the plan and changes nothing.                                                                      |
 | First lock     | `--skip-lock` skips `nix run .#relock`; run it yourself before you enter the shell.                                   |
 
@@ -41,7 +41,7 @@ It never touches the app's own `pyproject.toml`. That file is the app's packagin
 Everything above is what app mode does by default, and an app that does nothing more keeps it unchanged. An app can also opt in to the [app standards](../app-standards/README.md): a profile of managed tool configs, git hooks, release and CI files that `frappe-init --sync` keeps in step. Pass `--standards <profile>` to opt in while setting up, or later:
 
 ```bash
-nix run github:Avunu/frappe-nix -- --app --standards recommended --frappe-version version-16
+nix run github:Avunu/frappe-nix -- --app --standards recommended --version version-16
 nix run .#frappe-init -- --sync --standards minimal     # an app already in app mode
 ```
 

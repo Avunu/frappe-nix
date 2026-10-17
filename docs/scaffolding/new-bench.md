@@ -3,7 +3,7 @@ title: Create a new bench
 description: Scaffold a fresh Frappe bench with frappe-nix, the equivalent of bench init, choosing a Frappe version and a set of apps.
 order: 1
 tags: [scaffolding, bench, uv]
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 `nix run github:Avunu/frappe-nix` scaffolds a fresh bench: the frappe-nix equivalent of `bench init`. You choose a Frappe version, which fixes the Python and Node versions from a [preset](README.md#versions-and-presets), and an optional set of apps. The scaffolder then writes the wrapper flake, adds `frappe` and the apps as git submodules pinned to that version's branch, and runs `uv lock`.
@@ -22,7 +22,7 @@ Non-interactively, pass everything as flags:
 
 ```bash
 nix run github:Avunu/frappe-nix -- \
-  --frappe-version version-15 --apps erpnext,hrms --name mybench mybench
+  --version version-15 --apps erpnext,hrms --name mybench mybench
 ```
 
 Then enter the directory and start the stack:
@@ -37,15 +37,15 @@ In another terminal, run `provision-site` to create the site. [Getting started](
 
 ## Flags
 
-| Flag                   | Meaning                                                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| `--frappe-version <V>` | `develop`, `version-16` or `version-15`. Required without a terminal.                     |
-| `--apps <A,B,C>`       | Apps to add: bare names (resolved to `frappe/<name>`), `owner/repo`, or full git URLs.    |
-| `--name <NAME>`        | The bench name: the container image prefix and the source of the per-bench port offset.   |
-| `--site <SITE>`        | The default site. Defaults to `frappe.localhost`.                                         |
-| a positional directory | Where to create the bench. Prompted for when omitted, with `frappe-bench` as the default. |
-| `--skip-lock`          | Do not run `uv lock`.                                                                     |
-| `--dry-run`            | Print the plan and exit without changing anything.                                        |
+| Flag                    | Meaning                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| `--version <V>`         | `develop`, `version-16` or `version-15`. Required without a terminal.                     |
+| `--apps <A,B,C>`        | Apps to add: bare names (resolved to `frappe/<name>`), `owner/repo`, or full git URLs.    |
+| `--name <NAME>`         | The bench name: the container image prefix and the source of the per-bench port offset.   |
+| `--default-site <SITE>` | The default site. Defaults to `frappe.localhost`.                                         |
+| a positional directory  | Where to create the bench. Prompted for when omitted, with `frappe-bench` as the default. |
+| `--skip-lock`           | Do not run `uv lock`.                                                                     |
+| `--dry-run`             | Print the plan and exit without changing anything.                                        |
 
 The full list, including the migration-only flags, is in [Scaffolder reference](../reference/scaffolder.md).
 

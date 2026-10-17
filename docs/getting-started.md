@@ -3,7 +3,7 @@ title: Getting started
 description: Scaffold a new Frappe bench with frappe-nix, start the development shell and create your first site.
 order: 2
 tags: [quick-start, devenv, bench]
-updated: 2026-10-06
+updated: 2026-10-16
 ---
 
 This page takes you from an empty directory to a running Frappe site. It uses the new-bench path. If you already have a bench or a single app, pick the matching mode in [Choose a mode](scaffolding/README.md) and come back for the shell steps.
@@ -23,17 +23,17 @@ The generated flake declares the `devenv.cachix.org` binary cache, so Nix may as
 
 ## 1. Scaffold a bench
 
-Run the scaffolder from the directory where the bench should live. With a terminal and no flags it prompts you (using [gum](https://github.com/charmbracelet/gum)) for a Frappe version, a set of apps and a directory name.
+Run the scaffolder from the directory where the bench should live. With a terminal and no flags it prompts you for a Frappe version, a set of apps and a directory name.
 
 ```bash
 nix run github:Avunu/frappe-nix
 ```
 
-For a scripted run, pass everything as flags. Without a terminal, `--frappe-version` is required.
+For a scripted run, pass everything as flags. Without a terminal, `--version` is required.
 
 ```bash
 nix run github:Avunu/frappe-nix -- \
-  --frappe-version version-15 --apps erpnext,hrms --name mybench mybench
+  --version version-15 --apps erpnext,hrms --name mybench mybench
 ```
 
 The scaffolder writes the wrapper `flake.nix`, adds `frappe` and your apps as git submodules on the branch that matches the version you chose, and runs `uv lock`. See [Create a new bench](scaffolding/new-bench.md) for the presets, the flags and the files it writes.

@@ -66,10 +66,10 @@ In [app mode](docs/scaffolding/app-mode.md) frappe-nix builds that layout itself
 One command does all three. It detects the mode from the directory it runs in.
 
 ```sh
-nix run github:Avunu/frappe-nix                 # interactive (gum prompts)
+nix run github:Avunu/frappe-nix                 # interactive (prompts for what it needs)
 # or fully non-interactive:
 nix run github:Avunu/frappe-nix -- \
-  --frappe-version version-15 --apps erpnext,hrms --name mybench mybench
+  --version version-15 --apps erpnext,hrms --name mybench mybench
 cd mybench && direnv allow && devenv up         # then `provision-site` in another shell
 ```
 
