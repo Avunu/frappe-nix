@@ -1,6 +1,8 @@
 # Releases without an App (docs: ci.md, S13): release-please, CI on the release PR, the
 # fast-forward of the release branch (develop+version) and, when enabled, the registry PR.
 {% set publish = modules.listing and cfg.listing.publish %}
+{# The locked frappe-nix revision; a lock without one (a path: override, frappe-nix's own self-tests) keeps the file's pin. #}
+{% macro uses(workflow) %}{% if frappe_nix.rev %}{{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/{{ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}{% else %}{{ pin(frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" ~ workflow, "", "v" ~ frappe_nix.version) }}{% endif %}{% endmacro %}
 name: release
 on:
   push:
@@ -22,7 +24,7 @@ jobs:
       pull-requests: write
       actions: write
       checks: read
-    uses: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/app-release.yml@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+    uses: {{ uses("app-release.yml") }}
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}

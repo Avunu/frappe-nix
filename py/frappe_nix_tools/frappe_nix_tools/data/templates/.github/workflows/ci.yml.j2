@@ -1,8 +1,8 @@
 # The quality gates (docs: ci.md). One caller job per enabled gate, each named `ci`, so the
 # checks are `ci / <gate>` (S3, S39). frappe-nix's reusable workflows move only through
 # `frappe-nix repo rollout` or `frappe-init --sync` (S5).
-{% set fn = frappe_nix.owner ~ "/" ~ frappe_nix.name %}
-{% set at = "@" ~ frappe_nix.rev ~ " # v" ~ frappe_nix.version %}
+{# The locked frappe-nix revision; a lock without one (a path: override, frappe-nix's own self-tests) keeps the file's pin. #}
+{% macro uses(workflow) %}{% if frappe_nix.rev %}{{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/{{ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}{% else %}{{ pin(frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" ~ workflow, "", "v" ~ frappe_nix.version) }}{% endif %}{% endmacro %}
 name: ci
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: {{ fn }}/.github/workflows/app-{{ gate }}.yml{{ at }}
+    uses: {{ uses("app-" ~ gate ~ ".yml") }}
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}

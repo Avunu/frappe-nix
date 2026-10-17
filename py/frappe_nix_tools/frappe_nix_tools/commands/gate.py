@@ -50,6 +50,7 @@ output and annotates failures.
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import subprocess
@@ -68,6 +69,7 @@ from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError, 
 from frappe_nix_tools.scaffold import context, discover, globs
 
 GATES = ("lint", "typecheck", "marketplace")
+TOOLS_PYTHON = "3.14"
 CUSTOMIZATION_HOOKS = ("validate_customizations", "clean_customized_doctypes")
 
 
@@ -277,8 +279,15 @@ def lint(g: Gate) -> None:
 				if g.run(*scan, "--config", str(Path(rules) / "rules"), app) != 0:
 					failed.append("frappe rules")
 			if g.cfg("semgrep.test-correctness", True):
+				# The tracked test files, named: semgrep's default ignores skip every tests/
+				# directory, where most of an app's tests live.
 				config = str(data_path("semgrep/test-correctness.yml"))
-				if g.run(*scan, "--include=**/test_*.py", "--config", config, app) != 0:
+				tests = [
+					p
+					for p in sorted(tracked)
+					if p.startswith(f"{app}/") and fnmatch.fnmatchcase(p.rsplit("/", 1)[-1], "test_*.py")
+				]
+				if tests and g.run(*scan, "--config", config, *tests) != 0:
 					failed.append("test correctness")
 			if (root / "semgrep").is_dir():
 				if g.run(*scan, "--config", "semgrep", app) != 0:
@@ -507,6 +516,11 @@ def run(args: argparse.Namespace) -> int:
 	root = repo.find_up("pyproject.toml").parent
 	app = load_app(root)
 	g = Gate(app, args.format, args.base or None, args.expect_rev or "")
+	# The tools/ project's interpreter: the one frappe-nix-tools is installed with (§4.1), not
+	# uv's newest (semgrep 1.179.0's engine crashes on 3.15); and semgrep's posix I/O backend,
+	# which hosted runners' thread limits need (frappe-listing's L7 scan sets it too).
+	g.env.setdefault("UV_PYTHON", TOOLS_PYTHON)
+	g.env.setdefault("EIO_BACKEND", "posix")
 	RUNNERS[args.gate](g)
 	failed = [s for s in g.steps if s.status == "failed"]
 	report = Path(args.report) if args.report else root / ".dev-dist" / "gate" / f"{args.gate}.json"

@@ -28,6 +28,8 @@ permissions: {}
 
 env:
   FORCE_COLOR: "1"
+  # The tools/ project's Python: uv would take its newest, which semgrep 1.179.0 crashes on.
+  UV_PYTHON: "3.14"
 
 jobs:
   typecheck:

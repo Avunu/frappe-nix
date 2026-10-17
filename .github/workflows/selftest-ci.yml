@@ -65,8 +65,7 @@ jobs:
           # The zizmor.yml every app gets (the fixture's, as sync rendered it): strict hash-pin.
           lint zizmor --config tests/fixtures/standards-app/.github/zizmor.yml \
             .github/workflows/app-*.yml .github/workflows/fleet-audit.yml .github/workflows/selftest-ci.yml
-          python="$(uv tool dir)/frappe-nix-tools/bin/python"
-          "$python" - <<'EOF'
+          uv run --no-project --with pyyaml python - <<'EOF'
           import yaml
           doc = yaml.safe_load(open(".github/workflows/fleet-audit.yml"))
           triggers = doc.get("on", doc.get(True))
@@ -78,8 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           lint() { uv run --frozen --project "$GITHUB_WORKSPACE/tests/fixtures/standards-app/tools" "$@"; }
-          python="$(uv tool dir)/frappe-nix-tools/bin/python"
-          "$python" tests/standards/ci_render.py . "$RUNNER_TEMP/render"
+          uv run --no-project --with ./py/frappe_nix_tools python tests/standards/ci_render.py . "$RUNNER_TEMP/render"
           for dir in "$RUNNER_TEMP"/render/*/; do
             echo "::group::$(basename "$dir")"
             (

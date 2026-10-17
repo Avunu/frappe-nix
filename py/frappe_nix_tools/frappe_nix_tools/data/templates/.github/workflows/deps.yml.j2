@@ -2,6 +2,8 @@
 # decision table, and the sweep that re-dispatches CI for bot PRs (§4.5).
 {% set sweep = cfg.ci.schedules["deps-sweep"] %}
 {% set relock = cfg.ci.schedules["deps-relock"] %}
+{# The locked frappe-nix revision; a lock without one (a path: override, frappe-nix's own self-tests) keeps the file's pin. #}
+{% macro uses(workflow) %}{% if frappe_nix.rev %}{{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/{{ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}{% else %}{{ pin(frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" ~ workflow, "", "v" ~ frappe_nix.version) }}{% endif %}{% endmacro %}
 name: deps
 on:
   pull_request:
@@ -25,7 +27,7 @@ jobs:
       pull-requests: write
       actions: write
       checks: read
-    uses: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/app-deps.yml@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+    uses: {{ uses("app-deps.yml") }}
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}
