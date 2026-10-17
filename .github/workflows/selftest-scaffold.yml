@@ -169,6 +169,16 @@ jobs:
         run: |
           set -euo pipefail
           git add -A
+          # What a dev shell leaves in the checkout: the materialized bench and devenv's
+          # virtualenv, both ignored. Each holds what static_analysis would report if it
+          # walked them (a missing template, an unwhitelisted call, an unused import).
+          for dir in .frappe-nix/bench/apps/frappe/frappe .devenv/state/venv/lib .direnv node_modules/pkg; do
+            mkdir -p "$dir"
+            printf 'import frappe\nimport os\n\n\ndef page():\n\treturn frappe.render_template("templates/missing.html", {})\n' > "$dir/planted.py"
+            printf 'frappe.call({ method: "missing_app.api.nothing" });\n' > "$dir/planted.js"
+          done
+          untracked="$(git ls-files --others --exclude-standard)"
+          test -z "$untracked" || { echo "::error::the planted files are not ignored: $untracked"; exit 1; }
           uv run --frozen --project tools prek run --all-files --show-diff-on-failure
 
       - name: tsc --build

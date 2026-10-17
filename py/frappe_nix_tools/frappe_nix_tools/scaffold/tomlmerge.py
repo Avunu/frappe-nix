@@ -41,7 +41,7 @@ from frappe_nix_tools.scaffold import context, hooks
 
 FRAPPE_APPS = ("frappe", "erpnext", "hrms", "payments")
 COVERAGE_OMIT = ["*/tests/*", "*/test_*.py", "*/patches/*"]
-VULTURE_EXCLUDE = [".venv/", "node_modules/", ".frappe-nix/", ".dev-dist/"]
+VULTURE_EXCLUDE = [f"{d}/" for d in context.UNMANAGED_DIRS]
 
 # test_utils' static_analysis resolves every dotted path an app calls (frappe.call, a
 # whitelisted method in hooks.py) against the app and the apps beside it in a bench. Outside
@@ -183,8 +183,8 @@ def groups(ctx: Any) -> dict[str, list[tuple[tuple[str, ...], Any]]]:
 			),
 		],
 		# test_utils' static_analysis runs vulture over the whole checkout, which reads this
-		# table: without it, tools/.venv (uv's environment for tools/) and the generated
-		# bench are scanned as the app's own dead code.
+		# table: without it, tools/.venv (uv's environment for tools/), the generated bench
+		# and devenv's virtualenv are scanned as the app's own dead code.
 		"test-utils": [(("tool", "vulture", "exclude"), VULTURE_EXCLUDE)],
 	}
 
