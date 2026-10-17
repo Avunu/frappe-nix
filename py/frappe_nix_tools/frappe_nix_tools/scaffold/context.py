@@ -39,6 +39,12 @@ GATES = ("pr-policy", "lint", "typecheck", "test", "marketplace")
 # Modules the compat hook runs rules for (§2.14): any of them puts it in the pre-commit config.
 COMPAT_MODULES = ("metadata", "releases", "vite-register", "tests", "typescript", "hygiene")
 
+# Directories in an app's checkout that are never its source (the managed .gitignore lists
+# them): uv's environments, node packages, the materialized dev bench, the pinned trees, and
+# devenv's and direnv's state, which hold a whole virtualenv. A hook that walks the checkout
+# itself, rather than taking prek's file list, must not descend into them.
+UNMANAGED_DIRS = (".venv", "node_modules", ".frappe-nix", ".dev-dist", ".devenv", ".direnv")
+
 
 class NS(dict):
 	"""A dict whose keys also read as attributes, for ``when`` expressions and templates."""
@@ -319,6 +325,7 @@ def build(
 			"first_commit_year": first_commit_year(app.root),
 			"options": options or {},
 			"precommit_live": precommit_live,
+			"unmanaged_dirs": list(UNMANAGED_DIRS),
 			# Whether this package renders scripts/vite-register.mjs (N2): C8, the build append
 			# and retiring a Vite app's update-assets.mjs wait for it.
 			"vite_register_shipped": manifest.ships(manifest.VITE_REGISTER),

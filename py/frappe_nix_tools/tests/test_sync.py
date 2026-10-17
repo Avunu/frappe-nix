@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -1314,6 +1315,76 @@ class TestStaticAnalysisWhitelist(AppCase):
 		self.assertEqual(self.fn("sync", "--write")[0], 0)
 		self.assertEqual(self.whitelist(), ["flow.api.*", "frappe.*", "erpnext.*"])
 		self.assertEqual(self.check()[0], 0)
+
+
+class TestTreeWalkingHooks(AppCase):
+	"""static_analysis and track_overrides walk the checkout themselves: their managed entry prunes
+	the walk at the unmanaged directories, which [tool.vulture] exclude also names."""
+
+	extra_pyproject = "\n[tool.frappe-nix.test-utils]\nenable = true\ntrack-overrides = true\n"
+	UNMANAGED = (".frappe-nix", ".devenv", ".direnv", ".dev-dist", ".venv", "node_modules")
+
+	# A stand-in for test_utils' hook modules: each walk the real ones use, printing what it finds.
+	HOOK = (
+		"import os, pathlib, sys\n"
+		"def main(argv=None):\n"
+		"\troot = pathlib.Path(sys.argv[1])\n"
+		"\tfound = {str(p.relative_to(root)) for p in root.rglob('*.py')}\n"
+		"\tfound |= {str(p.relative_to(root)) for p in root.rglob('doctype/*/*.py')}\n"
+		"\tfound |= {str(p.relative_to(root)) for p in root.rglob('templates')}\n"
+		"\tfound |= {os.path.relpath(os.path.join(r, f), root) for r, _, fs in os.walk(root) for f in fs}\n"
+		"\tprint(sys.argv[0], *sorted(found))\n"
+	)
+
+	def entry(self, hook: str) -> list[str]:
+		import shlex
+
+		import yaml
+
+		config = yaml.safe_load(self.read(".pre-commit-config.yaml"))
+		(repo,) = [r for r in config["repos"] if r["repo"].endswith("/test_utils")]
+		(spec,) = [h for h in repo["hooks"] if h["id"] == hook]
+		return shlex.split(spec["entry"])
+
+	def test_the_walks_skip_the_unmanaged_directories(self):
+		self.synced()
+		vulture = tomllib.loads(self.read("pyproject.toml"))["tool"]["vulture"]["exclude"]
+		self.assertEqual(sorted(vulture), sorted(f"{d}/" for d in self.UNMANAGED))
+		with tempfile.TemporaryDirectory() as tmp:
+			modules = Path(tmp, "test_utils", "pre_commit")
+			modules.mkdir(parents=True)
+			Path(tmp, "test_utils", "__init__.py").write_text("")
+			Path(modules, "__init__.py").write_text("")
+			app = Path(tmp, "app")
+			for rel in ("demo_app/api.py", "demo_app/doctype/thing/thing.py", "demo_app/templates/page.html"):
+				Path(app, rel).parent.mkdir(parents=True, exist_ok=True)
+				Path(app, rel).write_text("")
+			# What made the hooks fail in a dev shell: frappe's sources in the bench, a virtualenv.
+			for d in (*self.UNMANAGED, ".git", "demo_app/__pycache__"):
+				for rel in ("frappe/www/page.py", "doctype/user/user.py", "templates/web.html"):
+					Path(app, d, rel).parent.mkdir(parents=True, exist_ok=True)
+					Path(app, d, rel).write_text("")
+			for hook in ("static_analysis", "track_overrides"):
+				Path(modules, f"{hook}.py").write_text(self.HOOK)
+				python, flag, code, name = self.entry(hook)
+				self.assertEqual((python, flag, name), ("python", "-c", hook))
+				out = subprocess.run(
+					[sys.executable, "-c", code, name, str(app)],
+					env={**os.environ, "PYTHONPATH": tmp},
+					capture_output=True,
+					text=True,
+					check=True,
+				).stdout.split()
+				self.assertEqual(
+					out,
+					[
+						hook,
+						"demo_app/api.py",
+						"demo_app/doctype/thing/thing.py",
+						"demo_app/templates",
+						"demo_app/templates/page.html",
+					],
+				)
 
 
 class TestStaleYarnLock(AppCase):

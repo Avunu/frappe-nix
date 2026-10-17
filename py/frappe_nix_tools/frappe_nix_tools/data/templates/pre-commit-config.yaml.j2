@@ -9,6 +9,35 @@
 {% set major_rule = modules.commits and modules.releases and cfg.releases["version-scheme"] == "frappe-major" %}
 {% set local = modules["python-lint"] or modules.js or stylelint or modules["workflow-lint"] or modules["shell-lint"] or compat or modules.commits %}
 {% set tu = cfg["test-utils"].hooks %}
+{#
+  static_analysis and track_overrides walk the checkout themselves and take no exclude: run
+  each in its own environment with os.walk and Path.rglob pruned at the unmanaged
+  directories, or the dev bench and devenv's virtualenv are read as the app's source.
+  Vulture, which static_analysis runs, reads [tool.vulture] exclude instead.
+  check_code_duplication's jscpd already skips them.
+#}
+{% macro pruned(hook) %}
+        # Its own walk of the checkout skips the dev bench, devenv's state and the other unmanaged directories.
+        entry: |-
+          python -c '
+          import fnmatch, importlib, os, pathlib, sys
+          skip = { {%- for d in [".git", "__pycache__"] + unmanaged_dirs %}{{ d | json_string }}{{ ", " if not loop.last else "" }}{% endfor -%} }
+          def pruned(top, topdown=True, onerror=None, followlinks=False):
+              for root, dirs, files in walk(top, topdown, onerror, followlinks):
+                  dirs[:] = [d for d in dirs if d not in skip]
+                  yield root, dirs, files
+          def rglob(self, pattern, **kwargs):
+              if "/" in pattern:
+                  return (p for p in glob(self, pattern, **kwargs) if skip.isdisjoint(p.relative_to(self).parts))
+              return (type(self)(root, name) for root, dirs, files in pruned(self) for name in dirs + files if fnmatch.fnmatchcase(name, pattern))
+          walk, glob = os.walk, pathlib.Path.rglob
+          os.walk, pathlib.Path.rglob = pruned, rglob
+          hook = sys.argv.pop(1)
+          module = importlib.import_module("test_utils.pre_commit." + hook)
+          sys.argv[0] = hook
+          sys.exit(module.main())
+          ' {{ hook }}
+{% endmacro %}
 default_install_hook_types: [{{ "pre-commit, commit-msg" if modules.commits else "pre-commit" }}]
 default_stages: [pre-commit]
 default_language_version:
@@ -153,7 +182,7 @@ repos:
 {% endif %}
 {% if "static_analysis" in tu %}
       - id: static_analysis
-        args: ["."]
+{{ pruned("static_analysis") }}        args: ["."]
 {% endif %}
 {% if "validate_doctype_python_types" in tu %}
       - id: validate_doctype_python_types
@@ -185,7 +214,7 @@ repos:
 {% endif %}
 {% if cfg["test-utils"]["track-overrides"] %}
       - id: track_overrides
-        args: [--app, {{ app }}, --base-branch, {{ frappe.branch }}]
+{{ pruned("track_overrides") }}        args: [--app, {{ app }}, --base-branch, {{ frappe.branch }}]
 {% endif %}
 
 {% endif %}
