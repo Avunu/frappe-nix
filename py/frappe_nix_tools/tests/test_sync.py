@@ -591,6 +591,43 @@ class TestDiscovery(AppCase):
 		self.assertFalse((self.root / ".stylelintrc.json").exists())
 
 
+class TestZizmorConfig(AppCase):
+	""".github/zizmor.yml is live only when zizmor has something to audit (§2.18)."""
+
+	ZIZMOR = ".github/zizmor.yml"
+
+	def test_first_sync_renders_it_with_the_callers(self):
+		# recommended turns ci and dependabot on: the callers and dependabot.yml are rendered
+		# in this same sync, untracked as yet, and zizmor.yml comes with them.
+		self.synced()
+		self.assertTrue((self.root / ".github/workflows/ci.yml").exists())
+		text = self.read(self.ZIZMOR)
+		self.assertTrue(text.startswith("# frappe-nix:managed"), text)
+		self.assertIn('"*": hash-pin', text)
+
+
+class TestZizmorConfigNothingToAudit(AppCase):
+	extra_pyproject = (
+		"\n[tool.frappe-nix.ci]\nenable = false\n\n[tool.frappe-nix.dependabot]\nenable = false\n"
+	)
+
+	def test_rendered_once_the_app_tracks_a_workflow(self):
+		"""With no caller and no dependabot.yml, an app gets zizmor.yml when it tracks a
+		workflow of its own (a docs check, say), and not before."""
+		self.synced()
+		zizmor = TestZizmorConfig.ZIZMOR
+		self.assertFalse((self.root / zizmor).exists(), "nothing to audit, no zizmor config")
+		self.write(".github/workflows/docs.yml", "on: push\njobs: {}\n")
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn(zizmor, out)
+		self.assertEqual(self.fn("sync", "--write")[0], 0)
+		self.assertIn('"*": hash-pin', self.read(zizmor))
+		self.commit()
+		self.assertEqual(self.check()[0], 0)
+
+
 class TestRetire(AppCase):
 	def test_workflows_stay_until_the_callers_ship(self):
 		"""The app's own release-please and auto-merge workflows are retired only once this

@@ -155,7 +155,7 @@ jobs:
           uv run --frozen --project tools zizmor --offline "$SELF"
           # The fixture's rendered workflows: none until N4's manifest.d/ci.json
           # renders them; from then on they must exist and pass.
-          if jq -s -e '[.[].entries[]?.path | select(startswith(".github/"))] | length > 0' \
+          if jq -s -e '[.[].entries[]?.path | select(startswith(".github/workflows/"))] | length > 0' \
             "$(frappe-nix data-path manifest.d)"/*.json > /dev/null; then
             test -d .github/workflows || { echo "::error::the manifest renders .github files, but the fixture has none"; exit 1; }
           fi
