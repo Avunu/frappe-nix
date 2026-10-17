@@ -3,7 +3,7 @@ title: App assets
 description: "How an app's Vite outputs are registered on every bench, and how frontends are named and built."
 order: 4
 tags: [app-standards, assets, vite, bundles]
-updated: 2026-10-07
+updated: 2026-10-16
 ---
 
 Frappe serves an app's scripts and stylesheets by name. `app_include_js = ["timer.bundle.js"]` in `hooks.py`, and `{{ bundled_asset('timer.bundle.js') }}` in a `www` template, are looked up in the bench's `sites/assets/assets.json`, which maps each name to the hashed file a build wrote: `/assets/my_app/dist/js/timer.bundle.4KQ2LZ7M.js`. Frappe's own esbuild pipeline writes that file from what esbuild built. It knows nothing about a bundle the app builds with Vite, so on a stock bench such a bundle has no entry and its page asks for `/assets/my_app/dist/js/timer.bundle.js`, which is a 404.
@@ -17,7 +17,7 @@ Running both changes nothing the second time. A key is written only when its val
 
 ## What gets registered
 
-The registration reads every Vite manifest under `<app>/public/dist/`: `manifest*.json` and `.vite/manifest*.json`, at any depth. For each entry with `isEntry: true` it takes the entry's `file` and each of its `css` files, and registers each one whose name has the shape `<name>.bundle.<hash>.js` or `.css` (a hash of six or more of `A-Z a-z 0-9 _ -`):
+The registration reads every Vite manifest under `<app>/public/dist/`: `manifest*.json` and `.vite/manifest*.json`, at any depth. For each entry with `isEntry: true` it takes the entry's `file` and each of its `css` files, plus the `style.css` record a build with `cssCodeSplit: false` writes for its one stylesheet (no entry lists that file in its `css`), and registers each one whose name has the shape `<name>.bundle.<hash>.js` or `.css` (a hash of six or more of `A-Z a-z 0-9 _ -`):
 
 ```text
 public/dist/js/timer.bundle.4KQ2LZ7M.js    →  "timer.bundle.js":  "/assets/my_app/dist/js/timer.bundle.4KQ2LZ7M.js"

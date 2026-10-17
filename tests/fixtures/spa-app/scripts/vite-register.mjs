@@ -74,9 +74,12 @@ const bundleKeys = ({ appDir, app, log }) => {
 	}
 	for (const manifest of manifestsUnder(dist)) {
 		const outDir = outDirOf(manifest);
-		const chunks = Object.values(readManifest(manifest, log));
-		for (const chunk of chunks) {
-			if (!chunk || chunk.isEntry !== true) {
+		const chunks = Object.entries(readManifest(manifest, log));
+		for (const [id, chunk] of chunks) {
+			// `cssCodeSplit: false` emits the build's one stylesheet as its
+			// own record, "style.css", which no entry lists in its `css`.
+			const sheet = id === "style.css";
+			if (!chunk || (chunk.isEntry !== true && !sheet)) {
 				continue;
 			}
 			const files = [chunk.file, ...(chunk.css || [])];
