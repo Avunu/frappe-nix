@@ -140,15 +140,25 @@ jobs:
           attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
           attic use "ci:$NAME"
 
-      # frappe-nix's self-test only: its fixture app commits no nix/uv.lock (it would pin every
-      # Python dependency of frappe in frappe-nix's tree), so the run makes one first.
+      # frappe-nix's self-test only: its fixture app lives in a subdirectory of frappe-nix, and
+      # commits no nix/uv.lock (it would pin every Python dependency of frappe in frappe-nix's
+      # tree). The run makes the fixture a repository of its own, so its flake is that
+      # directory, and relocks it.
       - if: inputs.frappe-nix-override != ''
-        name: Relock the self-test's fixture
+        name: Prepare the self-test's fixture
+        env:
+          APP_ROOT: ${{ inputs.app-root }}
         run: |
           set -euo pipefail
+          commit() { git add -A && git -c user.name=self-test -c user.email=self-test@localhost commit -qm "$1"; }
+          if [ "$APP_ROOT" != . ] && [ ! -e .git ]; then
+            git init -q
+            commit "the fixture app"
+          fi
           if [ ! -f nix/uv.lock ]; then
             read -ra override <<< "$NIX_OVERRIDE"
             nix run --no-pure-eval "${override[@]}" .#relock
+            commit "relock"
           fi
 
       # The clean bench build (also every app's assets, S30): always on push, schedule and
