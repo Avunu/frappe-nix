@@ -131,6 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           read -ra override <<< "$NIX_OVERRIDE"
+          mkdir -p .dev-dist
           # shellcheck disable=SC2016 # the dev shell's frappe-nix expands it
           nix develop --no-pure-eval "${override[@]}" --profile .dev-dist/devshell-profile \
             -c bash -c 'bash "$(frappe-nix data-path ci/nightly.sh)"'

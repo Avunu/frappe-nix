@@ -195,6 +195,7 @@ jobs:
         run: |
           set -euo pipefail
           read -ra override <<< "$NIX_OVERRIDE"
+          mkdir -p .dev-dist
           nix develop --no-pure-eval "${override[@]}" --profile .dev-dist/devshell-profile -c frappe-test --ci
 
       - if: failure()
