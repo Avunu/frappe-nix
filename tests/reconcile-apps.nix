@@ -9,12 +9,15 @@
 
 let
   inherit (pkgs) lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
 
   render =
     (import ../lib/scripts.nix {
       inherit lib pkgs;
       appsWithNode = [ ];
       benchBin = "bench";
+      # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).
+      benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
     }).reconcile-apps.exec;
 in
 {

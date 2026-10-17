@@ -2317,18 +2317,16 @@ in
           nodeNestedFrontendExcludes = nodeExcludes;
           inherit appMode;
           lockDir = cfg.app.lockDir;
-        };
-
-        # reconcile-apps with the renames and replacements around it (the
-        # renamedApps and replacedApps options). Unchanged when both are empty.
-        # lib/scripts.nix's own body exits early on its quiet paths, so it runs
-        # as a script of its own between the two steps.
-        reconcileAppsExec = import ../lib/rename/reconcile.nix { inherit pkgs lib; } {
-          reconcileExec = scripts.reconcile-apps.exec;
-          pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
-          benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
+          # bench-get-app's clone (lib.sources).
+          sources = lib.getExe shellTools.sources;
+          # reconcile-apps renames before it installs, and replaces after.
           inherit (cfg) renamedApps replacedApps;
         };
+
+        # reconcile-apps, with the renames and replacements around it (the
+        # renamedApps and replacedApps options, in its configuration): the
+        # script, and the frappe:apps-reconcile task.
+        reconcileAppsExec = scripts.reconcile-apps.exec;
 
         # The app standards outputs; here for frappe-nix-tools, the package the
         # Python bench commands ship in.
@@ -2376,6 +2374,7 @@ in
         rootSyncTool = import ../lib/root-sync.nix {
           inherit pkgs;
           buildDepsSync = buildDepsSyncBin;
+          inherit (standardsOutputs) frappeNixTools;
         };
 
         # frappe-runtime is a normal workspace dependency, so a bench whose
@@ -3894,11 +3893,6 @@ in
 
             scripts =
               scripts
-              // {
-                reconcile-apps = scripts.reconcile-apps // {
-                  exec = reconcileAppsExec;
-                };
-              }
               // cfg.extraScripts
               // lib.optionalAttrs assetsReassertActive {
                 # On-demand trigger for the same check the task/process run —

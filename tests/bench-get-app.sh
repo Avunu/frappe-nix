@@ -156,7 +156,7 @@ check_eq "both apps are members, in order" "telephony hrms" "$(xargs < sites/app
 echo "── what bench-update --pull will see ───────────────────────────"
 # The classifier is what the pull loop reads; a recorded branch is what keeps
 # the app on its list.
-WORKSPACE_TOOL="$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)"
+WORKSPACE_TOOL="${WORKSPACE_TOOL:-$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)}"
 check_eq "telephony: name, kind, branch, url" \
   "$(printf 'telephony\tsubmodule\tdevelop\tfile://%s/remotes/telephony.git' "$ROOT")" \
   "$("$WORKSPACE_TOOL" apps --apps-dir apps | grep '^telephony')"

@@ -92,7 +92,7 @@ installed() { printf '%s' "$1" > "$INSTALLED_APPS_JSON"; }
 
 # The real tool (its interpreter carries tomlkit), so the fixture is registered
 # exactly the way bench-get-app registers an app.
-WORKSPACE_TOOL="$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)"
+WORKSPACE_TOOL="${WORKSPACE_TOOL:-$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)}"
 sync_registry() {
   "$WORKSPACE_TOOL" sync-registry --pyproject pyproject.toml --apps-dir apps --sites-dir sites > /dev/null
 }

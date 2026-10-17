@@ -446,7 +446,10 @@
         # app's repository owns) and in app mode.
         // import ./tests/update-deps.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
-        // import ./tests/bench-get-app.nix { inherit pkgs; }
+        // import ./tests/bench-get-app.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
         # .gitmodules too — and what it refuses to touch.
         // import ./tests/bench-remove-app.nix { inherit pkgs; }
