@@ -158,6 +158,9 @@ jobs:
           if [ ! -f nix/uv.lock ]; then
             read -ra override <<< "$NIX_OVERRIDE"
             nix run --no-pure-eval "${override[@]}" .#relock
+            # frappe's own ui/yarn.lock at the fixture's frappe pin does not cover its package.json;
+            # force a repaired lock over it, as the build's own message says.
+            nix run --no-pure-eval "${override[@]}" .#relock -- --node-locks frappe/ui
             commit "relock"
           fi
 
