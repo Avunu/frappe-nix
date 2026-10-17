@@ -12,6 +12,9 @@ import process from "node:process";
 // vite-register:begin
 // A bundle Vite emitted: <name>.bundle.<hash>.<js|css>.
 const BUNDLE = /^(?<name>[^/]+)\.bundle\.[A-Za-z0-9_-]{6,}\.(?<ext>js|css)$/;
+// The key frappe looks a stylesheet up by in a right-to-left session.
+const RTL_KEY = /^rtl_/;
+const isRtlDir = (dir) => dir.endsWith("-rtl");
 
 const isDir = (dir) => {
 	try {
@@ -100,7 +103,14 @@ const bundleKeys = ({ appDir, app, log }) => {
 					continue;
 				}
 				const { name, ext } = match.groups;
-				const key = `${name}.bundle.${ext}`;
+				// A stylesheet under a *-rtl/ directory (frappe's own css-rtl/)
+				// is the right-to-left build of <name>; any other file there is
+				// a by-product of that build, not a second copy of the entry.
+				const rtl = path.dirname(rel).split(path.sep).some(isRtlDir);
+				if (rtl && ext !== "css") {
+					continue;
+				}
+				const key = `${rtl ? "rtl_" : ""}${name}.bundle.${ext}`;
 				const mtime = mtimeOf(path.join(dist, rel));
 				const seen = found[key];
 				if (seen && seen.rel !== rel && seen.mtime > mtime) {
@@ -119,7 +129,22 @@ const bundleKeys = ({ appDir, app, log }) => {
 		const url = rel.split(path.sep).join("/");
 		keys[key] = `/assets/${app}/dist/${url}`;
 	}
+	// frappe asks for rtl_<name>.bundle.css in an ar, he, fa or ps session.
+	// Without a right-to-left build, the left-to-right stylesheet stands in:
+	// the layout is not mirrored, but the page is styled, not a 404.
+	for (const key of Object.keys(keys)) {
+		const twin = `rtl_${key}`;
+		if (key.endsWith(".bundle.css") && !RTL_KEY.test(key) && !keys[twin]) {
+			keys[twin] = keys[key];
+		}
+	}
 	return keys;
+};
+
+// frappe reads assets-rtl.json over assets.json and writes each rtl_ key to
+// it alone, so a key there wins: an rtl_ key belongs in that file.
+const assetsFileOf = (key) => {
+	return RTL_KEY.test(key) ? "assets-rtl.json" : "assets.json";
 };
 
 const readJson = (file) => {
@@ -224,29 +249,50 @@ const keptNewer = ({ appDir, app, sitesDir, current, value }) => {
 	return a !== null && b !== null && a > b;
 };
 
+// Merge keys into one of sites/assets/assets.json and assets-rtl.json.
+const mergeInto = ({ appDir, app, sitesDir, log, name, keys, ltr }) => {
+	const file = path.join(sitesDir, "assets", name);
+	const changed = [];
+	if (Object.keys(keys).length === 0) {
+		return changed;
+	}
+	const assets = readJson(file);
+	for (const [key, value] of Object.entries(keys)) {
+		const current = assets[key];
+		if (current === value) {
+			continue;
+		}
+		if (keptNewer({ appDir, app, sitesDir, current, value })) {
+			log(`vite-register: ${app}: ${key} kept: ${value} is older`);
+			continue;
+		}
+		assets[key] = value;
+		changed.push(key);
+		const how = value === ltr[key] ? "vite, no rtl build" : "vite";
+		log(`vite-register: ${app}: ${key} -> ${value} (${how})`);
+	}
+	if (changed.length > 0) {
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		writeJson(file, assets);
+	}
+	return changed;
+};
+
 const register = ({ appDir, app, sitesDir, log = console.log }) => {
 	const keys = bundleKeys({ appDir, app, log });
-	const file = path.join(sitesDir, "assets", "assets.json");
+	const byFile = { "assets.json": {}, "assets-rtl.json": {} };
+	// The stylesheet each rtl_ key would name without a right-to-left build.
+	const ltr = {};
+	for (const [key, value] of Object.entries(keys)) {
+		byFile[assetsFileOf(key)][key] = value;
+		if (RTL_KEY.test(key)) {
+			ltr[key] = keys[key.replace(RTL_KEY, "")];
+		}
+	}
 	const changed = [];
-	if (Object.keys(keys).length > 0) {
-		const assets = readJson(file);
-		for (const [key, value] of Object.entries(keys)) {
-			const current = assets[key];
-			if (current === value) {
-				continue;
-			}
-			if (keptNewer({ appDir, app, sitesDir, current, value })) {
-				log(`vite-register: ${app}: ${key} kept: ${value} is older`);
-				continue;
-			}
-			assets[key] = value;
-			changed.push(key);
-			log(`vite-register: ${app}: ${key} -> ${value} (vite)`);
-		}
-		if (changed.length > 0) {
-			fs.mkdirSync(path.dirname(file), { recursive: true });
-			writeJson(file, assets);
-		}
+	for (const [name, part] of Object.entries(byFile)) {
+		const args = { appDir, app, sitesDir, log, name, keys: part, ltr };
+		changed.push(...mergeInto(args));
 	}
 	const copied = copyOutputs({ appDir, app, sitesDir });
 	return { keys, changed, copied };

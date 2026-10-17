@@ -67,14 +67,37 @@ key() { jq -r --arg k "$2" '.[$k] // "none"' "$1"; }
 
 # <assets.json> <public dir>: spa.bundle.js and spa.bundle.css name hashed files under <public dir>/dist.
 expect_bundles() {
-  local assets="$1" public="$2" js css
+  local assets="$1" public="$2" js css rtl
   js="$(key "$assets" spa.bundle.js)"
   css="$(key "$assets" spa.bundle.css)"
   [[ "$js" =~ ^/assets/spa_app/dist/js/spa\.bundle\.[A-Za-z0-9_-]{6,}\.js$ ]] || fail "spa.bundle.js maps to $js ($assets)"
   [[ "$css" =~ ^/assets/spa_app/dist/css/spa\.bundle\.[A-Za-z0-9_-]{6,}\.css$ ]] || fail "spa.bundle.css maps to $css ($assets)"
   [ -f "$public/${js#/assets/spa_app/}" ] || fail "$js is not in $public"
   [ -f "$public/${css#/assets/spa_app/}" ] || fail "$css is not in $public"
-  ok "spa.bundle.js -> $js, spa.bundle.css -> $css"
+  # frappe asks for rtl_spa.bundle.css in an ar/he/fa/ps session, from
+  # assets-rtl.json; the fixture has no right-to-left build, so the
+  # left-to-right stylesheet stands in.
+  rtl="$(key "$(dirname "$assets")/assets-rtl.json" rtl_spa.bundle.css)"
+  [ "$rtl" = "$css" ] || fail "rtl_spa.bundle.css maps to $rtl, not $css"
+  ok "spa.bundle.js -> $js, spa.bundle.css -> $css, rtl_spa.bundle.css -> $rtl"
+}
+
+# <bench>: frappe's own include_style() resolves spa.bundle.css to its hashed
+# file in a left-to-right and a right-to-left session alike.
+expect_include_style() {
+  local bench="$1" got
+  for lang in en ar; do
+    got="$(cd "$bench/sites" && "$bench/env/bin/python" -c '
+import sys, frappe
+from frappe.utils import jinja_globals
+frappe.local.conf = frappe._dict(developer_mode=1)
+frappe.local.preload_assets = {"style": [], "script": [], "icons": []}
+frappe.local.lang = sys.argv[1]
+print(jinja_globals.bundled_asset("spa.bundle.css"))
+' "$lang")" || fail "frappe could not resolve spa.bundle.css for $lang"
+    [[ "$got" =~ /assets/spa_app/dist/css/spa\.bundle\.[A-Za-z0-9_-]{6,}\.css$ ]] || fail "frappe resolves spa.bundle.css for $lang to $got"
+    ok "frappe resolves spa.bundle.css for $lang to $got"
+  done
 }
 
 # ── stock ─────────────────────────────────────────────────────────────────────
@@ -108,7 +131,9 @@ cmd_stock() {
   expect_bundles "$assets" "$public"
   grep -q 'vite-register: spa_app: spa.bundle.js -> ' "$WORK/build-stock.log" || fail "the app's own build did not register (no vite-register line in the log)"
   ok "stock bench: the app's own scripts/vite-register.mjs registered its bundles"
+  expect_include_style "$bench"
   cp "$assets" "$WORK/assets.stock.json"
+  cp "$bench/sites/assets/assets-rtl.json" "$WORK/assets-rtl.stock.json"
 
   group "a second build, under frappe-nix's preload"
   # frappe-nix's frappe_nodebuild, grafted as lib/python.nix grafts it, carries
@@ -122,7 +147,8 @@ cmd_stock() {
     diff -u "$WORK/assets.stock.json" "$assets" || true
     fail "the build under the preload changed assets.json"
   }
-  ok "a second bench build under frappe-nix's preload leaves assets.json byte-identical"
+  cmp "$WORK/assets-rtl.stock.json" "$bench/sites/assets/assets-rtl.json" || fail "the build under the preload changed assets-rtl.json"
+  ok "a second bench build under frappe-nix's preload leaves assets.json and assets-rtl.json byte-identical"
 
   group "the preload alone"
   # Without the app's own step and without its keys, the preload's registration
@@ -131,6 +157,8 @@ cmd_stock() {
   jq '.scripts.build = "node build.mjs"' "$WORK/package.orig.json" > "$bench/apps/spa_app/package.json"
   jq -j --indent 4 'del(.["spa.bundle.js"], .["spa.bundle.css"])' "$assets" > "$WORK/assets.trimmed.json"
   cp "$WORK/assets.trimmed.json" "$assets"
+  jq -j --indent 4 'del(.["rtl_spa.bundle.css"])' "$bench/sites/assets/assets-rtl.json" > "$WORK/assets-rtl.trimmed.json"
+  cp "$WORK/assets-rtl.trimmed.json" "$bench/sites/assets/assets-rtl.json"
   (cd "$bench" && FRAPPE_NIX_ESBUILD_PRELOAD="$FN/lib/js/esbuild-preload.js" bench build --app spa_app) 2>&1 | tee "$WORK/build-preload-only.log"
   cp "$WORK/package.orig.json" "$bench/apps/spa_app/package.json"
   endgroup

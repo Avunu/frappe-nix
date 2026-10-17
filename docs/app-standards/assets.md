@@ -13,7 +13,7 @@ frappe-nix registers Vite bundles in `assets.json` with one piece of code, [`lib
 - **The app's own build.** An app that opted in to the app standards, with a Vite config and the `vite-register` module on (it is on in `recommended`), gets the managed file `scripts/vite-register.mjs`, and its `build` script ends with `node scripts/vite-register.mjs`. Frappe's esbuild writes `assets.json` and then runs every app's `yarn build` in `apps/<app>`, so the keys land after its own on any bench: a stock `bench init` bench, Frappe Cloud, a registry install.
 - **frappe-nix's esbuild preload.** On a bench frappe-nix builds (the dev shell's `bench build`, `builtBench`, the images and the NixOS module), the preload runs the same registration after each app's `yarn build`. This applies to every app in app mode, whether or not it opted in: it only adds the keys of hashed Vite bundles that had none, and it never touches a file in the app.
 
-Running both changes nothing the second time. A key is written only when its value differs, `assets.json` is rewritten (to a temporary file, then renamed) only when a key changed, and `assets-rtl.json` is left alone.
+Running both changes nothing the second time. A key is written only when its value differs, and `assets.json` or `assets-rtl.json` is rewritten (to a temporary file, then renamed) only when one of its keys changed.
 
 ## What gets registered
 
@@ -38,6 +38,17 @@ vite-register: my_app: timer.bundle.js -> /assets/my_app/dist/js/timer.bundle.4K
 - A key whose current file (under `sites/assets/`) is newer than the Vite file stays as it is (`vite-register: my_app: timer.bundle.js kept: … is older`). The app's `yarn build` runs after esbuild, so a bundle Vite just built is always the newer one.
 
 When `sites/assets/<app>` is a real directory rather than the usual link to the app's `public/` (after `bench build --hard-link`, or in an image that copied `public/` before the app's build ran), the registration also copies `public/dist/` into it, and every other directory directly under `public/` that a Vite build wrote with a manifest (`public/portal/` for a portal SPA). Files already hard-linked there are left alone.
+
+## Right-to-left stylesheets
+
+In an Arabic, Hebrew, Persian or Pashto session, Frappe looks a stylesheet up by another name: `include_style("timer.bundle.css")` and `bundled_asset("timer.bundle.css")` ask for `rtl_timer.bundle.css`. Frappe's esbuild builds every stylesheet a second time through rtlcss into `dist/css-rtl/` and writes those keys to `sites/assets/assets-rtl.json`, which Frappe reads over `assets.json`. A name with no key there is served as it stands, so without an `rtl_` key the page links `/rtl_timer.bundle.css`, gets a 404, and loads unstyled.
+
+The registration therefore writes an `rtl_<name>.bundle.css` key to `assets-rtl.json` for every stylesheet it registers:
+
+- **With a right-to-left build of the app's own**, it names that file. A stylesheet whose path under `public/dist/` passes through a directory ending in `-rtl` (Frappe's own `css-rtl/`) is that build: `public/dist/css-rtl/timer.bundle.Rt1Lx9Qa.css` registers as `rtl_timer.bundle.css`, from any manifest under `public/dist/`. A script under such a directory registers nothing, so a second Vite build that mirrors the stylesheet never takes the entry's `timer.bundle.js`.
+- **Without one**, it names the left-to-right file, and the build log says so: `vite-register: my_app: rtl_timer.bundle.css -> /assets/my_app/dist/css/timer.bundle.Hc9Qx1Zd.css (vite, no rtl build)`. The page is styled but not mirrored: margins, floats and `left`/`right` stay as written. That beats an unstyled page, and an app that uses logical properties (`margin-inline-start`, `inset-inline-end`) gets most of the mirroring for free. An app that needs the full mirror builds one, for example a second Vite config with an rtlcss PostCSS plugin and an `outDir` of `public/dist/css-rtl/`.
+
+The rules above for stale manifests and newer files apply to these keys too.
 
 ## Conventions for an app with Vite
 
@@ -137,6 +148,7 @@ frappe-nix.app = {
 | Symptom | Cause | Fix |
 |---|---|---|
 | `GET /assets/<app>/dist/js/<name>.bundle.js` is a 404 | No key for the bundle in `sites/assets/assets.json`. | Check that the Vite build writes a manifest (`build.manifest: true`) under `public/dist/` and that the output is named `<name>.bundle.[hash].js`, then rebuild. On a stock bench, check that `build` ends with `node scripts/vite-register.mjs`. |
+| The desk or a page is unstyled in Arabic, Hebrew, Persian or Pashto; `GET /rtl_<name>.bundle.css` is a 404 | No `rtl_<name>.bundle.css` key in `sites/assets/assets-rtl.json`: the registration that wrote the app's keys predates right-to-left keys. | Update the app's managed `scripts/vite-register.mjs` (`frappe-init --sync`) or frappe-nix, then rebuild. |
 | The page loads an old bundle after a deploy | A template or hook names a fixed path. | Use `bundled_asset('<name>.bundle.js')` and the bundle name in `hooks.py`. |
 | `vite-register: no bench found; skipped` | `yarn build` ran outside a bench. | Nothing to do; under `bench build` it registers. |
 | `vite-register: no Frappe app package in <dir>` | The repository has no single directory with a `hooks.py` and a `modules.txt`. | Run the build from the app's repository root. |
