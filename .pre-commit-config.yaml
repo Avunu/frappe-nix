@@ -62,7 +62,7 @@ repos:
   # network to re-resolve, which a flake check in the sandbox does not have;
   # there lib/lock-audit.nix catches a stale lock at evaluation instead.
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.13.0
+    rev: 0.13.1
     hooks:
       - id: uv-lock
         args: [--check, --project, dev]
