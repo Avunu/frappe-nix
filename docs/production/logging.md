@@ -59,7 +59,7 @@ journald reads the `<N>` as the line's syslog priority (debug 7, info 6, warning
 
 ## Log level
 
-`services.frappe-nix.logging.level` is the threshold for `frappe.logger()` and for bench's log, passed as `FRAPPE_LOG_LEVEL`. It accepts `debug`, `info`, `warning` and `error`, and defaults to `warning`. Frappe's own production default is error, which silently drops every `frappe.logger().warning()`.
+`services.frappe-nix.logging.level` is the threshold for `frappe.logger()` and for bench's log, passed as `FRAPPE_NIX_LOG_LEVEL`. It accepts `debug`, `info`, `warning` and `error`, and defaults to `warning`. Frappe's own production default is error, which silently drops every `frappe.logger().warning()`.
 
 An explicit `set_log_level()` in code still wins. The runtime's lifecycle lines stay at info, and gunicorn, Node, MariaDB and Redis keep their own levels. The units also set `PYTHONUNBUFFERED=1`, so `print()` output is neither held back nor lost in a crash.
 

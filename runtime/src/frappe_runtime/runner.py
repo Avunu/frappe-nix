@@ -617,7 +617,7 @@ def main() -> None:
 	# INFO, not the level services.frappe-nix.logging.level sets: what reaches the root
 	# logger here is mostly the runner's own lifecycle (restarts, drains), which is
 	# what an operator reads the unit's journal for. Frappe's application loggers
-	# do not propagate to it; FRAPPE_LOG_LEVEL governs those.
+	# do not propagate to it; FRAPPE_NIX_LOG_LEVEL governs those.
 	setup_logging(logging.INFO)
 	if config.verbose:
 		logging.getLogger("frappe.realtime.packets").setLevel(logging.INFO)

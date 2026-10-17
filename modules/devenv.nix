@@ -1525,7 +1525,7 @@ in
               reads every doctype's JSON once more before each migrate.
               `bench-offline-migrate --plan` reports what it would do without
               changing anything, and works whether or not this is on.
-              `FRAPPE_OFFLINE_MIGRATE=0 bench migrate` skips it for one run.
+              `FRAPPE_NIX_OFFLINE_MIGRATE=0 bench migrate` skips it for one run.
             '';
           };
 
@@ -1538,7 +1538,7 @@ in
               anything notices; `0` sends every table with a pending change
               through pt-online-schema-change.
 
-              Overridable at runtime with `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD`
+              Overridable at runtime with `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD`
               or `bench-offline-migrate --threshold`.
             '';
           };
@@ -2083,7 +2083,7 @@ in
         # Unlike devguard there is nothing to bake into the others:
         # frappe_unixsock reads only runtime facts (the paths of sockets other
         # processes in this bench listen on); frappe_journald keys off
-        # JOURNAL_STREAM, which systemd sets, and FRAPPE_LOG_LEVEL;
+        # JOURNAL_STREAM, which systemd sets, and FRAPPE_NIX_LOG_LEVEL;
         # frappe_nodebuild reads the preload's path from
         # FRAPPE_NIX_ESBUILD_PRELOAD; frappe_benchcli's two routes are fixed,
         # and mirror the umbrella wrapper's `case` in lib/scripts.nix.
@@ -2912,7 +2912,7 @@ in
 
                     # Read by frappe_unixsock, which is the only way past
                     # frappe/app.py's hardcoded run_simple("0.0.0.0", int(port)).
-                    FRAPPE_WEB_SOCKET = webSocket;
+                    FRAPPE_NIX_WEB_SOCKET = webSocket;
                   }
                   # optionalAttrs, not mkIf: `env` is an attrsOf, and mkIf false
                   # leaves the *name* declared with no definition rather than
@@ -3403,7 +3403,7 @@ in
                     # happens to sit inside another bench's apps/ — finds that one
                     # and runs against its database.
                     cwd = benchPath;
-                    # --port is ignored when FRAPPE_WEB_SOCKET is set
+                    # --port is ignored when FRAPPE_NIX_WEB_SOCKET is set
                     # (frappe_unixsock rewrites the bind address), but still passed:
                     # it is the port the site is actually reachable on, and it is
                     # what `bench serve` logs.
@@ -3420,7 +3420,7 @@ in
                   }
                   # Without nginx out front, the web server owns the public port.
                   // lib.optionalAttrs (!sockets) { ports.main.allocate = webBase; }
-                  // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_WEB_SOCKET" "/"; };
+                  // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_NIX_WEB_SOCKET" "/"; };
 
                   scheduler = {
                     # bench resolves its bench by walking *up* from cwd

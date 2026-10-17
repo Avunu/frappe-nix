@@ -9,6 +9,8 @@ the only property that matters.
 Run directly (``python test_unixsock.py``) or via ``nix flake check``.
 """
 
+import contextlib
+import io
 import os
 import sys
 import types
@@ -52,6 +54,8 @@ SOCK = "/run/user/1000/devenv-abcdef0/web.sock"
 
 def clear_env():
 	for name in (
+		"FRAPPE_NIX_WEB_SOCKET",
+		"FRAPPE_NIX_REPLICA_DB_SOCKET",
 		"FRAPPE_WEB_SOCKET",
 		"FRAPPE_REPLICA_DB_SOCKET",
 		"FRAPPE_UNIXSOCK_ENABLED",
@@ -64,38 +68,56 @@ def clear_env():
 # --------------------------------------------------------------------------
 print("== settings ==")
 clear_env()
-check("unset socket resolves to None", _settings.socket_path("FRAPPE_WEB_SOCKET") is None)
+check("unset socket resolves to None", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") is None)
 
-os.environ["FRAPPE_WEB_SOCKET"] = "   "
-check("blank socket resolves to None", _settings.socket_path("FRAPPE_WEB_SOCKET") is None)
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = "   "
+check("blank socket resolves to None", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") is None)
 
-os.environ["FRAPPE_WEB_SOCKET"] = SOCK
-check("configured socket resolves", _settings.socket_path("FRAPPE_WEB_SOCKET") == SOCK)
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = SOCK
+check("configured socket resolves", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") == SOCK)
 
 os.environ["FRAPPE_UNIXSOCK_ENABLED"] = "0"
 check(
 	"FRAPPE_UNIXSOCK_ENABLED=0 disables resolution",
-	_settings.socket_path("FRAPPE_WEB_SOCKET") is None,
+	_settings.socket_path("FRAPPE_NIX_WEB_SOCKET") is None,
 )
 os.environ.pop("FRAPPE_UNIXSOCK_ENABLED")
+
+# The names before FRAPPE_NIX_* are still read, with one warning each.
+clear_env()
+os.environ["FRAPPE_WEB_SOCKET"] = SOCK
+old_err = io.StringIO()
+with contextlib.redirect_stderr(old_err):
+	old_path = _settings.socket_path("FRAPPE_NIX_WEB_SOCKET")
+	_settings.socket_path("FRAPPE_NIX_WEB_SOCKET")
+check("the old FRAPPE_WEB_SOCKET still resolves", old_path == SOCK)
+check(
+	"…with one warning naming the new name",
+	old_err.getvalue().count("FRAPPE_WEB_SOCKET is deprecated; set FRAPPE_NIX_WEB_SOCKET") == 1,
+	old_err.getvalue(),
+)
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = "/run/new.sock"
+check("the new name wins over the old", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") == "/run/new.sock")
+clear_env()
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = SOCK
 
 # The relative-path trap: node's `connStr.replace("unix://", "")` and Python's
 # urlparse disagree about what a two-slash URL means, so a relative path must
 # never reach either of them.
-os.environ["FRAPPE_WEB_SOCKET"] = "run/user/1000/web.sock"
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = "run/user/1000/web.sock"
 expect_raises(
 	"relative socket path is rejected",
 	UnixSocketPathError,
-	lambda: _settings.socket_path("FRAPPE_WEB_SOCKET"),
+	lambda: _settings.socket_path("FRAPPE_NIX_WEB_SOCKET"),
 )
 
 # The failure this actually catches in the wild: a socket under a long project
 # path, which fails as a bare "AF_UNIX path too long" from inside the server.
-os.environ["FRAPPE_WEB_SOCKET"] = "/" + ("a" * 200) + "/web.sock"
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = "/" + ("a" * 200) + "/web.sock"
 expect_raises(
 	"over-long socket path is rejected up front",
 	UnixSocketPathError,
-	lambda: _settings.socket_path("FRAPPE_WEB_SOCKET"),
+	lambda: _settings.socket_path("FRAPPE_NIX_WEB_SOCKET"),
 )
 clear_env()
 
@@ -175,7 +197,7 @@ app.serve(port=8000)
 check("...and the server still binds TCP", serving.calls[-1][0] == "0.0.0.0")
 
 # 2. Socket configured: the bind address is rewritten, everything else survives.
-os.environ["FRAPPE_WEB_SOCKET"] = SOCK
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = SOCK
 app = make_frappe_app()
 web._patch_app(app)
 check("socket configured replaces serve()", app.serve is not original_serve)
@@ -211,7 +233,7 @@ web._patch_app(app)
 check("...but is silent when no socket is configured", not hasattr(app, "serve"))
 
 # 5. The hook wiring: a module already in sys.modules is patched immediately.
-os.environ["FRAPPE_WEB_SOCKET"] = SOCK
+os.environ["FRAPPE_NIX_WEB_SOCKET"] = SOCK
 web._INSTALLED = False
 sys.modules["frappe.app"] = make_frappe_app()
 web.install()
@@ -268,7 +290,7 @@ untouched = frappe.connect_replica
 database._patch_frappe(frappe)
 check("no replica socket leaves connect_replica untouched", frappe.connect_replica is untouched)
 
-os.environ["FRAPPE_REPLICA_DB_SOCKET"] = REPLICA_SOCK
+os.environ["FRAPPE_NIX_REPLICA_DB_SOCKET"] = REPLICA_SOCK
 frappe, db = make_frappe()
 database._patch_frappe(frappe)
 frappe.connect_replica()

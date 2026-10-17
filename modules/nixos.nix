@@ -147,6 +147,11 @@ let
       FRAPPE_STREAM_LOGGING = "1";
       # Read by frappe_journald as Frappe's default logger level. Frappe's own
       # production default is ERROR, which drops every frappe.logger().warning().
+      FRAPPE_NIX_LOG_LEVEL = lib.toUpper cfg.logging.level;
+      # Its name before (CONVENTIONS.md, Tool-owned variables), for a bench
+      # package built from an older frappe-nix than this module, whose graft
+      # reads only that. The graft prefers the new name. Removed with the
+      # aliases in the next minor release.
       FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
       # A block-buffered stdout holds print() output back until the buffer fills
       # or the process exits, so a crash loses exactly the lines that explain it,
@@ -174,6 +179,8 @@ let
       # Read by frappe_unixsock. gunicorn takes --bind unix: natively and does
       # not need it, but a `bench serve` run by hand on this host would
       # otherwise open a surprise port on 0.0.0.0.
+      FRAPPE_NIX_WEB_SOCKET = siteCfg.web.socketPath;
+      # The old name too, as FRAPPE_LOG_LEVEL above.
       FRAPPE_WEB_SOCKET = siteCfg.web.socketPath;
     }
     // optionalAttrs (siteCfg.database.socket != "") {
@@ -693,8 +700,8 @@ let
         # a half-applied plan is not left behind.
         if [ "$RC" -eq 0 ]; then
           echo "frappe-migrate(${name}): altering large tables online"
-          FRAPPE_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
-          FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
+          FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
+          FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
             ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
             || RC=$?
         fi
@@ -1876,7 +1883,7 @@ in
         default = "warning";
         description = ''
           Threshold for Frappe's application loggers (`frappe.logger()`) and for
-          bench's own log, passed as FRAPPE_LOG_LEVEL.
+          bench's own log, passed as FRAPPE_NIX_LOG_LEVEL.
 
           Frappe's own production default is error, which silently drops every
           `frappe.logger().warning()`; warning keeps those at no real cost in

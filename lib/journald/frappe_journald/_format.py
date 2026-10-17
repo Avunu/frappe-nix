@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 
-#: ``FRAPPE_LOG_LEVEL`` values, as ``services.frappe-nix.logging.level`` writes them.
+#: ``FRAPPE_NIX_LOG_LEVEL`` values, as ``services.frappe-nix.logging.level`` writes them.
 LEVELS = {
 	"debug": logging.DEBUG,
 	"info": logging.INFO,
@@ -64,9 +64,25 @@ def journal_stream():
 	return st.st_dev == dev and st.st_ino == ino
 
 
+#: The level's variable, and its name before CONVENTIONS.md's FRAPPE_NIX_* rule
+#: (python-devops-nix, Tool-owned variables), still read with a warning until the
+#: next minor release.
+ENV_LEVEL = "FRAPPE_NIX_LOG_LEVEL"
+OLD_ENV_LEVEL = "FRAPPE_LOG_LEVEL"
+_warned_old_level = []
+
+
 def env_level():
-	"""The level ``FRAPPE_LOG_LEVEL`` names, or None when unset or unknown."""
-	return LEVELS.get((os.environ.get("FRAPPE_LOG_LEVEL") or "").strip().lower())
+	"""The level ``FRAPPE_NIX_LOG_LEVEL`` names, or None when unset or unknown."""
+	value = os.environ.get(ENV_LEVEL)
+	if value is None and OLD_ENV_LEVEL in os.environ:
+		if not _warned_old_level:
+			_warned_old_level.append(True)
+			sys.stderr.write(
+				f"WARNING frappe_journald {OLD_ENV_LEVEL} is deprecated; set {ENV_LEVEL} instead\n"
+			)
+		value = os.environ[OLD_ENV_LEVEL]
+	return LEVELS.get((value or "").strip().lower())
 
 
 def current_site():

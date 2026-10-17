@@ -71,8 +71,8 @@ in
     echo "migrate.offline.enable = true:"
     has "the tool runs against the site" "offline-migrate.py --site ${site} --bench-root" ${on}
     has "with the bench's own interpreter" "/bin/python " ${on}
-    has "and the threshold the option names" "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=50000" ${on}
-    has "and a pt-online-schema-change that carries its perl" "FRAPPE_OFFLINE_MIGRATE_PT_OSC=" ${on}
+    has "and the threshold the option names" "FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=50000" ${on}
+    has "and a pt-online-schema-change that carries its perl" "FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=" ${on}
     has "a failure of it is the migrate's failure" "|| RC=\$?" ${on}
     has "bench migrate only runs if it passed" 'if [ "$RC" -eq 0 ]; then' ${on}
     offline_at="$(line "altering large tables online" ${on})"
@@ -91,7 +91,7 @@ in
 
     echo "migrate.offline.enable = false (the default):"
     lacks "no offline step" "offline-migrate" ${off}
-    lacks "no percona-toolkit" "FRAPPE_OFFLINE_MIGRATE_PT_OSC" ${off}
+    lacks "no percona-toolkit" "FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC" ${off}
     has "bench migrate still runs" "running bench migrate" ${off}
 
     if [ "$fails" -ne 0 ]; then

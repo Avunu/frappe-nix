@@ -105,8 +105,8 @@ in
     eq "redis: shared, so no site"   "APP_SERVICE=redis"              ${lib.escapeShellArg (fieldsOf runtime "redis-frappe")}
     eq "nginx: shared, so no site"   "APP_SERVICE=nginx"              ${lib.escapeShellArg (fieldsOf runtime "nginx")}
     eq "no frappe-* unit without the site's fields" "" ${lib.escapeShellArg (unlabelled runtime)}
-    eq "FRAPPE_LOG_LEVEL defaults to warning" "WARNING" ${
-      lib.escapeShellArg (envOf runtime "frappe-${site}" "FRAPPE_LOG_LEVEL")
+    eq "FRAPPE_NIX_LOG_LEVEL defaults to warning" "WARNING" ${
+      lib.escapeShellArg (envOf runtime "frappe-${site}" "FRAPPE_NIX_LOG_LEVEL")
     }
     eq "Python output is unbuffered" "1" ${
       lib.escapeShellArg (envOf runtime "frappe-${site}" "PYTHONUNBUFFERED")
@@ -128,8 +128,8 @@ in
     eq "a worker"                    "APP_SERVICE=worker ${perSite}"    ${lib.escapeShellArg (fieldsOf split "frappe-worker-short-${site}")}
     eq "...identified by its queue"  "frappe-worker-short"              ${lib.escapeShellArg (idOf split "frappe-worker-short-${site}")}
     eq "no frappe-* unit without the site's fields" "" ${lib.escapeShellArg (unlabelled split)}
-    eq "FRAPPE_LOG_LEVEL follows the option" "DEBUG" ${
-      lib.escapeShellArg (envOf split "frappe-web-${site}" "FRAPPE_LOG_LEVEL")
+    eq "FRAPPE_NIX_LOG_LEVEL follows the option" "DEBUG" ${
+      lib.escapeShellArg (envOf split "frappe-web-${site}" "FRAPPE_NIX_LOG_LEVEL")
     }
     has "the access log is off" "access_log off;" ${lib.escapeShellArg split.services.nginx.commonHttpConfig}
 

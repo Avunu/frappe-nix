@@ -20,7 +20,7 @@ redirected for the length of one call rather than the caller reimplemented —
 which matters here because ``connect_replica`` also does credential selection
 and the primary/replica connection swap that we have no business duplicating.
 
-Opt-in via ``FRAPPE_REPLICA_DB_SOCKET``: without it this module patches
+Opt-in via ``FRAPPE_NIX_REPLICA_DB_SOCKET``: without it this module patches
 nothing, so a TCP replica keeps working and cannot be broken by a target
 moving upstream.
 
@@ -41,7 +41,7 @@ NAME = "replica"
 #: Socket the read replica listens on. Distinct from FRAPPE_DB_SOCKET: a replica
 #: is a different server, usually on a different host, and sharing the primary's
 #: socket path would silently read from the primary.
-ENV = "FRAPPE_REPLICA_DB_SOCKET"
+ENV = "FRAPPE_NIX_REPLICA_DB_SOCKET"
 
 _INSTALLED = False
 

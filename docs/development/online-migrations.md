@@ -27,8 +27,8 @@ The step sits in front of `bench migrate`, `bench update` and `bench restore` al
 | ---------------------------------------- | -------------------------------------------------------------------------------------- |
 | See what it would do                     | `bench-offline-migrate --plan`. Changes nothing, and works with the option off.        |
 | Have pt-online-schema-change rehearse it | `bench-offline-migrate --dry-run`. Creates and drops the shadow table, copies no rows. |
-| Skip it for one migrate                  | `FRAPPE_OFFLINE_MIGRATE=0 bench migrate`                                               |
-| Change the threshold for one command     | `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=<ROWS>` or `--threshold <ROWS>`. The flag wins.  |
+| Skip it for one migrate                  | `FRAPPE_NIX_OFFLINE_MIGRATE=0 bench migrate`                                               |
+| Change the threshold for one command     | `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=<ROWS>` or `--threshold <ROWS>`. The flag wins.  |
 | Pass options to pt-online-schema-change  | `bench-offline-migrate -- <OPTIONS>`                                                   |
 
 On NixOS, `services.frappe-nix.migrate.offline.enable` puts the same step inside the `frappe-migrate-<SITE>` unit, after the snapshot and the switch to maintenance mode and in front of `bench migrate`. A failure there is a failed migrate: the snapshot is restored and the site stays in maintenance mode. See [Operate a deployed site](../production/operations.md#safe-migrations-on-deploy).
@@ -45,7 +45,7 @@ Frappe's own `MariaDBTable` produces the ALTER, with its DDL captured instead of
 ## What it deliberately does not do
 
 - **It will not write a row.** `MariaDBTable.alter()` backfills NULLs with a real `UPDATE` before a change to NOT NULL. Planning refuses every statement but a read, so such a table is reported as left to `bench migrate`. The backfill is the migrate's to run, and pt-online-schema-change would not give those rows Frappe's default.
-- **It does not run patches, and it runs before they do.** A `pre_model_sync` patch that renames a column in a table the step has already widened, with `rename_field` onto a name the step added, fails on the duplicate column. Run that one migrate with `FRAPPE_OFFLINE_MIGRATE=0`.
+- **It does not run patches, and it runs before they do.** A `pre_model_sync` patch that renames a column in a table the step has already widened, with `rename_field` onto a name the step added, fails on the duplicate column. Run that one migrate with `FRAPPE_NIX_OFFLINE_MIGRATE=0`.
 - **It does not see Property Setters** from `custom/*.json`. A column whose length or type one changes is still altered by `bench migrate`, in place.
 - **It assumes one node.** A site's database user owns its database and nothing else, so it may not run `SHOW SLAVE STATUS`, which pt-online-schema-change would otherwise issue to look for replicas and for a row-based source. The defaults are `--recursion-method=none` and `--force`. A bench that replicates passes `-- --recursion-method=processlist`, or `hosts`.
 

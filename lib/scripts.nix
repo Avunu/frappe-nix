@@ -102,16 +102,26 @@ let
   '';
 
   # What lib/offline-migrate.py reads, defaulted rather than exported by the
-  # shell so a caller's own FRAPPE_OFFLINE_MIGRATE_* — `=0` for one migrate that
-  # must run stock — still wins.
-  offlineMigrateEnv = lib.concatStrings [
-    (lib.optionalString (offlineMigrate ? ptOsc) ''
-      export FRAPPE_OFFLINE_MIGRATE_PT_OSC="''${FRAPPE_OFFLINE_MIGRATE_PT_OSC:-${offlineMigrate.ptOsc}}"
-    '')
-    (lib.optionalString (offlineMigrate ? rowThreshold) ''
-      export FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD="''${FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD:-${toString offlineMigrate.rowThreshold}}"
-    '')
-  ];
+  # shell so a caller's own FRAPPE_NIX_OFFLINE_MIGRATE_* — `=0` for one migrate
+  # that must run stock — still wins. So does one under its old name
+  # (FRAPPE_OFFLINE_MIGRATE_*), which the tool reads with a warning until the
+  # next minor release.
+  offlineMigrateEnv =
+    let
+      default = name: value: ''
+        if [ -z "''${FRAPPE_NIX_${name}+x}" ] && [ -z "''${FRAPPE_${name}+x}" ]; then
+          export FRAPPE_NIX_${name}=${lib.escapeShellArg value}
+        fi
+      '';
+    in
+    lib.concatStrings [
+      (lib.optionalString (offlineMigrate ? ptOsc) (
+        default "OFFLINE_MIGRATE_PT_OSC" offlineMigrate.ptOsc
+      ))
+      (lib.optionalString (offlineMigrate ? rowThreshold) (
+        default "OFFLINE_MIGRATE_ROW_THRESHOLD" (toString offlineMigrate.rowThreshold)
+      ))
+    ];
 
   # The one implementation of the apps/ ⇄ pyproject.toml ⇄ sites/apps.{txt,json}
   # contract, shared with the `frappe-init` scaffolder/migrator and the bench
@@ -768,12 +778,16 @@ secretScripts
               # `checkout -B` discards anything not on the remote branch. Refuse when
               # this submodule carries commits that are not in what we just fetched.
               if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
-                if [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
-                  echo "     ⚠  local commits will be discarded (FRAPPE_BENCH_UPDATE_FORCE=1)"
+                if [ -z "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ] && [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
+                  echo "     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead" >&2
+                  FRAPPE_NIX_BENCH_UPDATE_FORCE=$FRAPPE_BENCH_UPDATE_FORCE
+                fi
+                if [ -n "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ]; then
+                  echo "     ⚠  local commits will be discarded (FRAPPE_NIX_BENCH_UPDATE_FORCE=1)"
                 else
                   echo "  ⚠  $app: HEAD is not an ancestor of $remote/$branch — it has local or"
                   echo "     unpushed commits that checkout -B would discard. Skipping."
-                  echo "     Push them, or re-run with FRAPPE_BENCH_UPDATE_FORCE=1 to overwrite."
+                  echo "     Push them, or re-run with FRAPPE_NIX_BENCH_UPDATE_FORCE=1 to overwrite."
                   if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
                     echo "     (This clone is shallow. If you made no commits here, 'git fetch --unshallow'"
                     echo "     in apps/$app settles it.)"

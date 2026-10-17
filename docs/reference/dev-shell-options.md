@@ -176,7 +176,7 @@ Alter large tables online in front of `bench migrate`. See [Migrate large tables
 | Option                        | Type | Default  | Notes                                                                                                                                                                                           |
 | ----------------------------- | ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `offlineMigrate.enable`       | bool | `false`  | Run `bench-offline-migrate` in front of every `bench migrate`, so the ALTERs of large tables cannot lock them. Adds percona-toolkit to the closure.                                             |
-| `offlineMigrate.rowThreshold` | int  | `100000` | Rows at which a table is altered online. `0` sends every table with a pending change through pt-online-schema-change. Overridable with `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` or `--threshold`. |
+| `offlineMigrate.rowThreshold` | int  | `100000` | Rows at which a table is altered online. `0` sends every table with a pending change through pt-online-schema-change. Overridable with `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD` or `--threshold`. |
 
 ## Containers
 

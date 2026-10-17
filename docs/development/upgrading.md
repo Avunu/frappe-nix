@@ -56,6 +56,22 @@ The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS
 
 The NixOS module moved the same way: `services.frappe` is now `services.frappe-nix`, and a site's `extraConfig` and `extraConfigFiles` are now `settings` and `settingsFiles`, the nixpkgs name for a block that becomes the framework's config file (`site_config.json`). The old names still work, with a NixOS warning, until the next minor release.
 
+The environment variables frappe-nix's own tools read are all `FRAPPE_NIX_*` now. The old names are still read, with a warning, until the next minor release:
+
+| Old                                    | New                                        |
+| -------------------------------------- | ------------------------------------------ |
+| `FRAPPE_OFFLINE_MIGRATE`               | `FRAPPE_NIX_OFFLINE_MIGRATE`               |
+| `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` | `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD` |
+| `FRAPPE_OFFLINE_MIGRATE_PT_OSC`        | `FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC`        |
+| `FRAPPE_BENCH_UPDATE_FORCE`            | `FRAPPE_NIX_BENCH_UPDATE_FORCE`            |
+| `FRAPPE_WEB_SOCKET`                    | `FRAPPE_NIX_WEB_SOCKET`                    |
+| `FRAPPE_REPLICA_DB_SOCKET`             | `FRAPPE_NIX_REPLICA_DB_SOCKET`             |
+| `FRAPPE_LOG_LEVEL`                     | `FRAPPE_NIX_LOG_LEVEL`                     |
+
+`services.frappe-nix` sets both `FRAPPE_NIX_WEB_SOCKET` and `FRAPPE_WEB_SOCKET`, and both log-level names, in the same window, so a bench package built from an older frappe-nix than the module still finds them.
+
+Frappe's own variables (`FRAPPE_SITE`, `FRAPPE_DB_SOCKET`, `FRAPPE_REDIS_CACHE` and the rest) keep their names, and so do the grafts' switches (`FRAPPE_DEVGUARD_*`, `FRAPPE_UNIXSOCK_ENABLED`).
+
 A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from inside the shell. `nodeOfflineHashes` was one such. It stays an evaluation error that names the edit.
 
 ## In app mode

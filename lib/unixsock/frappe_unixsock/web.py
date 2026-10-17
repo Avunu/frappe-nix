@@ -37,7 +37,7 @@ NAME = "web"
 
 #: Path the development server should bind. Set by the devenv shell, and by
 #: `services.frappe-nix` when the site is in socket mode.
-ENV = "FRAPPE_WEB_SOCKET"
+ENV = "FRAPPE_NIX_WEB_SOCKET"
 
 _INSTALLED = False
 
