@@ -2669,6 +2669,12 @@ in
                 enable = true;
                 install.enable = false;
               };
+              # devenv turns on typescript-language-server by default. An
+              # editor's language server has no business blocking shell entry,
+              # and when nixpkgs cannot build it (its pnpm deps hash drifted at
+              # devenv-nixpkgs 256551e) every uncached shell fails. A bench that
+              # wants it sets this back to true.
+              lsp.enable = lib.mkDefault false;
             };
 
             env = {
