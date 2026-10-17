@@ -67,6 +67,7 @@ The environment variables frappe-nix's own tools read are all `FRAPPE_NIX_*` now
 | `FRAPPE_WEB_SOCKET`                    | `FRAPPE_NIX_WEB_SOCKET`                    |
 | `FRAPPE_REPLICA_DB_SOCKET`             | `FRAPPE_NIX_REPLICA_DB_SOCKET`             |
 | `FRAPPE_LOG_LEVEL`                     | `FRAPPE_NIX_LOG_LEVEL`                     |
+| `FRAPPE_TEST_ADMIN_PASSWORD`           | `FRAPPE_NIX_TEST_ADMIN_PASSWORD`           |
 
 `services.frappe-nix` sets both `FRAPPE_NIX_WEB_SOCKET` and `FRAPPE_WEB_SOCKET`, and both log-level names, in the same window, so a bench package built from an older frappe-nix than the module still finds them.
 

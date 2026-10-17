@@ -2099,7 +2099,7 @@ The nightly script (N4, `py/frappe_nix_tools/frappe_nix_tools/data/ci/nightly.sh
 ```bash
 set -uo pipefail
 rc=0
-export FRAPPE_ADMIN_PASSWORD="${FRAPPE_TEST_ADMIN_PASSWORD:-admin}"
+export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-${FRAPPE_TEST_ADMIN_PASSWORD:-admin}}"
 export FRAPPE_NIX_ARTIFACT_DIR="$PWD/.dev-dist/nightly"; mkdir -p "$FRAPPE_NIX_ARTIFACT_DIR"
 frappe-test --ci --keep-up || rc=$?
 bench build || rc=1
@@ -2531,7 +2531,7 @@ frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
 
 - `FRAPPE_NIX_CI`;
 - `GITHUB_STEP_SUMMARY`;
-- `FRAPPE_TEST_ADMIN_PASSWORD` (default `admin`).
+- `FRAPPE_NIX_TEST_ADMIN_PASSWORD` (default `admin`; `FRAPPE_TEST_ADMIN_PASSWORD`, its name before, is read with a warning through 1.x).
 
 **Defaults.**
 
