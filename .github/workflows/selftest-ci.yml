@@ -101,6 +101,8 @@ jobs:
     with:
       app: standards_fixture
       app-root: tests/fixtures/standards-app
+      # frappe-nix's own integration branch: the ratchet base of a dispatched run.
+      integration-branch: main
       frappe-nix-override: .
 
   typecheck:
@@ -112,6 +114,8 @@ jobs:
     with:
       app: standards_fixture
       app-root: tests/fixtures/standards-app
+      # frappe-nix's own integration branch: the ratchet base of a dispatched run.
+      integration-branch: main
       frappe-nix-override: .
 
   marketplace:
@@ -123,6 +127,8 @@ jobs:
     with:
       app: standards_fixture
       app-root: tests/fixtures/standards-app
+      # frappe-nix's own integration branch: the ratchet base of a dispatched run.
+      integration-branch: main
       frappe-nix-override: .
 
   contexts:
@@ -158,6 +164,8 @@ jobs:
     with:
       app: standards_fixture
       app-root: tests/fixtures/standards-app
+      # frappe-nix's own integration branch: the ratchet base of a dispatched run.
+      integration-branch: main
       frappe-nix-override: .
 
   pr-policy:
@@ -170,6 +178,8 @@ jobs:
     with:
       app: standards_fixture
       app-root: tests/fixtures/standards-app
+      # frappe-nix's own integration branch: the ratchet base of a dispatched run.
+      integration-branch: main
       frappe-nix-override: .
 
   minibench:
