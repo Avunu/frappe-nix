@@ -12,7 +12,7 @@ siblings and the app, and ``D/env`` is created.
 - ``customizations`` (the ``test-utils`` hooks ``validate_customizations`` and
   ``clean_customized_doctypes``, run in ``lint``): ``git worktree add --detach D/apps/<app> HEAD``;
   the caller then runs the manual-stage hooks from there.
-- ``doctypes`` (``frappe-types gen-doctypes``, in ``typecheck``): a copy of the app's
+- ``doctypes`` (``frappe-types gen-registry``, in ``typecheck``): a copy of the app's
   ``/<app>/*/doctype/**/*.json``, ``/<app>/*/custom/*.json`` and ``/<app>/fixtures/*.json``.
 
 The guard: exit 1 unless ``D/sites``, ``D/env`` and ``D/apps/frappe/frappe/modules.txt``
@@ -135,7 +135,7 @@ def run(args: argparse.Namespace) -> int:
 def register(subparsers: argparse._SubParsersAction) -> None:
 	p = subparsers.add_parser(
 		"minibench",
-		help="build a sparse fake bench from flake.lock (test-utils hooks, gen-doctypes)",
+		help="build a sparse fake bench from flake.lock (test-utils hooks, gen-registry)",
 		description=__doc__,
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 	)

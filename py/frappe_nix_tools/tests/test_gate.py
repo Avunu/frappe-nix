@@ -203,6 +203,36 @@ class TestTypecheck(GateCase):
 		self.assertEqual(self.steps(report)["js-unit"]["status"], "failed")
 
 
+class TestGenRegistry(GateCase):
+	"""The doctypes step's command: frappe-types' ``gen-registry``, with the required siblings."""
+
+	def app(self, siblings: str, required: str) -> gate.AppConfig:
+		pyproject = self.root / "pyproject.toml"
+		pyproject.write_text(pyproject.read_text().replace("siblings = []", f"siblings = {siblings}"))
+		hooks = self.root / "standards_fixture" / "hooks.py"
+		hooks.write_text(hooks.read_text().replace("required_apps = []", f"required_apps = {required}"))
+		return gate.load_app(self.root)
+
+	def test_no_siblings(self) -> None:
+		cmd = gate.gen_registry(self.app("[]", "[]"), Path("B"))
+		self.assertEqual(
+			cmd,
+			[
+				"yarn", "-s", "frappe-types", "gen-registry", "--bench", "B", "--app", "standards_fixture",
+				"--out", "types/doctypes.d.ts", "--check",
+			],
+		)  # fmt: skip
+
+	def test_only_required_siblings_are_typed_in_full(self) -> None:
+		cmd = gate.gen_registry(self.app('["erpnext", "hrms"]', '["erpnext"]'), Path("B"))
+		self.assertIn("gen-registry", cmd)
+		self.assertEqual(cmd[cmd.index("--include-siblings") + 1], "erpnext")
+
+	def test_test_only_siblings_are_left_out(self) -> None:
+		cmd = gate.gen_registry(self.app('["erpnext", "hrms"]', "[]"), Path("B"))
+		self.assertNotIn("--include-siblings", cmd)
+
+
 class TestMarketplace(GateCase):
 	def test_listing_off_is_skipped(self) -> None:
 		code, report, out = self.gate("marketplace")
