@@ -66,8 +66,10 @@ cat >"$BIN/bench" <<STUB
 #!$(command -v bash)
 STUB
 cat >>"$BIN/bench" <<'STUB'
-# Records every invocation; answers list-apps from a fixture.
+# Records every invocation, and the PATH it was run with; answers list-apps
+# from a fixture.
 printf '%s\n' "$*" >> "$BENCH_LOG"
+printf '%s\n' "$PATH" > "$BENCH_LOG.path"
 args=("$@")
 for i in "${!args[@]}"; do
   if [ "${args[$i]}" = "list-apps" ]; then
@@ -485,6 +487,16 @@ if [ "$RC" -ne 0 ] && said "is not a point in time" && ! logged " restore "; the
   ok "--at that is not a time is refused"
 else
   no "--at yesterday is refused" "rc=$RC out=$OUT"
+fi
+
+# What restore runs gets the caller's PATH, unchanged: a console-script
+# wrapper would put python3.14's bin/ and an unwrapped frappe-nix ahead of the
+# dev shell's own.
+run "$WORK/local.sql.gz"
+if [ "$(cat "$WORK/bench.log.path" 2>/dev/null)" = "$PATH" ]; then
+  ok "bench runs with the caller's PATH, unchanged"
+else
+  no "bench runs with the caller's PATH, unchanged" "got: $(cut -c1-300 "$WORK/bench.log.path" 2>/dev/null)"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

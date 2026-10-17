@@ -49,7 +49,7 @@ let
       inherit lib pkgs;
       appsWithNode = [ ];
       benchBin = "bench";
-      benchCli = lib.getExe' frappeNixTools "frappe-nix-bench";
+      benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
       inherit secrets;
       restore = {
         inherit devguard enable files;
