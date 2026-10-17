@@ -20,13 +20,18 @@
 #
 # A lock that fails restores both files. The alternative — a pyproject.toml
 # declaring what uv.lock does not carry — fails the *next* evaluation (see
-# lib/lock-audit.nix) and is back to needing `nix run .#relock` from outside,
+# the lock audit in lib/python.nix) and is back to needing `nix run .#relock` from outside,
 # which is exactly the shape this exists to remove. The shell stays openable, the
 # hook says why it could not finish, and the next entry tries again.
 #
 # uv is taken from PATH on purpose: the dev shell carries its own, and the lock
 # should be written by that one, not by a second uv baked in here.
-{ pkgs }:
+{
+  pkgs,
+  # lib/build-deps.nix's `sync`, as a path: after the lock, the managed
+  # [tool.uv.extra-build-dependencies] block in step with it. Null skips it.
+  buildDepsSync ? null,
+}:
 
 let
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
@@ -103,6 +108,7 @@ pkgs.writeShellApplication {
       echo "  additions listed above in pyproject.toml and run 'uv lock' here (uv is on PATH)." >&2
       exit 1
     fi
+    ${pkgs.lib.optionalString (buildDepsSync != null) buildDepsSync}
     completed=true
 
     echo ""

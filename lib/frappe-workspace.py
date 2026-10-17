@@ -19,6 +19,9 @@ from pathlib import Path
 
 import tomlkit
 
+# The first line of frappe-nix's managed build-dependency block (lib/build-deps.nix).
+BUILD_DEPS_BEGIN = "# >>> frappe-nix: sdist build deps (managed) >>>"
+
 # Distribution-name normalization (PEP 503), so a `[tool.uv.sources]` key
 # written here matches what uv resolves the workspace member to.
 _NORMALIZE = re.compile(r"[-_.]+")
@@ -284,13 +287,19 @@ def cmd_ensure_root(args):
 		template = tomlkit.parse(Path(args.template).read_text())
 		template_uv = template.get("tool", {}).get("uv", {})
 
+		# A bench with frappe-nix's managed block has its entries derived from
+		# uv.lock (frappe-nix-build-deps, lib/build-deps.nix), the template's
+		# among them: a key added here would land outside the block, and the
+		# next update would write it a second time inside. One without the
+		# block keeps its hand-kept list, and gains only what it lacks.
 		wanted = template_uv.get("extra-build-dependencies", {})
 		existing = table_at(doc, "tool", "uv", "extra-build-dependencies")
 		added = 0
-		for key, value in wanted.items():
-			if key not in existing:
-				existing[key] = value
-				added += 1
+		if BUILD_DEPS_BEGIN not in existing.as_string():
+			for key, value in wanted.items():
+				if key not in existing:
+					existing[key] = value
+					added += 1
 		if added:
 			changed.append(f"[tool.uv.extra-build-dependencies] += {added} entries")
 

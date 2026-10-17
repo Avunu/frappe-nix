@@ -464,7 +464,7 @@ in
         v15=${appRootWith { testToolsLock = v15Lock; }}
         expect "an app-mode root that has not opted in, with a version-15 lock" "$v15" \
           ruff pre-commit semgrep pydantic pytest responses -- coverage unittest-xml-reporting
-        # What lib/lock-audit.nix asks of the root's dev group: every name in the lock.
+        # What the lock audit (lib/python.nix) asks of the root's dev group: every name in the lock.
         python3 - "$v15" ${v15Lock} <<'PY'
         import re, sys, tomllib
         dev = tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"]["dev"]

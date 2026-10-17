@@ -94,7 +94,12 @@
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
-      frappeInit = pkgs: import ./lib/init.nix { inherit pkgs; };
+      frappeInit =
+        pkgs:
+        import ./lib/init.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        };
       # The app standards tools: packages.frappe-nix-tools, and one package and
       # app per lib/standards/tools/*.nix (`frappe-nix`, …).
       standards = pkgs: import ./lib/standards/outputs.nix { inherit pkgs; };
@@ -102,7 +107,10 @@
     {
       flakeModules.default = ./modules/flake-module.nix;
 
-      nixosModules.default = ./modules/nixos.nix;
+      # importApply keeps the file's own path in the module system's errors.
+      nixosModules.default = nixpkgs.lib.modules.importApply ./modules/nixos.nix {
+        inherit (inputs.python-devops-nix.lib.python) threadCaps;
+      };
 
       lib = {
         mkFlake =
@@ -429,7 +437,16 @@
         # .gitmodules too — and what it refuses to touch.
         // import ./tests/bench-remove-app.nix { inherit pkgs; }
         # The stale-uv.lock preflight, over a fixture workspace.
-        // import ./tests/lock-audit.nix { inherit pkgs; }
+        // import ./tests/lock-audit.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        }
+        # [tool.uv.extra-build-dependencies] from uv.lock: frappe-nix's always,
+        # the template, the after-lock sync, a bench's own entries.
+        // import ./tests/build-deps.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        }
         # What an editable workspace member is built from in the dev shell.
         // import ./tests/editable-src.nix { inherit pkgs; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.

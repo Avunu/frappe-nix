@@ -31,6 +31,14 @@ in
         ${dev.frappeUpstream}/bin/frappe-upstream check ${dev.frappeSrc} root | tee "$out"
       '';
 
+  # dev/pyproject.toml's managed [tool.uv.extra-build-dependencies] block
+  # against dev/uv.lock: `frappe-nix-build-deps update` after a hand-run
+  # `uv lock --project dev` (update-frappe and sync-frappe-upstream run it).
+  build-deps = pkgs.runCommand "frappe-nix-build-deps-check" { } ''
+    ${pkgs.lib.getExe dev.buildDeps} check ${./pyproject.toml} ${./uv.lock}
+    touch "$out"
+  '';
+
   # The whole tree, not what changed: editing one module can break a caller in
   # another. --python is explicit because the sandbox has no ./env link for
   # ty.toml's default to find. The graft packages are checked as a build

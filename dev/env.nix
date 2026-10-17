@@ -1,6 +1,6 @@
 # frappe-nix's own development environment, built by the same lib/python.nix a
 # bench is: uv2nix over dev/uv.lock, so Frappe is the upstream revision that lock
-# pins and a stale lock fails evaluation with lib/lock-audit.nix's sentence.
+# pins and a stale lock fails evaluation with the lock audit's sentence.
 #
 # Shared by the dev shell (dev/devenv.nix) and the flake checks, so the hooks a
 # commit runs and the hooks CI runs see the same ruff, ty and Frappe.
@@ -49,6 +49,14 @@ in
     mkdir "$out"
     tar -xzf ${envs.pythonSet.frappe.src} --strip-components=1 -C "$out"
   '';
+
+  # `frappe-nix-build-deps {update,check}` for dev/pyproject.toml's managed
+  # [tool.uv.extra-build-dependencies] block (lib/build-deps.nix, `dev`).
+  buildDeps =
+    (import ../lib/build-deps.nix {
+      inherit pkgs;
+      inherit (inputs) python-devops-nix;
+    }).dev;
 
   # dev/frappe-upstream.py: pin / sync / check.
   frappeUpstream = pkgs.writeShellScriptBin "frappe-upstream" ''

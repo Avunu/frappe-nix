@@ -28,6 +28,8 @@ When it does change something, it says so, lists what it added, and tells you to
 
 If `uv lock` fails, because there is no network or because the new requirement genuinely conflicts with an app's pins, both files are put back exactly as they were, mtimes included, and the shell opens anyway. A `pyproject.toml` that declares what `uv.lock` does not carry would fail the _next_ evaluation (see [Dependencies and locks](locks.md#a-stale-uvlock-is-an-evaluation-error)), which is the one outcome this hook exists to avoid: you would be back to fixing the shell from outside it. The next entry retries. To resolve a conflict by hand, make the listed additions in `pyproject.toml`, add the override `uv` asks for, and run `uv lock` in the shell.
 
+It does not touch `[tool.uv.extra-build-dependencies]` beyond adding a frappe-nix entry a hand-kept list lacks. A bench scaffolded before frappe-nix derived that table from `uv.lock` keeps its list until you move it; see [Moving a bench to the derived list](locks.md#moving-a-bench-to-the-derived-list). If the bench's `pythonOverrides` lists `lib.overrides.pycups`, `python-ldap`, `pyvips` or `cairocffi`, evaluation warns: every bench gets those fixes now, so remove them.
+
 ## What it deliberately does not do
 
 The shell hook does not register submodules, vendor apps, edit `.gitignore` or `common_site_config.json`, or `git add` anything. That is [the reconciler's](../scaffolding/migrate.md) job, and the reconciler still does all of it for the cases a shell hook should not decide:

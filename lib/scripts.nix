@@ -34,6 +34,10 @@
   pythonBin ? "python3",
   # Absolute path to lib/node-locks.nix's tool, same convention.
   nodeLocksBin ? "frappe-nix-node-locks",
+  # Absolute path to lib/build-deps.nix's `sync`, run after each `uv lock` to
+  # derive the managed [tool.uv.extra-build-dependencies] block; null runs
+  # nothing (a consumer rendering these scripts on their own).
+  buildDepsSyncBin ? null,
   # perSystem.frappe-nix.nodeNestedFrontendExcludes: the nested frontends the
   # lock generator must leave alone (and prune).
   nodeNestedFrontendExcludes ? [ ],
@@ -115,6 +119,12 @@ let
   # comment-preserving (tomlkit).
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
   workspaceBin = "${workspaceTool}/bin/frappe-nix-workspace";
+
+  # Shell snippet: after a `uv lock`, the managed build-dependency block in step
+  # with the new lock (lib/build-deps.nix). Expects cwd at the bench root.
+  syncBuildDeps = lib.optionalString (buildDepsSyncBin != null) ''
+    ${buildDepsSyncBin}
+  '';
 
   # Shell snippet: register "$APP_NAME" as a uv workspace member — appends
   # apps/$APP_NAME to [tool.uv.workspace].members and adds a [tool.uv.sources]
@@ -835,7 +845,8 @@ secretScripts
               echo "     for one against [dependency-groups], relax the pin there. Then re-run 'uv lock'." >&2
               exit 1
             fi
-            echo "  commit uv.lock along with the submodule bumps"
+            ${syncBuildDeps}
+            echo "  commit uv.lock (and pyproject.toml) along with the submodule bumps"
             echo ""
           fi
 
@@ -901,7 +912,9 @@ secretScripts
       else
         ''
           echo "Updating Python dependencies..."
-          uv lock && uv sync
+          uv lock || exit
+          ${syncBuildDeps}
+          uv sync
         ''
     }
     echo ""
@@ -1178,6 +1191,7 @@ secretScripts
 
       echo "Syncing Python dependencies..."
       uv sync
+      ${syncBuildDeps}
 
       echo ""
       echo "✅ App '$APP_NAME' added successfully!"
@@ -1409,6 +1423,7 @@ secretScripts
         echo "  ⚠  uv lock failed — the dev shell will not evaluate until it resolves. Re-run: uv lock" >&2
         exit 1
       fi
+      ${syncBuildDeps}
 
       echo ""
       echo "✅ $APP removed from the bench."
@@ -1457,6 +1472,7 @@ secretScripts
 
       echo "Syncing Python dependencies..."
       uv sync
+      ${syncBuildDeps}
 
       command -v direnv >/dev/null 2>&1 && direnv reload || true
 

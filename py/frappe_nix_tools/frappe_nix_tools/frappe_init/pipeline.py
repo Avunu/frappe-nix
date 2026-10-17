@@ -6,6 +6,7 @@ check-then-act, so an interrupted run is resumed by running it again.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 from frappe_nix_tools.frappe_init import ui
@@ -36,6 +37,9 @@ from frappe_nix_tools.frappe_init.template import (
 
 #: More files than this to stage usually means .gitignore is wrong.
 STAGE_LIMIT = 20000
+
+#: lib/build-deps.nix's `sync`, on PATH when lib/init.nix was given python-devops-nix.
+BUILD_DEPS_SYNC = "frappe-nix-build-deps-sync"
 
 
 def print_plan(st: Run) -> None:
@@ -138,6 +142,11 @@ def finalize(st: Run) -> None:
 			st.warn(
 				"uv lock failed. Resolve it in pyproject.toml and re-run 'uv lock': for a conflict between two apps, add a pin to [tool.uv] override-dependencies; for one against the [dependency-groups] dev tools, relax the pin there. Everything else about the migration is already done."
 			)
+		elif shutil.which(BUILD_DEPS_SYNC) and attempt([BUILD_DEPS_SYNC]) != 0:
+			# The managed [tool.uv.extra-build-dependencies] block, derived from
+			# the lock just written (lib/build-deps.nix). The dev shell's relock
+			# runs it again, so a failure here is a warning.
+			st.warn(f"{BUILD_DEPS_SYNC} failed; run `nix run .#relock` to derive the build dependencies")
 
 	ui.step("Staging")
 	staged = len((probe(git("add", "-An")) or "").splitlines())

@@ -8,7 +8,7 @@ Run by the interpreter of that environment, from the bench root.
   1. Every requirement an app's pyproject.toml declares is in uv.lock. An app
      moved to a newer commit can add one the lock predates; Nix then fails to
      evaluate with `attribute 'x' missing`, which names neither the app nor
-     `uv lock` (lib/lock-audit.nix turns that into a sentence when it can).
+     `uv lock` (the lock audit in lib/python.nix turns that into a sentence when it can).
   2. Every app in sites/apps.txt imports in this environment — i.e. it is a
      workspace member the environment was built with, not merely a directory
      under apps/.

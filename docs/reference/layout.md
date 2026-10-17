@@ -20,8 +20,9 @@ frappe-nix/
 │   ├── app-workspace.nix     # app mode: the bench workspace, assembled in the store
 │   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
 │   ├── root-sync.nix         # shell entry: pyproject.toml up to date with frappe-nix, then uv lock
-│   ├── lock-audit.nix        # names a stale uv.lock before uv2nix trips over it
-│   ├── overrides.nix         # mysqlclient / pycups / python-ldap / pyvips / cairocffi
+│   ├── relock-advice.nix     # how a bench re-locks, for the stale-lock message
+│   ├── build-deps.nix        # [tool.uv.extra-build-dependencies] from uv.lock
+│   ├── overrides.nix         # mysqlclient (the shared fixes are python-devops-nix's)
 │   ├── yarn-lock.nix         # one fetchurl per tarball in a yarn.lock
 │   ├── node-locks.nix        # the node-locks/ fallback generator
 │   ├── secrets.nix           # python-devops-nix's secrets tools, with frappe-nix's names

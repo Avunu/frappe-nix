@@ -1,19 +1,30 @@
-# Composable Python package overrides for packages that need system libraries.
+# frappe-nix's own Python package override: mysqlclient, which only a Frappe
+# bench builds.
 #
-# Pure-Python build deps (setuptools, poetry-core, etc.) should be declared in
-# pyproject.toml [tool.uv.extra-build-dependencies] so uv2nix handles them
-# automatically. These overlays are only for packages needing native C headers
-# or system libraries that can't be expressed in pyproject.toml.
+# The fixes both frappe-nix and odoo-nix need (psycopg2, python-ldap, lxml,
+# pycups, python-magic, pyvips, cairocffi) are python-devops-nix's
+# lib.python.overrides, which lib/python.nix applies to every bench right after
+# uv2nix's overlay. This one, and a bench's own `pythonOverrides`, layer on top.
 #
-# All overrides accept `pkgs` as the first argument (for system packages)
-# and return a Python package set overlay (final: prev: { ... }).
+# Pure-Python build dependencies (setuptools, poetry-core and the like) are not
+# overlays: they belong in [tool.uv.extra-build-dependencies], which
+# `frappe-nix-build-deps` derives from uv.lock (lib/build-deps.nix).
 #
-# Usage in consuming flake:
-#   pythonOverrides = lib.composeManyExtensions [
-#     (frappe-nix.lib.overrides.mysqlclient { inherit pkgs; mariadb = pkgs.mariadb; })
-#     (frappe-nix.lib.overrides.pycups { inherit pkgs; })
-#   ];
-
+# Each override takes `pkgs` (for system packages) and returns a Python package
+# set overlay (final: prev: { ... }).
+let
+  # pycups, python-ldap, pyvips and cairocffi were frappe-nix's to apply; the
+  # base's set now applies them to every bench, so a bench that still lists one
+  # in its pythonOverrides gets a no-op and a warning rather than the fix twice
+  # (the dlopen patches would fail the second time: the bare name is gone).
+  # Remove at the next minor release.
+  applied =
+    name:
+    { pkgs, ... }:
+    pkgs.lib.warn
+      "frappe-nix: lib.overrides.${name} is applied to every bench already (python-devops-nix's lib.python.overrides); remove it from pythonOverrides."
+      (_final: _prev: { });
+in
 {
   # mysqlclient needs MariaDB/MySQL headers and client libraries.
   mysqlclient =
@@ -35,80 +46,8 @@
       });
     };
 
-  # pycups needs CUPS headers and libraries (for printing support).
-  pycups =
-    { pkgs }:
-    final: prev: {
-      pycups = prev.pycups.overrideAttrs (old: {
-        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-          final.setuptools
-          pkgs.pkg-config
-          pkgs.cups.dev
-        ];
-        buildInputs = (old.buildInputs or [ ]) ++ [
-          pkgs.cups
-        ];
-      });
-    };
-
-  # python-ldap needs OpenLDAP headers.
-  python-ldap =
-    { pkgs }:
-    final: prev: {
-      python-ldap = prev.python-ldap.overrideAttrs (old: {
-        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-          final.setuptools
-          pkgs.pkg-config
-        ];
-        buildInputs = (old.buildInputs or [ ]) ++ [
-          pkgs.openldap
-          pkgs.cyrus_sasl
-          pkgs.openssl
-        ];
-      });
-    };
-
-  # pyvips uses cffi ffi.dlopen at runtime and needs the absolute store path
-  # for libvips — ctypes.util.find_library won't find it in the Nix store.
-  pyvips =
-    { pkgs }:
-    _final: prev: {
-      pyvips = prev.pyvips.overrideAttrs (old: {
-        buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.vips ];
-        postPatch = ''
-          substituteInPlace pyvips/__init__.py \
-            --replace "library_name('vips', 42)" "'${pkgs.lib.getLib pkgs.vips}/lib/libvips.so.42'"
-        '';
-      });
-    };
-
-  # cairocffi is a cffi wrapper, not a compiled extension: it calls
-  # ffi.dlopen('libcairo.so.2') at *import* time, by bare filename. Nix has
-  # no ldconfig cache and nothing on LD_LIBRARY_PATH by default, so that
-  # dlopen fails outright unless libcairo is put on the loader's path somehow.
-  #
-  # Putting cairo's whole /lib on LD_LIBRARY_PATH is a trap: it also carries
-  # cairo's own libexpat, which shadows the interpreter's ABI-incompatible
-  # one and breaks Python's built-in XML parsing everywhere, not just cairo.
-  # Nix already bakes a RUNPATH into libcairo.so.2 for its own dependencies
-  # (libpng, freetype, fontconfig, pixman, X11 libs), so patching the dlopen
-  # call to the absolute store path resolves everything through that
-  # self-contained RUNPATH with nothing added to LD_LIBRARY_PATH - same fix
-  # shape as pyvips above, for the same underlying reason.
-  cairocffi =
-    { pkgs }:
-    final: prev: {
-      cairocffi = prev.cairocffi.overrideAttrs (old: {
-        nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-          final.setuptools
-          final.cffi
-          final.pycparser
-        ];
-        buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.cairo ];
-        postPatch = ''
-          substituteInPlace cairocffi/__init__.py \
-            --replace "'libcairo.so.2'" "'${pkgs.lib.getLib pkgs.cairo}/lib/libcairo.so.2'"
-        '';
-      });
-    };
+  pycups = applied "pycups";
+  python-ldap = applied "python-ldap";
+  pyvips = applied "pyvips";
+  cairocffi = applied "cairocffi";
 }

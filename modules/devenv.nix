@@ -922,6 +922,30 @@ in
           description = "Python package set overlay for system-library overrides.";
         };
 
+        pythonBuildDependencies = mkOption {
+          type = types.attrsOf (types.listOf types.str);
+          default = { };
+          example = {
+            jsonata = [
+              "setuptools"
+              "pybind11"
+            ];
+            fuuid = [ "poetry-core" ];
+          };
+          description = ''
+            This bench's own `[tool.uv.extra-build-dependencies]` entries:
+            `{ <package> = [ <build dependency> ]; }`, for a package whose
+            sdist needs more than setuptools to build.
+
+            The rest are derived from `uv.lock` (every package it has no wheel
+            for gets setuptools) and written between the
+            `# >>> frappe-nix: sdist build deps (managed) >>>` markers in
+            pyproject.toml after every relock. An entry here is listed whatever
+            the lock says, in place of the derived one. It reaches
+            pyproject.toml at the next relock (`nix run .#relock`).
+          '';
+        };
+
         devguard = {
           enable = mkOption {
             type = types.bool;
@@ -1729,6 +1753,7 @@ in
             # lock (S35, lib/app-workspace.nix). The same lock for both
             # workspaces: relock's must agree.
             testToolsLock = if standardsShell.optedIn then null else lockPath;
+            buildDeps = buildDepsTools.command;
           };
 
         # Two of them, and the difference matters: `relock` exists precisely for
@@ -2244,6 +2269,7 @@ in
           nodeVerifyBin = "${nodeVerifyTool}/bin/frappe-nix-node-verify";
           pythonBin = "${pythonEnvs.devPythonEnv}/bin/python";
           nodeLocksBin = "${nodeLocksTool}/bin/frappe-nix-node-locks";
+          inherit buildDepsSyncBin;
           nodeNestedFrontendExcludes = nodeExcludes;
           inherit appMode;
           lockDir = cfg.app.lockDir;
@@ -2292,10 +2318,22 @@ in
         # lib/db-nocow.nix and the mariadb.noCow option.
         dbNocowTool = import ../lib/db-nocow.nix { inherit pkgs; };
 
+        # [tool.uv.extra-build-dependencies], derived from uv.lock after every
+        # relock where the bench has the managed block (lib/build-deps.nix).
+        buildDepsTools = import ../lib/build-deps.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+          extra = cfg.pythonBuildDependencies;
+        };
+        buildDepsSyncBin = "${buildDepsTools.sync}/bin/frappe-nix-build-deps-sync";
+
         # Keeps the workspace root in step with this frappe-nix: what
         # `frappe-init` would add to pyproject.toml on a re-run, plus the
         # re-lock, done on shell entry instead. See lib/root-sync.nix.
-        rootSyncTool = import ../lib/root-sync.nix { inherit pkgs; };
+        rootSyncTool = import ../lib/root-sync.nix {
+          inherit pkgs;
+          buildDepsSync = buildDepsSyncBin;
+        };
 
         # frappe-runtime is a normal workspace dependency, so a bench whose
         # pyproject.toml does not declare it resolves
@@ -2308,18 +2346,18 @@ in
         # from outside.
         #
         # Declared, not resolved: a name in [project].dependencies that uv.lock
-        # does not carry is the lock audit's error (lib/lock-audit.nix), and it
+        # does not carry is the lock audit's error (lib/python.nix), and it
         # says so before anything here is forced.
         runtimeDeclared = builtins.elem "frappe-runtime" pythonEnvs.rootDepNames;
         runtimeActive = cfg.runtime.enable && runtimeDeclared;
 
-        # The dev-shell welcome banner (rich-rendered, lib/banner.py) -- shares
-        # lib/rich-python.nix with nothing else yet, but kept separate from
-        # cfg.python's own withPackages call rather than hand-drawn
+        # The dev-shell welcome banner (rich-rendered, lib/banner.py), on
+        # python-devops-nix's lib.python.rich: nixpkgs' rich for cfg.python,
+        # kept out of the bench's own environment, rather than hand-drawn
         # box-drawing-character `echo` lines, which are fragile to keep
         # column-aligned by hand and degrade ungracefully (no width awareness)
         # compared to a real renderer.
-        richPython = import ../lib/rich-python.nix {
+        richPython = inputs.python-devops-nix.lib.python.rich {
           inherit (cfg) python;
         };
 
@@ -2350,7 +2388,8 @@ in
                 fi
                 echo "Re-locking the Python workspace with $(uv --version)…"
                 uv lock "$@"
-                echo "✅ uv.lock updated — commit it, then re-enter the shell."
+                ${buildDepsSyncBin}
+                echo "✅ uv.lock updated — commit it (and pyproject.toml), then re-enter the shell."
               ''
             else
               ''
@@ -2708,6 +2747,9 @@ in
 
                 # Package managers
                 uv
+                # `frappe-nix-build-deps {update,check}`: the managed
+                # [tool.uv.extra-build-dependencies] block against uv.lock.
+                buildDepsTools.command
 
                 # Dev tools
                 curl
@@ -2750,124 +2792,128 @@ in
               lsp.enable = lib.mkDefault false;
             };
 
-            env = {
-              DEV_SERVER = "1";
-              FRAPPE_ENV_TYPE = "development";
-              FRAPPE_STREAM_LOGGING = "1";
-              FRAPPE_TUNE_GC = "1";
-              LIVE_RELOAD = "1";
-              NO_SERVICE_RESTART = "1";
+            # BLAS and OpenMP pools at one thread, as production has them
+            # (python-devops-nix's lib.python.threadCaps; modules/nixos.nix).
+            env =
+              inputs.python-devops-nix.lib.python.threadCaps
+              // {
+                DEV_SERVER = "1";
+                FRAPPE_ENV_TYPE = "development";
+                FRAPPE_STREAM_LOGGING = "1";
+                FRAPPE_TUNE_GC = "1";
+                LIVE_RELOAD = "1";
+                NO_SERVICE_RESTART = "1";
 
-              USE_PROFILER = "";
-              USE_PROXY = "";
-              NO_STATICS = "";
+                USE_PROFILER = "";
+                USE_PROXY = "";
+                NO_STATICS = "";
 
-              FRAPPE_DB_TYPE = "mariadb";
+                FRAPPE_DB_TYPE = "mariadb";
 
-              # The database has been socket-only since long before the rest
-              # of this — `bench new-site --db-socket` already wrote db_socket
-              # into every site_config.json — so it needs no `sockets` guard.
-              FRAPPE_DB_SOCKET = mysqlSocket;
+                # The database has been socket-only since long before the rest
+                # of this — `bench new-site --db-socket` already wrote db_socket
+                # into every site_config.json — so it needs no `sockets` guard.
+                FRAPPE_DB_SOCKET = mysqlSocket;
 
-              # Same target builtBench compiles for, so a bundle that builds
-              # here builds in the package too. See the esbuildTarget option.
-              ESBUILD_TARGET = cfg.esbuildTarget;
-              # frappe_nodebuild hands it to every `bench build` and `bench
-              # watch`, as builtBench's build phase does. See lib/nodebuild.
-              FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js}/esbuild-preload.js";
-              # Frappe ends a build by running every app's `yarn build` in turn
-              # and stops at the first that fails, leaving the apps after it
-              # unbuilt. The preload carries on, builds the rest and still exits
-              # 1. Not builtBench, which should stop at the first failure.
-              FRAPPE_NIX_KEEP_GOING = "1";
-              # The shell's statement that devguard is on (devguard.enable),
-              # for frappe-nix's own tools, as odoo-nix's ODOO_NIX_DEVGUARD
-              # (CONVENTIONS.md, Tool-owned variables). frappe_devguard does
-              # not read it; FRAPPE_DEVGUARD_* is its own.
-              FRAPPE_NIX_DEVGUARD = if dg.enable then "1" else "0";
+                # Same target builtBench compiles for, so a bundle that builds
+                # here builds in the package too. See the esbuildTarget option.
+                ESBUILD_TARGET = cfg.esbuildTarget;
+                # frappe_nodebuild hands it to every `bench build` and `bench
+                # watch`, as builtBench's build phase does. See lib/nodebuild.
+                FRAPPE_NIX_ESBUILD_PRELOAD = "${../lib/js}/esbuild-preload.js";
+                # Frappe ends a build by running every app's `yarn build` in turn
+                # and stops at the first that fails, leaving the apps after it
+                # unbuilt. The preload carries on, builds the rest and still exits
+                # 1. Not builtBench, which should stop at the first failure.
+                FRAPPE_NIX_KEEP_GOING = "1";
+                # The shell's statement that devguard is on (devguard.enable),
+                # for frappe-nix's own tools, as odoo-nix's ODOO_NIX_DEVGUARD
+                # (CONVENTIONS.md, Tool-owned variables). frappe_devguard does
+                # not read it; FRAPPE_DEVGUARD_* is its own.
+                FRAPPE_NIX_DEVGUARD = if dg.enable then "1" else "0";
 
-              FRAPPE_BENCH_ROOT = benchPath;
-              SITES_PATH = benchPath + "/sites";
+                FRAPPE_BENCH_ROOT = benchPath;
+                SITES_PATH = benchPath + "/sites";
 
-              PYTHONPATH = benchInfra.appsPath benchPath;
+                PYTHONPATH = benchInfra.appsPath benchPath;
 
-              # Frappe app build scripts conventionally look for the framework
-              # beside themselves, at <app>/../frappe. In app mode that is not
-              # where it is — apps/<app> is a symlink and Node realpaths
-              # __dirname, so the sibling lookup lands outside the bench
-              # entirely. Exported in both modes so the two agree; it is inert
-              # for anything that does not read it.
-              FRAPPE_PATH = benchPath + "/apps/frappe";
+                # Frappe app build scripts conventionally look for the framework
+                # beside themselves, at <app>/../frappe. In app mode that is not
+                # where it is — apps/<app> is a symlink and Node realpaths
+                # __dirname, so the sibling lookup lands outside the bench
+                # entirely. Exported in both modes so the two agree; it is inert
+                # for anything that does not read it.
+                FRAPPE_PATH = benchPath + "/apps/frappe";
 
-              # The git worktree this flake lives in, which in app mode is NOT
-              # the bench. Read by the secrets scripts and agecheck, where a
-              # path under the generated bench would make `agenix -e` report
-              # "no rule for file" and `agenix -r` skip it as "does not exist,
-              # ignored" — exit 0, nothing rekeyed. uv2nix's editable finder
-              # used to read this and now reads FRAPPE_BENCH_ROOT instead; see
-              # lib/python.nix.
-              REPO_ROOT = config.devenv.root;
+                # The git worktree this flake lives in, which in app mode is NOT
+                # the bench. Read by the secrets scripts and agecheck, where a
+                # path under the generated bench would make `agenix -e` report
+                # "no rule for file" and `agenix -r` skip it as "does not exist,
+                # ignored" — exit 0, nothing rekeyed. uv2nix's editable finder
+                # used to read this and now reads FRAPPE_BENCH_ROOT instead; see
+                # lib/python.nix.
+                REPO_ROOT = config.devenv.root;
 
-              UV_PROJECT_ENVIRONMENT = config.env.DEVENV_STATE + "/uv-env";
-              YARN_CACHE_FOLDER = config.env.DEVENV_STATE + "/yarn-cache";
+                UV_PROJECT_ENVIRONMENT = config.env.DEVENV_STATE + "/uv-env";
+                YARN_CACHE_FOLDER = config.env.DEVENV_STATE + "/yarn-cache";
 
-              LD_LIBRARY_PATH = lib.makeLibraryPath (
-                [
-                  pkgs.zlib
-                  pkgs.openssl
-                  pkgs.libffi
-                  pkgs.file.out
-                  pkgs.mariadb.client
-                ]
-                ++ cfg.extraLibraryPaths
-              );
-            }
-            // {
-              # frappe.db reads neither of these — db_socket is set, and
-              # get_connection_settings drops host/port the moment it is. They
-              # are here for everything that connects to `conf.db_host:db_port`
-              # on its own (Insights' "Site DB", any app handed a data source),
-              # which otherwise inherits frappe/config.py's 127.0.0.1:3306
-              # default and lands in whichever bench happens to hold 3306.
-              #
-              # Under sockets.enable that port has no listener, so such a
-              # client now gets ECONNREFUSED here instead of a silent success
-              # against the wrong database. Do not drop these to match: an
-              # unset FRAPPE_DB_PORT is what re-opens the 3306 hole.
-              FRAPPE_DB_HOST = "127.0.0.1";
-              FRAPPE_DB_PORT = toString dbPort;
-            }
-            // (
-              if sockets then
-                {
-                  FRAPPE_REDIS_CACHE = redisUrl;
-                  FRAPPE_REDIS_QUEUE = redisUrl;
+                LD_LIBRARY_PATH = lib.makeLibraryPath (
+                  [
+                    pkgs.zlib
+                    pkgs.openssl
+                    pkgs.libffi
+                    pkgs.file.out
+                    pkgs.mariadb.client
+                  ]
+                  ++ cfg.extraLibraryPaths
+                );
+              }
+              // {
+                # frappe.db reads neither of these — db_socket is set, and
+                # get_connection_settings drops host/port the moment it is. They
+                # are here for everything that connects to `conf.db_host:db_port`
+                # on its own (Insights' "Site DB", any app handed a data source),
+                # which otherwise inherits frappe/config.py's 127.0.0.1:3306
+                # default and lands in whichever bench happens to hold 3306.
+                #
+                # Under sockets.enable that port has no listener, so such a
+                # client now gets ECONNREFUSED here instead of a silent success
+                # against the wrong database. Do not drop these to match: an
+                # unset FRAPPE_DB_PORT is what re-opens the 3306 hole.
+                FRAPPE_DB_HOST = "127.0.0.1";
+                FRAPPE_DB_PORT = toString dbPort;
+              }
+              // (
+                if sockets then
+                  {
+                    FRAPPE_REDIS_CACHE = redisUrl;
+                    FRAPPE_REDIS_QUEUE = redisUrl;
 
-                  # Read by frappe_unixsock, which is the only way past
-                  # frappe/app.py's hardcoded run_simple("0.0.0.0", int(port)).
-                  FRAPPE_WEB_SOCKET = webSocket;
-                }
-                # optionalAttrs, not mkIf: `env` is an attrsOf, and mkIf false
-                # leaves the *name* declared with no definition rather than
-                # dropping it. devenv's shell derivation reads every key, so the
-                # build dies with "option ... was accessed but has no value
-                # defined" instead of quietly omitting the variable.
-                // lib.optionalAttrs (!runtimeActive) {
-                  # Read by node_utils.js; realtime/index.js does
-                  # `server.listen(uds || port)`.
-                  FRAPPE_SOCKETIO_UDS = socketioSocket;
-                }
-              else
-                {
-                  # Fallback mode: still no fixed ports, just more of them.
-                  FRAPPE_REDIS_CACHE = "redis://127.0.0.1:${toString config.services.redis.port}";
-                  FRAPPE_REDIS_QUEUE = "redis://127.0.0.1:${toString config.services.redis.port}";
-                }
-            )
-            // (lib.optionalAttrs (cfg.siteName != "") {
-              FRAPPE_SITE = cfg.siteName;
-            })
-            // cfg.extraEnv;
+                    # Read by frappe_unixsock, which is the only way past
+                    # frappe/app.py's hardcoded run_simple("0.0.0.0", int(port)).
+                    FRAPPE_WEB_SOCKET = webSocket;
+                  }
+                  # optionalAttrs, not mkIf: `env` is an attrsOf, and mkIf false
+                  # leaves the *name* declared with no definition rather than
+                  # dropping it. devenv's shell derivation reads every key, so the
+                  # build dies with "option ... was accessed but has no value
+                  # defined" instead of quietly omitting the variable.
+                  // lib.optionalAttrs (!runtimeActive) {
+                    # Read by node_utils.js; realtime/index.js does
+                    # `server.listen(uds || port)`.
+                    FRAPPE_SOCKETIO_UDS = socketioSocket;
+                  }
+                else
+                  {
+                    # Fallback mode: still no fixed ports, just more of them.
+                    FRAPPE_REDIS_CACHE = "redis://127.0.0.1:${toString config.services.redis.port}";
+                    FRAPPE_REDIS_QUEUE = "redis://127.0.0.1:${toString config.services.redis.port}";
+                  }
+              )
+              // (lib.optionalAttrs (cfg.siteName != "") {
+                FRAPPE_SITE = cfg.siteName;
+              })
+              // cfg.extraEnv;
 
             # The app standards' packages and enterShell snippet, as a module of
             # their own (lib/standards/shell.nix; empty unless the app opted in,

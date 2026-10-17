@@ -36,7 +36,7 @@ at …/uv2nix/build/lib/resolvers.nix:123:23
 Three things keep that from being a puzzle:
 
 - **`bench-update --pull` re-locks.** It runs `uv lock` when any app's `pyproject.toml` moved, and regenerates the fallback lock of any app without a `yarn.lock` whose `package.json` moved.
-- **The error says so.** Before uv2nix resolves anything, frappe-nix audits every declared requirement against the set the resolver will index ([`lib/lock-audit.nix`](../../lib/lock-audit.nix)) and names the app, the requirement and the fix. Marker-gated and direct-URL requirements are left alone, because they can sit outside a resolution legitimately and a false alarm would be worse than the raw error it replaces.
+- **The error says so.** Before uv2nix resolves anything, frappe-nix audits every declared requirement against the set the resolver will index ([`lib/python.nix`](../../lib/python.nix), on python-devops-nix's `lib.python.lockAudit`) and names the app, the requirement and the fix. Marker-gated and direct-URL requirements are left alone, because they can sit outside a resolution legitimately and a false alarm would be worse than the raw error it replaces.
 - **`nix run .#relock` works when nothing else does.** This class of failure blocks evaluation, so the dev shell that carries `uv` is exactly what you cannot open. The `relock` app is deliberately outside every other output's dependency graph and takes its `uv` from nixpkgs, so it still runs.
 
 ```bash
@@ -48,6 +48,47 @@ nix run .#relock -- --node-locks       # app mode: only the fallback locks in ni
 In a bench, `relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`) and passes any further arguments to `uv lock`. In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
 
 In app mode the cause is `nix flake update` and not a submodule bump, and the fix is `nix run .#relock` and not `uv lock`. The workspace root there is generated into the store, so there is no bench root of yours to run `uv` in. The audit says that instead. `relock` is also how the first lock is produced: a repository with no `nix/uv.lock` cannot evaluate the dev shell either, and the error names the command.
+
+### Build dependencies
+
+A package `uv.lock` has no wheel for is built from its sdist, in the Nix sandbox, with only the build dependencies uv2nix is told about. An old sdist often declares none, so `pyproject.toml` names them under `[tool.uv.extra-build-dependencies]`. That table is derived from `uv.lock` rather than kept by hand (python-devops-nix's `lib.python.buildDeps`, wrapped by [`lib/build-deps.nix`](../../lib/build-deps.nix)):
+
+```toml
+[tool.uv.extra-build-dependencies]
+# >>> frappe-nix: sdist build deps (managed) >>>
+"cairocffi" = ["setuptools", "cffi", "pycparser"]
+"docopt" = ["setuptools"]
+"frappe-runtime" = ["hatchling"]
+# <<< frappe-nix: sdist build deps (managed) <<<
+```
+
+- Every package the lock has no wheel for gets `setuptools`.
+- frappe-nix adds two entries whatever the lock says: `frappe-runtime` (`hatchling`) and `cairocffi` (`cffi` and `pycparser`).
+- A bench adds its own with the `pythonBuildDependencies` option, for a sdist that needs more than setuptools, such as `fuuid = [ "poetry-core" ];`. An entry there replaces the derived one.
+
+The lines between the markers are rewritten after every `uv lock` frappe-nix runs: `nix run .#relock`, `bench-update --pull`, `update-deps`, `bench-get-app`, `bench-new-app`, `bench-remove-app`, the shell-entry reconcile and `frappe-init`. After a `uv lock` of your own, run `frappe-nix-build-deps update` (it is on the shell's PATH); `frappe-nix-build-deps check` exits 1 when the block is out of date. `uv.lock` itself does not record these entries, so it does not change.
+
+In app mode the root `pyproject.toml` is generated, and its block is derived from `nix/uv.lock` at evaluation.
+
+#### Moving a bench to the derived list
+
+A bench scaffolded before the block keeps the list it was given, about 100 hand-kept entries, untouched: a relock prints a one-line hint and changes nothing. The list keeps working. Most of its entries are for packages that now ship wheels, so it is mostly noise, and it never gains an entry for a new sdist-only dependency.
+
+To move:
+
+1. Note the entries in `[tool.uv.extra-build-dependencies]` that are not `["setuptools"]` and that frappe-nix does not add itself (`frappe-runtime`, `cairocffi`). Put each in the flake as `pythonBuildDependencies`, for example `jsonata = [ "setuptools" "pybind11" ];`. Leave out one whose package has a wheel in `uv.lock`: uv2nix does not build it.
+2. Replace every entry of the table with the two marker lines:
+
+   ```toml
+   [tool.uv.extra-build-dependencies]
+   # >>> frappe-nix: sdist build deps (managed) >>>
+   # <<< frappe-nix: sdist build deps (managed) <<<
+   ```
+
+   An entry left outside the markers for a package the block also lists makes `pyproject.toml` invalid TOML (a key defined twice).
+3. `nix run .#relock`, then commit `pyproject.toml`.
+
+The derivations of packages installed from a wheel change once (uv2nix adds a package's extra build dependencies to a wheel's build inputs too, and the stock list named many wheels), so the next deploy rebuilds the environment.
 
 ## Node: each app's yarn.lock
 
