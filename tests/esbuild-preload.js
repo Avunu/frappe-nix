@@ -352,9 +352,14 @@ const makeBench = (name) => {
   vwrite(`${b}/apps/spa/spa/public/dist/js/index-AbC.js`, "export {};\n");
   vwrite(
     `${b}/apps/spa/spa/public/dist/legacy/manifest.json`,
-    manifest({ "old.ts": { file: "js/old.bundle.Qwerty1.js", isEntry: true } })
+    // An IIFE build with `cssCodeSplit: false`: its stylesheet is a record of its own.
+    manifest({
+      "old.ts": { file: "js/old.bundle.Qwerty1.js", isEntry: true },
+      "style.css": { file: "css/old.bundle.StYlE1.css", src: "style.css" },
+    })
   );
   vwrite(`${b}/apps/spa/spa/public/dist/legacy/js/old.bundle.Qwerty1.js`, "old();\n");
+  vwrite(`${b}/apps/spa/spa/public/dist/legacy/css/old.bundle.StYlE1.css`, ".old{}\n");
   vwrite(`${b}/apps/spa/spa/public/dist/broken/manifest.json`, "{");
   vwrite(`${b}/apps/spa/spa/public/portal/.vite/manifest.json`, manifest({ "index.html": { file: "assets/index-PoRt12.js", isEntry: true } }));
   vwrite(`${b}/apps/spa/spa/public/portal/assets/index-PoRt12.js`, "portal();\n");
@@ -411,6 +416,7 @@ const expected = {
   "foo.bundle.js": "/assets/spa/dist/js/foo.bundle.AbC123.js",
   "foo.bundle.css": "/assets/spa/dist/css/foo.bundle.XyZ789.css",
   "old.bundle.js": "/assets/spa/dist/legacy/js/old.bundle.Qwerty1.js",
+  "old.bundle.css": "/assets/spa/dist/legacy/css/old.bundle.StYlE1.css",
   "linked.bundle.js": "/assets/linked/dist/js/linked.bundle.LnK123.js",
 };
 check(
