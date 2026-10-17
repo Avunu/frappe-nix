@@ -526,14 +526,21 @@ fi
 # starts as a copy of the real one: `git add -A` on an empty index would skip a
 # tracked file under an ignored path (generated output committed with
 # `git add -f`), which is exactly what these checks are for.
+# The runtime directories are excluded only where .gitignore doesn't already: `git add`
+# exits 1 when a pathspec, even an exclude, names an ignored path, and the managed
+# .gitignore ignores all four.
 snapshot() {
-  local index real
+  local index real dir
+  local -a skip=()
   index="$(mktemp)"
   rm -f "$index"
   real="$(cd "$REPO" && git rev-parse --path-format=absolute --git-path index)"
   [ ! -f "$real" ] || cp "$real" "$index"
-  (cd "$REPO" && GIT_INDEX_FILE="$index" git add -A -- . \
-    ':(exclude).frappe-nix' ':(exclude).devenv' ':(exclude).direnv' ':(exclude).dev-dist' \
+  for dir in .frappe-nix .devenv .direnv .dev-dist; do
+    [ -e "$REPO/$dir" ] || continue
+    (cd "$REPO" && git check-ignore -q "$dir") || skip+=(":(exclude)$dir")
+  done
+  (cd "$REPO" && GIT_INDEX_FILE="$index" git add -A -- . "${skip[@]}" \
     && GIT_INDEX_FILE="$index" git write-tree)
   rm -f "$index"
 }
