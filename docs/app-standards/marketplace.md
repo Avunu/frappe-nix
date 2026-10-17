@@ -89,7 +89,7 @@ A key found more often than its count is a new finding; found less often, the en
 
 ### L9 and the dependency apps
 
-The registry validates an app on a throwaway bench. An app that imports erpnext or hrms fails pilot's import check there unless those apps are on the bench too, so L9 builds the bench with frappe and every app in `[tool.bench.frappe-dependencies]` at the revisions the app's `flake.lock` pins, then runs each of pilot's checks on its own. It needs `uv` and, when the app imports something the bench lacks, `pkg-config` and the MySQL client headers (the dev shell has them; CI's marketplace job installs them).
+The registry validates an app on a throwaway bench. An app that imports erpnext or hrms fails pilot's import check there unless those apps are on the bench too, so L9 builds the bench with frappe and every app in `[tool.bench.frappe-dependencies]` at the revisions the app's `flake.lock` pins, then runs each of pilot's checks on its own. It needs `uv` and, when the app imports something the bench lacks, the MySQL client headers and library: `frappe-listing` in the dev shell points mysqlclient's `MYSQLCLIENT_CFLAGS`/`MYSQLCLIENT_LDFLAGS` at nixpkgs' mariadb-connector-c (a value you export wins), and CI's marketplace job installs `pkg-config` and `libmysqlclient-dev`.
 
 ## frappe-listing registry
 

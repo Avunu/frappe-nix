@@ -14,8 +14,10 @@ that aren't its own; ``frappe/marketplace#29`` puts them on the bench, and so do
    version-16) as the bench's interpreter, which uv provides.
 
 Building frappe's ``mysqlclient`` (ImportCheck installs frappe into a throwaway venv when the
-app imports anything the bench lacks) needs ``pkg-config`` and the MySQL client headers:
-CI's ``marketplace`` job installs them, the dev shell has them. A bench that cannot be
+app imports anything the bench lacks) needs the MySQL client headers and library: CI's
+``marketplace`` job installs them with ``pkg-config``, and the ``frappe-listing`` wrapper
+(lib/standards/tools/frappe-listing.nix) sets ``MYSQLCLIENT_CFLAGS``/``MYSQLCLIENT_LDFLAGS``
+to nixpkgs' mariadb-connector-c unless the caller has. A bench that cannot be
 built is an environment error (exit 3); a check that fails is an L9 error.
 """
 
