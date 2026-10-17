@@ -48,6 +48,21 @@ fail() {
 ok() { echo "ok   $*"; }
 group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$*"; else echo "── $* ──"; fi; }
 endgroup() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::endgroup::"; fi; }
+# Copy the graft package <src> (lib/<x>/frappe_<x>) into <site-packages> with
+# python-devops-nix's _hook.py beside it, as lib.python.mkGraft does: the
+# package carries no copy of its own (one a dev shell copied into a checkout
+# is replaced). <python> must then import both.
+graft() {
+  local src="$1" sitepkg="$2" python="$3" rev name
+  name="$(basename "$src")"
+  rev="$(jq -r '.nodes["python-devops-nix"].locked.rev' "$FN/flake.lock")"
+  [ -n "$rev" ] && [ "$rev" != null ] || fail "no python-devops-nix revision in flake.lock"
+  rm -rf "${sitepkg:?}/$name"
+  cp -r "$src" "$sitepkg/"
+  curl -fsSL --retry 3 -o "$sitepkg/$name/_hook.py" \
+    "https://raw.githubusercontent.com/Avunu/python-devops-nix/$rev/python/devguard/_hook.py"
+  "$python" -c "import $name, $name._hook" || fail "$name does not import from $sitepkg"
+}
 commit() { git -C "$1" add -A && git -C "$1" -c user.name=selftest -c user.email=selftest@localhost commit -q --allow-empty -m "$2"; }
 
 # A copy of the fixture at <dir>, a git repository of its own.
@@ -113,8 +128,10 @@ cmd_stock() {
   group "a second build, under frappe-nix's preload"
   # frappe-nix's frappe_nodebuild, grafted as lib/python.nix grafts it, carries
   # FRAPPE_NIX_ESBUILD_PRELOAD into frappe's build (it replaces NODE_OPTIONS).
+  # Assembled as lib.python.mkGraft builds it, without Nix: the package and
+  # python-devops-nix's shared _hook.py, at the revision flake.lock pins.
   sitepkg="$("$bench/env/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-  cp -r "$FN/lib/nodebuild/frappe_nodebuild" "$sitepkg/"
+  graft "$FN/lib/nodebuild/frappe_nodebuild" "$sitepkg" "$bench/env/bin/python"
   printf 'import frappe_nodebuild; frappe_nodebuild.install()\n' > "$sitepkg/zzz-frappe-nodebuild.pth"
   (cd "$bench" && FRAPPE_NIX_ESBUILD_PRELOAD="$FN/lib/js/esbuild-preload.js" bench build --app spa_app) 2>&1 | tee "$WORK/build-preload.log"
   endgroup

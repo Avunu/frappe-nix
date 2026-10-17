@@ -14,6 +14,11 @@
 #                        services.frappe run) carries no frappe_devguard and no
 #                        devguard .pth, while the development one does. Through
 #                        the real devenv module, over a fixture workspace.
+#   grafts               every graft lib/grafts.nix builds carries the shared
+#                        _hook.py, and the bench's development and production
+#                        interpreters start with every .pth graft importing
+#                        cleanly (a graft built without its _hook.py fails
+#                        each interpreter start with "Error processing line").
 #   devguard-renames     the Track B renames (devguard.mail.smtpPort, the
 #                        devguard.scheduler tree): the old names still set the
 #                        new options and the baked settings, and are listed for
@@ -113,6 +118,43 @@ in
     product = "frappe-nix";
     name = "devguard-core";
   };
+
+  grafts = checks.script "grafts" { } ''
+    ${lib.concatMapStrings
+      (name: ''
+        test -f ${grafts.${name}}/${grafts.${name}.module}/_hook.py
+        cmp ${grafts.${name}}/${grafts.${name}.module}/_hook.py ${base.python.hook}
+        echo "ok   ${grafts.${name}.module} carries the shared _hook.py"
+      '')
+      [
+        "unixsock"
+        "journald"
+        "nodebuild"
+        "benchcli"
+      ]
+    }
+    test -f ${package}/frappe_devguard/_hook.py
+    echo "ok   frappe_devguard carries the core's _hook.py"
+
+    for env in ${devPythonEnv} ${prodPythonEnv}; do
+      site="$env/${sitePackages}"
+      for pth in "$site"/zzz-*.pth; do
+        module=$(sed -n 's/^import \([a-z_]*\);.*/\1/p' "$pth")
+        [ -n "$module" ] || { echo "FAIL $pth is not an import line" >&2; exit 1; }
+        "$env/bin/python" -c "import $module, $module._hook" 2> err || {
+          cat err >&2
+          echo "FAIL $module does not import from $env" >&2
+          exit 1
+        }
+        if grep -q 'Error processing' err; then
+          cat err >&2
+          echo "FAIL a .pth failed at interpreter start in $env" >&2
+          exit 1
+        fi
+        echo "ok   $(basename "$pth") imports $module and its _hook ($(basename "$env"))"
+      done
+    done
+  '';
 
   devguard-renames = checks.eval "devguard-renames" {
     expected = {
