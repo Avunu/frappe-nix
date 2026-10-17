@@ -57,6 +57,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--egress", action="store_true")
 	parser.add_argument("--egress-allow", default="")
 	parser.add_argument("--mail", action="store_true")
+	parser.add_argument("--mailpit", action="store_true")
 	parser.add_argument("--mail-host", default="")
 	parser.add_argument("--mail-http-port", default="")
 	parser.add_argument("--mail-pop3", action="store_true")
@@ -104,10 +105,16 @@ def main() -> None:
 	elif args.egress:
 		allowed = f" (allowed: {escape(args.egress_allow)})" if args.egress_allow else ""
 		console.print(f"  Egress: outbound connections blocked{allowed}")
+	mailpit = f"Mailpit (http://{args.mail_host}:{args.mail_http_port})"
 	if args.mail:
-		console.print(f"  Mail: ALL outgoing email → Mailpit (http://{args.mail_host}:{args.mail_http_port})")
-		incoming = "served from Mailpit POP3" if args.mail_pop3 else "blocked"
+		catcher = mailpit if args.mailpit else "Mailpit, which is off (mailpit.enable): sending fails"
+		console.print(f"  Mail: ALL outgoing email → {catcher}")
+		incoming = "served from Mailpit POP3" if args.mailpit and args.mail_pop3 else "blocked"
 		console.print(f"        incoming (IMAP/POP3) is {incoming}")
+	elif args.mailpit:
+		console.print(
+			f"  Mail: the mail guard is off, so mail goes where each site sends it. {mailpit} is up"
+		)
 	if args.default_site:
 		console.print(f"  Site: {args.default_site}")
 	if args.runtime_warn:

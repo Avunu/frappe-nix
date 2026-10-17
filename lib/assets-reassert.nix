@@ -20,7 +20,7 @@
 # at a file that doesn't exist?) plus a caller-supplied list of `bench execute`
 # targets to run when that's true. Whatever app is doing the shadowing points
 # its own healing entry point at this from its own flake, via
-# `assets.reassert.hooks`.
+# `watch.reassert.hooks`.
 {
   lib,
   pkgs,

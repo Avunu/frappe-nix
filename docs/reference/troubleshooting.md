@@ -53,7 +53,7 @@ Frappe's own esbuild target, es2017, cannot lower async generators or BigInt lit
 
 ### The browser reports a 404 for a JS or CSS bundle after `bench watch` rebuilt it
 
-An app's `hooks.py` names a bundle key that a watch rebuild does not rewrite. Point `assets.reassert.hooks` at your app's fixup. See [Asset-shadow staleness](../development/assets.md#asset-shadow-staleness).
+An app's `hooks.py` names a bundle key that a watch rebuild does not rewrite. Point `watch.reassert.hooks` at your app's fixup. See [Asset-shadow staleness](../development/assets.md#asset-shadow-staleness).
 
 ### The nginx image cannot start
 

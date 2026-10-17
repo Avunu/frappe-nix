@@ -30,7 +30,7 @@ The mail guard sends everything to Mailpit. Open its web UI, at the address prin
 
 ## Incoming mail
 
-Incoming mail is blocked by default. A dev bench polling production mailboxes every 10 minutes marks real messages as seen and fires auto-replies. Set `devguard.mail.pop3.enable = true` to serve incoming mail from Mailpit's POP3 listener instead. Frappe issues `DELE` after fetching and Mailpit honors it, so pulled messages disappear from the Mailpit UI.
+Incoming mail is blocked by default. A dev bench polling production mailboxes every 10 minutes marks real messages as seen and fires auto-replies. Set `mailpit.pop3.enable = true` to serve incoming mail from Mailpit's POP3 listener instead. Frappe issues `DELE` after fetching and Mailpit honors it, so pulled messages disappear from the Mailpit UI.
 
 ## Outbound connections
 

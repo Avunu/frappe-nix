@@ -47,10 +47,22 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 | `benchName`                             | `name`                             |
 | `siteName`                              | `defaultSite`                      |
 | `restore.withFiles`                     | `restore.files`                    |
-| `devguard.mail.smtpPort`                | `devguard.mail.port`               |
+| `devguard.mail.smtpPort`                | `mailpit.port`                     |
+| `devguard.mail.port`                    | `mailpit.port`                     |
+| `devguard.mail.host`                    | `mailpit.host`                     |
+| `devguard.mail.httpPort`                | `mailpit.httpPort`                 |
+| `devguard.mail.pop3.*`                  | `mailpit.pop3.*`                   |
+| `runtime.dev`                           | `watch.python`                     |
+| `assets.reassert.hooks`                 | `watch.reassert.hooks`             |
+| `assets.reassert.debounceMs`            | `watch.reassert.debounceMs`        |
 | `devguard.scheduler.enable`             | `devguard.jobs.enable`             |
 | `devguard.scheduler.blockServerScripts` | `devguard.jobs.blockServerScripts` |
 | `devguard.scheduler.extraBlockedJobs`   | `devguard.jobs.extraBlocked`       |
+
+The last of those follow the development shell's option tree (python-devops-nix's `CONVENTIONS.md`): `watch` is what the shell does when a file changes, `mailpit` is the catcher as a service, `devguard` is guard policy only, and `ports` has one attribute per service (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3`, `ports.socketio`) that the rest of the module reads. Two behaviours changed with them:
+
+- **Mailpit runs whether or not the mail guard is on** (`mailpit.enable`, default `true`). Before, it ran only with `devguard.mail.enable`, and turning the guard off also stopped the catcher. The server, workers and scheduler start after it whenever it runs.
+- **`watch.python = false` keeps serving `/assets` and `/files`.** `runtime.dev = false` used to turn both off, because frappe-runtime's `--dev` did both. The runtime now has a separate `--serve-assets`, which the shell always passes. With `runtime.enable = false`, `watch.python = false` runs `bench serve --noreload`.
 
 The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED` (was `FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS`), `FRAPPE_DEVGUARD_JOBS_BLOCK_SERVER_SCRIPTS`, `FRAPPE_DEVGUARD_JOBS_ENABLE` and `FRAPPE_DEVGUARD_DISABLE=jobs`. The old ones are read, with a warning, for the same period. Its log lines still read `frappe_devguard[scheduler]`.
 

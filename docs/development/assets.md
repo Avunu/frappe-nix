@@ -50,18 +50,18 @@ Frappe's esbuild pipeline writes that file two different ways for the same logic
 
 An app whose `hooks.py` names the second key can have a `bench watch` rebuild touch only the first, while esbuild's own dist cleanup deletes the file the second key still points at. Frappe's own resolution, `bundled_asset()`, is a bare dict lookup with no existence check, so the browser gets a 404 with no server-side signal. `bench watch` alone is enough to trigger this. No devenv restart and no second app is involved.
 
-### assets.reassert
+### watch.reassert
 
-`assets.reassert.hooks` is the fix. It ships with **zero built-in hooks and names no app**. It is a list of `bench execute`-able dotted paths that you point at your own app's asset-shadow fixup:
+`watch.reassert.hooks` (formerly `assets.reassert.hooks`) is the fix. It ships with **zero built-in hooks and names no app**. It is a list of `bench execute`-able dotted paths that you point at your own app's asset-shadow fixup:
 
 ```nix
-frappe-nix.assets.reassert.hooks = [ "<APP>.<MODULE>.<FUNCTION>" ];
+frappe-nix.watch.reassert.hooks = [ "<APP>.<MODULE>.<FUNCTION>" ];
 ```
 
 Whenever `sites/assets/assets.json` names a bundle file that does not exist on disk, every configured hook runs, in order, against `defaultSite`. Two triggers cover the two ways this goes stale:
 
 - A `frappe:assets-reassert` task runs the check once at `devenv up`, so a bench that sat idle with a stale `assets.json` heals before the first page load.
-- An `assetsWatch` process watches `assets.json` for the writes that `bench watch`'s own rebuilds make, using [fswatch](https://github.com/emcrisostomo/fswatch) for file-change detection, which is portable across Linux and Darwin. It is debounced by `assets.reassert.debounceMs` (default 750 ms).
+- An `assetsWatch` process watches `assets.json` for the writes that `bench watch`'s own rebuilds make, using [fswatch](https://github.com/emcrisostomo/fswatch) for file-change detection, which is portable across Linux and Darwin. It is debounced by `watch.reassert.debounceMs` (default 750 ms).
 
 esbuild's writer truncates and writes with no temp-file-and-rename, so a read can land mid-write. The check retries a failed JSON parse a few times before giving up, and a parse failure is never treated as a missing-file invariant failure, because it would otherwise fire the hooks on every rebuild instead of only when something is actually missing.
 
