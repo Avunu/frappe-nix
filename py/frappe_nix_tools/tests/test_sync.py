@@ -544,6 +544,10 @@ class TestDiscovery(AppCase):
 
 	def test_generated_globs_reach_every_tool(self):
 		self.table("test-utils.enable = true\n")
+		self.write("demo_app/public/js/generated/icons.ts", "export const x = 1;\n")
+		self.write(
+			"demo_app/public/js/main.bundle.ts", 'import { x } from "./generated/icons.ts";\nvoid x;\n'
+		)
 		self.write(
 			"pyproject.toml",
 			self.read("pyproject.toml").replace(
@@ -561,6 +565,10 @@ class TestDiscovery(AppCase):
 		self.assertIn(
 			"demo_app/public/js/generated/**", json.loads(self.read(".oxlintrc.json"))["ignorePatterns"]
 		)
+		# Not tsc: a generated module the sources import must stay in the composite browser project,
+		# or tsc --build fails with TS6307 ("not listed within the file list of project").
+		browser = json.loads(_strip(self.read("tsconfig.browser.json")))
+		self.assertNotIn("demo_app/public/js/generated/**", browser["exclude"])
 
 	def test_scss_brings_stylelint(self):
 		self.write("demo_app/public/scss/x.scss", "a { color: red; }\n")

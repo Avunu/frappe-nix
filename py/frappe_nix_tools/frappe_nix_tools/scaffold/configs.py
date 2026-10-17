@@ -191,7 +191,9 @@ def tsconfig_browser(ctx: Any) -> dict:
 				"node_modules",
 				f"{app}/public/dist",
 				*ctx.discover.spa_globs,
-				*ctx.cfg.get("generated", []),
+				# Not cfg.generated: a generated .ts module the bundles import has to be in this
+				# composite project, or tsc --build fails with TS6307. Generated files stay out of
+				# the formatters, linters and validate_copyright, not out of the type check.
 				*ts.get("exclude", []),
 			]
 		),
