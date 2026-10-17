@@ -7,9 +7,18 @@
 # post-restore checks — with no database, no Frappe and no network.
 #
 # Usage: bench-restore.sh <rendered-bench-restore.sh>
+#
+# The same command rendered with other options, each optional (the cases that
+# need one are skipped without it):
+#   UNGUARDED_SCRIPT  devguard.enable = false
+#   NOFETCH_SCRIPT    restore.enable = false
+#   ALLFILES_SCRIPT   both file archives by default (restore.withFiles = "all")
 set -euo pipefail
 
 SCRIPT="$1"
+UNGUARDED_SCRIPT="${UNGUARDED_SCRIPT:-}"
+NOFETCH_SCRIPT="${NOFETCH_SCRIPT:-}"
+ALLFILES_SCRIPT="${ALLFILES_SCRIPT:-}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -40,6 +49,12 @@ mk "$SRC/20260101_010101/20260101_010101-prod_example_com-private-files.tar" "pr
 mk "$SRC/20260202_020202/20260202_020202-prod_example_com-database-enc.sql.gz" "feb-db"
 mk "$SRC/20260202_020202/20260202_020202-prod_example_com-site_config_backup-enc.json" \
   '{"encryption_key":"EK2","backup_encryption_key":"BK2"}'
+
+# Older than the rest, so "the newest" stays 20260202_020202: an encrypted dump
+# whose site config carries no key at all.
+mk "$SRC/20251231_235959/20251231_235959-prod_example_com-database-enc.sql.gz" "dec-db"
+mk "$SRC/20251231_235959/20251231_235959-prod_example_com-site_config_backup.json" \
+  '{"host_name":"https://prod.example.com"}'
 
 # ── the stub bench ────────────────────────────────────────────────────────
 BIN="$WORK/bin"
@@ -96,6 +111,15 @@ run() {
   export BENCH_LOG="$WORK/bench.log"
   OUT="$(bash "$SCRIPT" "$@" 2>&1)" && RC=0 || RC=$?
 }
+# run, with another rendering of the command.
+run_with() {
+  local script="$1"
+  shift
+  : >"$WORK/bench.log"
+  export BENCH_LOG="$WORK/bench.log"
+  OUT="$(bash "$script" "$@" 2>&1)" && RC=0 || RC=$?
+}
+said() { printf '%s' "$OUT" | grep -qF -- "$1"; }
 logged() { grep -qF -- "$1" "$WORK/bench.log"; }
 
 # ── 1. a fresh clone bootstraps the site ─────────────────────────────────
@@ -241,6 +265,226 @@ if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
   ok "FRAPPE_BACKUP_SOURCE is still read, with a deprecation warning"
 else
   no "the legacy FRAPPE_BACKUP_SOURCE still works" "rc=$RC out=$OUT"
+fi
+
+# ── 14. --help ───────────────────────────────────────────────────────────
+run --help
+if [ "$RC" -eq 0 ] && said "Usage: bench restore" && said "--no-force" && [ ! -s "$WORK/bench.log" ]; then
+  ok "--help prints the usage and runs nothing"
+else
+  no "--help prints the usage and runs nothing" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+
+# ── 15. one file at most ─────────────────────────────────────────────────
+run "$WORK/local.sql.gz" "$WORK/other.sql.gz"
+if [ "$RC" -eq 1 ] && said "unexpected argument" && [ ! -s "$WORK/bench.log" ]; then
+  ok "a second file is refused"
+else
+  no "a second file is refused" "rc=$RC out=$OUT"
+fi
+
+# ── 16. what restore does not know reaches bench restore ─────────────────
+run "$WORK/local.sql.gz" --verbose -- --admin-password secret
+if [ "$RC" -eq 0 ] && logged "--verbose" && logged "--admin-password secret"; then
+  ok "unknown options, and everything after --, are passed through"
+else
+  no "unknown options are passed through" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+
+# ── 17. the download cache, and --no-cache ───────────────────────────────
+run --at 20260101_010101
+run --at 20260101_010101
+cached_rc=$RC
+cached_out="$OUT"
+run --at 20260101_010101 --no-cache
+if [ "$cached_rc" -eq 0 ] && printf '%s' "$cached_out" | grep -q 'cached .*-database.sql.gz' &&
+  [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'fetch .*-database.sql.gz'; then
+  ok "a repeat restore is served from cache, and --no-cache downloads again"
+else
+  no "the cache, and --no-cache" "first: $cached_out | --no-cache: $OUT"
+fi
+
+# ── 18. a key given on the command line is the one used ──────────────────
+run --at 20260202_020202 -- --encryption-key MYKEY
+if [ "$RC" -eq 0 ] && logged "--encryption-key MYKEY" && ! logged "--encryption-key BK2"; then
+  ok "--encryption-key on the command line wins over the backup's own key"
+else
+  no "--encryption-key on the command line wins" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+
+# ── 19. an encrypted dump with no key anywhere is refused ────────────────
+rm -rf "$ROOT/sites/$FRAPPE_SITE"
+run --at 20251231_235959
+if [ "$RC" -eq 1 ] && said "no backup_encryption_key" && ! logged " restore "; then
+  ok "an encrypted dump with no key anywhere is refused before bench restore runs"
+else
+  no "an encrypted dump with no key is refused" "rc=$RC out=$OUT log=$(cat "$WORK/bench.log")"
+fi
+
+# ── 20. the backup's slug, this bench's site, and what is said about it ──
+rm -rf "$ROOT/sites/$FRAPPE_SITE"
+run --at 20260101_010101
+first_db="$(jq -r .db_name "$SITE_CFG")"
+first_pw="$(jq -r .db_password "$SITE_CFG")"
+if [ "$RC" -eq 0 ] && said "the backup is of 'prod_example_com', this bench is 'erp_example_com'" &&
+  said "restored erp.example.com from 20260101_010101"; then
+  ok "a restore across sites says so, and ends by naming the backup"
+else
+  no "a restore across sites says so" "rc=$RC out=$OUT"
+fi
+
+# ── 21. a second restore keeps the site's own database credentials ───────
+run --at 20260101_010101
+if [ "$RC" -eq 0 ] && [ "$(jq -r .db_name "$SITE_CFG")" = "$first_db" ] &&
+  [ "$(jq -r .db_password "$SITE_CFG")" = "$first_pw" ] &&
+  [ "$first_db" = "_$(printf '%s' "$FRAPPE_SITE" | sha1sum | cut -c1-16)" ]; then
+  ok "the seeded db_name is frappe's own scheme, and a second restore keeps it"
+else
+  no "a second restore keeps the site's credentials" "db_name=$first_db -> $(jq -r .db_name "$SITE_CFG")"
+fi
+
+# ── 22. no sites/apps.txt: nothing to compare, migrate runs ──────────────
+mv "$ROOT/sites/apps.txt" "$WORK/apps.txt"
+run --at 20260101_010101
+if [ "$RC" -eq 0 ] && logged "migrate"; then
+  ok "without sites/apps.txt the missing-app check is skipped and migrate runs"
+else
+  no "without sites/apps.txt migrate runs" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+mv "$WORK/apps.txt" "$ROOT/sites/apps.txt"
+
+# ── 23. a multi-tenant bench with no site to restore into ────────────────
+FRAPPE_SITE="" run
+if [ "$RC" -eq 1 ] && said "multi-tenant" && [ ! -s "$WORK/bench.log" ]; then
+  ok "with FRAPPE_SITE unset, a fetched restore is refused"
+else
+  no "with FRAPPE_SITE unset, a fetched restore is refused" "rc=$RC out=$OUT"
+fi
+
+# ── 24. no backup source configured ──────────────────────────────────────
+if [ -n "$NOFETCH_SCRIPT" ]; then
+  run_with "$NOFETCH_SCRIPT"
+  if [ "$RC" -eq 1 ] && said "no backup source is configured" && [ ! -s "$WORK/bench.log" ]; then
+    ok "with fetching off, a restore with no file says how to turn it on"
+  else
+    no "with fetching off, a restore with no file is refused" "rc=$RC out=$OUT"
+  fi
+  run_with "$NOFETCH_SCRIPT" "$WORK/local.sql.gz"
+  if [ "$RC" -eq 0 ] && logged "local.sql.gz"; then
+    ok "with fetching off, an explicit file still restores"
+  else
+    no "with fetching off, an explicit file still restores" "rc=$RC $(cat "$WORK/bench.log")"
+  fi
+fi
+
+# ── 25. both archives by default ─────────────────────────────────────────
+if [ -n "$ALLFILES_SCRIPT" ]; then
+  run_with "$ALLFILES_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 0 ] && logged "--with-public-files" && logged "--with-private-files"; then
+    ok "both file archives are restored when the bench asks for them by default"
+  else
+    no "both archives by default" "rc=$RC $(cat "$WORK/bench.log")"
+  fi
+fi
+
+# ── 26. an unguarded bench ───────────────────────────────────────────────
+if [ -n "$UNGUARDED_SCRIPT" ]; then
+  rm -rf "$ROOT/sites/$FRAPPE_SITE"
+  run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then
+    ok "an unguarded bench refuses production's encryption key"
+  else
+    no "an unguarded bench refuses production's key" "rc=$RC out=$OUT"
+  fi
+
+  FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 0 ] && [ "$(jq -r '.encryption_key // "-"' "$SITE_CFG")" = "EK1" ] && ! said "deprecated"; then
+    ok "FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED=1 restores anyway, key and all"
+  else
+    no "the unguarded override restores" "rc=$RC out=$OUT"
+  fi
+
+  # The name it had before (CONVENTIONS.md, Tool-owned variables), read with a
+  # warning until the next minor release.
+  FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
+  if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
+    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"
+  else
+    no "the legacy unguarded override still works" "rc=$RC out=$OUT"
+  fi
+
+  # Unguarded always refuses now (CONVENTIONS.md, Unguarded restore): not
+  # only when production's key would cross over, and an explicit file too.
+  rm -rf "$ROOT/sites/$FRAPPE_SITE"
+  run_with "$UNGUARDED_SCRIPT" --at 20260101_010101 --no-site-config
+  if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then
+    ok "an unguarded bench refuses even without production's key (--no-site-config)"
+  else
+    no "an unguarded bench refuses with --no-site-config" "rc=$RC out=$OUT"
+  fi
+  run_with "$UNGUARDED_SCRIPT" "$WORK/local.sql.gz"
+  if [ "$RC" -eq 1 ] && said "refusing" && [ ! -s "$WORK/bench.log" ]; then
+    ok "an unguarded bench refuses an explicit file too"
+  else
+    no "an unguarded bench refuses an explicit file" "rc=$RC out=$OUT"
+  fi
+  run_with "$UNGUARDED_SCRIPT" --list
+  if [ "$RC" -eq 0 ] && said 20260202_020202; then
+    ok "an unguarded bench can still list the backups"
+  else
+    no "an unguarded bench can list" "rc=$RC out=$OUT"
+  fi
+fi
+
+# ── 27. neutralizing ─────────────────────────────────────────────────────
+# A fetched restore pauses the scheduler and switches mail off in the restored
+# database (restore.neutralize, on by default in the dev shell).
+run --at 20260101_010101
+if [ "$RC" -eq 0 ] && logged "--site erp.example.com disable-scheduler" &&
+  logged "execute frappe.db.sql" && logged "enable_outgoing = 0, enable_incoming = 0"; then
+  ok "a fetched restore is neutralized: scheduler paused, Email Accounts off"
+else
+  no "a fetched restore is neutralized" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+if [ "$(grep -n 'disable-scheduler' "$WORK/bench.log" | cut -d: -f1)" -gt "$(grep -n ' restore ' "$WORK/bench.log" | cut -d: -f1)" ] &&
+  [ "$(grep -n 'disable-scheduler' "$WORK/bench.log" | cut -d: -f1)" -lt "$(grep -n ' migrate' "$WORK/bench.log" | cut -d: -f1)" ]; then
+  ok "it is neutralized after the restore and before the migrate"
+else
+  no "neutralize runs between restore and migrate" "$(cat "$WORK/bench.log")"
+fi
+run --at 20260101_010101 --no-neutralize
+if [ "$RC" -eq 0 ] && ! logged "disable-scheduler" && ! logged "execute frappe.db.sql"; then
+  ok "--no-neutralize leaves the restored database as production had it"
+else
+  no "--no-neutralize skips it" "$(cat "$WORK/bench.log")"
+fi
+run "$WORK/local.sql.gz"
+if [ "$RC" -eq 0 ] && ! logged "disable-scheduler"; then
+  ok "an explicit file is not neutralized unless asked"
+else
+  no "an explicit file is not neutralized by default" "$(cat "$WORK/bench.log")"
+fi
+run "$WORK/local.sql.gz" --neutralize
+if [ "$RC" -eq 0 ] && logged "local.sql.gz" && logged "disable-scheduler" && logged "execute frappe.db.sql"; then
+  ok "--neutralize neutralizes an explicit file's restore"
+else
+  no "--neutralize on an explicit file" "rc=$RC $(cat "$WORK/bench.log")"
+fi
+
+# ── 28. --at takes ISO 8601 and any leading part of a time ───────────────
+for at in 2026-01-01T01:01:01 "2026-01-01 01:01" 2026-01 20260101_010101; do
+  run --at "$at"
+  if [ "$RC" -eq 0 ] && said "restored erp.example.com from 20260101_010101"; then
+    ok "--at $at picks 20260101_010101"
+  else
+    no "--at $at picks 20260101_010101" "rc=$RC $(printf '%s' "$OUT" | tail -3)"
+  fi
+done
+run --at yesterday
+if [ "$RC" -ne 0 ] && said "is not a point in time" && ! logged " restore "; then
+  ok "--at that is not a time is refused"
+else
+  no "--at yesterday is refused" "rc=$RC out=$OUT"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

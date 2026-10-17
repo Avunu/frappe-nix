@@ -1,9 +1,10 @@
-# The `bench restore` script, rendered from lib/scripts.nix with secrets and
-# fetching switched on, then driven against a fixture bucket and a stub bench.
+# `bench restore`, rendered from lib/scripts.nix with secrets and fetching
+# switched on, then driven against a fixture bucket and a stub bench.
 #
-# Rendering it here rather than testing lib/scripts.nix's output by inspection
-# is the point: devenv never shellchecks a `scripts.<n>.exec` body, so without
-# this the largest script in the repo would ship unlinted and unexercised.
+# The script is a shim that execs the Python command (frappe-nix-bench restore,
+# py/frappe_nix_tools/frappe_nix_tools/restore/) with the configuration
+# lib/scripts.nix generates for it, so this drives the real thing: the shim,
+# the generated JSON and the command, against the real backup fetch command.
 { pkgs, python-devops-nix }:
 
 let
@@ -36,23 +37,29 @@ let
 
   fetch = import ../lib/backup-fetch.nix { inherit pkgs python-devops-nix; };
 
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+
   render =
-    devguard:
+    {
+      devguard ? true,
+      enable ? true,
+      files ? "none",
+    }:
     (import ../lib/scripts.nix {
       inherit lib pkgs;
       appsWithNode = [ ];
       benchBin = "bench";
+      benchCli = lib.getExe' frappeNixTools "frappe-nix-bench";
       inherit secrets;
       restore = {
-        inherit devguard;
-        enable = true;
+        inherit devguard enable files;
         prefix = "";
-        withFiles = "none";
         carryConfigKeys = [
           "encryption_key"
           "backup_encryption_key"
         ];
         migrate = true;
+        neutralize = true;
         requireDevguard = true;
         fetch = lib.getExe fetch;
         # The real one decrypts; here the credentials come from
@@ -71,28 +78,38 @@ in
           coreutils
           shellcheck
         ];
-        guarded = render true;
-        unguarded = render false;
+        guarded = render { };
+        unguarded = render { devguard = false; };
+        nofetch = render { enable = false; };
+        allfiles = render { files = "all"; };
         passAsFile = [
           "guarded"
           "unguarded"
+          "nofetch"
+          "allfiles"
         ];
       }
       ''
         export HOME="$PWD"
 
         # devenv would ship these unlinted; lint them here instead.
-        for f in "$guardedPath" "$unguardedPath"; do
+        for f in "$guardedPath" "$unguardedPath" "$nofetchPath" "$allfilesPath"; do
           shellcheck -s bash -S warning -e SC2317 "$f"
         done
 
-        # The devguard interlock has to be absent when the guards are on and present
-        # when they are off — it is generated, so a refactor could silently drop it.
-        grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$unguardedPath" ||
-          { echo "devguard interlock missing from the unguarded build" >&2; exit 1; }
-        ! grep -q FRAPPE_RESTORE_ALLOW_UNGUARDED "$guardedPath" ||
-          { echo "devguard interlock present when guards are on" >&2; exit 1; }
+        # Each shim is the two lines it should be, and hands the command a
+        # configuration that says whether the bench is guarded: generated, so a
+        # refactor could silently drop it.
+        config() { grep -o '/nix/store/[^ ]*-frappe-nix-cli.json' "$1"; }
+        [ "$(jq -r .restore.devguard "$(config "$unguardedPath")")" = false ] ||
+          { echo "the unguarded build does not say so" >&2; exit 1; }
+        [ "$(jq -r .restore.devguard "$(config "$guardedPath")")" = true ] ||
+          { echo "the guarded build does not say so" >&2; exit 1; }
+        [ "$(grep -c . "$guardedPath")" -le 2 ] ||
+          { echo "bench-restore is more than a shim:" >&2; cat "$guardedPath" >&2; exit 1; }
 
-        bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
+        UNGUARDED_SCRIPT="$unguardedPath" NOFETCH_SCRIPT="$nofetchPath" \
+          ALLFILES_SCRIPT="$allfilesPath" \
+          bash ${./bench-restore.sh} "$guardedPath" | tee "$out"
       '';
 }
