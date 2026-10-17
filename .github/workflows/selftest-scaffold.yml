@@ -177,7 +177,8 @@ jobs:
             printf 'import frappe\nimport os\n\n\ndef page():\n\treturn frappe.render_template("templates/missing.html", {})\n' > "$dir/planted.py"
             printf 'frappe.call({ method: "missing_app.api.nothing" });\n' > "$dir/planted.js"
           done
-          test -z "$(git status --porcelain)" || { echo "::error::the planted files are not ignored"; git status --porcelain; exit 1; }
+          untracked="$(git ls-files --others --exclude-standard)"
+          test -z "$untracked" || { echo "::error::the planted files are not ignored: $untracked"; exit 1; }
           uv run --frozen --project tools prek run --all-files --show-diff-on-failure
 
       - name: tsc --build
