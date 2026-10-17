@@ -93,6 +93,7 @@
 			"template": ".github/zizmor.yml.j2",
 			"strategy": "whole",
 			"module": "workflow-lint",
+			"when": "discover.github_workflows or modules.ci or modules['pilot-assets'] or modules.dependabot",
 			"header": "yaml",
 			"uses": [
 				"dependabot.cooldown-days"
