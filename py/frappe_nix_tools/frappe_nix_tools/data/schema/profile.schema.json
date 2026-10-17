@@ -1060,6 +1060,25 @@
             "default": [],
             "description": "Steps before the app's tests: \"module:<dotted test module>\" or \"execute:<dotted callable>\".",
             "x-app-only": true
+          },
+          "devguard-disable": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "mail",
+                "backups",
+                "objectstore",
+                "integrations",
+                "google",
+                "webhooks",
+                "plaid",
+                "jobs"
+              ]
+            },
+            "uniqueItems": true,
+            "default": [],
+            "description": "Development guards frappe-test turns off for the processes that run the app's tests (setup, run-tests, testmap, composition), never for the dev shell or devenv up. egress is not one of them: it is what keeps a relaxed test run on this machine.",
+            "x-app-only": true
           }
         },
         "description": "The frappe-test gate (ci / test), coverage tables, testmap, composition, JS unit tests, R1/R4/R7 (\u00a75.1)."

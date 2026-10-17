@@ -161,6 +161,56 @@ class TestFrappeTestBench(unittest.TestCase):
 		run.env_failed = True
 		self.assertEqual(run.verdict(), 10)
 
+	def test_guards_off_env(self) -> None:
+		env = {"PATH": "/bin"}
+		self.assertEqual(frappe_test.guards_off_env([], env), env)
+		self.assertEqual(
+			frappe_test.guards_off_env(["mail"], env), {"PATH": "/bin", "FRAPPE_DEVGUARD_DISABLE": "mail"}
+		)
+		# What the caller already turned off for the command stays off, once.
+		env["FRAPPE_DEVGUARD_DISABLE"] = " backups, mail ,"
+		self.assertEqual(
+			frappe_test.guards_off_env(["mail", "webhooks"], env)["FRAPPE_DEVGUARD_DISABLE"],
+			"backups,mail,webhooks",
+		)
+		self.assertEqual(env["FRAPPE_DEVGUARD_DISABLE"], " backups, mail ,")
+
+	def test_relaxed_guards_reach_the_test_processes_only(self) -> None:
+		calls: list[tuple[list[str], dict | None]] = []
+
+		def fake_call(cmd, *, cwd=None, env=None, **_):
+			calls.append((list(cmd), env))
+			return 0
+
+		with mock.patch.dict(os.environ, {"FRAPPE_DEVGUARD_DISABLE": ""}), quiet():
+			run = frappe_test.Run(
+				frappe_test.TestArgs(),
+				bench=self.bench,
+				repo=self.repo,
+				out=self.tmp,
+				junit="",
+				app="a",
+				site="s",
+			)
+			run.relax_guards([])
+			self.assertEqual(run.test_env["FRAPPE_DEVGUARD_DISABLE"], "")
+			with contextlib.redirect_stdout(io.StringIO()) as said:
+				run.relax_guards(["mail"])
+			self.assertIn("devguard-disable", said.getvalue())
+			with mock.patch.object(frappe_test, "call", side_effect=fake_call):
+				run.bench_cmd("--site", "s", "execute", "x.y")
+				run.run_tests(coverage=False)
+				run.testmap(True, have_coverage=True)
+				run.composition(True)
+			# The dev shell's own environment is untouched.
+			self.assertEqual(os.environ["FRAPPE_DEVGUARD_DISABLE"], "")
+		self.assertEqual(len(calls), 4)
+		for cmd, env in calls:
+			with self.subTest(cmd=cmd[:3]):
+				self.assertIsNotNone(env)
+				assert env is not None
+				self.assertEqual(env["FRAPPE_DEVGUARD_DISABLE"], "mail")
+
 	def test_outside_the_dev_shell_and_down(self) -> None:
 		with mock.patch.dict(os.environ, {"FRAPPE_BENCH_ROOT": "", "DEVENV_ROOT": ""}), quiet():
 			self.assertEqual(frappe_test.main([]), 10)

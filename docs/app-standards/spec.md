@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-07
+updated: 2026-10-17
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -450,6 +450,8 @@ setup = []                                   # steps before the app's tests. Eac
                                              # (bench run-tests --module) or "execute:<dotted callable>".
                                              # Default when empty: "module:erpnext.tests.bootstrap_test_data" if
                                              # erpnext is a sibling, else "execute:frappe.utils.install.complete_setup_wizard"
+devguard-disable = []                        # dev guards frappe-test's test processes run without, e.g. ["mail"]
+                                             # for a mail transport; never egress. The shell and devenv up keep them
 js-coverage-min = 50                         # node:test line-coverage minimum; only used when test/unit/ exists
 
 [tool.frappe-nix.releases]

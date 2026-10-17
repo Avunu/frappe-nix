@@ -3,7 +3,8 @@
 ``test-plan`` prints, as JSON, what ``frappe-test`` reads from the app's resolved
 configuration (§8.4): which stages ``--ci`` runs (each one's module, §8.2), the coverage
 target and raise margin of the upward ratchet, the ``[tool.frappe-nix.tests] setup``
-steps, the ``shell-checks`` and the siblings. An app without ``[tool.frappe-nix]`` has no
+steps and the development guards the test run goes without (``devguard-disable``), the
+``shell-checks`` and the siblings. An app without ``[tool.frappe-nix]`` has no
 configuration to read (S35): it gets the ``recommended`` values and nothing app-specific.
 
 ``coverage-ratchet`` is the upward half of the coverage gate (S24, decision 5): while
@@ -165,6 +166,7 @@ def test_plan(pyproject_path: Path) -> dict:
 		},
 		"coverage": {"target": float(coverage["target"]), "raise-margin": float(coverage["raise-margin"])},
 		"setup": list(tests.get("setup", [])) if opted_in else [],
+		"devguard-disable": list(tests.get("devguard-disable", [])) if opted_in else [],
 		"shell-checks": shell_checks,
 		"siblings": [_sibling_name(s) for s in cfg.get("siblings", [])] if opted_in else [],
 	}
