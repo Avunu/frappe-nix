@@ -1,5 +1,6 @@
 # `frappe-shots` (docs/app-standards/spec.md §5.5): repeatable screenshots of an app's demo
-# site, lib/sh/frappe-shots.sh around the lib/shots engine. Everything that decides a pixel
+# site, `frappe_nix_tools.app_tools.frappe_shots` (PLAN.md Track D, D6, run as `python -I -m`
+# as frappe-init is) around the lib/shots engine. Everything that decides a pixel
 # comes from frappe-nix's own nixpkgs: chromium, libwebp's cwebp and dwebp, ffmpeg (videos),
 # libfaketime, Node 24, and a fixed FONTCONFIG_FILE with the Inter, IBM Plex and Noto sets;
 # pixelmatch and pngjs come from lib/shots/yarn.lock, as a Nix-built node_modules beside the
@@ -73,6 +74,15 @@ let
     ];
   };
 
+  python = frappeNixTools.pythonModule.withPackages (_: [ frappeNixTools ]);
+  # What frappe-shots reads (app_tools/config.py); it refuses a missing or an unknown key.
+  config = pkgs.writeText "frappe-shots.json" (
+    builtins.toJSON {
+      shotsDir = "${engine}";
+      faketimeLib = "${faketime}/$LIB/libfaketime.so.1";
+    }
+  );
+
   linux = pkgs.writeShellApplication {
     name = "frappe-shots";
     runtimeInputs = [
@@ -88,11 +98,9 @@ let
       frappeDemo
     ];
     runtimeEnv.FONTCONFIG_FILE = "${fonts}";
-    text =
-      builtins.replaceStrings
-        [ "@SHOTS_DIR@" "@FAKETIME_LIB@" ]
-        [ "${engine}" "${faketime}/$LIB/libfaketime.so.1" ]
-        (builtins.readFile ../../sh/frappe-shots.sh);
+    text = ''
+      FRAPPE_NIX_CLI_CONFIG=${config} exec ${python}/bin/python3 -I -m frappe_nix_tools.app_tools.frappe_shots "$@"
+    '';
     passthru = { inherit engine; };
     meta.description = "Take repeatable screenshots of a Frappe app's demo site and compare them with the committed ones";
   };

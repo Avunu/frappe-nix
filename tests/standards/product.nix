@@ -6,7 +6,6 @@
 # (frappe-demo, frappe-shots) is .github/workflows/selftest-product.yml.
 #
 #   standards-product-tools  frappe-listing, frappe-icon, frappe-demo and frappe-shots build
-#                            (shellcheck runs over the two shell tools as they build)
 #   standards-demo-shots     tests/standards/demo-shots.sh: frappe-demo's and frappe-shots'
 #                            every flag, exit code and branch that needs no real bench or
 #                            chromium, against a dev shell of stubs (the refusals and the

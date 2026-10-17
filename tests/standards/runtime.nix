@@ -33,7 +33,7 @@
 #                            tools, fails the same check.
 #   standards-coverage-env    `import coverage` (and xmlrunner) works in the dev
 #                            virtualenv lib/python.nix builds from that group.
-#   standards-frappe-test     frappe-test builds (shellcheck), parses its
+#   standards-frappe-test     frappe-test builds, parses its
 #                            arguments, and runs the stages its plan turns on
 #                            against a dev shell of stubs.
 {

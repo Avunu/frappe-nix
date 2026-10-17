@@ -66,6 +66,9 @@ buildPythonPackage {
     "frappe_nix_tools.bench_cli"
     "frappe_nix_tools.restore.command"
     "frappe_nix_tools.frappe_init.command"
+    "frappe_nix_tools.app_tools.frappe_test"
+    "frappe_nix_tools.app_tools.frappe_demo"
+    "frappe_nix_tools.app_tools.frappe_shots"
   ];
 
   meta = {
