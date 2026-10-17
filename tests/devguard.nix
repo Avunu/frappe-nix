@@ -19,7 +19,7 @@
 #                        interpreters start with every .pth graft importing
 #                        cleanly (a graft built without its _hook.py fails
 #                        each interpreter start with "Error processing line").
-#   devguard-renames     the Track B renames (devguard.mail.smtpPort, the
+#   devguard-renames     the Track B renames (devguard.mail.smtpPort, now mailpit.port; the
 #                        devguard.scheduler tree): the old names still set the
 #                        new options and the baked settings, and are listed for
 #                        the evaluation warning. At evaluation; nothing is built.
@@ -173,7 +173,7 @@ in
       shellVariable = "1";
     };
     actual = {
-      inherit (renamed.frappe-nix.devguard.mail) port;
+      inherit (renamed.frappe-nix.mailpit) port;
       inherit (renamed.frappe-nix.devguard) jobs;
       deprecated = lib.sort builtins.lessThan (
         map (

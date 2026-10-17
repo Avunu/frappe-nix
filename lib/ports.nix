@@ -58,7 +58,7 @@ rec {
 
   # Every base, from one offset. `web` is nginx's (or, with sockets off, the web
   # server's); `db` names MariaDB's allocated but unbound port under sockets;
-  # the three Mailpit ports are the devguard.mail defaults.
+  # the three Mailpit ports are ports.{smtp,mailUi,pop3}, the mailpit.* defaults.
   basesFor = offset: {
     web = 8000 + offset;
     db = 3306 + offset;
