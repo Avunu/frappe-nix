@@ -1,9 +1,9 @@
 # The checks frappe-nix's own dev tooling adds to `nix flake check`.
 #
 # The Python, JSON, TOML and YAML hooks are .pre-commit-config.yaml's, run by
-# prek on a commit and by CI's `lint` job. These are the two that cannot be:
-# the Nix linters need nix, and ty needs the dev env's interpreter with the
-# pinned upstream Frappe in it.
+# prek on a commit and by CI's `lint` job. ty cannot be: it needs the dev env's
+# interpreter with the pinned upstream Frappe in it. The Nix linters are
+# python-devops-nix's nix-lint check, registered in flake.nix.
 { pkgs, inputs }:
 
 let
@@ -25,31 +25,6 @@ in
         cp ${./uv.lock} root/dev/uv.lock
         cp ${../.pre-commit-config.yaml} root/.pre-commit-config.yaml
         ${dev.frappeUpstream}/bin/frappe-upstream check ${dev.frappeSrc} root | tee "$out"
-      '';
-
-  # nixfmt, statix and deadnix over the tree. Fixtures stand in for third-party
-  # benches and templates hold @PLACEHOLDERS@, so neither is Nix that parses;
-  # keep these in step with `exclude` in .pre-commit-config.yaml. statix reads
-  # statix.toml, and walks the tree itself.
-  nix-lint =
-    pkgs.runCommand "frappe-nix-nix-lint"
-      {
-        nativeBuildInputs = [
-          pkgs.deadnix
-          pkgs.findutils
-          pkgs.nixfmt
-          pkgs.statix
-        ];
-      }
-      ''
-        cp -r ${../.} src
-        chmod -R u+w src
-        cd src
-        find . -name '*.nix' -not -path './tests/fixtures/*' -not -path './templates/*' -print0 > ../nix-files
-        xargs -0 nixfmt --check < ../nix-files
-        statix check --format errfmt --ignore 'tests/fixtures/*' --ignore 'templates/*' .
-        xargs -0 deadnix --fail < ../nix-files
-        touch "$out"
       '';
 
   # The whole tree, not what changed: editing one module can break a caller in

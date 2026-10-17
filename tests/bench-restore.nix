@@ -4,12 +4,14 @@
 # Rendering it here rather than testing lib/scripts.nix's output by inspection
 # is the point: devenv never shellchecks a `scripts.<n>.exec` body, so without
 # this the largest script in the repo would ship unlinted and unexercised.
-{ pkgs }:
+{ pkgs, python-devops-nix }:
 
 let
   inherit (pkgs) lib;
 
-  schema = import ../lib/secrets-schema.nix { inherit lib; };
+  schema = python-devops-nix.lib.secrets.schema {
+    varPrefix = "frappe";
+  };
 
   secretsCfg = rec {
     enable = true;
@@ -27,12 +29,12 @@ let
     declared = schema.secretList secretsCfg;
   };
 
-  secrets = import ../lib/secrets-tools.nix {
-    inherit lib pkgs schema;
+  secrets = import ../lib/secrets.nix {
+    inherit pkgs python-devops-nix;
     cfg = secretsCfg;
   };
 
-  fetch = import ../lib/backup-fetch.nix { inherit pkgs; };
+  fetch = import ../lib/backup-fetch.nix { inherit pkgs python-devops-nix; };
 
   render =
     devguard:
@@ -52,10 +54,10 @@ let
         ];
         migrate = true;
         requireDevguard = true;
-        fetch = "${fetch}/bin/frappe-nix-backup-fetch";
+        fetch = lib.getExe fetch;
         # The real one decrypts; here the credentials come from
-        # FRAPPE_BACKUP_SOURCE, so this only has to be a no-op that proves the
-        # hook is wired.
+        # FRAPPE_NIX_BACKUP_SOURCE, so this only has to be a no-op that proves
+        # the hook is wired.
         loadSecrets = ":";
       };
     }).bench-restore.exec;
@@ -66,7 +68,6 @@ in
       {
         nativeBuildInputs = with pkgs; [
           jq
-          minio-client
           coreutils
           shellcheck
         ];

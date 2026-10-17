@@ -546,6 +546,29 @@
         "type": "github"
       }
     },
+    "python-devops-nix": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792193956,
+        "narHash": "sha256-WEck77xcgNXLiFnuyrm3vXsYbANizaUzW/xBxANaXhM=",
+        "owner": "Avunu",
+        "repo": "python-devops-nix",
+        "rev": "2ea6d8c98ee3ce791c78ab5b2b4f9afd37df146f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Avunu",
+        "repo": "python-devops-nix",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "agenix-shell": "agenix-shell",
@@ -558,6 +581,7 @@
         "pilot": "pilot",
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",
+        "python-devops-nix": "python-devops-nix",
         "uv2nix": "uv2nix"
       }
     },

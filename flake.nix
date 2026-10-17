@@ -38,6 +38,16 @@
       inputs.flake-parts.follows = "flake-parts";
     };
 
+    # The pieces frappe-nix shares with odoo-nix: the secrets toolkit, the
+    # backup fetch layer and the repository checks
+    # (https://github.com/Avunu/python-devops-nix). Its own inputs are nixpkgs
+    # and flake-parts, both followed, so it adds one node to the lock.
+    python-devops-nix = {
+      url = "github:Avunu/python-devops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-parts.follows = "flake-parts";
+    };
+
     # The registry checks an app must pass, pinned (docs/app-standards/spec.md S20).
     # Not flakes: plain source trees. They reach each app through its
     # flake.lock, where `frappe-nix pin-path <name>` finds them under the
@@ -122,7 +132,10 @@
           # is how the three copies of this got out of step in the first place.
           # `--fetch-only` style use: it prints a JSON manifest and touches no
           # database, so the deployment keeps its own restore half.
-          backup-fetch = import ./lib/backup-fetch.nix { inherit pkgs; };
+          backup-fetch = import ./lib/backup-fetch.nix {
+            inherit pkgs;
+            inherit (inputs) python-devops-nix;
+          };
         }
       );
 
@@ -158,50 +171,6 @@
             chmod -R u+w ./devguard
             ${pkgs.python3}/bin/python ./devguard/tests/test_devguard.py | tee "$out"
           '';
-
-          # The recipient-drift check, tested against real age ciphertext:
-          # throwaway SSH keys, `rage` encrypts to a subset of them, and the
-          # assertions are about the verdict. No network and no identity of the
-          # builder's — an age header names its recipients in the clear, which
-          # is the whole reason the check can run offline.
-          agecheck =
-            pkgs.runCommand "frappe-nix-agecheck-check"
-              {
-                nativeBuildInputs = [
-                  pkgs.rage
-                  pkgs.openssh
-                  pkgs.python3
-                ];
-              }
-              ''
-                cat > agecheck <<EOF
-                #!${pkgs.runtimeShell}
-                exec ${pkgs.python3}/bin/python3 ${./lib/agecheck.py} "\$@"
-                EOF
-                chmod +x agecheck
-                bash ${./tests/agecheck.sh} "$PWD/agecheck" \
-                  ${pkgs.rage}/bin/rage ${pkgs.openssh}/bin/ssh-keygen | tee "$out"
-              '';
-
-          # A directory tree stands in for a bucket: `mc ls --json` emits the
-          # same shape for a local path as for S3, so folder selection, the
-          # -partial and -enc cases, the public/private archive split, the
-          # download cache and its retention all run with no server and no
-          # network.
-          backup-fetch =
-            pkgs.runCommand "frappe-nix-backup-fetch-check"
-              {
-                nativeBuildInputs = [
-                  pkgs.jq
-                  pkgs.minio-client
-                ];
-              }
-              ''
-                export HOME="$PWD"
-                bash ${./tests/backup-fetch.sh} \
-                  ${import ./lib/backup-fetch.nix { inherit pkgs; }}/bin/frappe-nix-backup-fetch \
-                  | tee "$out"
-              '';
 
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
           # frappe.database and werkzeug.serving, and the assertions are about
@@ -415,8 +384,12 @@
               2>&1 | tee "$out"
           '';
         }
-        # edit-secret / rekey-secrets against a real ragenix and real keys.
-        // import ./tests/secrets-cli.nix { inherit pkgs; }
+        # frappe-nix.secrets as a bench declares it: the option tree, the
+        # agenix-shell secret set, the rules and flake.lib.secrets that
+        # python-devops-nix's module derives from frappe-nix's names and sites.
+        # The toolkit's own tests (agecheck, edit-secret, rekey-secrets,
+        # check-secrets, the backup fetch layer) are python-devops-nix's.
+        // import ./tests/secrets-module.nix { inherit self pkgs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }
@@ -426,7 +399,10 @@
         // import ./tests/mariadbd-wrapper.nix { inherit pkgs; }
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
-        // import ./tests/bench-restore.nix { inherit pkgs; }
+        // import ./tests/bench-restore.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-migrate` and `bench-offline-migrate`: the step in front of the
         # migrate, over stubs.
         // import ./tests/offline-migrate-scripts.nix { inherit pkgs; }
@@ -492,6 +468,40 @@
         # frappe-nix's own lint and type checks, and the drift check that keeps
         # its ruff config on the pinned upstream Frappe's. See dev/.
         // import ./dev/checks.nix { inherit pkgs inputs; }
+        # The repository checks frappe-nix shares with odoo-nix
+        # (python-devops-nix, CONVENTIONS.md, Formatter and Repository files):
+        # nixfmt-rs, statix and deadnix over the tree with statix.toml compared
+        # to the shared copy, and .editorconfig, .pre-commit-config.yaml and
+        # ruff.toml carrying the shared settings.
+        // {
+          nix-lint = inputs.python-devops-nix.lib.checks.nixLint {
+            inherit pkgs;
+            src = ./.;
+            product = "frappe-nix";
+            # Fixtures stand in for third-party benches and templates hold
+            # @PLACEHOLDERS@, so neither is Nix that parses; keep these in step
+            # with `exclude` in .pre-commit-config.yaml.
+            ignore = [
+              "tests/fixtures"
+              "templates"
+            ];
+          };
+          shared-config = inputs.python-devops-nix.lib.checks.sharedConfig {
+            inherit pkgs;
+            src = ./.;
+            product = "frappe-nix";
+            # frappe-nix's Python is written in Frappe's style, as its
+            # ruff.toml extends Frappe's own config and its code is read and
+            # copied next to Frappe's: tabs, where the shared copy (vendored
+            # into both products, linted by neither) uses Ruff's four spaces.
+            exceptions.".editorconfig" = [
+              [
+                "*.py"
+                "indent_style"
+              ]
+            ];
+          };
+        }
         # The app standards checks, one file per area, and `standards-all`
         # that builds them all. See tests/standards/default.nix.
         // import ./tests/standards { inherit self pkgs inputs; }

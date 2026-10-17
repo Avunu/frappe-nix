@@ -42,4 +42,4 @@ The bucket and prefix live in the secret rather than in Nix on purpose. They are
 
 ## Read-only output
 
-When secrets are enabled, the flake also exposes `lib.frappeSecrets` with `recipients`, `sites` and `files`, so a deployment can read the same ciphertext. See [Use the same secrets on the server](../development/secrets.md#use-the-same-secrets-on-the-server).
+When secrets are enabled, the flake also exposes `lib.secrets` with `recipients`, `sites` and `files`, so a deployment can read the same ciphertext. See [Use the same secrets on the server](../development/secrets.md#use-the-same-secrets-on-the-server).

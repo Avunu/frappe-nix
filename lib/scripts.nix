@@ -10,12 +10,20 @@
   # Absolute path to the real bench CLI (devPythonEnv/bin/bench). The umbrella
   # `bench` wrapper and the re-entrancy guard use it to reach the unwrapped bench.
   benchBin ? "bench",
-  # lib/secrets-tools.nix. `enabled = false` when the bench declares no secrets,
-  # in which case the secret scripts are omitted entirely rather than shipped as
-  # stubs that fail late.
+  # lib/secrets.nix (python-devops-nix's lib.secrets.tools). `enabled = false`
+  # when the bench declares no secrets.
   secrets ? {
     enabled = false;
   },
+  # The secrets toolkit's dev-shell commands (edit-secret, rekey-secrets,
+  # check-secrets, setup-backup-access): `secrets.scripts { fetch = …; }`. Empty
+  # when the bench declares no secrets, rather than stubs that fail late. Merged
+  # in here, under every other script, rather than contributed separately:
+  # modules/devenv.nix assigns `scripts` wholesale as `scripts //
+  # cfg.extraScripts`, so a second module defining the same attribute would turn
+  # a consumer's `extraScripts.edit-secret` into a *conflict* instead of the
+  # documented override.
+  secretScripts ? { },
   # Absolute path to lib/node-modules.nix's tool. Left as a bare name for a
   # consumer that instantiates this file on its own; the dev shell passes the
   # store path.
@@ -30,7 +38,7 @@
   # lock generator must leave alone (and prune).
   nodeNestedFrontendExcludes ? [ ],
   # perSystem.frappe-nix.restore, plus `fetch` (the frappe-nix-backup-fetch
-  # binary) and `devguard` (whether this bench's guard rails are on).
+  # command, lib/backup-fetch.nix) and `devguard` (whether this bench's guard rails are on).
   # `enable = false` leaves `bench restore` with its explicit-file behaviour.
   restore ? {
     enable = false;
@@ -73,7 +81,8 @@ let
   # Secrets are tracked files in the git worktree, which in app mode is not the
   # bench. A rules file naming a path under the generated bench makes `agenix -e`
   # report "no rule for file" and `agenix -r` skip it as "does not exist,
-  # ignored" — exit 0, nothing rekeyed. See lib/secrets-tools.nix.
+  # ignored" — exit 0, nothing rekeyed. See writeRules in python-devops-nix's
+  # lib.secrets.tools.
   atRepo = ''cd "$REPO_ROOT"'';
 
   siteFlag = ''
@@ -157,114 +166,6 @@ let
     ${workspaceBin} sync-registry --pyproject pyproject.toml --apps-dir apps --sites-dir sites
   '';
 
-  # ── secrets ───────────────────────────────────────────────────────────────
-  # Only defined when the bench declares secrets; merged in below. They live
-  # here, with every other script, rather than being contributed separately from
-  # modules/secrets.nix — modules/devenv.nix assigns `scripts` wholesale as
-  # `scripts // cfg.extraScripts`, so a second module defining the same
-  # attribute would turn a consumer's `extraScripts.edit-secret` into a
-  # *conflict* instead of the documented override.
-  secretNames = lib.concatMapStringsSep "\n" (s: "  ${s.name}") (secrets.names or [ ]);
-
-  secretScripts =
-    lib.optionalAttrs (secrets.enabled or false) {
-      edit-secret.exec = ''
-        set -euo pipefail
-        ${atRepo}
-
-        if [ -z "''${1:-}" ] || [ "''${1:-}" = "--help" ] || [ "''${1:-}" = "-h" ]; then
-          cat <<'EOF'
-        Usage: edit-secret <name> [identity-file]
-
-        Decrypts a secret into $EDITOR and re-encrypts it to the recipients
-        declared in flake.nix. Creates it if it does not exist.
-
-        Declared secrets:
-        ${secretNames}
-
-        The recipient list is generated from `frappe-nix.secrets.recipients`, so
-        there is no secrets.nix to keep in step. After changing that list, run
-        `rekey-secrets`.
-        EOF
-          exit 0
-        fi
-
-        REL="${secrets.relDir}/$1.age"
-        shift
-
-        # The rules are rendered here rather than committed, so the recipient
-        # list in flake.nix is the only place it is written down. They carry
-        # absolute paths and the file below is passed absolute to match — see
-        # lib/secrets-tools.nix for why a store-path rules file with relative
-        # keys silently does nothing.
-        ${secrets.writeRules}
-
-        # ryantm/agenix substitutes `cp -- /dev/stdin` for $EDITOR when stdin is
-        # not a terminal, so `edit-secret foo <<EOF … EOF` just works there.
-        # ragenix does not — it refuses with "Standard output is not a terminal"
-        # — which would make every secret in this bench hand-typed only. Restore
-        # the documented behaviour.
-        # Unconditional, not "only if EDITOR is unset": EDITOR is nano on most
-        # machines, and an interactive editor cannot work without a terminal
-        # anyway, so honouring it here just fails. ryantm/agenix makes the same
-        # unconditional substitution.
-        if [ ! -t 0 ]; then
-          EDITOR="cp /dev/stdin"
-          export EDITOR
-        fi
-
-        if [ -n "''${1:-}" ]; then
-          ${lib.getExe' secrets.cli "agenix"} -e "$REPO_ROOT/$REL" -i "$1"
-        else
-          ${lib.getExe' secrets.cli "agenix"} -e "$REPO_ROOT/$REL"
-        fi
-
-        # A new .age is untracked, and a flake's source tree is only its tracked
-        # files — so an untracked secret is invisible to the build and the next
-        # `direnv reload` reports it missing. Stage it now rather than letting
-        # that happen.
-        if ! git ls-files --error-unmatch -- "$REL" >/dev/null 2>&1; then
-          git add -- "$REL"
-          echo "staged new secret $REL (age ciphertext is meant to be committed)"
-        fi
-
-        ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check ${secrets.rulesJSON} --root .
-      '';
-
-      rekey-secrets.exec = ''
-        set -euo pipefail
-        ${atRepo}
-
-        echo "Re-encrypting every declared secret to the current recipient list…"
-        echo "(you need to be able to decrypt them, so this cannot run in CI)"
-        echo
-
-        ${secrets.writeRules}
-        ${lib.getExe' secrets.cli "agenix"} -r "$@"
-
-        echo
-        ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check ${secrets.rulesJSON} --root .
-        echo
-        echo "Commit the changed .age files — until you do, the recipient list in"
-        echo "flake.nix and the ciphertext on the branch disagree."
-      '';
-
-      check-secrets.exec = ''
-        set -euo pipefail
-        ${atRepo}
-        if [ -n "''${1:-}" ]; then
-          exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} explain \
-            ${secrets.rulesJSON} "$1" --root .
-        fi
-        exec ${lib.getExe' secrets.agecheck "frappe-nix-agecheck"} check \
-          ${secrets.rulesJSON} --root .
-      '';
-    }
-    // lib.optionalAttrs ((secrets.enabled or false) && (restore.enable or false)) {
-      setup-backup-access.exec = ''
-        exec ${secrets.setupBackupAccess restore.fetch}/bin/frappe-nix-setup-backup-access "$@"
-      '';
-    };
   # App mode replaces the two scripts whose whole job is to edit the bench as if
   # it were a checkout. Replaced rather than dropped: the `bench` umbrella
   # wrapper dispatches `get-app`/`new-app`/`remove-app` to them, and a missing
@@ -329,6 +230,7 @@ let
       appsWithNode
       benchBin
       secrets
+      secretScripts
       nodeModulesBin
       nodeVerifyBin
       pythonBin
@@ -1054,7 +956,11 @@ secretScripts
     [ "$WANT_PUBLIC" = true ] && FETCH_ARGS+=(--files)
     [ "$WANT_PRIVATE" = true ] && FETCH_ARGS+=(--private-files)
     [ "$NO_CACHE" = true ] && FETCH_ARGS+=(--no-cache)
-    export FRAPPE_BACKUP_CACHE="''${FRAPPE_BACKUP_CACHE:-$DEVENV_STATE/frappe-nix/restore}"
+    # The legacy FRAPPE_BACKUP_CACHE is still honoured, by the fetch command
+    # itself, until the next minor release; it is not exported over.
+    if [ -z "''${FRAPPE_NIX_BACKUP_CACHE:-}" ] && [ -z "''${FRAPPE_BACKUP_CACHE:-}" ]; then
+      export FRAPPE_NIX_BACKUP_CACHE="$DEVENV_STATE/frappe-nix/restore"
+    fi
     ${lib.optionalString ((restore.prefix or "") != "") ''
       export BACKUPS_PREFIX="''${BACKUPS_PREFIX:-${restore.prefix}}"
     ''}

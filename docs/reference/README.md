@@ -31,7 +31,7 @@ The `frappe-nix` flake itself provides:
 | `packages.<system>.backup-fetch`           | The object-store half of `bench restore`, standalone, for a production host that restores too. It prints a JSON manifest and touches no database. |
 | `apps.<system>.default`, `frappe-init`     | The scaffolder as a flake app.                                                                                                                    |
 
-In a consuming bench that declares [secrets](../development/secrets.md), the bench flake also exposes `lib.frappeSecrets`: the declared `.age` paths and recipients, so a deployment can read the same ciphertext.
+In a consuming bench that declares [secrets](../development/secrets.md), the bench flake also exposes `lib.secrets`: the declared `.age` paths and recipients, so a deployment can read the same ciphertext.
 
 ### What the module adds to your flake
 
