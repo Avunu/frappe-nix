@@ -686,7 +686,7 @@ secretScripts
                 ;;
               submodule-uninitialized)
                 # Shell entry checks out only what a fresh clone has never had
-                # (lib/apps-report.nix); a pull is where any other gets its
+                # (python-devops-nix's lib.sources); a pull is where any other gets its
                 # checkout — a deinitialized one's, say, or a fresh clone's
                 # pulled before the shell was ever entered — and then moves with
                 # the rest. Not --recursive, as ever: Frappe apps ship nested
@@ -739,7 +739,7 @@ secretScripts
               # A plain fetch on a shallow clone stops at what the clone already
               # has, so it costs only the new commits and stays shallow.
               #
-              # A partial clone (lib/apps-report.nix makes them) keeps its
+              # A partial clone (shell entry's lib.sources makes them) keeps its
               # paired branch with the folders of every commit, and fetches
               # anything else as commits only — its configured filter. The
               # branch this pulls is the paired one, so ask for its folders.

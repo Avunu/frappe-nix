@@ -100,7 +100,7 @@ expect() {
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
 # The primary checkout's web port: 8000 + sha256(name)[0:4] mod 900, the
-# offset every bench has had since ports were hashed (lib/ports.nix).
+# offset every bench has had since ports were hashed (python-devops-nix's lib.ports).
 PRIMARY_PORT="$((8000 + $(python3 -c 'import hashlib; print(int(hashlib.sha256(b"standards-fixture").hexdigest()[:4], 16) % 900)')))"
 
 # ── main ──────────────────────────────────────────────────────────────────────

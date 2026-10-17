@@ -45,8 +45,20 @@
 }:
 
 let
-  ports = import ../../lib/ports.nix { inherit lib; };
-  ciMode = import ../../lib/ci-mode.nix { inherit lib; };
+  # python-devops-nix's lib.ports and lib.ciMode, as modules/devenv.nix has
+  # them (lib/shell-tools.nix).
+  ports = inputs.python-devops-nix.lib.ports;
+  inherit
+    (import ../../lib/shell-tools.nix {
+      inherit pkgs;
+      base = inputs.python-devops-nix.lib;
+    })
+    ciMode
+    ;
+  parseEnvOffset = ports.parseEnvOffset {
+    label = "frappe-nix";
+    variable = "FRAPPE_NIX_PORT_OFFSET";
+  };
 
   # --- ports, through the module ----------------------------------------------
 
@@ -70,6 +82,7 @@ let
       inherit (config.frappe-nix.ports) offset;
       web = shell.processes.nginx.ports.main.allocate;
       db = shell.processes.mysql.ports.main.allocate;
+      inherit (config.frappe-nix.ports) socketio;
       smtp = mail.port;
       http = mail.httpPort;
       pop3 = mail.pop3.port;
@@ -128,9 +141,10 @@ let
       (
         contains "webBase = cfg.ports.http;" devenvSource
         && contains "dbBase = cfg.ports.db;" devenvSource
-        && contains "bases = ports.basesFor (portOffsetOf config.frappe-nix);" devenvSource
+        && contains "tree = ports.options (" devenvSource
+        && contains "bases = portBases;" devenvSource
       )
-      "devenv.nix: the web or db port no longer comes from ports.basesFor, through ports.http and ports.db";
+      "devenv.nix: the web or db port no longer comes from lib.ports.options, through ports.http and ports.db";
     assert lib.assertMsg (
       contains "default = config.frappe-nix.ports.smtp;" devenvSource
       && contains "default = config.frappe-nix.ports.mailUi;" devenvSource
@@ -144,8 +158,11 @@ let
       && contains "portOffset = portOffsetOf cfg;" devenvSource
     ) "devenv.nix: the Mailpit defaults or the bases no longer derive from the one offset";
     assert lib.assertMsg
-      (contains "salt = config.frappe-nix.app.enable && config.frappe-nix.ports.worktreeSalt;" devenvSource)
-      "devenv.nix: ports.offset's seed is not salted by app mode and ports.worktreeSalt";
+      (
+        contains "saltApplies = config.frappe-nix.app.enable;" devenvSource
+        && contains "envApplies = config.frappe-nix.app.enable;" devenvSource
+      )
+      "devenv.nix: ports.offset's seed is not salted by app mode and ports.worktreeSalt, or FRAPPE_NIX_PORT_OFFSET applies outside app mode";
     # Bench mode and an app that has not opted in start as they did (S35, §5.12).
     assert lib.assertMsg (
       contains "portsFreeCheckActive = appMode && (standardsShell.optedIn || cfg.ports.worktreeSalt);" devenvSource
@@ -160,6 +177,7 @@ let
         offset = 740;
         web = 8740;
         db = 4046;
+        socketio = 9740;
         smtp = 19740;
         http = 20740;
         pop3 = 21740;
@@ -170,6 +188,7 @@ let
         offset = 123;
         web = 8123;
         db = 3429;
+        socketio = 9123;
         smtp = 19123;
         http = 20123;
         pop3 = 21123;
@@ -206,26 +225,14 @@ let
     assert lib.assertMsg (
       worktreeA != worktreeB && worktreeA != ports.offsetFor "standards-fixture"
     ) "two worktrees of one app share an offset (${toString worktreeA}, ${toString worktreeB})";
-    assert lib.assertMsg (ports.parseEnvOffset "123" == 123) "FRAPPE_NIX_PORT_OFFSET=123 is not 123";
-    assert lib.assertMsg (ports.parseEnvOffset "007" == 7) "FRAPPE_NIX_PORT_OFFSET=007 is not 7";
-    assert lib.assertMsg (ports.parseEnvOffset "0" == 0) "FRAPPE_NIX_PORT_OFFSET=0 is not 0";
-    assert lib.assertMsg (
-      ports.parseEnvOffset "" == null
-    ) "an unset FRAPPE_NIX_PORT_OFFSET is not null";
+    assert lib.assertMsg (parseEnvOffset "123" == 123) "FRAPPE_NIX_PORT_OFFSET=123 is not 123";
+    assert lib.assertMsg (parseEnvOffset "007" == 7) "FRAPPE_NIX_PORT_OFFSET=007 is not 7";
+    assert lib.assertMsg (parseEnvOffset "0" == 0) "FRAPPE_NIX_PORT_OFFSET=0 is not 0";
+    assert lib.assertMsg (parseEnvOffset "" == null) "an unset FRAPPE_NIX_PORT_OFFSET is not null";
     assert lib.assertMsg (ports.effectiveOffset 123 740 == 123) "FRAPPE_NIX_PORT_OFFSET does not win";
     assert lib.assertMsg (
       ports.effectiveOffset null 740 == 740
     ) "the option is ignored without the variable";
-    assert lib.assertMsg (
-      ports.basesFor 123 == {
-        web = 8123;
-        db = 3429;
-        socketio = 9123;
-        mailSmtp = 19123;
-        mailHttp = 20123;
-        mailPop3 = 21123;
-      }
-    ) "basesFor 123 is wrong";
     {
       inherit today set123;
       worktrees = [

@@ -3114,7 +3114,7 @@ These are dev-shell behaviours, not standards modules. `FRAPPE_NIX_CI` applies t
 **`FRAPPE_NIX_CI=1`** is read when enterShell runs, not at evaluation, so one shell derivation serves both modes. When it is set, enterShell:
 
 - skips `frappe-nix-node-verify` and `frappe-nix-node-modules` for every app;
-- skips `frappe-nix-apps-report`, which only runs in bench mode anyway;
+- skips `frappe-nix-sources enter` (the apps report), which only runs in bench mode anyway;
 - replaces the banner with the single line `frappe-nix: CI mode (<bench>, site <site>)`;
 - exports `DEVENV_IN_DIRENV_SHELL=true` and `PC_TUI_ENABLED=0`.
 

@@ -11,7 +11,7 @@ from frappe_nix_tools.frappe_init import ui
 from frappe_nix_tools.frappe_init.apps import ensure_bench_repo
 from frappe_nix_tools.frappe_init.detect import classify_apps, dir_is_empty
 from frappe_nix_tools.frappe_init.pipeline import run_pipeline
-from frappe_nix_tools.frappe_init.proc import git, probe, run
+from frappe_nix_tools.frappe_init.proc import run
 from frappe_nix_tools.frappe_init.secret_files import scaffold_secrets_dir
 from frappe_nix_tools.frappe_init.state import Run, normalize_name, resolve_app_url, url_basename
 
@@ -50,27 +50,21 @@ def require_version(st: Run) -> None:
 
 
 def clone_app(st: Run, url: str, name: str) -> None:
-	"""A partial clone of the preset's branch, as shell entry's first checkout
-	makes one (lib/apps-report.nix): every commit and folder, only the files the
-	checkout needs. `git clone -b` rather than `submodule add -b`, which honours
-	only the remote's default branch; registration comes later, in the pipeline.
+	"""A partial clone of the preset's branch, or the remote's default when it
+	has none, in the shape shell entry's first checkout makes: every commit and
+	folder, only the files the checkout needs (python-devops-nix's lib.sources,
+	`frappe-nix-sources clone`). `git clone -b` rather than `submodule add -b`,
+	which honours only the remote's default branch; registration comes later, in
+	the pipeline.
 	"""
+	if st.config.sources is None:
+		ui.die(
+			"this frappe-init was built without python-devops-nix's sources command; run it as `nix run github:Avunu/frappe-nix`"
+		)
 	path = f"apps/{name}"
 	branch = st.p.branch
-	has_branch = bool(probe(git("ls-remote", "--heads", url, branch)))
-	ui.info(f"+ {path} ({branch if has_branch else 'default branch'}) — {url}")
-	run(
-		git(
-			"clone",
-			"-q",
-			"--filter=blob:none",
-			"--single-branch",
-			*(["--branch", branch] if has_branch else []),
-			"--",
-			url,
-			path,
-		)
-	)
+	ui.info(f"+ {path} ({branch}) — {url}")
+	run([st.config.sources, "clone", "--branch", branch, "--", url, path])
 
 
 def cmd_init(st: Run) -> None:

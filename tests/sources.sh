@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Checks for `frappe-nix-apps-report` — what the dev shell does about apps/ on
+# Checks for `frappe-nix-sources enter` (python-devops-nix's lib.sources, as
+# lib/shell-tools.nix configures it) — what the dev shell does about apps/ on
 # entry. On a fresh clone of the bench it checks out every app submodule, once.
 # After that it touches none: entry used to check out any registered submodule
 # it found without one, which is how an app removed by hand came back,
 # re-cloned, on the next direnv reload.
 #
-# Usage: apps-report.sh <path-to-frappe-nix-apps-report>
+# Usage: sources.sh <path-to-frappe-nix-sources>
 set -euo pipefail
 
 TOOL="$1"
@@ -45,7 +46,7 @@ check_eq() { # <description> <expected> <actual>
 }
 says() { grep -qF -- "$1" <<< "$OUT"; }
 silent_on() { ! grep -qF -- "$1" <<< "$OUT"; }
-run() { OUT="$("$TOOL" "$PWD" 2>&1)" && RC=0 || RC=$?; }
+run() { OUT="$("$TOOL" enter "$PWD" 2>&1)" && RC=0 || RC=$?; }
 
 # Whether an object is on disk, without the lazy fetch a partial clone would
 # otherwise make to answer the question.
@@ -383,7 +384,7 @@ before="$(pack_entries $GD)"
 run
 check_eq "exits 0 when the remote cannot be reached" 0 "$RC"
 check "…says the pin could not be fetched" says "could not fetch apps/pins's pinned commit"
-check "…and the history it would cost" says "download the app's whole history again"
+check "…and the history it would cost" says "will download its whole history again"
 check_eq "…leaving the clone's packs as they were" "$before" "$(pack_entries $GD)"
 mv "$ROOT/remotes/pins.git.away" "$ROOT/remotes/pins.git"
 run
@@ -426,7 +427,7 @@ check_eq "a filter set by hand is left as it is" 'blob:limit=1k' "$(git -C apps/
 
 echo "── not a bench ──────────────────────────────────────────────────"
 mkdir -p "$ROOT/empty"
-OUT="$("$TOOL" "$ROOT/empty" 2>&1)" && RC=0 || RC=$?
+OUT="$("$TOOL" enter "$ROOT/empty" 2>&1)" && RC=0 || RC=$?
 check_eq "no apps/: exits 0" 0 "$RC"
 check_eq "and prints nothing" "" "$OUT"
 
