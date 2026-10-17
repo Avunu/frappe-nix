@@ -80,7 +80,12 @@ const bundleKeys = ({ appDir, app, log }) => {
 		const outDir = outDirOf(manifest);
 		const chunks = Object.values(readManifest(manifest, log));
 		for (const chunk of chunks) {
-			if (!chunk || chunk.isEntry !== true) {
+			// An entry chunk, or a stylesheet at the manifest's top level:
+			// with `cssCodeSplit: false` Vite emits the build's one stylesheet
+			// as its own "style.css" record, not under the entry's `css`.
+			const own = chunk?.file;
+			const sheet = typeof own === "string" && own.endsWith(".css");
+			if (!chunk || (chunk.isEntry !== true && !sheet)) {
 				continue;
 			}
 			const files = [chunk.file, ...(chunk.css || [])];

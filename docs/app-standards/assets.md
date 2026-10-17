@@ -17,7 +17,7 @@ Running both changes nothing the second time. A key is written only when its val
 
 ## What gets registered
 
-The registration reads every Vite manifest under `<app>/public/dist/`: `manifest*.json` and `.vite/manifest*.json`, at any depth. For each entry with `isEntry: true` it takes the entry's `file` and each of its `css` files, and registers each one whose name has the shape `<name>.bundle.<hash>.js` or `.css` (a hash of six or more of `A-Z a-z 0-9 _ -`):
+The registration reads every Vite manifest under `<app>/public/dist/`: `manifest*.json` and `.vite/manifest*.json`, at any depth. For each entry with `isEntry: true` it takes the entry's `file` and each of its `css` files, plus the `file` of any stylesheet at the manifest's top level (a build with `cssCodeSplit: false` writes its one stylesheet there, as `style.css`, rather than under the entry's `css`), and registers each one whose name has the shape `<name>.bundle.<hash>.js` or `.css` (a hash of six or more of `A-Z a-z 0-9 _ -`):
 
 ```text
 public/dist/js/timer.bundle.4KQ2LZ7M.js    →  "timer.bundle.js":  "/assets/my_app/dist/js/timer.bundle.4KQ2LZ7M.js"

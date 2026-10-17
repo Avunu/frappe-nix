@@ -356,6 +356,17 @@ const makeBench = (name) => {
   );
   vwrite(`${b}/apps/spa/spa/public/dist/legacy/js/old.bundle.Qwerty1.js`, "old();\n");
   vwrite(`${b}/apps/spa/spa/public/dist/broken/manifest.json`, "{");
+  // dock: an IIFE build with `cssCodeSplit: false`, whose one stylesheet is a
+  // top-level "style.css" record rather than the entry's `css`.
+  vwrite(
+    `${b}/apps/spa/spa/public/dist/manifest-dock.json`,
+    manifest({
+      "style.css": { file: "css/dock.bundle.StYlE1.css", src: "style.css" },
+      "dock.entry.ts": { file: "js/dock.bundle.DoCk12.js", name: "dock.entry", src: "dock.entry.ts", isEntry: true },
+    })
+  );
+  vwrite(`${b}/apps/spa/spa/public/dist/js/dock.bundle.DoCk12.js`, "dock();\n");
+  vwrite(`${b}/apps/spa/spa/public/dist/css/dock.bundle.StYlE1.css`, ".dock{}\n");
   vwrite(`${b}/apps/spa/spa/public/portal/.vite/manifest.json`, manifest({ "index.html": { file: "assets/index-PoRt12.js", isEntry: true } }));
   vwrite(`${b}/apps/spa/spa/public/portal/assets/index-PoRt12.js`, "portal();\n");
   // kiosk: a second SPA built by Vite 4, its manifest.json at the outDir's top.
@@ -411,10 +422,12 @@ const expected = {
   "foo.bundle.js": "/assets/spa/dist/js/foo.bundle.AbC123.js",
   "foo.bundle.css": "/assets/spa/dist/css/foo.bundle.XyZ789.css",
   "old.bundle.js": "/assets/spa/dist/legacy/js/old.bundle.Qwerty1.js",
+  "dock.bundle.css": "/assets/spa/dist/css/dock.bundle.StYlE1.css",
+  "dock.bundle.js": "/assets/spa/dist/js/dock.bundle.DoCk12.js",
   "linked.bundle.js": "/assets/linked/dist/js/linked.bundle.LnK123.js",
 };
 check(
-  "each app's Vite entries and their stylesheets are registered under /assets/<app>/dist/, by their bundle names",
+  "each app's Vite entries and their stylesheets (a `cssCodeSplit: false` build's top-level one too) are registered under /assets/<app>/dist/, by their bundle names",
   expected,
   keysOf(vb)
 );
