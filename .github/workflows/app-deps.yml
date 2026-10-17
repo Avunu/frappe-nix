@@ -325,7 +325,11 @@ jobs:
           set -euo pipefail
           args=(--pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
             --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE" --dependency-group "$GROUP"
-            --dependency-names "$NAMES" --directory "$DIRECTORY")
+            --dependency-names "$NAMES" --directory "$DIRECTORY"
+            --frappe-nix-repo "$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)")
+          if [ "$(frappe-nix config modules.docs-site)" = true ]; then
+            args+=(--docs-patterns "$(frappe-nix config docs-site.action-patterns --json)")
+          fi
           if [ "$ECOSYSTEM" = nix ]; then
             if [ "$RELOCK_STATE" = rollout-input-moved ]; then
               args+=(--relock rollout-input-moved --moved "$MOVED")
