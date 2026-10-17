@@ -32,7 +32,7 @@ typecheck
                  tracked, then ``yarn -s test:unit``
   nested         each nested frontend with a ``typecheck`` script: install and typecheck it
   doctypes       [typescript, ``types/doctypes.d.ts`` tracked] minibench doctypes, then
-                 ``frappe-types gen-doctypes … --check``
+                 ``frappe-types gen-registry … --check`` (siblings in ``required_apps`` typed in full)
   audit-consumer [typescript] ``frappe-types audit-consumer``: ``--strict`` with
                  ``typescript.audit-consumer``, else advisory when the subcommand exists
   ci-typecheck   ``yarn -s ci:typecheck`` when present
@@ -67,6 +67,7 @@ from frappe_nix_tools.common.appgates import load as load_app
 from frappe_nix_tools.common.pins import pin_path
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError, FrappeNixError
 from frappe_nix_tools.scaffold import context, discover, globs
+from frappe_nix_tools.scaffold import hooks as app_hooks
 
 GATES = ("lint", "typecheck", "marketplace")
 TOOLS_PYTHON = "3.14"
@@ -143,6 +144,23 @@ class Gate:
 def frappe_nix(*args: str) -> list[str]:
 	"""This frappe-nix-tools' own CLI, whatever ``frappe-nix`` is on PATH."""
 	return [sys.executable, "-m", "frappe_nix_tools.cli", *args]
+
+
+def gen_registry(app: AppConfig, bench: Path) -> list[str]:
+	"""The doctypes step's ``frappe-types gen-registry … --check`` over the mini-bench ``bench``.
+
+	Only the siblings ``hooks.required_apps`` names are typed in full: those are the apps the
+	app's code runs against. A sibling that is there for the tests' sake alone (fixtures in
+	another app's sidebar, say) would put every one of its DocTypes in the registry."""
+	required = {
+		app_hooks.bare(r) for r in app_hooks.required_apps(app_hooks.read(app.root / app.app / "hooks.py"))
+	}
+	major = int(app.cfg["frappe-major"])
+	siblings = [s["name"] for s in context.siblings(app.cfg, major, required) if s["required"]]
+	cmd = ["yarn", "-s", "frappe-types", "gen-registry", "--bench", str(bench), "--app", app.app]
+	if siblings:
+		cmd += ["--include-siblings", ",".join(siblings)]
+	return [*cmd, "--out", "types/doctypes.d.ts", "--check"]
 
 
 def ok(code: int, what: str = "") -> tuple[str, str]:
@@ -405,25 +423,7 @@ def typecheck(g: Gate) -> None:
 			code = g.run(*frappe_nix("minibench", "--mode", "doctypes", "--dest", str(dest)))
 			if code != 0:
 				return "failed", f"minibench exit {code}"
-			major = int(g.app.cfg["frappe-major"])
-			siblings = ",".join(s["name"] for s in context.siblings(g.app.cfg, major))
-			return ok(
-				g.run(
-					"yarn",
-					"-s",
-					"frappe-types",
-					"gen-doctypes",
-					"--bench",
-					str(dest),
-					"--app",
-					g.app.app,
-					"--include-siblings",
-					siblings,
-					"--out",
-					"types/doctypes.d.ts",
-					"--check",
-				)
-			)
+			return ok(g.run(*gen_registry(g.app, dest)))
 
 		g.step("doctypes", "typescript", doctypes)
 
