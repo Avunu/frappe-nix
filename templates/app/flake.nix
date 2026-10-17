@@ -49,7 +49,7 @@
         perSystem = _: {
           frappe-nix = {
             enable = true;
-            siteName = "@SITE_NAME@";
+            defaultSite = "@SITE_NAME@";
 
             app = {
               enable = true;
@@ -58,7 +58,7 @@
               # siblings = [ { name = "erpnext"; src = inputs.erpnext; } ];
 
               # src defaults to `self`, name to this repo's [project].name,
-              # benchName to that normalized, python/nodejs to the
+              # frappe-nix.name to that normalized, python/nodejs to the
               # @FRAPPE_VERSION@ preset, and lockDir to ./nix.
             };
           };

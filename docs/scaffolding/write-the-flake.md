@@ -37,8 +37,8 @@ This is the **bench** shape: a repository that holds `apps/*`. For a single app'
           {
             frappe-nix = {
               enable = true;
-              benchName = "mybench";          # container image prefix: mybench/runtime, …
-              siteName = "mysite.localhost";  # → FRAPPE_SITE (empty for multi-tenancy)
+              name = "mybench";          # container image prefix: mybench/runtime, …
+              defaultSite = "mysite.localhost";  # → FRAPPE_SITE (empty for multi-tenancy)
               workspaceRoot = ./.;
               python = pkgs.python312;
               nodejs = pkgs.nodejs_22;
@@ -69,14 +69,14 @@ The `.envrc` is a single line, `use flake . --no-pure-eval`. [Avunu/frappe-deven
 
 | Option                         | Default                            | Purpose                                                                                            |
 | ------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `benchName`                    | required                           | Identifier for environment names and the container image prefix. It also seeds the port offset.    |
-| `siteName`                     | `""`                               | Sets `FRAPPE_SITE`. Leave empty for a multi-tenant bench.                                          |
+| `name`                    | required                           | Identifier for environment names and the container image prefix. It also seeds the port offset.    |
+| `defaultSite`                     | `""`                               | Sets `FRAPPE_SITE`. Leave empty for a multi-tenant bench.                                          |
 | `workspaceRoot`                | `null`                             | The bench root, where `pyproject.toml` and `apps/` live. Required in bench mode.                   |
 | `python`, `nodejs`             | `pkgs.python312`, `pkgs.nodejs_22` | Interpreters. In app mode the `frappeVersion` preset chooses them.                                 |
 | `mariadb.initialDatabases`     | `[]`                               | Databases created on the first `devenv up`.                                                        |
 | `watch.apps`                   | `null`                             | Apps the watcher rebuilds. `null` skips apps published by Frappe Technologies. `[ ]` turns it off. |
 | `mariadb.durable`              | `false`                            | Trades crash durability for much faster commits.                                                   |
-| `ports.base`                   | `null`                             | First port to try. Defaults to 8000 plus a hash of `benchName`.                                    |
+| `ports.base`                   | `null`                             | First port to try. Defaults to 8000 plus a hash of `name`.                                    |
 | `sockets.enable`               | `true`                             | Unix sockets behind one nginx port. Needs Frappe 15.46 or newer.                                   |
 | `runtime.enable`               | `true`                             | One `frappe-runtime` process instead of split web, socket.io, worker and scheduler processes.      |
 | `containers.enable`            | `false`                            | Build the OCI images. See [Build production images](../production/images.md).                      |

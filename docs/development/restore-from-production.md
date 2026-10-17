@@ -91,6 +91,6 @@ The restore behavior is configured under `frappe-nix.restore`:
 | `restore.neutralize`      | `true`                                         | Pause the scheduler and switch mail off in a database fetched from the object store. |
 | `restore.requireDevguard` | `true`                                         | Refuse to restore into an unguarded bench.                                  |
 
-With no backup source configured, `bench restore` says so and tells you to pass a file or declare the `backup-access` secret. On a multi-tenant bench (`siteName = ""`) with `FRAPPE_SITE` unset there is no site to restore into: set `FRAPPE_SITE` in `.env`, or pass a file.
+With no backup source configured, `bench restore` says so and tells you to pass a file or declare the `backup-access` secret. On a multi-tenant bench (`defaultSite = ""`) with `FRAPPE_SITE` unset there is no site to restore into: set `FRAPPE_SITE` in `.env`, or pass a file.
 
 If you push attachments from the dev shell to the production bucket, see [Pushing attachments to production](guard-rails.md#pushing-attachments-to-production).

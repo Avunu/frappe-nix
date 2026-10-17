@@ -44,7 +44,7 @@
             formatter = pkgs.nixfmt;
             frappe-nix = {
               enable = true;
-              siteName = "standards-fixture.localhost";
+              defaultSite = "standards-fixture.localhost";
               app = {
                 enable = true;
                 frappeVersion = "version-16";

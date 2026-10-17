@@ -52,7 +52,7 @@ and one **app**, run with `nix run .#<name>`:
 
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}`, so the NixOS module and the containers can discover interpreters from the package itself.
 
-With `containers.enable = true` it additionally builds, named `<benchName>/<name>:latest`, or `<registry>/<benchName>/<name>:latest` with `containers.registry` set:
+With `containers.enable = true` it additionally builds, named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set:
 
 - `runtime`, `nginx` and `bench-cli` (image name `bench`), or
 - with `runtime.enable = false`: `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx` and `bench-cli`.

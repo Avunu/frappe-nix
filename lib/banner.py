@@ -1,7 +1,7 @@
 """The frappe-nix dev-shell welcome banner, printed once on `enterShell`.
 
 Takes every fact as a CLI flag -- some are Nix-eval-time constants
-(--bench-name, --app-mode), others are read back from the running shell
+(--name, --app-mode), others are read back from the running shell
 (--port, via jq against sites/common_site_config.json, since the port
 allocator only runs under `devenv up` and a value baked in at eval time
 could be stale) -- so this stays a one-shot render with no bench-runtime
@@ -18,10 +18,10 @@ from rich.panel import Panel
 from rich.table import Table
 
 
-def _commands(app_mode: bool, site_name: str) -> list[tuple[str, str]]:
+def _commands(app_mode: bool, default_site: str) -> list[tuple[str, str]]:
 	rows = [("devenv up", "start all services")]
-	if site_name:
-		rows.append(("default site", site_name))
+	if default_site:
+		rows.append(("default site", default_site))
 	if app_mode:
 		rows += [
 			("bench-update", "migrate + build"),
@@ -44,13 +44,13 @@ def _commands(app_mode: bool, site_name: str) -> list[tuple[str, str]]:
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--bench-name", required=True)
+	parser.add_argument("--name", required=True)
 	parser.add_argument("--python-bin", required=True)
 	parser.add_argument("--bench-root", required=True)
 	parser.add_argument("--port", required=True)
 	parser.add_argument("--app-mode", action="store_true")
 	parser.add_argument("--app-name", default="")
-	parser.add_argument("--site-name", default="")
+	parser.add_argument("--default-site", default="")
 	parser.add_argument("--sockets", action="store_true")
 	parser.add_argument("--devenv-runtime", default="")
 	parser.add_argument("--devguard-off", action="store_true")
@@ -71,7 +71,7 @@ def main() -> None:
 	table = Table.grid(padding=(0, 2))
 	table.add_column(style="bold cyan")
 	table.add_column()
-	for command, description in _commands(args.app_mode, args.site_name):
+	for command, description in _commands(args.app_mode, args.default_site):
 		# Table cells parse rich markup by default, and "--pull"/"[db]"-style
 		# bracketed placeholders in these command strings look exactly like
 		# markup tags -- escape() keeps them literal.
@@ -81,7 +81,7 @@ def main() -> None:
 	console.print(
 		Panel(
 			table,
-			title=escape(f"{args.bench_name} — Frappe Bench dev environment"),
+			title=escape(f"{args.name} — Frappe Bench dev environment"),
 			title_align="left",
 			border_style="cyan",
 		)
@@ -108,8 +108,8 @@ def main() -> None:
 		console.print(f"  Mail: ALL outgoing email → Mailpit (http://{args.mail_host}:{args.mail_http_port})")
 		incoming = "served from Mailpit POP3" if args.mail_pop3 else "blocked"
 		console.print(f"        incoming (IMAP/POP3) is {incoming}")
-	if args.site_name:
-		console.print(f"  Site: {args.site_name}")
+	if args.default_site:
+		console.print(f"  Site: {args.default_site}")
 	if args.runtime_warn:
 		console.print()
 		console.print(

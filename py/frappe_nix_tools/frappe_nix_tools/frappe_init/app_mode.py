@@ -42,7 +42,7 @@ def sync_write_args(st: Run) -> list[str]:
 		words += ["--standards", a.standards]
 	if st.version:
 		words += ["--frappe-version", st.version]
-	# Only a site the user gave: sync otherwise keeps the siteName an existing
+	# Only a site the user gave: sync otherwise keeps the defaultSite an existing
 	# flake names, and a defaulted one would orphan every developer's dev site.
 	if a.site:
 		words += ["--site", a.site]

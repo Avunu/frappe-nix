@@ -61,8 +61,8 @@
           {
             frappe-nix = {
               enable = true;
-              benchName = "@BENCH_NAME@";
-              siteName = "@SITE_NAME@";
+              name = "@BENCH_NAME@";
+              defaultSite = "@SITE_NAME@";
               workspaceRoot = ./.;
               python = pkgs.@PYTHON@;
               nodejs = pkgs.@NODEJS@;

@@ -142,8 +142,8 @@ expect_exit "--init a bench with an app" 0 "Next steps:" \
   --apps hrms "$ROOT/new"
 cp "$OUT" "$ROOT/new.log"
 cd "$ROOT/new"
-check "flake.nix is the wrapper, named for the bench" grep -q 'benchName = "acme";' flake.nix
-check "flake.nix names the default site" grep -q 'siteName = "acme.localhost";' flake.nix
+check "flake.nix is the wrapper, named for the bench" grep -q 'name = "acme";' flake.nix
+check "flake.nix names the default site" grep -q 'defaultSite = "acme.localhost";' flake.nix
 check "flake.nix pins the preset's python" grep -q 'pkgs.python312' flake.nix
 check "pyproject.toml is the workspace root" grep -q '^name = "acme"' pyproject.toml
 check "README.md is the bench's" grep -qx '# acme' README.md
@@ -245,7 +245,7 @@ expect_exit "--keep-db-root-password --absorb-gitdirs --name --commit" 0 "commit
 cd "$ROOT/flags"
 check_eq "--keep-db-root-password keeps it" s3cret "$(jq -r .mariadb_root_password sites/common_site_config.json)"
 check "--absorb-gitdirs leaves apps/frappe a gitfile" test -f apps/frappe/.git
-check "--name names the bench" grep -q 'benchName = "flagged";' flake.nix
+check "--name names the bench" grep -q 'name = "flagged";' flake.nix
 check_eq "--commit commits the result" "chore: migrate bench to frappe-nix" "$(git log -1 --format=%s)"
 check "…with nothing left staged" git diff --cached --quiet
 cd "$ROOT"

@@ -58,7 +58,7 @@ An app whose `hooks.py` names the second key can have a `bench watch` rebuild to
 frappe-nix.assets.reassert.hooks = [ "<APP>.<MODULE>.<FUNCTION>" ];
 ```
 
-Whenever `sites/assets/assets.json` names a bundle file that does not exist on disk, every configured hook runs, in order, against `siteName`. Two triggers cover the two ways this goes stale:
+Whenever `sites/assets/assets.json` names a bundle file that does not exist on disk, every configured hook runs, in order, against `defaultSite`. Two triggers cover the two ways this goes stale:
 
 - A `frappe:assets-reassert` task runs the check once at `devenv up`, so a bench that sat idle with a stale `assets.json` heals before the first page load.
 - An `assetsWatch` process watches `assets.json` for the writes that `bench watch`'s own rebuilds make, using [fswatch](https://github.com/emcrisostomo/fswatch) for file-change detection, which is portable across Linux and Darwin. It is debounced by `assets.reassert.debounceMs` (default 750 ms).

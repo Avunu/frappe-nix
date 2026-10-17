@@ -53,7 +53,7 @@ Concretely, it:
 | `--keep-db-root-password` | Do not blank `mariadb_root_password`.                                                                                                  |
 | `--commit[=<MESSAGE>]`    | Commit the migration instead of only staging it.                                                                                       |
 | `--absorb-gitdirs`        | Run `git submodule absorbgitdirs` after registering the apps.                                                                          |
-| `--name <NAME>`           | The bench name. Defaults to the `benchName` a frappe-nix bench's `flake.nix` already sets, else the directory's name.                  |
+| `--name <NAME>`           | The bench name. Defaults to the `name` a frappe-nix bench's `flake.nix` already sets, else the directory's name.                  |
 | `--default-site <SITE>`   | Default site. Needed without a terminal when the bench has several sites and no `default_site`.                                        |
 
 The complete list is in [Scaffolder reference](../reference/scaffolder.md).

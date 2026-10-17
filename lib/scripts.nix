@@ -951,7 +951,7 @@ secretScripts
   # One-shot: creates $FRAPPE_SITE and installs every sites/apps.txt entry.
   # Not safe to re-run to pick up a later-pinned sibling — `--force` below
   # drops the site's database. That case is `reconcile-apps` instead (and,
-  # in app mode with a fixed siteName, `frappe:apps-reconcile` runs it
+  # in app mode with a fixed defaultSite, `frappe:apps-reconcile` runs it
   # automatically on every `devenv up` — see `appsReconcile.enable`).
   provision-site.exec = ''
     set -euo pipefail

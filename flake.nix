@@ -404,6 +404,9 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
+        # Track B's renames: each old option name still reaches the new one,
+        # and is listed for its deprecation warning.
+        // import ./tests/renames.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }

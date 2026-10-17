@@ -71,7 +71,7 @@ After the commit it updates the `installed_apps` copy in `site_config.json` and 
 You rarely run the site half by hand.
 
 - **Production.** `services.frappe.sites.<site>.renamedApps = { esign = "esign_webforms"; };` runs it in the site's migrate unit, right after maintenance mode goes on and before the online migrate and `bench migrate`, inside the same snapshot and rollback.
-- **The dev shell.** `frappe-nix.renamedApps` does the same in `reconcile-apps`, which `devenv up` runs on `siteName` before anything starts, ahead of installing whatever `sites/apps.txt` names: installing the new app beside the renamed old one would fail on the `Module Def` they share.
+- **The dev shell.** `frappe-nix.renamedApps` does the same in `reconcile-apps`, which `devenv up` runs on `defaultSite` before anything starts, ahead of installing whatever `sites/apps.txt` names: installing the new app beside the renamed old one would fail on the `Module Def` they share.
 
 Before the production deploy that ships a rename, pause the scheduler and let the job queues drain: a job already queued under an old dotted path fails once the code is gone. Run `--dry-run --scan` against a restored copy of the production database first and review what it lists.
 

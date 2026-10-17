@@ -44,7 +44,7 @@
             formatter = pkgs.nixfmt;
             frappe-nix = {
               enable = true;
-              siteName = "spa-app.localhost";
+              defaultSite = "spa-app.localhost";
               app = {
                 enable = true;
                 frappeVersion = "version-16";

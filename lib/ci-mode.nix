@@ -38,11 +38,11 @@ rec {
   # The banner, or in CI mode one line naming the bench and the site.
   # The site is read when the shell starts, so one set in .env is the one named.
   banner =
-    { benchName, interactive }:
+    { name, interactive }:
     ''
       if ${isCi}; then
         echo "frappe-nix: CI mode (${
-          lib.escape [ "\"" "$" "`" "\\" ] benchName
+          lib.escape [ "\"" "$" "`" "\\" ] name
         }, site ''${FRAPPE_SITE:-unset})"
       else
         ${interactive}

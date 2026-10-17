@@ -66,7 +66,7 @@ let
   # written into sites/common_site_config.json — realtime/utils.js reads
   # webserver_port straight out of the JSON and no env var can reach it — and
   # that file is committed. A path-derived port would therefore differ in every
-  # clone and dirty the worktree forever. `benchName` is committed in the bench's
+  # clone and dirty the worktree forever. `name` is committed in the bench's
   # own flake.nix, so every clone on every machine derives the same number.
   #
   # Nothing moves a port at run time: devenv's port allocator is the identity
@@ -112,8 +112,16 @@ in
     }:
     {
       # Renames, each kept until the next minor release (PLAN.md, design
-      # rule 2; CONVENTIONS.md, Restore and devguard).
+      # rule 2; CONVENTIONS.md, Identity options, Restore and devguard).
       imports = map (pair: renamed (builtins.elemAt pair 0) (builtins.elemAt pair 1)) [
+        [
+          [ "benchName" ]
+          [ "name" ]
+        ]
+        [
+          [ "siteName" ]
+          [ "defaultSite" ]
+        ]
         [
           [
             "restore"
@@ -184,22 +192,31 @@ in
           description = "Renamed options in use, each warned about (lib.warn) when the shell's config is evaluated.";
         };
 
-        benchName = mkOption {
+        name = mkOption {
           type = types.str;
           default =
             if config.frappe-nix.app.enable then
               normalizeDist config.frappe-nix.app.name
             else
-              throw "frappe-nix: `benchName` is required — it fixes this bench's port range and its container image prefix.";
+              throw "frappe-nix: `name` is required — it fixes this bench's port range and its container image prefix.";
           defaultText = lib.literalMD "the normalized `app.name` in app mode; required otherwise";
-          description = "Project identifier used for environment names and container prefixes.";
+          description = ''
+            The project's identity, a slug. It seeds the port range and names
+            the container images, the systemd scope of the dev processes and
+            the shell's messages, and devenv's own top-level `name` defaults to
+            it. Was `benchName`.
+          '';
           example = "mybench";
         };
 
-        siteName = mkOption {
+        defaultSite = mkOption {
           type = types.str;
           default = "";
-          description = "Default FRAPPE_SITE value. Empty string for multi-tenancy (user sets via .env).";
+          description = ''
+            Frappe's `default_site`, and the shell's `FRAPPE_SITE`. Empty for a
+            multi-tenant bench, where each command picks its site (`--site`, or
+            `FRAPPE_SITE` in .env). Was `siteName`.
+          '';
           example = "erp.example.com";
         };
 
@@ -701,10 +718,10 @@ in
         appsReconcile = {
           enable = mkOption {
             type = types.bool;
-            default = config.frappe-nix.siteName != "";
-            defaultText = lib.literalMD "`true` when `siteName` names one site, `false` in multi-tenant mode";
+            default = config.frappe-nix.defaultSite != "";
+            defaultText = lib.literalMD "`true` when `defaultSite` names one site, `false` in multi-tenant mode";
             description = ''
-              Reconcile `sites/apps.txt` against `siteName`'s actually-installed
+              Reconcile `sites/apps.txt` against `defaultSite`'s actually-installed
               apps on every `devenv up`, installing whatever is missing.
 
               `sites/apps.txt` is the candidate list frappe-nix regenerates from
@@ -717,7 +734,7 @@ in
               forever. See https://github.com/Avunu/frappe-nix/issues/32.
 
               Needs one concrete site, because the task runs unattended at
-              `devenv up` and a multi-tenant bench (`siteName = ""`) has no
+              `devenv up` and a multi-tenant bench (`defaultSite = ""`) has no
               single answer for which site to target — off there by default;
               run `reconcile-apps <site>` by hand instead.
 
@@ -734,7 +751,7 @@ in
           example = literalExpression ''{ esign = "esign_webforms"; }'';
           description = ''
             Apps renamed in place, `OLD = NEW` (`frappe-rename-app`, see
-            docs/app-standards/rename.md). The bench carries NEW only; `siteName`'s
+            docs/app-standards/rename.md). The bench carries NEW only; `defaultSite`'s
             database still names OLD, so `reconcile-apps` (which `devenv up` runs
             under `appsReconcile.enable`) first runs `frappe-rename-app --site`
             on it, before it installs anything: installing NEW beside the
@@ -765,7 +782,7 @@ in
               default = [ ];
               description = ''
                 `bench execute` targets — dotted Python paths — run against
-                `siteName` whenever `sites/assets/assets.json` names a bundle
+                `defaultSite` whenever `sites/assets/assets.json` names a bundle
                 file that does not exist on disk.
 
                 Empty by default, and this option names no app: some Frappe
@@ -784,9 +801,9 @@ in
                 app's own asset-shadow fixup. Every hook runs, in order, each
                 time the invariant check fails.
 
-                Needs `siteName` set — `bench execute` needs one site to run
+                Needs `defaultSite` set — `bench execute` needs one site to run
                 in; an evaluation error if hooks are non-empty with
-                `siteName = ""`.
+                `defaultSite = ""`.
               '';
             };
 
@@ -856,7 +873,7 @@ in
               App mode: salt `ports.offset` with the checkout's path in a linked
               worktree (`git worktree add`, whose `.git` is a file), so a second
               worktree of the same app gets its own ports. The primary checkout
-              keeps the bench-name hash either way. It also has `devenv up` stop
+              keeps the `name` hash either way. It also has `devenv up` stop
               and name a TCP port that is already taken.
 
               On by default only for an app that opted in to the app standards
@@ -870,27 +887,27 @@ in
             type = types.ints.between 0 899;
             default = ports.offsetFor (
               ports.seed {
-                inherit (config.frappe-nix) benchName;
+                inherit (config.frappe-nix) name;
                 salt = config.frappe-nix.app.enable && config.frappe-nix.ports.worktreeSalt;
                 pwd = builtins.getEnv "PWD";
                 gitKind = ports.gitKindAt (builtins.getEnv "PWD");
               }
             );
-            defaultText = lib.literalMD "a hash of `benchName`, salted with the checkout's path in an app-mode linked worktree when `ports.worktreeSalt` is on";
+            defaultText = lib.literalMD "a hash of `name`, salted with the checkout's path in an app-mode linked worktree when `ports.worktreeSalt` is on";
             description = ''
               The offset every TCP port of this bench is derived from: the web
               port (nginx) is `8000 + offset`, MariaDB's unbound port `3306 +
               offset`, and Mailpit's SMTP, web UI and POP3 ports `19000`, `20000`
               and `21000 + offset`.
 
-              By default it is a hash of `benchName`, so every bench lands
+              By default it is a hash of `name`, so every bench lands
               somewhere different and every clone of one bench lands in the same
               place, which keeps the port out of a bench's committed
               sites/common_site_config.json. In app mode with
               `ports.worktreeSalt` on, a linked worktree (`git worktree add`,
-              whose `.git` is a file) hashes `benchName@<path>` instead, so a
+              whose `.git` is a file) hashes `<name>@<path>` instead, so a
               second worktree of the same app gets its own ports; the primary
-              checkout keeps the bench-name hash.
+              checkout keeps the `name` hash.
 
               The ports are fixed when the shell is evaluated: devenv's port
               allocator does not move them under flake integration. In app mode
@@ -1606,7 +1623,7 @@ in
             type = types.str;
             default = "";
             example = "ghcr.io/avunu";
-            description = "Registry prefix for the image names: \"ghcr.io/avunu\" names them ghcr.io/avunu/<benchName>/<name>. A trailing slash is dropped; empty leaves the names bare.";
+            description = "Registry prefix for the image names: \"ghcr.io/avunu\" names them ghcr.io/avunu/<name>/<role>. A trailing slash is dropped; empty leaves the names bare.";
           };
         };
       };
@@ -1927,7 +1944,7 @@ in
                     gunicorn_workers = 1;
                     mariadb_root_password = "";
                   }
-                  // lib.optionalAttrs (cfg.siteName != "") { default_site = cfg.siteName; }
+                  // lib.optionalAttrs (cfg.defaultSite != "") { default_site = cfg.defaultSite; }
                 )
               )
             } > "$_bench/sites/common_site_config.json"
@@ -2096,7 +2113,7 @@ in
 
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
-          inherit (cfg) python benchName;
+          inherit (cfg) python name;
           workspaceRoot = effectiveWorkspaceRoot;
           lockAuditRelock = if appMode then appRelockAdvice else null;
           # Keyed on the distribution name uv resolved the member to, which is
@@ -2626,7 +2643,7 @@ in
                   fi
                 done
                 if [ -n "$_frappe_nix_taken" ]; then
-                  echo "frappe-nix: cannot start ${cfg.benchName}: already in use:$_frappe_nix_taken" >&2
+                  echo "frappe-nix: cannot start ${cfg.name}: already in use:$_frappe_nix_taken" >&2
                   echo "  Another bench on the same ports, or this bench already up in another shell." >&2
                   ${lib.optionalString (cfg.ports.base != null) ''
                     # ports.base pins the web port: the offset does not move it.
@@ -2653,16 +2670,16 @@ in
             assetsReassertActive = cfg.assets.reassert.hooks != [ ];
 
             # `bench execute` needs one concrete site; a multi-tenant bench
-            # (siteName = "") has none, so a non-empty hook list there is a
+            # (defaultSite = "") has none, so a non-empty hook list there is a
             # configuration error, not a silent no-op — the same posture
             # appsReconcile.enable takes by defaulting off instead.
             assetsReassertSite =
               if !assetsReassertActive then
                 null
-              else if cfg.siteName != "" then
-                cfg.siteName
+              else if cfg.defaultSite != "" then
+                cfg.defaultSite
               else
-                throw "frappe-nix: assets.reassert.hooks needs `siteName` set — it targets `bench execute` at one concrete site, and a multi-tenant dev bench (siteName = \"\") has no single answer.";
+                throw "frappe-nix: assets.reassert.hooks needs `defaultSite` set — it targets `bench execute` at one concrete site, and a multi-tenant dev bench (defaultSite = \"\") has no single answer.";
 
             # fswatch --latency wants seconds as a decimal, not milliseconds.
             assetsReassertDebounceSeconds =
@@ -2718,6 +2735,10 @@ in
             };
           in
           {
+            # devenv's own "Name of the project": the shell and frappe-nix name
+            # the project the same way (CONVENTIONS.md, Identity options).
+            name = lib.mkDefault cfg.name;
+
             # devenv's dotenv integration is loaded by the devenv CLI and
             # asserts against being combined with the flake integration
             # (`nix develop`, as opposed to `devenv shell`) — enabling it
@@ -2910,8 +2931,8 @@ in
                     FRAPPE_REDIS_QUEUE = "redis://127.0.0.1:${toString config.services.redis.port}";
                   }
               )
-              // (lib.optionalAttrs (cfg.siteName != "") {
-                FRAPPE_SITE = cfg.siteName;
+              // (lib.optionalAttrs (cfg.defaultSite != "") {
+                FRAPPE_SITE = cfg.defaultSite;
               })
               // cfg.extraEnv;
 
@@ -3031,7 +3052,7 @@ in
               )}
 
               ${ciMode.banner {
-                inherit (cfg) benchName;
+                inherit (cfg) name;
                 interactive = ''
                   # Read back rather than interpolate: the port allocator only runs
                   # for `devenv up`, so a value baked in here would be the base while
@@ -3039,12 +3060,14 @@ in
                   _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
 
                   ${richPython}/bin/python ${../lib/banner.py} \
-                    --bench-name ${lib.escapeShellArg cfg.benchName} \
+                    --name ${lib.escapeShellArg cfg.name} \
                     --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
                     --bench-root "$FRAPPE_BENCH_ROOT" \
                     --port "''${_port:-${toString webBase}}" \
                     ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
-                    ${lib.optionalString (cfg.siteName != "") "--site-name ${lib.escapeShellArg cfg.siteName}"} \
+                    ${
+                      lib.optionalString (cfg.defaultSite != "") "--default-site ${lib.escapeShellArg cfg.defaultSite}"
+                    } \
                     ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
                     ${
                       if !dg.enable then
@@ -3216,7 +3239,7 @@ in
 
                   # NB no X-Frappe-Site-Name: frappe/app.py reads it *before*
                   # get_site_name(request.host), which would pin the bench to one
-                  # site and break the documented siteName = "" multi-tenancy
+                  # site and break the documented defaultSite = "" multi-tenancy
                   # mode. The default site is the runtime's business instead:
                   # a Host that names no site on the bench (localhost:<port>)
                   # gets FRAPPE_SITE / default_site, on both the web and the
@@ -3274,7 +3297,7 @@ in
                 let
                   ps = cfg.processScope;
                   unitName = lib.concatMapStrings (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "-") (
-                    lib.stringToCharacters cfg.benchName
+                    lib.stringToCharacters cfg.name
                   );
                 in
                 lib.mkIf (ps.enable && config.process.manager.implementation != "native") ''
@@ -3284,7 +3307,7 @@ in
                     export FRAPPE_NIX_SCOPED=1
                     exec systemd-run --user --scope --quiet --collect \
                       --unit="frappe-nix-${unitName}-$$" \
-                      --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.benchName})"} \
+                      --description=${lib.escapeShellArg "frappe-nix dev processes (${cfg.name})"} \
                       -p MemoryHigh=${lib.escapeShellArg ps.memoryHigh} \
                       ${lib.optionalString (ps.memoryMax != null) "-p MemoryMax=${lib.escapeShellArg ps.memoryMax}"} \
                       -- "$0" "$@"
@@ -3665,7 +3688,7 @@ in
                           .file_watcher_port)
                   ' "$config" > "$tmp"
 
-                  # Compare before writing. The port is derived from benchName, so
+                  # Compare before writing. The port is derived from `name`, so
                   # after the first run this is a no-op and the committed file stays
                   # clean; a diff later means the allocator genuinely had to move.
                   if cmp -s "$tmp" "$config"; then
@@ -3700,12 +3723,12 @@ in
             }
             // lib.optionalAttrs cfg.appsReconcile.enable {
               # The devenv-startup half of Part 1 — installs whatever
-              # sites/apps.txt names that siteName's DB doesn't have yet. See
+              # sites/apps.txt names that defaultSite's DB doesn't have yet. See
               # appsReconcile.enable, and lib/scripts.nix's reconcile-apps
               # (the same script, callable by hand).
               "frappe:apps-reconcile" = {
                 exec = ''
-                  export FRAPPE_SITE="${cfg.siteName}"
+                  export FRAPPE_SITE="${cfg.defaultSite}"
                   ${reconcileAppsExec}
                 '';
                 after = [

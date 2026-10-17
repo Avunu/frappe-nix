@@ -217,11 +217,11 @@
           exec "$@"
         '';
 
-        prefix = cfg.benchName;
+        prefix = cfg.name;
 
-        # Images are <benchName>/<name>, and containers.registry prefixes that:
+        # Images are <name>/<role>, and containers.registry prefixes that:
         # "ghcr.io/avunu" (or "ghcr.io/avunu/") names them
-        # ghcr.io/avunu/<benchName>/<name>; "" leaves them bare. The same rule
+        # ghcr.io/avunu/<name>/<role>; "" leaves them bare. The same rule
         # as odoo-nix's modules/containers.nix. Only image names take it, not
         # the store paths named after prefix.
         registry = lib.removeSuffix "/" cfg.containers.registry;

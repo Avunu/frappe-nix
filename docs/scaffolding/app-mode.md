@@ -62,7 +62,7 @@ inputs = {
 perSystem = _: {
   frappe-nix = {
     enable = true;
-    siteName = "carbon.localhost";
+    defaultSite = "carbon.localhost";
     app = {
       enable = true;
       frappeVersion = "version-16";
@@ -77,7 +77,7 @@ Everything else is inferred:
 
 - `app.src` comes from `self`.
 - `app.name` comes from the repository's `[project].name`.
-- `benchName` is that name, normalized.
+- `name` is that name, normalized.
 - `python` and `nodejs` come from the `frappeVersion` [preset](README.md#versions-and-presets).
 - `app.lockDir` defaults to `nix`.
 

@@ -38,7 +38,7 @@ Without a mode flag, the mode is detected from the target directory, which is th
 | Flag                    | Meaning                                                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `--version <V>`         | `develop`, `version-16` or `version-15`. Overrides detection.                                                 |
-| `--name <NAME>`         | The bench name. Defaults to the `benchName` an existing frappe-nix bench has, or the target directory's name. |
+| `--name <NAME>`         | The bench name. Defaults to the `name` an existing frappe-nix bench has, or the target directory's name. |
 | `--default-site <SITE>` | The default site. Defaults to the existing `default_site`.                                                    |
 | `--skip-lock`           | Do not run `uv lock`.                                                                                         |
 | `-h`, `--help`          | Show the help.                                                                                                |

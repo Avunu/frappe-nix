@@ -14,7 +14,7 @@ let
   envs = import ../lib/python.nix {
     inherit pkgs lib python;
     workspaceRoot = ./.;
-    benchName = "frappe-nix";
+    name = "frappe-nix";
     inherit (inputs)
       pyproject-nix
       pyproject-build-systems

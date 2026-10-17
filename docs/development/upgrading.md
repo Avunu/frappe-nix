@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, and what to commit afterwards.
 order: 9
 tags: [upgrade, flake-update, reconcile]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -44,6 +44,8 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 
 | Old                                     | New                                |
 | --------------------------------------- | ---------------------------------- |
+| `benchName`                             | `name`                             |
+| `siteName`                              | `defaultSite`                      |
 | `restore.withFiles`                     | `restore.files`                    |
 | `devguard.mail.smtpPort`                | `devguard.mail.port`               |
 | `devguard.scheduler.enable`             | `devguard.jobs.enable`             |

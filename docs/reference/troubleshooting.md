@@ -75,7 +75,7 @@ An install that was cut short looks finished to yarn. Shell entry detects exactl
 
 ### A page of an app I just added returns 404, or throws
 
-The app is importable but not installed on the site. With `siteName` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `provision-site` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
+The app is importable but not installed on the site. With `defaultSite` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `provision-site` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
 
 ### `bench update --reset` is not accepted
 

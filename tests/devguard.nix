@@ -89,7 +89,7 @@ let
       (_: {
         frappe-nix = {
           enable = true;
-          benchName = "devguard-production";
+          name = "devguard-production";
           workspaceRoot = ./standards/fixtures/bench-dev-group;
           # The fixture's requires-python.
           python = pkgs.python314;

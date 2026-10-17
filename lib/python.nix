@@ -9,7 +9,7 @@
 #     inherit pkgs lib;
 #     python = pkgs.python312;
 #     workspaceRoot = ./.;
-#     benchName = "mybench";
+#     name = "mybench";
 #     pyproject-nix = inputs.pyproject-nix;
 #     pyproject-build-systems = inputs.pyproject-build-systems;
 #     uv2nix = inputs.uv2nix;
@@ -22,7 +22,7 @@
   lib,
   python,
   workspaceRoot,
-  benchName,
+  name,
   pyproject-nix,
   pyproject-build-systems,
   uv2nix,
@@ -190,7 +190,7 @@ let
   # Production: workspace members + runtime deps, no dev tools
   prodPythonEnv = assertLockCurrent (
     withGrafts "prod" (
-      pythonSet.mkVirtualEnv "${benchName}-bench-prod-env" (
+      pythonSet.mkVirtualEnv "${name}-bench-prod-env" (
         lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
       )
     )
@@ -242,7 +242,7 @@ let
     ]
   );
 
-  baseDevPythonEnv = editablePythonSet.mkVirtualEnv "${benchName}-bench-dev-env" (
+  baseDevPythonEnv = editablePythonSet.mkVirtualEnv "${name}-bench-dev-env" (
     lib.filterAttrs (name: _: name != rootPkgName) (workspace.deps.default // workspace.deps.groups)
     // rootDepsAttr
     // rootDevDepsAttr

@@ -325,7 +325,7 @@ def restore_fetched(args: RestoreArgs, cfg: RestoreConfig, site: str) -> None:
 		)
 	if not site:
 		fail(
-			f'{PREFIX}: this bench is multi-tenant (siteName = "") and',
+			f'{PREFIX}: this bench is multi-tenant (defaultSite = "") and',
 			"FRAPPE_SITE is unset, so there is no site to restore into.",
 			"Set FRAPPE_SITE in .env, or pass a file to restore explicitly.",
 		)
