@@ -108,7 +108,7 @@ Each patch is checked as it is applied. If Frappe's internals move, the import f
 
 ### frappe_unixsock
 
-[`lib/unixsock/frappe_unixsock`](../../lib/unixsock/frappe_unixsock) uses the same `.pth` mechanism but is not a guard rail. It ships to **both** virtualenvs, and therefore into `builtBench`, the containers and `services.frappe`. It carries no policy. Its whole job is to make Frappe honor a unix socket in the two places it only half does:
+[`lib/unixsock/frappe_unixsock`](../../lib/unixsock/frappe_unixsock) uses the same `.pth` mechanism but is not a guard rail. It ships to **both** virtualenvs, and therefore into `builtBench`, the containers and `services.frappe-nix`. It carries no policy. Its whole job is to make Frappe honor a unix socket in the two places it only half does:
 
 | Patch                                                     | Where it bites                                                                                                                                                  |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |

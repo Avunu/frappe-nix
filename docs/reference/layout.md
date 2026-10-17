@@ -56,7 +56,7 @@ frappe-nix/
 │   ├── devenv.nix            # perSystem.frappe-nix options, the dev shell and the packages
 │   ├── secrets.nix           # top-level frappe-nix.secrets
 │   ├── containers.nix        # OCI image builds
-│   └── nixos.nix             # services.frappe (the NixOS systemd module)
+│   └── nixos.nix             # services.frappe-nix (the NixOS systemd module)
 ├── runtime/                  # frappe-runtime: the unified process (a hard fork, MIT)
 ├── tests/                    # flake checks (see `nix flake check`)
 └── docs/                     # these pages

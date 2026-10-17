@@ -203,7 +203,7 @@ frappe-nix/
 │     N3a: app-mode `apps.frappe-init`; import of lib/standards/shell.nix
 │     N1:  port offset salt (opted-in apps, or `ports.worktreeSalt = true`) and FRAPPE_NIX_PORT_OFFSET;
 │          FRAPPE_NIX_CI in enterShell; nixfmt/statix/deadnix in an opted-in app-mode shell; frappe-nix.renamedApps
-├── modules/nixos.nix                          [N1]   (services.frappe.sites.<site>.renamedApps)
+├── modules/nixos.nix                          [N1]   (services.frappe-nix.sites.<site>.renamedApps)
 ├── templates/app/
 │   └── flake.nix, .envrc, .gitignore          unchanged from frappe-nix `main` (S35). `frappe-init --app` without
 │                                                      `--standards` copies exactly this, as today. N3 MUST NOT change
@@ -3039,7 +3039,7 @@ Exit 0, or 1 when the tree is dirty or the pair is a replace.
 
 **Replace path** (generic; the Avunu fleet's case is jailbreak → data_steward, A.2). data_steward is a new app with its own module (`Data Steward`) and doctypes (`Data Steward Settings`), so it never collides with jailbreak's `Jailbreak` Module Def or `Jailbreak Settings` while both are installed; Q5's keep-the-module-names rule doesn't apply to it. Its `after_install` copies the Jailbreak Settings values across, mapping each capability, and is idempotent. Wiring:
 
-- **NixOS:** `services.frappe.sites.<site>.replacedApps = { jailbreak = "data_steward"; }`. Inside the existing snapshot and rollback, after `setMaintenance on`: `bench --site S install-app data_steward` (if not installed), then `bench --site S uninstall-app jailbreak --yes --no-backup` (the snapshot is the backup), then migrate as usual. When jailbreak isn't installed it is a no-op.
+- **NixOS:** `services.frappe-nix.sites.<site>.replacedApps = { jailbreak = "data_steward"; }`. Inside the existing snapshot and rollback, after `setMaintenance on`: `bench --site S install-app data_steward` (if not installed), then `bench --site S uninstall-app jailbreak --yes --no-backup` (the snapshot is the backup), then migrate as usual. When jailbreak isn't installed it is a no-op.
 - **devenv:** `frappe-nix.replacedApps` does the same in `reconcile-apps`.
 - jailbreak's whitelisted `assert_capability` and `check_capability` lived in `jailbreak/__init__.py`; in data_steward they are `data_steward.api.assert_capability` and `data_steward.api.check_capability` (L5 forbids code in `__init__.py`). The JS namespace changes from `jailbreak.check_capability(...)` to `data_steward.check_capability(...)` in `public/js/data_steward.js`, and capabilities are delivered at boot (A.2). No shim is kept: the old app is uninstalled, so nothing can call the old paths.
 
@@ -3074,7 +3074,7 @@ When OLD isn't installed, it prints `OLD not installed on S: nothing to do` and 
 
 **Wiring:**
 
-- **NixOS:** `services.frappe.sites.<site>.renamedApps = { esign = "esign_webforms"; }` runs the site half right after `setMaintenance on`, and before offline-migrate and `bench migrate`, inside the existing snapshot and rollback.
+- **NixOS:** `services.frappe-nix.sites.<site>.renamedApps = { esign = "esign_webforms"; }` runs the site half right after `setMaintenance on`, and before offline-migrate and `bench migrate`, inside the existing snapshot and rollback.
 - **devenv:** `frappe-nix.renamedApps` makes `reconcile-apps` run the same step before `install-app`.
 - **Before production:** pause the scheduler and drain RQ (rename-mechanics track, deploy order).
 

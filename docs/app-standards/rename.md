@@ -70,7 +70,7 @@ After the commit it updates the `installed_apps` copy in `site_config.json` and 
 
 You rarely run the site half by hand.
 
-- **Production.** `services.frappe.sites.<site>.renamedApps = { esign = "esign_webforms"; };` runs it in the site's migrate unit, right after maintenance mode goes on and before the online migrate and `bench migrate`, inside the same snapshot and rollback.
+- **Production.** `services.frappe-nix.sites.<site>.renamedApps = { esign = "esign_webforms"; };` runs it in the site's migrate unit, right after maintenance mode goes on and before the online migrate and `bench migrate`, inside the same snapshot and rollback.
 - **The dev shell.** `frappe-nix.renamedApps` does the same in `reconcile-apps`, which `devenv up` runs on `defaultSite` before anything starts, ahead of installing whatever `sites/apps.txt` names: installing the new app beside the renamed old one would fail on the `Module Def` they share.
 
 Before the production deploy that ships a rename, pause the scheduler and let the job queues drain: a job already queued under an old dotted path fails once the code is gone. Run `--dry-run --scan` against a restored copy of the production database first and review what it lists.
@@ -79,7 +79,7 @@ Before the production deploy that ships a rename, pause the scheduler and let th
 
 Some apps are replaced by a new app rather than renamed: `old_app` becomes `new_app`, which has its own module and settings DocType, so both can be installed at once. `frappe-rename-app code` refuses such a pair when a profile or fleet file lists it ([Replace pairs](#replace-pairs)). Ship both apps, then:
 
-- **Production.** `services.frappe.sites.<site>.replacedApps = { old_app = "new_app"; };`: where the old app is installed, the migrate unit installs the new one (if needed) and uninstalls the old one, without a backup of its own (the pre-migrate snapshot is the backup), inside the snapshot and before migrating. Where the old app is not installed it does nothing.
+- **Production.** `services.frappe-nix.sites.<site>.replacedApps = { old_app = "new_app"; };`: where the old app is installed, the migrate unit installs the new one (if needed) and uninstalls the old one, without a backup of its own (the pre-migrate snapshot is the backup), inside the snapshot and before migrating. Where the old app is not installed it does nothing.
 - **The dev shell.** `frappe-nix.replacedApps` does the same in `reconcile-apps`, which also stops installing the old app from `sites/apps.txt` on its later runs.
 
 The new app's `after_install` copies the old settings across. The old app leaves the bench only after every site has run the replacement, because uninstalling it needs its hooks.

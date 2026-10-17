@@ -1,7 +1,7 @@
-# The journald contract services.frappe shares with odoo-nix and wordpress-nix,
+# The journald contract services.frappe-nix shares with odoo-nix and wordpress-nix,
 # checked at evaluation: every unit the module defines carries APP_SERVICE (and
 # APP_SITE when it serves one site), the per-site ones a stable
-# SyslogIdentifier, and services.frappe.logging reaches the environment and
+# SyslogIdentifier, and services.frappe-nix.logging reaches the environment and
 # nginx. A host shipping the journal to a log store selects by these fields, so
 # a unit added without them is a unit whose logs nobody finds.
 #
@@ -37,7 +37,7 @@ let
         {
           nixpkgs.pkgs = pkgs;
           system.stateVersion = lib.trivial.release;
-          services.frappe = lib.recursiveUpdate {
+          services.frappe-nix = lib.recursiveUpdate {
             enable = true;
             package = stubBench;
             redis.createLocally = true;

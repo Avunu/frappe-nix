@@ -165,7 +165,7 @@ let
     ++ lib.optional (unixsock != null) unixsock
     # frappe_journald ships to BOTH as well, and is inert in development by
     # construction: it does nothing unless stderr is the journal, which only a
-    # systemd unit arranges. Production is where it matters — services.frappe's
+    # systemd unit arranges. Production is where it matters — services.frappe-nix's
     # units log to the journal, and without it every Frappe line lands there at
     # the unit's default priority and bench keeps appending to logs/bench.log.
     ++ lib.optional (journald != null) journald

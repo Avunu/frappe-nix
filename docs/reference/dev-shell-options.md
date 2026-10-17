@@ -6,7 +6,7 @@ tags: [options, reference, devenv]
 updated: 2026-10-15
 ---
 
-These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe`](nixos-options.md).
+These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
 
 > [!NOTE]
 > `devguard.mail.port`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
@@ -93,7 +93,7 @@ Runs `devenv up` in a systemd scope of its own. See [Memory and disk](../develop
 
 ## Runtime
 
-The unified `frappe-runtime` process. See [The unified runtime](../production/runtime.md). The production counterparts are under [`services.frappe.runtime`](nixos-options.md#top-level-options).
+The unified `frappe-runtime` process. See [The unified runtime](../production/runtime.md). The production counterparts are under [`services.frappe-nix.runtime`](nixos-options.md#top-level-options).
 
 | Option               | Type         | Default                       | Notes                                                                                                                                    |
 | -------------------- | ------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |

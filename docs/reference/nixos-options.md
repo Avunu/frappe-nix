@@ -1,16 +1,16 @@
 ---
-title: services.frappe options
+title: services.frappe-nix options
 description: Every option of the frappe-nix NixOS module, at the top level and per site, with types and defaults.
 order: 3
 tags: [options, reference, nixos]
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 These are the options of `nixosModules.default`, the NixOS module that deploys a built bench. The types and defaults were checked against the module by evaluating it. For how the pieces work together, see [Run Frappe as a NixOS service](../production/nixos-service.md) and [Operate a deployed site](../production/operations.md).
 
 ## Top-level options
 
-These sit directly under `services.frappe`.
+These sit directly under `services.frappe-nix`. The module was `services.frappe`, which still works as an alias of the whole tree, with a NixOS warning, until the next minor release.
 
 | Option                         | Type                                  | Default                        | Notes                                                                                                                                                                                                                                                                                                              |
 | ------------------------------ | ------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -51,12 +51,12 @@ These sit directly under `services.frappe`.
 
 ## Per-site options
 
-These sit under `services.frappe.sites.<NAME>`, where `<NAME>` is the site name.
+These sit under `services.frappe-nix.sites.<NAME>`, where `<NAME>` is the site name.
 
 | Option                   | Type            | Default                     | Notes                                                                                                                                                                                                                          |
 | ------------------------ | --------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `enable`                 | bool            | `false`                     | Enable this site.                                                                                                                                                                                                              |
-| `package`                | package or null | `null`                      | Per-site bench package override. Defaults to `services.frappe.package`.                                                                                                                                                        |
+| `package`                | package or null | `null`                      | Per-site bench package override. Defaults to `services.frappe-nix.package`.                                                                                                                                                        |
 | `siteDir`                | str             | `"/var/lib/frappe/<NAME>"`  | The state directory for this site.                                                                                                                                                                                             |
 | `web.port`               | port            | `8000`                      | The listen port of the runtime or gunicorn. Ignored when `web.socketPath` is set.                                                                                                                                              |
 | `web.socketPath`         | str             | `""`                        | A unix socket instead of a TCP port. nginx reaches it through a generated upstream. The directory must not be `/run` itself: see [Run Frappe as a NixOS service](../production/nixos-service.md#unix-sockets-behind-a-tunnel). |

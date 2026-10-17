@@ -771,7 +771,7 @@ in
             OLD, whose hooks the uninstall still needs, so OLD leaves the bench
             only after every site has run this. A no-op where OLD is not
             installed. The production counterpart is
-            `services.frappe.sites.<site>.replacedApps`.
+            `services.frappe-nix.sites.<site>.replacedApps`.
           '';
         };
 
@@ -839,7 +839,7 @@ in
               sockets under $DEVENV_RUNTIME, which devenv already gives each
               project uniquely. An nginx in front on a single TCP port routes
               /socket.io to the realtime socket and everything else to the web
-              socket — the same shape services.frappe uses in production.
+              socket — the same shape services.frappe-nix uses in production.
 
               That leaves one public TCP listener per bench, nginx's. MariaDB
               gets `skip-networking` and listens on nothing at all; FRAPPE_DB_HOST
@@ -1377,7 +1377,7 @@ in
         extraPackages = mkOption {
           type = types.listOf types.package;
           default = [ ];
-          description = "Additional packages installed in both the dev shell and any production deployment of this package (via builtBench's passthru.extraPackages — see services.frappe.package in modules/nixos.nix).";
+          description = "Additional packages installed in both the dev shell and any production deployment of this package (via builtBench's passthru.extraPackages — see services.frappe-nix.package in modules/nixos.nix).";
         };
 
         extraLibraryPaths = mkOption {

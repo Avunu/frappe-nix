@@ -1,12 +1,12 @@
 ---
 title: Logging
-description: Everything services.frappe logs goes to the journal with APP_SERVICE and APP_SITE fields and real syslog priorities, including nginx's JSON access log.
+description: Everything services.frappe-nix logs goes to the journal with APP_SERVICE and APP_SITE fields and real syslog priorities, including nginx's JSON access log.
 order: 5
 tags: [logging, journald, nginx, observability]
 updated: 2026-10-06
 ---
 
-On a [`services.frappe`](nixos-service.md) host everything goes to the journal and nothing writes a log file. That covers Frappe (`FRAPPE_STREAM_LOGGING=1`, and a caller asking for a file is overridden), bench (`bench/logs/bench.log` is no longer written) and nginx (no `/var/log/nginx/access.log`).
+On a [`services.frappe-nix`](nixos-service.md) host everything goes to the journal and nothing writes a log file. That covers Frappe (`FRAPPE_STREAM_LOGGING=1`, and a caller asking for a file is overridden), bench (`bench/logs/bench.log` is no longer written) and nginx (no `/var/log/nginx/access.log`).
 
 The exceptions are Frappe features that write a file as their product rather than as logging, and only when used: the request monitor (`monitor` in `site_config`, `logs/monitor.json.log`) and the setup wizard's `logs/setup-wizard.log`.
 
@@ -59,13 +59,13 @@ journald reads the `<N>` as the line's syslog priority (debug 7, info 6, warning
 
 ## Log level
 
-`services.frappe.logging.level` is the threshold for `frappe.logger()` and for bench's log, passed as `FRAPPE_LOG_LEVEL`. It accepts `debug`, `info`, `warning` and `error`, and defaults to `warning`. Frappe's own production default is error, which silently drops every `frappe.logger().warning()`.
+`services.frappe-nix.logging.level` is the threshold for `frappe.logger()` and for bench's log, passed as `FRAPPE_LOG_LEVEL`. It accepts `debug`, `info`, `warning` and `error`, and defaults to `warning`. Frappe's own production default is error, which silently drops every `frappe.logger().warning()`.
 
 An explicit `set_log_level()` in code still wins. The runtime's lifecycle lines stay at info, and gunicorn, Node, MariaDB and Redis keep their own levels. The units also set `PYTHONUNBUFFERED=1`, so `print()` output is neither held back nor lost in a crash.
 
 ## The nginx access log
 
-`services.frappe.logging.accessLog` (default `true`) sends nginx's access log to the journal over `/dev/log`, one JSON object per request, under `SYSLOG_IDENTIFIER=nginx_access`. nginx writes each object on a single line. It is shown formatted here:
+`services.frappe-nix.logging.accessLog` (default `true`) sends nginx's access log to the journal over `/dev/log`, one JSON object per request, under `SYSLOG_IDENTIFIER=nginx_access`. nginx writes each object on a single line. It is shown formatted here:
 
 ```json
 {

@@ -37,7 +37,7 @@ The package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}`, so the N
 
 | You want                                                                                                        | Use                                                    |
 | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Declarative, multi-tenant Frappe on a NixOS host, with systemd units, automatic migrations and journald logging | [The `services.frappe` NixOS module](nixos-service.md) |
+| Declarative, multi-tenant Frappe on a NixOS host, with systemd units, automatic migrations and journald logging | [The `services.frappe-nix` NixOS module](nixos-service.md) |
 | To run Frappe on a host that is not NixOS, or in an orchestrator you already have                               | [OCI container images](images.md)                      |
 
 > [!IMPORTANT]

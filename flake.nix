@@ -467,14 +467,14 @@
           inherit pkgs;
           frappe-init = frappeInit pkgs;
         }
-        # The journald fields and services.frappe.logging, at evaluation. Linux
+        # The journald fields and services.frappe-nix.logging, at evaluation. Linux
         # only because it evaluates a NixOS system, but no VM: cheap enough for
         # every PR.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           import ./tests/logging-fields.nix { inherit self pkgs; }
-          # What services.frappe.migrate.offline puts in the migrate unit, on and off.
+          # What services.frappe-nix.migrate.offline puts in the migrate unit, on and off.
           // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
-          # What services.frappe.chromium and .wkhtmltopdf put in the units and the
+          # What services.frappe-nix.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
           // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }
           # The container image names, with and without containers.registry.

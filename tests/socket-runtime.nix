@@ -99,7 +99,7 @@ in
       virtualisation.memorySize = 2048;
       environment.systemPackages = [ pkgs.jq ];
 
-      services.frappe = {
+      services.frappe-nix = {
         enable = true;
         package = stubBench;
         # The default, stated for the reader.

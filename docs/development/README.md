@@ -23,7 +23,7 @@ You enter the shell with `direnv allow` (or `nix develop --no-pure-eval`) and st
 | watch                                               | none                                                                                                   |
 | assetsWatch                                         | none. Runs only when `assets.reassert.hooks` is set.                                                   |
 
-nginx routes `/socket.io` and everything else to the same socket, because the unified runtime answers both. That is the same shape [`services.frappe`](../production/nixos-service.md) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which lets the browser reach both over one origin.
+nginx routes `/socket.io` and everything else to the same socket, because the unified runtime answers both. That is the same shape [`services.frappe-nix`](../production/nixos-service.md) uses in production. `webserver_port` and `socketio_port` in `sites/common_site_config.json` are both set to the nginx port, which lets the browser reach both over one origin.
 
 `http://localhost:<PORT>`, and `127.0.0.1`, serve the site named by `defaultSite`. The runtime sends a request whose `Host` names no site on the bench to `FRAPPE_SITE` or `default_site`, on the web and the socket.io path alike. A `Host` that does name a site, such as `http://other.localhost:<PORT>` on a bench with several, still reaches that one.
 

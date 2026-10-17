@@ -1,4 +1,4 @@
-# services.frappe.migrate.offline, checked at evaluation: what the per-site
+# services.frappe-nix.migrate.offline, checked at evaluation: what the per-site
 # migrate unit's script does with it on and off, and in what order.
 #
 # Pure evaluation of two NixOS configurations against a stub bench that is never
@@ -35,7 +35,7 @@ let
         {
           nixpkgs.pkgs = pkgs;
           system.stateVersion = lib.trivial.release;
-          services.frappe = {
+          services.frappe-nix = {
             enable = true;
             package = stubBench;
             redis.createLocally = true;

@@ -20,7 +20,7 @@ From one `uv` workspace and an `apps/` tree, frappe-nix provides:
 - Reproducible **`node_modules`** for every app and every nested frontend, built from each one's own `yarn.lock`.
 - A **`builtBench`** package that runs `bench build` at build time, so compiled assets are part of the artifact. The NixOS module and the container images both consume it.
 - **OCI container images**: `runtime`, `nginx` and `bench-cli`, or an eight-image split set when you turn the unified runtime off.
-- A multi-tenant **NixOS module**, `services.frappe`, with per-site systemd units, secrets handling, snapshot-protected migrations on deploy and journald logging.
+- A multi-tenant **NixOS module**, `services.frappe-nix`, with per-site systemd units, secrets handling, snapshot-protected migrations on deploy and journald logging.
 - A set of portable **bench scripts** such as `provision-site`, `bench-update` and `bench-get-app`, and a `bench` wrapper that sends the commands that need frappe-nix handling to them.
 - **Age-encrypted secrets** committed next to the code, which the dev shell decrypts and the deployment host can read from the same ciphertext.
 
@@ -34,7 +34,7 @@ Lock files carry the contract between development and production. You change dep
 | each app's `yarn.lock` | each app's `node_modules`, with `yarn install --offline`                 |
 | `flake.lock`           | the pinned nixpkgs, devenv and uv2nix that everything else is built with |
 
-All of it ends up in `builtBench`, the one package that the OCI images and `services.frappe` both consume.
+All of it ends up in `builtBench`, the one package that the OCI images and `services.frappe-nix` both consume.
 
 Read [From development to production](production/README.md) for the full contract.
 

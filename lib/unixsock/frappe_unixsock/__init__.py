@@ -18,7 +18,7 @@ at once, "fell back to TCP" means "connected to another project's service".
 
 Unlike ``frappe_devguard``, this ships to **production as well** — it is
 installed into ``prodPythonEnv`` and therefore into ``builtBench``, the OCI
-images and ``services.frappe``. That is deliberate, and it is not a weakening of
+images and ``services.frappe-nix``. That is deliberate, and it is not a weakening of
 devguard's dev-only guarantee: the two packages are separate, and nothing here
 imports anything from there. These are transport corrections that a socket-mode
 deployment needs precisely *because* it is production; devguard's job is to stop

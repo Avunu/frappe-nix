@@ -31,7 +31,7 @@ The step sits in front of `bench migrate`, `bench update` and `bench restore` al
 | Change the threshold for one command     | `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=<ROWS>` or `--threshold <ROWS>`. The flag wins.  |
 | Pass options to pt-online-schema-change  | `bench-offline-migrate -- <OPTIONS>`                                                   |
 
-On NixOS, `services.frappe.migrate.offline.enable` puts the same step inside the `frappe-migrate-<SITE>` unit, after the snapshot and the switch to maintenance mode and in front of `bench migrate`. A failure there is a failed migrate: the snapshot is restored and the site stays in maintenance mode. See [Operate a deployed site](../production/operations.md#safe-migrations-on-deploy).
+On NixOS, `services.frappe-nix.migrate.offline.enable` puts the same step inside the `frappe-migrate-<SITE>` unit, after the snapshot and the switch to maintenance mode and in front of `bench migrate`. A failure there is a failed migrate: the snapshot is restored and the site stays in maintenance mode. See [Operate a deployed site](../production/operations.md#safe-migrations-on-deploy).
 
 ## What it plans from
 

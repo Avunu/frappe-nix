@@ -1,6 +1,6 @@
 ---
 title: Run Frappe as a NixOS service
-description: Deploy one or more Frappe sites on NixOS with the frappe-nix services.frappe module, including secrets, MariaDB, Redis, nginx and the units it generates.
+description: Deploy one or more Frappe sites on NixOS with the frappe-nix services.frappe-nix module, including secrets, MariaDB, Redis, nginx and the units it generates.
 order: 3
 tags: [nixos, services-frappe, systemd, deployment]
 updated: 2026-10-15
@@ -47,7 +47,7 @@ The module's configuration goes in `frappe.nix`. This example keeps secrets as f
 ```nix
 { config, bench, ... }:
 {
-  services.frappe = {
+  services.frappe-nix = {
     enable = true;
     package = bench.packages.x86_64-linux.default;
 
@@ -65,7 +65,7 @@ The module's configuration goes in `frappe.nix`. This example keeps secrets as f
 }
 ```
 
-Each key under `sites` is the site name, which is also its domain. Run `nixos-rebuild switch` to apply it. The full option list is in the [`services.frappe` reference](../reference/nixos-options.md).
+Each key under `sites` is the site name, which is also its domain. Run `nixos-rebuild switch` to apply it. The full option list is in the [`services.frappe-nix` reference](../reference/nixos-options.md).
 
 ## The units it generates
 
@@ -89,7 +89,7 @@ The service units start after, and require, their `frappe-init-<SITE>`. The modu
 Every site needs its own listener. Give each additional site a distinct `web.port`, or use a socket path:
 
 ```nix
-services.frappe.sites."site2.example.com" = {
+services.frappe-nix.sites."site2.example.com" = {
   enable = true;
   package = bench.packages.x86_64-linux.default;
   web.port = 8001;
@@ -157,7 +157,7 @@ You manage the account and its password on an external server. The module does n
 `redis.createLocally = true` runs a Redis instance named `frappe` on `127.0.0.1`, port `13000`, under the unit `redis-frappe`. All three site Redis URLs default to that address.
 
 > [!NOTE]
-> If you change `services.frappe.redis.port`, update the site URLs too. The defaults are fixed strings and do not follow the port.
+> If you change `services.frappe-nix.redis.port`, update the site URLs too. The defaults are fixed strings and do not follow the port.
 
 ## Put nginx in front
 
@@ -199,8 +199,8 @@ Frappe renders a PDF with one of three engines, and which one depends on the pri
 Turn on the engines your print formats use:
 
 ```nix
-services.frappe.chromium.enable = true;
-services.frappe.wkhtmltopdf.enable = true;
+services.frappe-nix.chromium.enable = true;
+services.frappe-nix.wkhtmltopdf.enable = true;
 ```
 
 Both are off by default because of their size. Chromium adds about 0.5 GiB to the system closure with the fonts below, and wkhtmltopdf about 200 MiB.

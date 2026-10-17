@@ -137,4 +137,4 @@ App mode is not development-only. `nix build` produces the same `builtBench` a b
 nix build                    # result/bench, assets compiled
 ```
 
-`containers.enable` and the [`services.frappe` module](../production/nixos-service.md) work unchanged.
+`containers.enable` and the [`services.frappe-nix` module](../production/nixos-service.md) work unchanged.

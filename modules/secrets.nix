@@ -5,7 +5,7 @@
 # secrets toolkit's (python-devops-nix, lib.secrets.mkModule; PLAN.md, Phase 2).
 # What is frappe-nix's own is below: the option path, the `frappe_` variable
 # prefix, and `sites`, a group whose units are Frappe sites, each with the three
-# secrets services.frappe consumes in production.
+# secrets services.frappe-nix consumes in production.
 #
 # TOP-LEVEL, not perSystem, deliberately. agenix-shell.secrets is a top-level
 # option and there is no supported way to reach a perSystem value from there;
@@ -39,7 +39,7 @@
               <dir>/erp.example.com/site-config.age      (JSON object)
 
           The same ciphertext feeds the dev shell and, through
-          `flake.lib.secrets`, `services.frappe`'s `encryptionKeyFile` /
+          `flake.lib.secrets`, `services.frappe-nix`'s `encryptionKeyFile` /
           `database.passwordFile` / `extraConfigFiles`. One declaration, one
           file, both ends.
         '';
@@ -55,7 +55,7 @@
           fetch and restore the database but cannot read the credentials stored
           inside it.
         '';
-        # The shapes mirror what services.frappe consumes in production
+        # The shapes mirror what services.frappe-nix consumes in production
         # (encryptionKeyFile, database.passwordFile, extraConfigFiles), and the
         # deployment host reads all three, so host keys always apply.
         roles = [
@@ -67,7 +67,7 @@
             description = ''
               Declare `<dir>/<site>/encryption-key.age`: the Frappe encryption
               key, one line. This is the key that decrypts every stored Password
-              and API-secret field, so it is also what `services.frappe`'s
+              and API-secret field, so it is also what `services.frappe-nix`'s
               `encryptionKeyFile` wants in production.
             '';
           }
@@ -78,7 +78,7 @@
             var = "db_password";
             description = ''
               Declare `<dir>/<site>/db-password.age`, one line: the production
-              counterpart of `services.frappe.sites.<name>.database.passwordFile`.
+              counterpart of `services.frappe-nix.sites.<name>.database.passwordFile`.
             '';
           }
           {
@@ -89,7 +89,7 @@
             description = ''
               Declare `<dir>/<site>/site-config.age`, a JSON object deep-merged
               into `site_config.json`: the counterpart of
-              `services.frappe.sites.<name>.extraConfigFiles`. Object-storage and
+              `services.frappe-nix.sites.<name>.extraConfigFiles`. Object-storage and
               third-party credentials belong here.
             '';
           }

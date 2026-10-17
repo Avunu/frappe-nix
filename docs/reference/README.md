@@ -11,7 +11,7 @@ This section lists what frappe-nix exposes. For guides, start from the [overview
 
 - [Dev shell options](dev-shell-options.md): `perSystem.frappe-nix`.
 - [Secrets options](secrets-options.md): the top-level `frappe-nix.secrets`.
-- [`services.frappe` options](nixos-options.md): the NixOS module.
+- [`services.frappe-nix` options](nixos-options.md): the NixOS module.
 - [Scaffolder](scaffolder.md): the flags of `nix run github:Avunu/frappe-nix`.
 - [Repository layout](layout.md), and the checks that run in CI.
 - [FAQ and troubleshooting](troubleshooting.md): the errors you are most likely to meet, with their fixes.
@@ -24,7 +24,7 @@ The `frappe-nix` flake itself provides:
 | Output                                     | Purpose                                                                                                                                           |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `flakeModules.default`                     | The flake-parts module. Import it and configure `perSystem.frappe-nix`.                                                                           |
-| `nixosModules.default`                     | The standalone NixOS module that exposes `services.frappe`, for multi-tenant production with systemd.                                             |
+| `nixosModules.default`                     | The standalone NixOS module that exposes `services.frappe-nix`, for multi-tenant production with systemd.                                             |
 | `lib.mkFlake`                              | A `flake-parts.lib.mkFlake` wrapper that merges frappe-nix's inputs into the consumer's.                                                          |
 | `lib.overrides`                            | Composable Python package overrides for native dependencies.                                                                                      |
 | `packages.<system>.default`, `frappe-init` | The scaffolder, run by `nix run github:Avunu/frappe-nix`.                                                                                         |

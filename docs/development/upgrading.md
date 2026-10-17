@@ -54,6 +54,8 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 
 The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED` (was `FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS`), `FRAPPE_DEVGUARD_JOBS_BLOCK_SERVER_SCRIPTS`, `FRAPPE_DEVGUARD_JOBS_ENABLE` and `FRAPPE_DEVGUARD_DISABLE=jobs`. The old ones are read, with a warning, for the same period. Its log lines still read `frappe_devguard[scheduler]`.
 
+The NixOS module moved the same way: `services.frappe` is now `services.frappe-nix`. The old path still sets the whole tree, with a NixOS warning, until the next minor release.
+
 A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from inside the shell. `nodeOfflineHashes` was one such. It stays an evaluation error that names the edit.
 
 ## In app mode

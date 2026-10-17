@@ -11,7 +11,7 @@
 #                        stub product, on the same interpreters.
 #   devguard-production  design rule 7: the production virtualenv a bench builds
 #                        (prodPythonEnv, which builtBench, the containers and
-#                        services.frappe run) carries no frappe_devguard and no
+#                        services.frappe-nix run) carries no frappe_devguard and no
 #                        devguard .pth, while the development one does. Through
 #                        the real devenv module, over a fixture workspace.
 #   grafts               every graft lib/grafts.nix builds carries the shared

@@ -17,7 +17,7 @@
 #                           [tool.frappe-nix]) are refused with exit 1, and an
 #                           app without [tool.frappe-nix] that names no source
 #                           exits 2 and changes nothing.
-#   standards-rename-nixos   services.frappe.sites.<site>.{renamedApps,replacedApps}:
+#   standards-rename-nixos   services.frappe-nix.sites.<site>.{renamedApps,replacedApps}:
 #                           the migrate unit's script, run against a stub bench
 #                           and database, renames after maintenance mode goes on
 #                           and before the migrate, installs the stand-in new app
@@ -130,7 +130,7 @@ let
         {
           nixpkgs.pkgs = pkgs;
           system.stateVersion = lib.trivial.release;
-          services.frappe = {
+          services.frappe-nix = {
             enable = true;
             package = stubBench;
             database.package = stubDatabase;
@@ -145,7 +145,7 @@ let
       ];
     }).config;
   migrateScript = nixos.systemd.services."frappe-migrate-${site}".serviceConfig.ExecStart;
-  dbName = nixos.services.frappe.sites.${site}.database.name;
+  dbName = nixos.services.frappe-nix.sites.${site}.database.name;
 
   # --- devenv -----------------------------------------------------------------
 

@@ -21,8 +21,8 @@
   #
   # Deployment servers import the NixOS module directly from frappe-nix:
   #   imports = [ frappe-nix.nixosModules.default ];
-  #   services.frappe.package = benchFlake.packages.x86_64-linux.default;
-  #   services.frappe.sites."mysite.example.com" = { ... };
+  #   services.frappe-nix.package = benchFlake.packages.x86_64-linux.default;
+  #   services.frappe-nix.sites."mysite.example.com" = { ... };
 
   outputs =
     { self, frappe-nix, ... }@inputs:

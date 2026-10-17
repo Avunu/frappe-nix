@@ -151,7 +151,7 @@ in
       virtualisation.memorySize = 2048;
       environment.systemPackages = [ pkgs.jq ];
 
-      services.frappe = {
+      services.frappe-nix = {
         enable = true;
         package = stubBench;
         # This test is about the split topology; the unified runtime has neither a

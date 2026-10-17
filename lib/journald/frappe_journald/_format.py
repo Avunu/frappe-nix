@@ -15,7 +15,7 @@ import logging
 import os
 import sys
 
-#: ``FRAPPE_LOG_LEVEL`` values, as ``services.frappe.logging.level`` writes them.
+#: ``FRAPPE_LOG_LEVEL`` values, as ``services.frappe-nix.logging.level`` writes them.
 LEVELS = {
 	"debug": logging.DEBUG,
 	"info": logging.INFO,
@@ -74,7 +74,7 @@ def current_site():
 
 	``frappe.local.site`` first — one process may serve several sites, and in a
 	request or a job that is the precise answer — then ``FRAPPE_SITE``, which
-	``services.frappe`` sets on every per-site unit. Frappe is looked up in
+	``services.frappe-nix`` sets on every per-site unit. Frappe is looked up in
 	``sys.modules`` rather than imported: a record logged before Frappe was ever
 	imported must not be the thing that imports it.
 	"""

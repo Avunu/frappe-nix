@@ -2,7 +2,7 @@
 
 Loaded at interpreter start from ``zzz-frappe-journald.pth`` inside the
 virtualenv, like ``frappe_unixsock``, so it reaches every process
-``services.frappe`` starts — ``frappe-runtime``, gunicorn, ``bench worker``,
+``services.frappe-nix`` starts — ``frappe-runtime``, gunicorn, ``bench worker``,
 ``bench schedule``, ``bench migrate`` — without an app install or a
 ``site_config.json`` edit.
 

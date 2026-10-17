@@ -484,7 +484,7 @@ def cmd_code(args) -> int:
 		target = pairs[old] or "its replacement"
 		die(
 			f"{old} is replaced, not renamed: {target} is a new app installed beside it and {old} "
-			"is uninstalled (spec §5.10, services.frappe.sites.<site>.replacedApps)"
+			"is uninstalled (spec §5.10, services.frappe-nix.sites.<site>.replacedApps)"
 		)
 	if git(repo, "status", "--porcelain"):
 		die(f"{repo} has uncommitted changes; commit or stash them first")

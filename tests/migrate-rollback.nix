@@ -1,4 +1,4 @@
-# NixOS VM test for the safe deploy-time migration (services.frappe.migrate.*).
+# NixOS VM test for the safe deploy-time migration (services.frappe-nix.migrate.*).
 #
 # It deliberately STUBS `bench migrate` — Frappe's own migration correctness is
 # out of scope. What is under test is the module's safety machinery in
@@ -227,7 +227,7 @@ in
       pkgs.mariadb
     ];
 
-    services.frappe = {
+    services.frappe-nix = {
       enable = true;
       package = stubBench;
       sites."${siteName}" = {
@@ -267,7 +267,7 @@ in
     )
     machine.succeed(root_connect)
     machine.fail(f"runuser -u frappe -- {root_connect}")
-    # So the wrapper adds --no-setup-db for a site declared in services.frappe,
+    # So the wrapper adds --no-setup-db for a site declared in services.frappe-nix,
     # unless the caller passes a database flag of their own. Then it passes
     # the command through untouched, and here Frappe's root login is refused,
     # leaving nothing behind.

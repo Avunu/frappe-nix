@@ -32,11 +32,11 @@ With one site, that declaration names four secrets on a fixed layout:
 | File                                | Shape       | What consumes it                        |
 | ----------------------------------- | ----------- | --------------------------------------- |
 | `secrets/backup-access.age`         | env-file    | `bench restore`'s fetch                 |
-| `secrets/<SITE>/encryption-key.age` | one line    | `services.frappe`'s `encryptionKeyFile` |
+| `secrets/<SITE>/encryption-key.age` | one line    | `services.frappe-nix`'s `encryptionKeyFile` |
 | `secrets/<SITE>/db-password.age`    | one line    | `database.passwordFile`                 |
 | `secrets/<SITE>/site-config.age`    | JSON object | `extraConfigFiles`                      |
 
-Each additional site adds its own three. The shapes are the ones `services.frappe` already consumes, so the same ciphertext can serve the deployment. For anything else, `frappe-nix.secrets.extra.<NAME>` declares `secrets/<NAME>.age` in the `env`, `raw` or `json` format.
+Each additional site adds its own three. The shapes are the ones `services.frappe-nix` already consumes, so the same ciphertext can serve the deployment. For anything else, `frappe-nix.secrets.extra.<NAME>` declares `secrets/<NAME>.age` in the `env`, `raw` or `json` format.
 
 In the dev shell each secret is available as `$<var>`, or for the JSON format as a file at `$<var>_PATH`. A secret whose `.age` file does not exist yet is left out of the shell on purpose, so declaring a secret and then creating it, which is the documented first run, does not break the flake. `check-secrets` still reports it as missing and says which command writes it.
 
@@ -114,7 +114,7 @@ On a NixOS host that decrypts with [agenix](https://github.com/ryantm/agenix) yo
 age.secrets = lib.mapAttrs (_: f: { file = f; mode = "0400"; })
   inputs.mybench.lib.secrets.files;
 
-services.frappe.sites."erp.example.com" = {
+services.frappe-nix.sites."erp.example.com" = {
   encryptionKeyFile = config.age.secrets.<NAME>.path;
   # …
 };
