@@ -6,7 +6,11 @@
 # (frappe-demo, frappe-shots) is .github/workflows/selftest-product.yml.
 #
 #   standards-product-tools  frappe-listing, frappe-icon, frappe-demo and frappe-shots build
-#                            (shellcheck runs over the two shell tools as they build)
+#   standards-demo-shots     tests/standards/demo-shots.sh: frappe-demo's and frappe-shots'
+#                            every flag, exit code and branch that needs no real bench or
+#                            chromium, against a dev shell of stubs (the refusals and the
+#                            prompt, the demo's date, seed and erpnext sources, the fake
+#                            clock, the bench brought up and stopped again)
 #   standards-shots-types    lib/shots/shots.d.ts and the packaged copy sync renders into
 #                            marketplace/shots.d.ts are the same file
 #   standards-icon           on the fixture with the example-org profile (tile #336699):
@@ -71,6 +75,25 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         "frappe-shots"
       ]
   );
+
+  standards-demo-shots =
+    pkgs.runCommand "standards-demo-shots-check"
+      {
+        nativeBuildInputs = [
+          pkgs.git
+          pkgs.python3
+          pkgs.coreutils
+          pkgs.gnugrep
+          pkgs.gnused
+          pkgs.util-linux
+        ];
+      }
+      ''
+        DEMO=${lib.getExe tools.frappe-demo} SHOTS=${lib.getExe tools.frappe-shots} \
+          FIXTURE=${fixture} REAL_PY=${lib.getExe pkgs.python3} \
+          bash ${./demo-shots.sh}
+        touch "$out"
+      '';
 
   standards-shots-types = pkgs.runCommand "standards-shots-types-check" { } ''
     cmp ${../../lib/shots/shots.d.ts} ${frappeNixTools}/${pkgs.python314.sitePackages}/frappe_nix_tools/data/templates/marketplace/shots.d.ts.j2 || {

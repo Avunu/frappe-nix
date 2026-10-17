@@ -1,7 +1,7 @@
 """frappe-demo's bench half (docs/app-standards/spec.md §5.4): a repeatable demo site.
 
-Run by lib/sh/frappe-demo.sh with the bench's interpreter, once the bench is up and the site
-exists::
+Run by frappe-demo (frappe_nix_tools/app_tools/frappe_demo.py) with the bench's interpreter,
+once the bench is up and the site exists::
 
     <bench>/env/bin/python frappe_demo.py --site S --sites-path <bench>/sites --app A \\
         --date 2026-01-15 --seed 1 [--erpnext-demo] --demo '<the demo module, as JSON>' \\

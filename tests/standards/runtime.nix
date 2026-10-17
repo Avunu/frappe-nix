@@ -33,7 +33,7 @@
 #                            tools, fails the same check.
 #   standards-coverage-env    `import coverage` (and xmlrunner) works in the dev
 #                            virtualenv lib/python.nix builds from that group.
-#   standards-frappe-test     frappe-test builds (shellcheck), parses its
+#   standards-frappe-test     frappe-test builds, parses its
 #                            arguments, and runs the stages its plan turns on
 #                            against a dev shell of stubs.
 {
@@ -602,6 +602,7 @@ in
           pkgs.curl
           pkgs.coreutils
           pkgs.jq
+          pkgs.util-linux
         ];
       }
       ''
@@ -634,12 +635,32 @@ in
           printf '#!%s\necho "%s $*" >> "$STATE/log"\n%s\n' ${lib.getExe pkgs.bash} "$(basename "$1")" "$2" > "$1"
           chmod +x "$1"
         }
-        stub stubs/devenv 'echo "frappe-nix: port already in use: nginx=8000; set FRAPPE_NIX_PORT_OFFSET" >&2; exit 1'
-        stub stubs/process-compose 'case "$*" in *" process list") [ -z "$STUB_PC_DOWN" ] ;; *" process get "*) exit 1 ;; esac'
+        # devenv fails as a taken port does, unless STUB_DEVENV_OK, when it brings the bench
+        # up ($STATE/pc-up, which `process list` then answers for and `down` removes).
+        stub stubs/devenv '[ -n "''${STUB_DEVENV_OK:-}" ] && touch "$STATE/pc-up" && exit 0
+        echo "frappe-nix: port already in use: nginx=8000; set FRAPPE_NIX_PORT_OFFSET" >&2; exit 1'
+        stub stubs/process-compose 'case "$*" in
+          *" process list") [ -z "$STUB_PC_DOWN" ] || [ -e "$STATE/pc-up" ] ;;
+          *" process get "*) grep -qx "''${@: -1}" "$STATE/procs" 2> /dev/null ;;
+          *" down") rm -f "$STATE/pc-up" ;;
+        esac'
         stub stubs/mariadb-admin 'exit 0'
-        stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"; mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"'
+        stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"
+        [ -z "''${STUB_PROVISION_FAILS:-}" ] || exit 1; mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"'
+        stub stubs/uv 'echo "error[x]: something"; echo "Found 3 diagnostics"; exit 1'
         stub bench/env/bin/bench 'exit 0'
-        stub bench/env/bin/python 'case "$*" in "-c import coverage") [ -z "''${STUB_NO_COVERAGE:-}" ] ;; esac'
+        # The tests exit STUB_TESTS_RC; `coverage run` leaves its data file, `coverage
+        # report` exits STUB_COV_REPORT_RC.
+        stub bench/env/bin/python 'case "$*" in
+          "-c import coverage") [ -z "''${STUB_NO_COVERAGE:-}" ] ;;
+          "-c import xmlrunner") [ -z "''${STUB_NO_XMLRUNNER:-}" ] ;;
+          *"-m coverage run "*)
+            for a in "$@"; do case "$a" in --data-file=*) touch "''${a#--data-file=}" ;; esac; done
+            exit "''${STUB_TESTS_RC:-0}" ;;
+          *"-m coverage report"*) exit "''${STUB_COV_REPORT_RC:-0}" ;;
+          *"-m coverage "*) exit 0 ;;
+          *bench_helper*) exit "''${STUB_TESTS_RC:-0}" ;;
+        esac'
 
         git init -q repo
         echo gen/ > repo/.gitignore
@@ -663,6 +684,14 @@ in
           shift 2
           : > "$STATE/log"
           timeout 120 ./frappe-test --out "$PWD/out" "$@" > run.log 2>&1 || rc=$?
+          [ "$rc" = "$want" ] || { cat run.log "$STATE/log"; fail "$label: exit $rc, want $want"; }
+        }
+        # run, with a terminal on stdin and stderr that answers <answer> to the prompt.
+        run_tty() { # <expected exit> <label> <answer> <args…>
+          local want="$1" label="$2" answer="$3" rc=0
+          shift 3
+          : > "$STATE/log"
+          printf '%s\n' "$answer" | timeout 120 script -qec "./frappe-test --out $PWD/out $(printf '%q ' "$@")" /dev/null > run.log 2>&1 || rc=$?
           [ "$rc" = "$want" ] || { cat run.log "$STATE/log"; fail "$label: exit $rc, want $want"; }
         }
         stage() { jq -r ".stages[\"$1\"]" out/frappe-test-report.json; }
@@ -742,6 +771,102 @@ in
         grep -q 'gen/types.ts' out/shell-checks.log || fail "the changed file is not listed: $(cat out/shell-checks.log)"
         git -C repo checkout -q gen/types.ts
         echo "ok   --ci runs the shell checks; one that rewrites a tracked file under an ignored path fails (exit 7)"
+
+        pyproject 'shell-checks = ["exit 3"]'
+        run 7 "a failing shell check, without --ci" --shell-checks --reuse-site --no-composition --no-coverage
+        grep -q 'exited 3' out/shell-checks.log || fail "the exit is not logged: $(cat out/shell-checks.log)"
+        echo "ok   --shell-checks turns the shell checks on without --ci; a failing one is exit 7, its status logged"
+
+        # Usage errors, and the app and the site to test.
+        pyproject ""
+        rc=0; ./frappe-test --app 2> err || rc=$?
+        [ "$rc" = 64 ] && grep -q -- '--app needs a value' err || fail "--app without a value: rc $rc, $(cat err)"
+        mkdir -p elsewhere
+        rc=0; DEVENV_ROOT="$PWD/elsewhere" ./frappe-test 2> err || rc=$?
+        [ "$rc" = 64 ] && grep -q 'cannot tell which app this is; pass --app' err || fail "no app: rc $rc, $(cat err)"
+        rc=0; FRAPPE_SITE= ./frappe-test 2> err || rc=$?
+        [ "$rc" = 64 ] && grep -q 'no site: set FRAPPE_SITE or pass --site' err || fail "no site: rc $rc, $(cat err)"
+        run 0 "--app" --app fixture --reuse-site --no-coverage --no-composition
+        grep -q 'run-tests --app fixture' "$STATE/log" || grep -q 'tests: fixture' run.log || fail "--app: $(cat run.log)"
+        echo "ok   --app without a value, no app to be found and no site are exit 64"
+
+        # The prompt for an existing site, on a terminal.
+        run_tty 64 "an existing site, answered no" n --no-coverage --no-composition
+        grep -q 'Recreate it? \[y/N\]' run.log && grep -q 'kept dev.localhost' run.log || fail "answered no: $(cat run.log)"
+        ! grep -q 'provision-site' "$STATE/log" || fail "answered no provisioned: $(cat "$STATE/log")"
+        run_tty 0 "an existing site, answered yes" y --no-coverage --no-composition
+        grep -qx 'provision-site created dev.localhost' "$STATE/log" || fail "answered yes did not recreate: $(cat "$STATE/log")"
+        echo "ok   on a terminal an existing site is recreated on a yes and kept (exit 64) on a no"
+
+        # The bench: brought up and stopped again, unless --keep-up; --down stops it.
+        export STUB_PC_DOWN=1 STUB_DEVENV_OK=1
+        run 0 "the bench this run started" --reuse-site --no-coverage --no-composition
+        grep -q 'starting the bench' run.log && grep -q 'process-compose .* down' "$STATE/log" || fail "not stopped: $(cat "$STATE/log")"
+        run 0 "--keep-up" --reuse-site --no-coverage --no-composition --keep-up
+        ! grep -q 'process-compose .* down' "$STATE/log" || fail "--keep-up stopped the bench: $(cat "$STATE/log")"
+        run 0 "--down" --down
+        grep -qx "process-compose -U -u $PC_SOCKET_PATH down" "$STATE/log" || fail "--down: $(cat "$STATE/log")"
+        [ ! -e "$STATE/pc-up" ] || fail "--down left the bench up"
+        unset STUB_DEVENV_OK
+        STUB_PC_DOWN=""
+        echo "ok   a bench frappe-test started is stopped at the end, not with --keep-up; --down stops it"
+
+        # Provisioning: the app processes stopped and started again; a failure is exit 10.
+        printf 'web\nworker\n' > "$STATE/procs"
+        run 0 "provision with app processes" --recreate-site --no-coverage --no-composition
+        grep -q 'process stop web' "$STATE/log" && grep -q 'process start worker' "$STATE/log" \
+          && ! grep -q 'process stop scheduler' "$STATE/log" || fail "processes: $(cat "$STATE/log")"
+        STUB_PROVISION_FAILS=1 run 10 "provision-site fails" --recreate-site --no-coverage --no-composition
+        grep -q 'could not prepare dev.localhost' run.log && [ "$(stage site)" = error ] || fail "provision fails: $(cat run.log)"
+        grep -q 'process start web' "$STATE/log" || fail "not restarted after a failed provision: $(cat "$STATE/log")"
+        rm "$STATE/procs"
+        mkdir -p bench/sites/dev.localhost
+        echo "ok   provisioning stops the app processes present and starts them again; a failure is exit 10, stage site error"
+
+        # The default setup with erpnext installed. (An unknown setup step never reaches
+        # frappe-test: the configuration's schema refuses it, exit 10 above.)
+        printf 'frappe\nerpnext\n' > bench/sites/apps.txt
+        printf '[project]\nname = "fixture"\n' > repo/pyproject.toml
+        run 0 "erpnext in apps.txt" --reuse-site --no-coverage --no-composition
+        grep -q 'frappe-test: setup module:erpnext.tests.bootstrap_test_data' run.log \
+          && grep -q 'bench --site dev.localhost run-tests --module erpnext.tests.bootstrap_test_data' "$STATE/log" || fail "erpnext setup: $(cat "$STATE/log")"
+        rm bench/sites/apps.txt
+        echo "ok   with erpnext installed, the default setup is erpnext's bootstrap"
+
+        # The tests: filters, JUnit, a failure, the coverage gate.
+        pyproject ""
+        run 0 "filters" --reuse-site --no-composition --no-coverage --module M --doctype D --test a --test b
+        grep -q 'run-tests --app fixture --module M --doctype D --test a --test b' "$STATE/log" || fail "filters: $(cat "$STATE/log")"
+        run 0 "--ci's JUnit" --ci --reuse-site --no-composition --no-coverage
+        grep -q -- "--junit-xml-output $PWD/out/junit.xml" "$STATE/log" || fail "--ci's JUnit: $(cat "$STATE/log")"
+        run 0 "--junit, relative" --reuse-site --no-composition --no-coverage --junit j.xml
+        grep -q -- "--junit-xml-output $PWD/j.xml" "$STATE/log" || fail "--junit: $(cat "$STATE/log")"
+        STUB_NO_XMLRUNNER=1 run 10 "--junit without xmlrunner" --reuse-site --no-composition --no-coverage --junit j.xml
+        grep -q 'environment has no unittest-xml-reporting' run.log || fail "no xmlrunner: $(cat run.log)"
+        STUB_TESTS_RC=1 run 1 "failing tests" --reuse-site --no-composition --no-coverage
+        [ "$(stage tests)" = failed ] || fail "failing tests: stage $(stage tests)"
+        STUB_COV_REPORT_RC=2 run 2 "below fail_under" --reuse-site --no-composition --no-testmap
+        grep -q 'coverage is below \[tool.coverage.report\] fail_under' run.log && [ "$(stage coverage)" = failed ] || fail "fail_under: $(cat run.log)"
+        STUB_COV_REPORT_RC=2 run 0 "a filter skips the gate" --reuse-site --no-composition --module M
+        grep -q 'a filter is set; the coverage gate is skipped' run.log && [ "$(stage coverage)" = skipped ] && [ "$(stage testmap)" = skipped ] \
+          || fail "filtered coverage: $(cat run.log)"
+        grep -q -- "-m coverage run --rcfile=$PWD/repo/pyproject.toml --data-file=$PWD/out/.coverage --source=$PWD/repo/fixture -m frappe.utils.bench_helper" "$STATE/log" \
+          || fail "coverage run: $(cat "$STATE/log")"
+        echo "ok   filters and JUnit reach run-tests; failing tests are exit 1; coverage under fail_under is 2; a filter skips the gate and the testmap"
+
+        # ty and nix-lint, turned on without --ci.
+        run 0 "--ty without tools/pyproject.toml" --ty --reuse-site --no-composition --no-coverage
+        grep -q 'no tools/pyproject.toml, so no ty' run.log && [ "$(stage ty)" = skipped ] || fail "--ty without tools: $(cat run.log)"
+        mkdir -p repo/tools && touch repo/tools/pyproject.toml
+        run 5 "--ty with diagnostics" --ty --reuse-site --no-composition --no-coverage
+        [ "$(jq -c .ty out/frappe-test-report.json)" = '{"diagnostics":3,"ignores":0}' ] || fail "ty: $(jq -c .ty out/frappe-test-report.json)"
+        grep -q 'uv run --frozen --project tools ty check --python' "$STATE/log" || fail "ty's command: $(cat "$STATE/log")"
+        rm -r repo/tools
+        mkdir -p repo/nix && printf '{a=1;}\n' > repo/nix/bad.nix && git -C repo add nix/bad.nix
+        run 6 "--nix-lint on a misformatted file" --nix-lint --reuse-site --no-composition --no-coverage
+        [ "$(stage nix-lint)" = failed ] || fail "nix-lint: $(stage nix-lint)"
+        git -C repo rm -qf nix/bad.nix
+        echo "ok   --ty runs ty (exit 5, its diagnostics in the report), or skips it without tools/pyproject.toml; --nix-lint fails a misformatted file (exit 6)"
         touch "$out"
       '';
 }

@@ -1,6 +1,6 @@
 // frappe-shots' engine (docs/app-standards/spec.md §5.5): repeatable screenshots of a demo
 // site, driven over the Chrome DevTools Protocol (./cdp.ts) and compared with the committed
-// ones (./diff.ts). lib/sh/frappe-shots.sh brings the bench up and runs frappe-demo first,
+// ones (./diff.ts). frappe-shots (app_tools/frappe_shots.py) brings the bench up and runs frappe-demo first,
 // with the demo script under libfaketime (./clock.ts); this file only drives the browser:
 //
 //   node runner.ts --spec <screenshots.ts> --base <url> --mode update|check
@@ -380,7 +380,7 @@ async function main(): Promise<number> {
 	const unknown = opts.only.filter((n) => !spec.shots.some((s) => s.name === n));
 	if (unknown.length) throw new ExitError(SPEC_ERROR, `--only names no shot: ${unknown.join(", ")}`);
 	// The page's clock: noon on the demo day where the screenshots are set. The demo data is
-	// from 09:00 in the same zone (frappe-shots.sh, ./clock.ts), so the gap between a record
+	// from 09:00 in the same zone (frappe_shots.py, ./clock.ts), so the gap between a record
 	// and the page's "now" is the same on every machine.
 	const clock = opts.clock || spec.demo?.date || "";
 	let start: number | null = null;
