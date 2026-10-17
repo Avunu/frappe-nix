@@ -26,7 +26,8 @@
   pyproject-nix,
   pyproject-build-systems,
   uv2nix,
-  # lib.python.withGrafts, the `.pth` graft.
+  # lib.python: withGrafts (the `.pth` graft), overrides (the package fixes)
+  # and lockAudit (the stale-lock sentence).
   python-devops-nix,
   extraOverrides ? (_final: _prev: { }),
   # The packages to graft, each from lib/grafts.nix, or null. devguard (the
@@ -37,8 +38,8 @@
   journald ? null,
   nodebuild ? null,
   benchcli ? null,
-  # Overrides the "how to re-lock" half of the stale-lock message. See
-  # lib/lock-audit.nix; null keeps its bench-mode default.
+  # Overrides the "how to re-lock" half of the stale-lock message; null keeps
+  # the bench's (lib/relock-advice.nix).
   lockAuditRelock ? null,
   # `{ <normalized distribution name> = <source>; }` — where a workspace member's
   # sources actually are, when that is not `workspaceRoot/apps/<name>`.
@@ -115,6 +116,13 @@ let
         lib.composeManyExtensions [
           pyproject-build-systems.overlays.default
           overlay
+          # The fixes for packages that need a system library (psycopg2,
+          # python-ldap, lxml, pycups, python-magic, pyvips, cairocffi), shared
+          # with odoo-nix: right after uv2nix's overlay, so frappe-nix's own
+          # (mysqlclient) and the bench's pythonOverrides layer on top. A build
+          # fix touches an sdist build only; a dlopen fix patches the installed
+          # files, so it reaches a wheel too.
+          (python-devops-nix.lib.python.overrides { inherit pkgs; })
           extraOverrides
           srcOverlay
         ]
@@ -123,17 +131,16 @@ let
   # Turn a stale uv.lock into a sentence instead of an "attribute 'x' missing"
   # deep inside uv2nix's resolver. Membership is tested against `pythonSet`
   # because that is precisely the set resolvers.nix indexes.
-  lockAudit = import ./lock-audit.nix { inherit lib; } (
-    {
-      inherit workspaceRoot rootPyproject;
-      hasPackage = name: pythonSet ? ${name};
-    }
-    // lib.optionalAttrs (lockAuditRelock != null) { relock = lockAuditRelock; }
-  );
+  lockAudit = python-devops-nix.lib.python.lockAudit {
+    inherit workspaceRoot rootPyproject;
+    label = "frappe-nix";
+    hasPackage = name: pythonSet ? ${name};
+    relock = if lockAuditRelock != null then lockAuditRelock else import ./relock-advice.nix;
+  };
 
   # Wraps both virtualenvs: every consumer — the dev shell, benchRoot, the
   # containers, the NixOS module — reaches uv2nix's resolver through one of them.
-  assertLockCurrent = env: if lockAudit.missing == [ ] then env else throw lockAudit.message;
+  assertLockCurrent = lockAudit.assertCurrent;
 
   # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap
   # (python-devops-nix's lib.python.withGrafts, which writes

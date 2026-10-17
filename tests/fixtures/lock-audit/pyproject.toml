@@ -1,4 +1,4 @@
-# Fixture bench root for the lib/lock-audit.nix check. Not a real workspace —
+# Fixture bench root for the lock-audit check (tests/lock-audit.nix). Not a real workspace —
 # nothing resolves it; only its declarations are read.
 [project]
 name = "fixture-bench"

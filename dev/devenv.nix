@@ -39,6 +39,7 @@ in
     dev.devPythonEnv
     pkgs.prek
     pkgs.uv
+    dev.buildDeps
     pkgs.nixfmt
     pkgs.statix
     pkgs.deadnix
@@ -75,6 +76,7 @@ in
         src=$(nix build --no-link --print-out-paths "${root}#checks.${system}.frappe-upstream-config.frappeSrc")
         ${dev.frappeUpstream}/bin/frappe-upstream sync "$src" "${root}"
         uv lock --project "${root}/dev"
+        frappe-nix-build-deps update "${root}/dev/pyproject.toml" "${root}/dev/uv.lock"
       '';
     };
     update-frappe = {
@@ -83,6 +85,7 @@ in
         set -euo pipefail
         ${dev.frappeUpstream}/bin/frappe-upstream pin "${root}"
         uv lock --project "${root}/dev" --upgrade-package frappe
+        frappe-nix-build-deps update "${root}/dev/pyproject.toml" "${root}/dev/uv.lock"
         sync-frappe-upstream
       '';
     };

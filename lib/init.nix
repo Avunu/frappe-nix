@@ -11,7 +11,13 @@
 # frappe-nix's tool interpreter. This file is its glue: the store paths it
 # needs, as the JSON FRAPPE_NIX_CLI_CONFIG names, and the commands it runs on
 # PATH.
-{ pkgs }:
+{
+  pkgs,
+  # For frappe-nix-build-deps-sync on PATH, which derives a new bench's
+  # [tool.uv.extra-build-dependencies] block from the lock frappe-init writes
+  # (lib/build-deps.nix). Null leaves the template's entries as they are.
+  python-devops-nix ? null,
+}:
 
 let
   inherit (pkgs) lib;
@@ -68,12 +74,17 @@ let
 in
 pkgs.writeShellApplication {
   name = "frappe-init";
-  runtimeInputs = with pkgs; [
-    git
-    uv
-    workspaceTool
-    frappeNix
-  ];
+  runtimeInputs =
+    with pkgs;
+    [
+      git
+      uv
+      workspaceTool
+      frappeNix
+    ]
+    ++
+      lib.optional (python-devops-nix != null)
+        (import ./build-deps.nix { inherit pkgs python-devops-nix; }).sync;
   text = ''
     FRAPPE_NIX_CLI_CONFIG=${config} exec ${python}/bin/python3 -I -m frappe_nix_tools.frappe_init "$@"
   '';

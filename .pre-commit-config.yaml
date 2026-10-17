@@ -60,7 +60,7 @@ repos:
 
   # Whether dev/uv.lock still answers dev/pyproject.toml and runtime/. Needs the
   # network to re-resolve, which a flake check in the sandbox does not have;
-  # there lib/lock-audit.nix catches a stale lock at evaluation instead.
+  # there the lock audit (lib/python.nix) catches a stale lock at evaluation instead.
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.13.1
     hooks:

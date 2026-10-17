@@ -1,14 +1,25 @@
-# Checks for lib/lock-audit.nix — the preflight that turns a stale uv.lock into
-# a sentence rather than an "attribute 'x' missing" inside uv2nix's resolver.
+# Checks for the lock audit as frappe-nix calls it (lib/python.nix): python-devops-nix's
+# lib.python.lockAudit with frappe-nix's label and bench relock advice — the
+# preflight that turns a stale uv.lock into a sentence rather than an
+# "attribute 'x' missing" inside uv2nix's resolver. The base tests the function
+# itself; this pins frappe-nix's message.
 #
 # The audit is pure evaluation, so the answers are computed here at eval time and
 # the derivation only has to compare them against what was expected.
-{ pkgs }:
+{ pkgs, python-devops-nix }:
 
 let
   inherit (pkgs) lib;
 
-  audit = import ../lib/lock-audit.nix { inherit lib; };
+  audit =
+    args:
+    python-devops-nix.lib.python.lockAudit (
+      {
+        label = "frappe-nix";
+        relock = import ../lib/relock-advice.nix;
+      }
+      // args
+    );
 
   # Stands in for the resolved package set. Deliberately holds the *normalized*
   # names, so a fixture requirement only matches if the audit normalizes it too.
@@ -92,6 +103,10 @@ in
               result.message
           )
         }
+
+      eq "the message opens with frappe-nix's sentence" \
+        "frappe-nix: uv.lock does not cover every declared dependency, so the Python" \
+        ${lib.escapeShellArg (builtins.head (lib.splitString "\n" result.message))}
 
       eq "the same gaps are found however the advice is worded" \
         ${lib.escapeShellArg (lib.concatStringsSep "\n" found)} \

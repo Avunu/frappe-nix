@@ -21,6 +21,11 @@
 #       nginx.enable           = true;
 #     };
 #   };
+#
+# flake.nix applies this file to python-devops-nix's lib.python.threadCaps
+# (lib.modules.importApply), so it is nixosModules.default, not this path, that a
+# host imports.
+{ threadCaps }:
 {
   config,
   lib,
@@ -103,14 +108,22 @@ let
   # systemd unit's `environment=` (via siteEnv) and by the imperative
   # `bench` CLI wrapper, so a var like GIT_PYTHON_REFRESH only needs setting
   # once instead of being kept in sync by hand in two places.
-  mkCoreEnv = _pkg: {
-    DEV_SERVER = "0";
-    FRAPPE_ENV_TYPE = "production";
-    SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-    LD_LIBRARY_PATH = libraryPath;
-    # GitPython probes `git` on import; skip it, we ship git on PATH ourselves.
-    GIT_PYTHON_REFRESH = "none";
-  };
+  # threadCaps: BLAS and OpenMP pools at one thread (python-devops-nix's
+  # lib.python.threadCaps). numpy, pandas or scipy, which an app may pull in,
+  # otherwise size a pool to the host's CPU count on import in every worker,
+  # which a request-serving process gains nothing from and which can fail
+  # outright (`pthread_create failed`) on a many-core host.
+  mkCoreEnv =
+    _pkg:
+    threadCaps
+    // {
+      DEV_SERVER = "0";
+      FRAPPE_ENV_TYPE = "production";
+      SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+      LD_LIBRARY_PATH = libraryPath;
+      # GitPython probes `git` on import; skip it, we ship git on PATH ourselves.
+      GIT_PYTHON_REFRESH = "none";
+    };
 
   # Per-site environment. The package (and therefore interpreters) can differ
   # per site, so this is a function of (siteName, siteCfg).

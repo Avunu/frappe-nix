@@ -9,7 +9,7 @@
 # Volume contract:
 #   /bench/sites  — mount a persistent volume here for site state
 #   /secrets/     — mount secret files (db_password, encryption_key, *.json)
-_:
+{ inputs, ... }:
 
 {
   config = {
@@ -85,7 +85,12 @@ _:
           "FRAPPE_TUNE_GC=1"
           "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
           "LD_LIBRARY_PATH=${libraryPath}"
-        ];
+        ]
+        # BLAS and OpenMP pools at one thread, as the NixOS units have them
+        # (python-devops-nix's lib.python.threadCaps).
+        ++ lib.mapAttrsToList (
+          name: value: "${name}=${value}"
+        ) inputs.python-devops-nix.lib.python.threadCaps;
 
         # Config-synthesis entrypoint, mirroring frappe-init-<site> from nixos.nix.
         # Reads site params from env vars, merges secrets from /secrets/, writes

@@ -71,13 +71,10 @@ frappe-nix.lib.mkFlake { inherit inputs; } flakeConfig
 
 ### `lib.overrides`
 
-Composable overlays for Python packages that need native libraries: `mysqlclient`, `pycups`, `python-ldap`, `pyvips` and `cairocffi`. `mysqlclient` is wired in automatically from `mariadb.package`. Add the others through `pythonOverrides`:
+Every bench gets python-devops-nix's `lib.python.overrides`, the fixes frappe-nix and odoo-nix share for packages that need a system library: `psycopg2`, `python-ldap` (with OpenLDAP 2.5's `ldap_r` link fix), `lxml`, `pycups`, `python-magic`, `pyvips` and `cairocffi`. A build fix applies only where the package builds from its sdist; a fix to where a package dlopens its library (`python-magic`, `pyvips`, `cairocffi`) patches the installed files, so it reaches a wheel too. Nothing to add.
 
-```nix
-pythonOverrides = lib.composeManyExtensions [
-  (frappe-nix.lib.overrides.pycups { inherit pkgs; })
-  (frappe-nix.lib.overrides.python-ldap { inherit pkgs; })
-];
-```
+`lib.overrides.mysqlclient` is frappe-nix's own, wired in automatically from `mariadb.package`. A bench's `pythonOverrides` layer on top of both.
 
-Pure-Python build dependencies (setuptools and the like) belong in `pyproject.toml` under `[tool.uv.extra-build-dependencies]`, so uv2nix handles them. These overlays are only for packages that need C headers or system libraries.
+`lib.overrides.pycups`, `python-ldap`, `pyvips` and `cairocffi` are kept for benches that still list them: each is now a no-op with a warning, since the fix is already applied. Remove them from `pythonOverrides`: the aliases are kept for all of 1.x, removed in 2.0.0.
+
+Pure-Python build dependencies (setuptools and the like) belong in `pyproject.toml` under `[tool.uv.extra-build-dependencies]`, which frappe-nix derives from `uv.lock`; a bench adds its own with `pythonBuildDependencies`. See [Build dependencies](../development/locks.md#build-dependencies). The overlays are only for packages that need C headers or system libraries.

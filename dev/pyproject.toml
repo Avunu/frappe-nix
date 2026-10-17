@@ -8,7 +8,7 @@
 # uv workspace above runtime/.
 #
 # Built by frappe-nix's own lib/python.nix (see dev/env.nix), so a stale
-# uv.lock is reported by lib/lock-audit.nix exactly as it is in a bench.
+# uv.lock is reported by the lock audit (lib/python.nix) exactly as it is in a bench.
 #
 # Bump Frappe with `update-frappe`; the ruff pin, the ruff-pre-commit rev in
 # .pre-commit-config.yaml and dev/frappe-ruff.toml follow it
@@ -25,7 +25,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # lib/banner.py's one dependency (it runs under lib/rich-python.nix).
+    # lib/banner.py's one dependency (it runs under python-devops-nix's lib.python.rich).
     "rich",
     "ruff==0.14.10",
     # py/frappe_nix_tools's one dependency frappe does not bring (jinja2, packaging and
@@ -60,130 +60,22 @@ frappe-runtime = { path = "../runtime", editable = true }
 # The Frappe branch `update-frappe` follows: a lib/frappe-presets.json row.
 frappe-branch = "version-16"
 
-# Build-time deps for older Frappe/ERPNext packages that predate PEP 517/518 and
-# rely on setuptools/pkg_resources. uv2nix consumes this so the Nix build needs
-# no setuptools overlay. Unused entries are ignored, so this is a safe superset.
+# Build dependencies for the packages dev/uv.lock has no wheel for, which uv2nix
+# builds from their sdist: setuptools for each, plus the entries the lock cannot
+# show (lib/build-deps.nix, `dev`): Frappe is a URL source whose backend is
+# flit-core, and frappe-runtime is installed editable, which hatchling builds
+# through `editables`. Derived by `frappe-nix-build-deps update`, which
+# update-frappe and sync-frappe-upstream run after `uv lock`; the
+# `build-deps` check fails when it is out of date.
 [tool.uv.extra-build-dependencies]
-# uv builds without isolation here, so a package's own build-system.requires is
-# not enough -- the backend has to be named again.
-# Installed editable here, which hatchling builds through `editables`.
-"frappe-runtime" = ["hatchling", "editables"]
-# A URL source: uv.lock records no build-system for it, so name Frappe's.
-"frappe" = ["flit-core"]
+# >>> frappe-nix: sdist build deps (managed) >>>
 "cairocffi" = ["setuptools", "cffi", "pycparser"]
-"backcall" = ["setuptools"]
-"backoff" = ["setuptools"]
-"barcodenumber" = ["setuptools"]
-"bleach-allowlist" = ["setuptools"]
-"braintree" = ["setuptools"]
-"chardet" = ["setuptools"]
-"colorama" = ["setuptools"]
-"croniter" = ["setuptools"]
-"csscompressor" = ["setuptools"]
-"cssselect" = ["setuptools"]
-"cssselect2" = ["setuptools"]
-"cssutils" = ["setuptools"]
-"dataclasses-json" = ["setuptools"]
-"decorator" = ["setuptools"]
 "docopt" = ["setuptools"]
-"dropbox" = ["setuptools"]
-"email-reply-parser" = ["setuptools"]
-"et-xmlfile" = ["setuptools"]
-"executing" = ["setuptools"]
-"filetype" = ["setuptools"]
-"getmac" = ["setuptools"]
-"gocardless-pro" = ["setuptools"]
-"googlemaps" = ["setuptools"]
+"frappe" = ["flit-core"]
+"frappe-runtime" = ["hatchling", "editables"]
 "gunicorn" = ["setuptools"]
-"hiredis" = ["setuptools"]
-"html5lib" = ["setuptools"]
-"httplib2" = ["setuptools"]
-"jellyfish" = ["setuptools"]
-"jsmin" = ["setuptools"]
-"jsonpath-ng" = ["setuptools"]
-"ldap3" = ["setuptools"]
-"markdown2" = ["setuptools"]
-"markdownify" = ["setuptools"]
-"marshmallow" = ["setuptools"]
-"matplotlib-inline" = ["setuptools"]
-"maxminddb-geolite2" = ["setuptools"]
-"maxminddb" = ["setuptools"]
-"monotonic" = ["setuptools"]
-"num2words" = ["setuptools"]
-"oauthlib" = ["setuptools"]
-"openpyxl" = ["setuptools"]
-"parso" = ["setuptools"]
-"passlib" = ["setuptools"]
-"paytmchecksum" = ["setuptools"]
-"pdfkit" = ["setuptools"]
-"pexpect" = ["setuptools"]
-"phonenumbers" = ["setuptools"]
-"pickleshare" = ["setuptools"]
-"plaid-python" = ["setuptools"]
-"ply" = ["setuptools"]
-"polyline" = ["setuptools"]
-"posthog" = ["setuptools"]
-"premailer" = ["setuptools"]
-"prompt-toolkit" = ["setuptools"]
-"psutil" = ["setuptools"]
-"ptyprocess" = ["setuptools"]
-"pure-eval" = ["setuptools"]
-"pyasn1-modules" = ["setuptools"]
-"pyasn1" = ["setuptools"]
-"pycountry" = ["setuptools"]
-"pycryptodome" = ["setuptools"]
-"pydyf" = ["setuptools"]
-"pyjwt" = ["setuptools"]
-"pymysql" = ["setuptools"]
-"pyopenssl" = ["setuptools"]
-"pyotp" = ["setuptools"]
-"pyparsing" = ["setuptools"]
-"pypdf" = ["setuptools"]
-"pyphen" = ["setuptools"]
+"mysqlclient" = ["setuptools"]
 "pypika" = ["setuptools"]
-"pypng" = ["setuptools"]
 "pyqrcode" = ["setuptools"]
-"python-barcode" = ["setuptools"]
-"python-docx" = ["setuptools"]
-"python-ldap" = ["setuptools"]
-"python-magic" = ["setuptools"]
-"python-pptx" = ["setuptools"]
-"python-stdnum" = ["setuptools"]
-"python-youtube" = ["setuptools"]
-"pytz" = ["setuptools"]
-"rapidfuzz" = ["setuptools"]
 "rauth" = ["setuptools"]
-"razorpay" = ["setuptools"]
-"redis" = ["setuptools"]
-"requests-oauthlib" = ["setuptools"]
-"responses" = ["setuptools"]
-"restrictedpython" = ["setuptools"]
-"rq" = ["setuptools"]
-"rsa" = ["setuptools"]
-"ruamel-yaml-clib" = ["setuptools"]
-"six" = ["setuptools"]
-"soupsieve" = ["setuptools"]
-"sql-metadata" = ["setuptools"]
-"sqlparse" = ["setuptools"]
-"stack-data" = ["setuptools"]
-"stone" = ["setuptools"]
-"stripe" = ["setuptools"]
-"tenacity" = ["setuptools"]
-"terminaltables" = ["setuptools"]
-"tinycss2" = ["setuptools"]
-"tinyhtml5" = ["setuptools"]
-"traceback-with-variables" = ["setuptools"]
-"traitlets" = ["setuptools"]
-"typing-inspect" = ["setuptools"]
-"unidecode" = ["setuptools"]
-"uritemplate" = ["setuptools"]
-"us" = ["setuptools"]
-"vobject" = ["setuptools"]
-"wcwidth" = ["setuptools"]
-"weasyprint" = ["setuptools"]
-"webencodings" = ["setuptools"]
-"whoosh" = ["setuptools"]
-"xlrd" = ["setuptools"]
-"xmltodict" = ["setuptools"]
-"zopfli" = ["setuptools"]
-"zxcvbn" = ["setuptools"]
+# <<< frappe-nix: sdist build deps (managed) <<<

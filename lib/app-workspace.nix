@@ -2,7 +2,7 @@
 # rather than a whole bench.
 #
 # A bench repo *is* the uv workspace: pyproject.toml and apps/ are tracked files
-# and every consumer (uv2nix, lib/lock-audit.nix) reads them off the checkout. An
+# and every consumer (uv2nix, the lock audit) reads them off the checkout. An
 # app repo has neither, so this builds the same shape out of flake inputs —
 # `apps/<name>` per pinned app, the app under development, a generated root
 # pyproject.toml, and the committed uv.lock — and hands the result to those
@@ -79,6 +79,12 @@
   # seeded into `nix run .#relock`'s workspace too, a relock keeps whatever
   # this decided.
   testToolsLock ? null,
+  # lib/build-deps.nix's `command` (frappe-nix-build-deps), or null. With a
+  # lock, the generated root's managed [tool.uv.extra-build-dependencies] block
+  # is derived from it, as a bench's is after its relock: the root is generated
+  # here every time, so this is the only place it can be. Null leaves the
+  # template's entries alone.
+  buildDeps ? null,
 }:
 
 let
@@ -162,5 +168,8 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
 
     ${lib.optionalString (lockFile != null) ''
       install -m 0644 ${lockFile} "$out/uv.lock"
+    ''}
+    ${lib.optionalString (lockFile != null && buildDeps != null) ''
+      ${lib.getExe buildDeps} update pyproject.toml uv.lock
     ''}
   ''
