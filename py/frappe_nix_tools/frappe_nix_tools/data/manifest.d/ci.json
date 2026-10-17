@@ -1,0 +1,102 @@
+{
+	"$comment": "N4's managed files (docs/app-standards/spec.md §4.7, §2.17, §2.18): the caller workflows, each live only while its module is on (S36, S39), dependabot.yml and zizmor.yml. The format is in frappe_nix_tools/scaffold/manifest.py.",
+	"entries": [
+		{
+			"path": ".github/workflows/ci.yml",
+			"template": ".github/workflows/ci.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"uses": [
+				"ci.test-timeout-minutes",
+				"ci.schedules.ci"
+			],
+			"header": "yaml"
+		},
+		{
+			"path": ".github/workflows/pr-policy.yml",
+			"template": ".github/workflows/pr-policy.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"when": "modules.commits",
+			"header": "yaml"
+		},
+		{
+			"path": ".github/workflows/release.yml",
+			"template": ".github/workflows/release.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"when": "modules.releases",
+			"uses": [
+				"ci.schedules.release",
+				"listing.publish",
+				"listing.registry-fork"
+			],
+			"header": "yaml"
+		},
+		{
+			"path": ".github/workflows/deps.yml",
+			"template": ".github/workflows/deps.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"when": "modules.dependabot",
+			"uses": [
+				"dependabot.auto-merge",
+				"ci.schedules.deps-sweep",
+				"ci.schedules.deps-relock",
+				"repo-policy.merge-methods"
+			],
+			"header": "yaml"
+		},
+		{
+			"path": ".github/workflows/nightly.yml",
+			"template": ".github/workflows/nightly.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"when": "cfg.ci.nightly",
+			"uses": [
+				"ci.nightly",
+				"ci.schedules.nightly",
+				"listing.publish",
+				"test-utils.hooks"
+			],
+			"header": "yaml"
+		},
+		{
+			"path": ".github/workflows/assets.yml",
+			"template": ".github/workflows/assets.yml.j2",
+			"strategy": "whole",
+			"module": "pilot-assets",
+			"header": "yaml"
+		},
+		{
+			"path": ".github/dependabot.yml",
+			"template": ".github/dependabot.yml.j2",
+			"strategy": "whole",
+			"module": "dependabot",
+			"uses": [
+				"dependabot.ecosystems",
+				"dependabot.cadence",
+				"dependabot.cadence-overrides",
+				"dependabot.cooldown-days",
+				"docs-site.action-patterns",
+				"docs-site.cooldown-exclude-actions",
+				"docs-site.package-names",
+				"test-utils.hooks"
+			],
+			"header": "yaml",
+			"local_regions": [
+				"updates"
+			]
+		},
+		{
+			"path": ".github/zizmor.yml",
+			"template": ".github/zizmor.yml.j2",
+			"strategy": "whole",
+			"module": "workflow-lint",
+			"header": "yaml",
+			"uses": [
+				"dependabot.cooldown-days"
+			]
+		}
+	]
+}

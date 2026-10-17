@@ -1,0 +1,28 @@
+{
+	"repository": {
+		"default_branch": "{integration_branch}",
+		"allow_squash_merge": "{squash in merge_methods}",
+		"allow_merge_commit": "{merge in merge_methods}",
+		"allow_rebase_merge": "{rebase in merge_methods}",
+		"allow_auto_merge": true,
+		"allow_update_branch": true,
+		"delete_branch_on_merge": "{delete_branch_on_merge}",
+		"squash_merge_commit_title": "PR_TITLE",
+		"squash_merge_commit_message": "COMMIT_MESSAGES",
+		"has_wiki": false,
+		"has_projects": false,
+		"homepage": "{documentation}",
+		"security_and_analysis": {
+			"secret_scanning": { "status": "enabled" },
+			"secret_scanning_push_protection": { "status": "enabled" }
+		}
+	},
+	"actions_workflow_permissions": { "default_workflow_permissions": "read", "can_approve_pull_request_reviews": true },
+	"vulnerability_alerts": true,
+	"automated_security_fixes": true,
+	"labels": [
+		{ "name": "dependencies", "color": "0366d6", "description": "Dependency updates" },
+		{ "name": "needs-review", "color": "d93f0b", "description": "Not merged automatically; a person reviews it" },
+		{ "name": "screenshots", "color": "c5def5", "description": "Screenshot refresh from nightly" }
+	]
+}

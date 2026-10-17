@@ -605,10 +605,12 @@ class TestRetire(AppCase):
 			"jobs: { m: { steps: [ { uses: dependabot/fetch-metadata@v2 } ] } }\n",
 		)
 		self.commit()
-		code, out = self.check()
-		self.assertEqual(code, 0, out)
-		with with_ci_callers:
+		# A package without the callers (frappe-nix before N4) leaves them alone ...
+		with mock.patch.object(manifest, "ships", lambda path: False):
 			code, out = self.check()
+		self.assertEqual(code, 0, out)
+		# ... and this one, which renders release.yml and deps.yml, retires them.
+		code, out = self.check()
 		self.assertEqual(code, 1, out)
 		self.assertIn(".github/workflows/old.yml (retire): legacy file", out)
 		self.assertIn(".github/workflows/merge.yml (retire): legacy file", out)
@@ -982,16 +984,16 @@ class TestCommitMsgPolicyHook(AppCase):
 	def test_rendered_only_with_policy(self):
 		import importlib.util
 
-		self.synced()
-		self.assertNotIn("frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
 		real = importlib.util.find_spec
-		shipped = mock.patch.object(
+		hidden = mock.patch.object(
 			importlib.util,
 			"find_spec",
-			lambda name, *a: object() if name == "frappe_nix_tools.commands.policy" else real(name, *a),
+			lambda name, *a: None if name == "frappe_nix_tools.commands.policy" else real(name, *a),
 		)
-		with shipped:
-			code, _, err = self.fn("sync", "--write")
+		with hidden:
+			self.synced()
+		self.assertNotIn("frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
+		code, _, err = self.fn("sync", "--write")
 		self.assertEqual(code, 0, err)
 		self.assertIn("id: frappe-nix-commit-msg", self.read(".pre-commit-config.yaml"))
 

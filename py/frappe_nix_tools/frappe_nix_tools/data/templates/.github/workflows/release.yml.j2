@@ -1,0 +1,42 @@
+# Releases without an App (docs: ci.md, S13): release-please, CI on the release PR, the
+# fast-forward of the release branch (develop+version) and, when enabled, the registry PR.
+{% set publish = modules.listing and cfg.listing.publish %}
+name: release
+on:
+  push:
+    branches: [{{ branches.integration }}]
+{% if cfg.ci.schedules.release %}
+  schedule:
+    # Auto-merged commits raise no push.
+    - cron: "{{ cfg.ci.schedules.release }}"
+{% endif %}
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
+    uses: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/app-release.yml@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+      release-branch: "{{ branches.release or "" }}"
+{% if publish %}
+      publish: {% raw %}${{ vars.MARKETPLACE_PUBLISH == 'true' }}{% endraw %}
+
+      registry-fork: {{ cfg.listing["registry-fork"] }}
+{% endif %}
+      pilot-assets: {{ "true" if modules["pilot-assets"] else "false" }}
+    secrets:
+{% if publish %}
+      REGISTRY_TOKEN: {% raw %}${{ secrets.REGISTRY_TOKEN }}{% endraw %}
+
+{% endif %}
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+

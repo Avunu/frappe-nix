@@ -1,0 +1,43 @@
+# Dependency PRs (docs: ci.md): relock and sync after a flake bump, auto-merge by the
+# decision table, and the sweep that re-dispatches CI for bot PRs (§4.5).
+{% set sweep = cfg.ci.schedules["deps-sweep"] %}
+{% set relock = cfg.ci.schedules["deps-relock"] %}
+name: deps
+on:
+  pull_request:
+{% if sweep or relock %}
+  schedule:
+{% if sweep %}
+    # Re-dispatch CI for bot PRs.
+    - cron: "{{ sweep }}"
+{% endif %}
+{% if relock %}
+    # The weekly Python relock; passed as relock-cron below.
+    - cron: "{{ relock }}"
+{% endif %}
+{% endif %}
+  workflow_dispatch:
+permissions: {}
+jobs:
+  deps:
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
+    uses: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/app-deps.yml@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+      nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
+
+      auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}
+      merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
+      relock-cron: "{{ relock }}"
+    secrets:
+      NIX_CACHE_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}{% endraw %}
+
+      NIX_CACHE_READ_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_READ_TOKEN }}{% endraw %}
+
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+

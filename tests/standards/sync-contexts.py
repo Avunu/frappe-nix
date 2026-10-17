@@ -176,6 +176,8 @@ def run(
 	for rel, text in files.items():
 		(root / rel).parent.mkdir(parents=True, exist_ok=True)
 		(root / rel).write_text(text)
+	# Phase A's lock exists before phase B renders the caller workflows from it (S32, §4.7).
+	(root / "flake.lock").write_text(json.dumps(lock(["frappe", *required])))
 	git(root, "add", "-A")
 	git(root, "commit", "-qm", "init")
 	problems = []

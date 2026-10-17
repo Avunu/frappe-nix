@@ -1,0 +1,92 @@
+name: app-pr-policy
+
+# The `pr-policy` gate (docs/app-standards/ci.md, spec §4.3), reusable: the caller job is
+# named `ci`, so the check reads `ci / pr-policy`. `frappe-nix policy --pr` checks the
+# base branch, the title and every commit (§5.9).
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        type: string
+        required: true
+      app-root:
+        type: string
+        default: "."
+      integration-branch:
+        type: string
+        default: develop
+      frappe-nix-override:
+        description: frappe-nix's self-test only (a path in the workspace)
+        type: string
+        default: ""
+    secrets:
+      FETCH_TOKEN:
+        required: false
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  pr-policy:
+    name: pr-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # the checkout
+      pull-requests: read # the PR's title and base, and the open PRs it may be stacked on
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.app-root }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock
+
+      - name: The commit tools
+        run: |
+          set -euo pipefail
+          if [ -f tools/pyproject.toml ]; then
+            uv sync --frozen --project tools
+          fi
+
+      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$FETCH_TOKEN" ]; then
+            echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
+            echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
+          else
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
+          fi
+
+      - name: frappe-nix policy --pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REF_NAME: ${{ github.ref_name }}
+        run: frappe-nix policy --pr

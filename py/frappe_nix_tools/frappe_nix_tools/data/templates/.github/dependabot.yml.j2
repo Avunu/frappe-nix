@@ -1,0 +1,186 @@
+# Every entry targets {{ branches.integration }} and commits as chore(deps)/chore(deps-dev), so no bump cuts a release.
+{% if modules.ci %}
+# deps.yml decides what merges automatically.
+{% endif %}
+{% set eco = cfg.dependabot.ecosystems %}
+{% set overrides = cfg.dependabot["cadence-overrides"] %}
+{% set cooldown = cfg.dependabot["cooldown-days"] %}
+{% set docs_actions = cfg["docs-site"]["action-patterns"] if modules["docs-site"] else [] %}
+{% set docs_cooldown_exclude = cfg["docs-site"]["cooldown-exclude-actions"] if modules["docs-site"] else [] %}
+{% set docs_packages = cfg["docs-site"]["package-names"] if modules["docs-site"] else [] %}
+{% set pilot_patterns = ["frappe/pilot*"] if modules["pilot-assets"] else [] %}
+{% set test_utils = modules["test-utils"] and cfg["test-utils"].hooks %}
+{% set remote_hooks = precommit_live and (modules.hygiene or modules.ssort or test_utils) %}
+{% macro cadence(name) %}{{ overrides[name] if name in overrides else cfg.dependabot.cadence }}{% endmacro %}
+{% macro schedule(name) %}
+{% if cadence(name) == "weekly" %}
+    schedule:
+      interval: weekly
+      day: monday
+{% else %}
+    schedule:
+      interval: {{ cadence(name) }}
+{% endif %}
+{% endmacro %}
+version: 2
+updates:
+{% if eco["github-actions"] %}
+  # One entry for /, which is also the entry a docs tool scaffolds. Separate groups,
+  # so a docs or pilot bump never holds up the rest.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: {{ branches.integration }}
+{{ schedule("github-actions") }}    cooldown:
+      default-days: {{ cooldown }}
+{% if docs_cooldown_exclude %}
+      exclude: {{ docs_cooldown_exclude | tojson }}
+{% endif %}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    # frappe-nix's reusable workflows move only through `frappe-nix repo rollout` and `frappe-init --sync`.
+    ignore:
+      - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
+    groups:
+{% if docs_actions %}
+      # needs-review: a merge publishes the docs site with the new workflow code
+      docs-actions:
+        patterns: {{ docs_actions | tojson }}
+{% endif %}
+{% if pilot_patterns %}
+      # needs-review: builds release assets
+      pilot:
+        patterns: {{ pilot_patterns | tojson }}
+{% endif %}
+      actions:
+        patterns: ["*"]
+{% if docs_actions or pilot_patterns %}
+        exclude-patterns: {{ (docs_actions + pilot_patterns) | tojson }}
+{% endif %}
+{% endif %}
+{% if eco.npm and package_json_live %}
+  - package-ecosystem: npm
+    directory: /
+    target-branch: {{ branches.integration }}
+{{ schedule("npm") }}    cooldown:
+      default-days: {{ cooldown }}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      toolchain:
+        patterns: [oxlint, oxfmt, typescript, frappe-types, "@types/node", "stylelint*"]
+        update-types: [minor, patch]
+      runtime:
+        patterns: ["*"]
+        update-types: [minor, patch]
+{% endif %}
+{% if eco.npm %}
+{% for d in discover.nested_frontends %}
+  - package-ecosystem: npm
+    directory: /{{ d }}
+    target-branch: {{ branches.integration }}
+{{ schedule("npm") }}    cooldown:
+      default-days: {{ cooldown }}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      {{ d }}:
+        patterns: ["*"]
+        update-types: [minor, patch]
+{% endfor %}
+{% if discover.docs_site and modules["docs-site"] %}
+  # docs-site/: a merge publishes the site, so deps.yml never merges these automatically
+  - package-ecosystem: npm
+    directory: /docs-site
+    target-branch: {{ branches.integration }}
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+{% if docs_packages %}
+      exclude: {{ docs_packages | tojson }}
+{% endif %}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      docs-site-packages:
+        patterns: ["*"]
+{% endif %}
+{% endif %}
+{% if eco.uv and tools_deps %}
+  - package-ecosystem: uv
+    directory: /tools
+    target-branch: {{ branches.integration }}
+{{ schedule("uv") }}    cooldown:
+      default-days: {{ cooldown }}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      tools:
+        patterns: ["*"]
+        update-types: [minor, patch]
+{% endif %}
+{% if eco["pre-commit"] and remote_hooks %}
+  - package-ecosystem: pre-commit
+    directory: /
+    target-branch: {{ branches.integration }}
+{{ schedule("pre-commit") }}    cooldown:
+      default-days: {{ cooldown }}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    groups:
+      hooks:
+        patterns: ["*"]
+{% if test_utils %}
+        exclude-patterns: ["*agritheory/test_utils*"]
+      test-utils:
+        patterns: ["*agritheory/test_utils*"]
+{% endif %}
+{% endif %}
+{% if eco.nix %}
+  - package-ecosystem: nix
+    directory: /
+    target-branch: {{ branches.integration }}
+{{ schedule("nix") }}    cooldown:
+      default-days: {{ cooldown }}
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+    # frappe-nix and the org profile move only through `frappe-nix repo rollout` (S5, S38): their bump can rewrite
+    # workflow files, which GITHUB_TOKEN can't push. Dependabot moves frappe and the siblings, which never touch one.
+    ignore:
+      - dependency-name: frappe-nix
+{% if profile_input %}
+      - dependency-name: standards-profile
+{% endif %}
+    groups:
+      flake-inputs:
+        patterns: ["*"]
+{% endif %}
+{% if discover.gitmodules and eco.gitsubmodule %}
+  - package-ecosystem: gitsubmodule
+    directory: /
+    target-branch: {{ branches.integration }}
+{{ schedule("gitsubmodule") }}    cooldown:
+      default-days: {{ cooldown }}
+    commit-message:
+      prefix: chore
+      include: scope
+    labels: [dependencies]
+{% endif %}
+  # frappe-nix:local-begin updates
+  # frappe-nix:local-end updates

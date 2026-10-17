@@ -1,0 +1,80 @@
+# frappe-nix's test-correctness rules (docs/app-standards/spec.md §4.2, the semgrep step of
+# `lint`, module `semgrep` with `semgrep.test-correctness`). Run over the app's test files only:
+#   semgrep scan --error --metrics=off --include='**/test_*.py' --config <this file> <app>
+# Each rule catches a test that passes without testing what it claims to.
+rules:
+  - id: frappe-nix-test-commit
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A test commits the transaction. FrappeTestCase rolls back after each test; a commit
+      leaks the test's data into every later test. Remove the commit (or use
+      frappe.db.savepoint / a separate site if the code under test commits on purpose).
+    pattern-either:
+      - pattern: frappe.db.commit()
+      - pattern: frappe.db.sql("commit")
+      - pattern: frappe.db.sql("COMMIT")
+
+  - id: frappe-nix-test-assert-true-comparison
+    languages: [python]
+    severity: ERROR
+    message: >-
+      assertTrue(a == b) hides both values when it fails; use assertEqual(a, b)
+      (or assertIn, assertIs, assertIsNone, assertGreater as fits).
+    pattern-either:
+      - pattern: $SELF.assertTrue($A == $B)
+      - pattern: $SELF.assertTrue($A != $B)
+      - pattern: $SELF.assertTrue($A in $B)
+      - pattern: $SELF.assertTrue($A is None)
+      - pattern: $SELF.assertFalse($A == $B)
+
+  - id: frappe-nix-test-assert-tuple
+    languages: [python]
+    severity: ERROR
+    message: An assert on a non-empty tuple is always true; the message belongs after a comma, not in parentheses.
+    pattern: assert ($A, $B)
+
+  - id: frappe-nix-test-swallowed-exception
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A test that catches every exception and passes can never fail; use
+      self.assertRaises(<the exception>) or let the exception fail the test.
+    pattern-either:
+      - pattern: |
+          try:
+              ...
+          except:
+              pass
+      - pattern: |
+          try:
+              ...
+          except Exception:
+              pass
+      - pattern: |
+          try:
+              ...
+          except BaseException:
+              pass
+
+  - id: frappe-nix-test-assert-raises-broad
+    languages: [python]
+    severity: ERROR
+    message: assertRaises(Exception) passes on any error, including a typo in the test; name the exception the code raises.
+    pattern-either:
+      - pattern: $SELF.assertRaises(Exception, ...)
+      - pattern: $SELF.assertRaises(BaseException, ...)
+
+  - id: frappe-nix-test-ignore-permissions-everywhere
+    languages: [python]
+    severity: WARNING
+    message: >-
+      frappe.flags.ignore_permissions set in a test and never reset leaks into every later
+      test; set it inside a try/finally or use frappe.set_user.
+    patterns:
+      - pattern: frappe.flags.ignore_permissions = True
+      - pattern-not-inside: |
+          try:
+              ...
+          finally:
+              ...

@@ -1,0 +1,39 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "fleet.schema.json",
+	"title": "A fleet list for frappe-nix repo apply|audit|rollout --all --fleet (docs/app-standards/spec.md §4.9)",
+	"type": "object",
+	"required": ["schema", "apps"],
+	"additionalProperties": false,
+	"properties": {
+		"$comment": { "type": "string" },
+		"schema": { "const": 1 },
+		"profile": {
+			"description": "The profile repo apply resolves for a repository without [tool.frappe-nix] (§5.6).",
+			"type": "string",
+			"minLength": 1
+		},
+		"apps": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/app" }
+		}
+	},
+	"$defs": {
+		"app": {
+			"type": "object",
+			"required": ["repo", "app"],
+			"additionalProperties": false,
+			"properties": {
+				"repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+				"app": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+				"target_app": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+				"private": { "type": "boolean", "default": false },
+				"list": { "type": "boolean", "default": true },
+				"documentation": { "type": "string", "pattern": "^https://" },
+				"rename_mode": { "enum": ["rename", "replace"], "default": "rename" },
+				"profile": { "type": "string", "minLength": 1 },
+				"integration_branch": { "type": "string", "minLength": 1 }
+			}
+		}
+	}
+}

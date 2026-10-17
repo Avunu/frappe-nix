@@ -1,0 +1,24 @@
+# `ci / pr-policy` (docs: ci.md): the PR's base, title and commits. Its own file, so a retitle
+# re-runs only this check (S4).
+name: pr-policy
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: {% raw %}pr-policy-${{ github.event.pull_request.number || github.ref }}{% endraw %}
+
+  cancel-in-progress: true
+jobs:
+  ci:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/app-pr-policy.yml@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+    secrets:
+      FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
+

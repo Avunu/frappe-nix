@@ -1,0 +1,244 @@
+name: selftest-ci
+
+# The CI gates end to end (docs/app-standards/spec.md §7, "N4: CI"), on the fixture app in
+# tests/fixtures/standards-app with this checkout of frappe-nix (frappe-nix-override: .,
+# which allows skew).
+#
+#   workflows   actionlint on every workflow here; zizmor (strict hash-pin, the shipped
+#               zizmor.yml) on the reusable app-*.yml, fleet-audit.yml and this file; the
+#               fixture's callers rendered under recommended, the example-org profile and the
+#               gate matrix (tests/standards/ci_render.py), each through actionlint and zizmor;
+#               fleet-audit.yml has no trigger but workflow_call.
+#   lint, typecheck, marketplace
+#               the reusable gates themselves, from caller jobs named `ci`, so the checks
+#               read `ci / lint` and so on (S3, S39). Every PR touching them runs these.
+#   contexts    asserts those check-run names on this run's head (§4.2's fallback otherwise).
+#   test        app-test.yml (Nix, the fixture's bench): weekly and on dispatch only.
+#   pr-policy   app-pr-policy.yml: on dispatch (no PR is found for the branch, so it passes)
+#               and weekly. On a PR it would check frappe-nix's PR against the fixture's
+#               integration branch.
+#   minibench   the customizations mini-bench: validate_customizations passes on the fixture
+#               with a Custom Field, and fails once an owner is an e-mail address.
+
+on:
+  pull_request:
+    paths:
+      - .github/**
+      - py/frappe_nix_tools/**
+      - templates/**
+      - tests/fixtures/standards-app/**
+      - tests/fixtures/profiles/**
+      - tests/standards/ci_render.py
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: frappe-nix-tools from this checkout, and the fixture's pinned linters
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 ./py/frappe_nix_tools
+          uv sync --frozen --project tests/fixtures/standards-app/tools
+
+      - name: frappe-nix's own workflows
+        run: |
+          set -euo pipefail
+          lint() { uv run --frozen --project tests/fixtures/standards-app/tools "$@"; }
+          lint actionlint .github/workflows/*.yml
+          # The zizmor.yml every app gets (the fixture's, as sync rendered it): strict hash-pin.
+          lint zizmor --config tests/fixtures/standards-app/.github/zizmor.yml \
+            .github/workflows/app-*.yml .github/workflows/fleet-audit.yml .github/workflows/selftest-ci.yml
+          python="$(uv tool dir)/frappe-nix-tools/bin/python"
+          "$python" - <<'EOF'
+          import yaml
+          doc = yaml.safe_load(open(".github/workflows/fleet-audit.yml"))
+          triggers = doc.get("on", doc.get(True))
+          assert list(triggers) == ["workflow_call"], f"fleet-audit.yml triggers: {list(triggers)}"
+          print("fleet-audit.yml: workflow_call only")
+          EOF
+
+      - name: The fixture's callers, every gate combination
+        run: |
+          set -euo pipefail
+          lint() { uv run --frozen --project "$GITHUB_WORKSPACE/tests/fixtures/standards-app/tools" "$@"; }
+          python="$(uv tool dir)/frappe-nix-tools/bin/python"
+          "$python" tests/standards/ci_render.py . "$RUNNER_TEMP/render"
+          for dir in "$RUNNER_TEMP"/render/*/; do
+            echo "::group::$(basename "$dir")"
+            (
+              cd "$dir"
+              lint actionlint .github/workflows/*.yml
+              files=(.github/workflows)
+              if [ -f .github/dependabot.yml ]; then
+                files+=(.github/dependabot.yml)
+              fi
+              lint zizmor --config .github/zizmor.yml "${files[@]}"
+            )
+            echo "::endgroup::"
+          done
+
+  lint:
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/app-lint.yml # zizmor: ignore[self-repository]
+    with:
+      app: standards_fixture
+      app-root: tests/fixtures/standards-app
+      frappe-nix-override: .
+
+  typecheck:
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/app-typecheck.yml # zizmor: ignore[self-repository]
+    with:
+      app: standards_fixture
+      app-root: tests/fixtures/standards-app
+      frappe-nix-override: .
+
+  marketplace:
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/app-marketplace.yml # zizmor: ignore[self-repository]
+    with:
+      app: standards_fixture
+      app-root: tests/fixtures/standards-app
+      frappe-nix-override: .
+
+  contexts:
+    needs: [lint, typecheck, marketplace]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read # this run's check-run names
+    steps:
+      - name: The gates report as `ci / <gate>`
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          names="$(gh api "repos/$REPO/commits/$SHA/check-runs?per_page=100" --paginate --jq '.check_runs[].name')"
+          echo "$names"
+          for gate in lint typecheck marketplace; do
+            if ! grep -qx "ci / $gate" <<<"$names"; then
+              echo "::error::no check run named 'ci / $gate' on $SHA: the caller job's name is not what the check reports"
+              exit 1
+            fi
+          done
+
+  test:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/app-test.yml # zizmor: ignore[self-repository]
+    with:
+      app: standards_fixture
+      app-root: tests/fixtures/standards-app
+      frappe-nix-override: .
+
+  pr-policy:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: ci
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/app-pr-policy.yml # zizmor: ignore[self-repository]
+    with:
+      app: standards_fixture
+      app-root: tests/fixtures/standards-app
+      frappe-nix-override: .
+
+  minibench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # the checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - name: validate_customizations in the mini-bench
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 ./py/frappe_nix_tools
+          uv sync --frozen --project tests/fixtures/standards-app/tools
+          prek="$GITHUB_WORKSPACE/tests/fixtures/standards-app/tools/.venv/bin/prek"
+          app="$RUNNER_TEMP/app"
+          cp -r tests/fixtures/standards-app "$app"
+          cd "$app"
+          git init -q -b develop
+          mkdir -p standards_fixture/standards_fixture/custom
+          custom=standards_fixture/standards_fixture/custom/todo.json
+          cat > "$custom" <<'EOF'
+          {
+            "doctype": "ToDo",
+            "custom_fields": [
+              {
+                "doctype": "Custom Field",
+                "dt": "ToDo",
+                "fieldname": "fixture_flag",
+                "fieldtype": "Check",
+                "label": "Fixture Flag",
+                "module": "Standards Fixture",
+                "owner": "Administrator",
+                "modified_by": "Administrator"
+              }
+            ],
+            "property_setters": [],
+            "custom_perms": []
+          }
+          EOF
+          cat > .pre-commit-config.yaml <<'EOF'
+          repos:
+            - repo: https://github.com/agritheory/test_utils
+              rev: v1.30.1
+              hooks:
+                - id: validate_customizations
+                  stages: [manual]
+          EOF
+          commit() { git add -A && git -c user.name=t -c user.email=t@example.com commit -qm "$1"; }
+          validate() {
+            rm -rf .dev-dist/minibench
+            git worktree prune
+            frappe-nix minibench --mode customizations --dest .dev-dist/minibench
+            (cd .dev-dist/minibench/apps/standards_fixture && "$prek" run --hook-stage manual validate_customizations --all-files --show-diff-on-failure)
+          }
+          commit clean
+          validate
+          echo "ok: the clean customization passes"
+          sed -i 's/"owner": "Administrator"/"owner": "someone@example.com"/' "$custom"
+          commit planted
+          if validate; then
+            echo "::error::validate_customizations passed with an e-mail owner"
+            exit 1
+          fi
+          echo "ok: an e-mail owner fails validate_customizations"
