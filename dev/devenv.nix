@@ -58,7 +58,7 @@ in
     # The editable frappe-runtime install expands this at interpreter start.
     FRAPPE_NIX_DEV_ROOT = "${root}/dev";
     # For reading, and for go-to-definition outside the editor.
-    FRAPPE_UPSTREAM_SRC = "${dev.frappeSrc}";
+    FRAPPE_NIX_UPSTREAM_SRC = "${dev.frappeSrc}";
     UV_PYTHON = "${dev.python}/bin/python";
     UV_PYTHON_DOWNLOADS = "never";
     # uv is here to lock dev/, not to install into a store path.
@@ -68,7 +68,7 @@ in
   scripts = {
     sync-frappe-upstream = {
       description = "Re-mirror Frappe's ruff config and ruff pins (dev/uv.lock, .pre-commit-config.yaml) from the revision dev/uv.lock pins";
-      # Resolved through the flake rather than $FRAPPE_UPSTREAM_SRC, which is the
+      # Resolved through the flake rather than $FRAPPE_NIX_UPSTREAM_SRC, which is the
       # revision this shell was entered with: after `update-frappe` re-locks,
       # that is the old one.
       exec = ''

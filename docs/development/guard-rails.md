@@ -108,12 +108,12 @@ Each patch is checked as it is applied. If Frappe's internals move, the import f
 
 ### frappe_unixsock
 
-[`lib/unixsock/frappe_unixsock`](../../lib/unixsock/frappe_unixsock) uses the same `.pth` mechanism but is not a guard rail. It ships to **both** virtualenvs, and therefore into `builtBench`, the containers and `services.frappe`. It carries no policy. Its whole job is to make Frappe honor a unix socket in the two places it only half does:
+[`lib/unixsock/frappe_unixsock`](../../lib/unixsock/frappe_unixsock) uses the same `.pth` mechanism but is not a guard rail. It ships to **both** virtualenvs, and therefore into `builtBench`, the containers and `services.frappe-nix`. It carries no policy. Its whole job is to make Frappe honor a unix socket in the two places it only half does:
 
 | Patch                                                     | Where it bites                                                                                                                                                  |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `frappe.app.serve` binds `unix://$FRAPPE_WEB_SOCKET`      | `bench serve` hardcodes `run_simple("0.0.0.0", int(port))`, so there is no other way off TCP. Inert in production, which runs `gunicorn --bind unix:` natively. |
-| `frappe.connect_replica` uses `$FRAPPE_REPLICA_DB_SOCKET` | It hardcodes `socket=None`, twenty lines below the `connect()` that honors `db_socket`. Production-only, and only when a replica is configured.                 |
+| `frappe.app.serve` binds `unix://$FRAPPE_NIX_WEB_SOCKET`      | `bench serve` hardcodes `run_simple("0.0.0.0", int(port))`, so there is no other way off TCP. Inert in production, which runs `gunicorn --bind unix:` natively. |
+| `frappe.connect_replica` uses `$FRAPPE_NIX_REPLICA_DB_SOCKET` | It hardcodes `socket=None`, twenty lines below the `connect()` that honors `db_socket`. Production-only, and only when a replica is configured.                 |
 
 Every patch is gated on its socket actually being set, so a bench with no sockets installs nothing and cannot be broken by a Frappe upgrade moving a target. A bench that is on sockets fails loudly instead, because silently falling back to TCP would mean connecting to another project's service. `FRAPPE_UNIXSOCK_ENABLED=0` disables it for a single command.
 

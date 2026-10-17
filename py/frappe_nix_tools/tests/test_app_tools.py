@@ -335,7 +335,7 @@ class TestFrappeShots(unittest.TestCase):
 			frappe_shots.demo_flags("s", frappe_shots.Demo("UTC", "d", "1", True))[-1], "--erpnext-demo"
 		)
 		args = frappe_shots.ShotsArgs(mode="check", only="a", video="v")
-		with mock.patch.dict(os.environ, {"FRAPPE_TEST_ADMIN_PASSWORD": ""}):
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_TEST_ADMIN_PASSWORD": ""}):
 			cmd = frappe_shots.runner_args(
 				args,
 				spec="/r/s.ts",
@@ -439,6 +439,20 @@ class TestDevshell(unittest.TestCase):
 		self.assertEqual(devshell.call(["/nonexistent/command"], quiet=True), 127)
 		self.assertEqual(devshell.capture(["sh", "-c", "printf 'a\\n\\n'"]), (0, "a"))
 		self.assertEqual(devshell.call(["sh", "-c", 'read l; [ -z "$l" ]'], stdin_text="\n", quiet=True), 0)
+
+
+class TestAdminPassword(unittest.TestCase):
+	def test_new_old_and_default(self):
+		env = {"FRAPPE_NIX_TEST_ADMIN_PASSWORD": "new", "FRAPPE_TEST_ADMIN_PASSWORD": "old"}
+		with mock.patch.dict(os.environ, env, clear=True):
+			self.assertEqual(devshell.admin_password(), "new")
+		err = io.StringIO()
+		with mock.patch.dict(os.environ, {"FRAPPE_TEST_ADMIN_PASSWORD": "old"}, clear=True):
+			with contextlib.redirect_stderr(err):
+				self.assertEqual(devshell.admin_password(), "old")
+		self.assertIn("set FRAPPE_NIX_TEST_ADMIN_PASSWORD", err.getvalue())
+		with mock.patch.dict(os.environ, {}, clear=True):
+			self.assertEqual(devshell.admin_password(), "admin")
 
 
 class TestConfig(unittest.TestCase):

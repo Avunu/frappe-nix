@@ -1,4 +1,4 @@
-# services.frappe.chromium and services.frappe.wkhtmltopdf, checked at
+# services.frappe-nix.chromium and services.frappe-nix.wkhtmltopdf, checked at
 # evaluation: what the units and the `bench` wrapper get with each on, and with
 # both off, and the fonts that come with them.
 #
@@ -38,7 +38,7 @@ let
         {
           nixpkgs.pkgs = pkgs;
           system.stateVersion = lib.trivial.release;
-          services.frappe = {
+          services.frappe-nix = {
             enable = true;
             package = stubBench;
             sites.${site}.enable = true;

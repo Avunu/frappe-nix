@@ -62,7 +62,7 @@ inputs = {
 perSystem = _: {
   frappe-nix = {
     enable = true;
-    siteName = "carbon.localhost";
+    defaultSite = "carbon.localhost";
     app = {
       enable = true;
       frappeVersion = "version-16";
@@ -77,7 +77,7 @@ Everything else is inferred:
 
 - `app.src` comes from `self`.
 - `app.name` comes from the repository's `[project].name`.
-- `benchName` is that name, normalized.
+- `name` is that name, normalized.
 - `python` and `nodejs` come from the `frappeVersion` [preset](README.md#versions-and-presets).
 - `app.lockDir` defaults to `nix`.
 
@@ -137,4 +137,4 @@ App mode is not development-only. `nix build` produces the same `builtBench` a b
 nix build                    # result/bench, assets compiled
 ```
 
-`containers.enable` and the [`services.frappe` module](../production/nixos-service.md) work unchanged.
+`containers.enable` and the [`services.frappe-nix` module](../production/nixos-service.md) work unchanged.

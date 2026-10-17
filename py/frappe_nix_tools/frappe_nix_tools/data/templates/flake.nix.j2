@@ -71,7 +71,7 @@
             formatter = pkgs.nixfmt;
             frappe-nix = {
               enable = true;
-              siteName = {{ site | nix_string }};
+              defaultSite = {{ site | nix_string }};
               app = {
                 enable = true;
                 frappeVersion = "{{ frappe.preset }}";

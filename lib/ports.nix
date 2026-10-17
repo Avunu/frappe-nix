@@ -34,12 +34,12 @@ rec {
   #            or pure evaluation, where PWD is "")
   seed =
     {
-      benchName,
+      name,
       salt,
       pwd,
       gitKind,
     }:
-    if salt && pwd != "" && gitKind == "regular" then "${benchName}@${pwd}" else benchName;
+    if salt && pwd != "" && gitKind == "regular" then "${name}@${pwd}" else name;
 
   # FRAPPE_NIX_PORT_OFFSET as a number, or null when unset. A value that is not
   # 0..899 is ignored with a warning rather than failing evaluation: the shell

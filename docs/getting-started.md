@@ -72,7 +72,7 @@ provision-site '<ADMIN_PASSWORD>'
 If the script prompts for a MariaDB root password, leave it blank and press Enter, because the development MariaDB root has none.
 
 > [!WARNING]
-> `provision-site` runs `bench new-site` with `--force`, which drops an existing database for that site. Do not run it again to pick up an app you added later. When `siteName` is set, `devenv up` installs missing apps for you. See [Apps in a bench](development/apps.md#installed-app-drift).
+> `provision-site` runs `bench new-site` with `--force`, which drops an existing database for that site. Do not run it again to pick up an app you added later. When `defaultSite` is set, `devenv up` installs missing apps for you. See [Apps in a bench](development/apps.md#installed-app-drift).
 
 ## 5. Open the site
 

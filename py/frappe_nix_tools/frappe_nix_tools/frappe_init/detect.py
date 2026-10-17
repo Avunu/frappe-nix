@@ -69,12 +69,58 @@ def has_foreign_flake() -> bool:
 	return os.path.isfile("flake.nix") and not is_frappe_nix_bench()
 
 
+#: ``frappe-nix = {`` in a flake.nix, where the block's own keys start.
+_FRAPPE_NIX_BLOCK = re.compile(r"\bfrappe-nix\s*=\s*\{")
+
+
+def _top_level_string(text: str, key: str) -> str | None:
+	"""``key = "<v>";`` at the top level of the attribute set ``text`` opens, or None.
+
+	Nested sets (``app = { name = …; }``) and lists (``siblings``) are skipped by
+	depth, so only the block's own ``key`` is read."""
+	depth = 0
+	pat = re.compile(rf'{re.escape(key)}\s*=\s*"([^"$\\]*)"\s*;')
+	i = 0
+	while i < len(text):
+		c = text[i]
+		if c == '"':
+			end = text.find('"', i + 1)
+			i = len(text) if end < 0 else end + 1
+			continue
+		if c == "#":
+			end = text.find("\n", i)
+			i = len(text) if end < 0 else end
+			continue
+		if c in "{[":
+			depth += 1
+		elif c in "}]":
+			if depth == 0:
+				return None
+			depth -= 1
+		elif depth == 0 and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] in "-_.")):
+			m = pat.match(text, i)
+			if m:
+				return m.group(1)
+		i += 1
+	return None
+
+
 def existing_bench_name() -> str:
-	"""The benchName a frappe-nix bench's flake.nix already sets, or ""."""
+	"""The project name a frappe-nix bench's flake.nix already sets, or "".
+
+	``frappe-nix.name`` (CONVENTIONS.md, Identity options), or ``benchName``, its
+	name before, which a bench scaffolded earlier still has."""
 	if not is_frappe_nix_bench():
 		return ""
-	m = re.search(r'^\s*benchName\s*=\s*"([^"]*)"\s*;', _read("flake.nix") or "", re.M)
-	return m.group(1) if m else ""
+	text = _read("flake.nix") or ""
+	m = re.search(r'^\s*benchName\s*=\s*"([^"]*)"\s*;', text, re.M)
+	if m:
+		return m.group(1)
+	for block in _FRAPPE_NIX_BLOCK.finditer(text):
+		name = _top_level_string(text[block.end() :], "name")
+		if name is not None:
+			return name
+	return ""
 
 
 def bench_repo_state() -> str:

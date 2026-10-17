@@ -23,7 +23,7 @@ and never rebinds, so there is no unlink race and no window where the socket is
 missing. Requests queue in the listen backlog across a reload instead of being
 refused, which is strictly better than the TCP behaviour it replaces.
 
-In production this is inert: ``services.frappe`` and the OCI images run gunicorn,
+In production this is inert: ``services.frappe-nix`` and the OCI images run gunicorn,
 which takes ``--bind unix:...`` natively. It ships there anyway so that a
 ``bench serve`` run by hand on a deployed host lands on the same socket as
 everything else rather than opening a surprise port on 0.0.0.0.
@@ -36,8 +36,8 @@ from ._settings import socket_path
 NAME = "web"
 
 #: Path the development server should bind. Set by the devenv shell, and by
-#: `services.frappe` when the site is in socket mode.
-ENV = "FRAPPE_WEB_SOCKET"
+#: `services.frappe-nix` when the site is in socket mode.
+ENV = "FRAPPE_NIX_WEB_SOCKET"
 
 _INSTALLED = False
 

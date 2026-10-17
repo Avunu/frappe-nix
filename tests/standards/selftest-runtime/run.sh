@@ -99,7 +99,7 @@ expect() {
 
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
-# The primary checkout's web port: 8000 + sha256(benchName)[0:4] mod 900, the
+# The primary checkout's web port: 8000 + sha256(name)[0:4] mod 900, the
 # offset every bench has had since ports were hashed (lib/ports.nix).
 PRIMARY_PORT="$((8000 + $(python3 -c 'import hashlib; print(int(hashlib.sha256(b"standards-fixture").hexdigest()[:4], 16) % 900)')))"
 
@@ -350,7 +350,7 @@ EOF
   [ -z "$(git -C "$app" status --porcelain)" ] || fail "code --dry-run changed the tree"
   expect 0 "$WORK/rename-code.log" dev "$app" frappe-rename-app code --from standards_fixture --to standards_fixture2
   grep -qx 'standards_fixture2.patches.count_runs' "$app/standards_fixture2/patches.txt" || fail "patches.txt not renamed"
-  sed -i 's/^\( *\)siteName = \(.*\);$/&\n\1renamedApps.standards_fixture = "standards_fixture2";/' "$app/flake.nix"
+  sed -i 's/^\( *\)defaultSite = \(.*\);$/&\n\1renamedApps.standards_fixture = "standards_fixture2";/' "$app/flake.nix"
   grep -q 'renamedApps.standards_fixture = "standards_fixture2";' "$app/flake.nix" || fail "could not set renamedApps"
   nix run --inputs-from "$FN" nixpkgs#nixfmt -- "$app/flake.nix"
   commit "$app" "rename to standards_fixture2"

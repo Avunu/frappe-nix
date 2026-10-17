@@ -1,6 +1,6 @@
 ---
 title: Run Frappe as a NixOS service
-description: Deploy one or more Frappe sites on NixOS with the frappe-nix services.frappe module, including secrets, MariaDB, Redis, nginx and the units it generates.
+description: Deploy one or more Frappe sites on NixOS with the frappe-nix services.frappe-nix module, including secrets, MariaDB, Redis, nginx and the units it generates.
 order: 3
 tags: [nixos, services-frappe, systemd, deployment]
 updated: 2026-10-15
@@ -47,7 +47,7 @@ The module's configuration goes in `frappe.nix`. This example keeps secrets as f
 ```nix
 { config, bench, ... }:
 {
-  services.frappe = {
+  services.frappe-nix = {
     enable = true;
     package = bench.packages.x86_64-linux.default;
 
@@ -65,7 +65,7 @@ The module's configuration goes in `frappe.nix`. This example keeps secrets as f
 }
 ```
 
-Each key under `sites` is the site name, which is also its domain. Run `nixos-rebuild switch` to apply it. The full option list is in the [`services.frappe` reference](../reference/nixos-options.md).
+Each key under `sites` is the site name, which is also its domain. Run `nixos-rebuild switch` to apply it. The full option list is in the [`services.frappe-nix` reference](../reference/nixos-options.md).
 
 ## The units it generates
 
@@ -89,7 +89,7 @@ The service units start after, and require, their `frappe-init-<SITE>`. The modu
 Every site needs its own listener. Give each additional site a distinct `web.port`, or use a socket path:
 
 ```nix
-services.frappe.sites."site2.example.com" = {
+services.frappe-nix.sites."site2.example.com" = {
   enable = true;
   package = bench.packages.x86_64-linux.default;
   web.port = 8001;
@@ -106,13 +106,13 @@ Setting `package` on a site lets you run, for example, a staging site on a newer
 
 The module never puts secrets in the Nix store. On every start, the `frappe-init-<SITE>` unit builds `site_config.json` in three layers:
 
-1. A base file generated from your Nix options: database and Redis settings, plus `extraConfig`. It is written to the store from Nix-declared values and holds no secrets.
+1. A base file generated from your Nix options: database and Redis settings, plus `settings`. It is written to the store from Nix-declared values and holds no secrets.
 2. The database password and encryption key, read from `database.passwordFile` and `encryptionKeyFile` into `db_password` and `encryption_key`.
-3. Each file in `extraConfigFiles`, deep-merged last with `jq`, so it can override earlier values.
+3. Each file in `settingsFiles`, deep-merged last with `jq`, so it can override earlier values.
 
 systemd's `LoadCredential` hands the secret files to the unit, so the service account never needs read access to the originals. The result is written to `<siteDir>/sites/<SITE>/site_config.json` with mode `0600`.
 
-Use `extraConfigFiles` for anything else sensitive, such as object-storage credentials. The file must contain a JSON object:
+Use `settingsFiles` for anything else sensitive, such as object-storage credentials. The file must contain a JSON object:
 
 ```json
 {
@@ -121,7 +121,7 @@ Use `extraConfigFiles` for anything else sensitive, such as object-storage crede
 ```
 
 > [!WARNING]
-> `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `extraConfig` and secrets in `extraConfigFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
+> `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `settings` and secrets in `settingsFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
 
 If your bench declares its secrets with [frappe-nix.secrets](../development/secrets.md), a deployment can read the same ciphertext through `lib.secrets` instead of keeping a second copy.
 
@@ -157,7 +157,7 @@ You manage the account and its password on an external server. The module does n
 `redis.createLocally = true` runs a Redis instance named `frappe` on `127.0.0.1`, port `13000`, under the unit `redis-frappe`. All three site Redis URLs default to that address.
 
 > [!NOTE]
-> If you change `services.frappe.redis.port`, update the site URLs too. The defaults are fixed strings and do not follow the port.
+> If you change `services.frappe-nix.redis.port`, update the site URLs too. The defaults are fixed strings and do not follow the port.
 
 ## Put nginx in front
 
@@ -199,8 +199,8 @@ Frappe renders a PDF with one of three engines, and which one depends on the pri
 Turn on the engines your print formats use:
 
 ```nix
-services.frappe.chromium.enable = true;
-services.frappe.wkhtmltopdf.enable = true;
+services.frappe-nix.chromium.enable = true;
+services.frappe-nix.wkhtmltopdf.enable = true;
 ```
 
 Both are off by default because of their size. Chromium adds about 0.5 GiB to the system closure with the fonts below, and wkhtmltopdf about 200 MiB.

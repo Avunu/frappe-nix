@@ -70,9 +70,9 @@ git rm --cached apps/<APP> && rm -rf apps/<APP> && bench-get-app <OWNER>/<APP>
 
 `apps.txt` is the candidate list that `install_app()` validates a name against. It is not a queue anything drains, and `bench migrate` walks the database list and never `apps.txt`. So if you pin a new sibling into an already provisioned bench, nothing installs it. The app is importable, on `PYTHONPATH` and even visible in the desk's app switcher, and every page it owns returns 404 or throws, with no signal pointing at "app not installed". [Issue 32](https://github.com/Avunu/frappe-nix/issues/32) describes how this presented: a report page that quietly ran on stock `frappe-datatable` because the app that was supposed to replace it had never been installed.
 
-`appsReconcile.enable` closes this. A `frappe:apps-reconcile` task diffs `sites/apps.txt` against `siteName`'s installed apps on every `devenv up` and installs whatever is missing. `install-app` is idempotent, a no-op unless `--force`, which this never passes, so on an already reconciled bench the task costs one `bench list-apps`.
+`appsReconcile.enable` closes this. A `frappe:apps-reconcile` task diffs `sites/apps.txt` against `defaultSite`'s installed apps on every `devenv up` and installs whatever is missing. `install-app` is idempotent, a no-op unless `--force`, which this never passes, so on an already reconciled bench the task costs one `bench list-apps`.
 
-It defaults to `true` whenever `siteName` names one site, which is the common case for every app-mode bench. It defaults to `false` in multi-tenant mode (`siteName = ""`), where the task has no single site to target. There, run it by hand:
+It defaults to `true` whenever `defaultSite` names one site, which is the common case for every app-mode bench. It defaults to `false` in multi-tenant mode (`defaultSite = ""`), where the task has no single site to target. There, run it by hand:
 
 ```bash
 reconcile-apps <SITE_NAME>

@@ -66,7 +66,7 @@ in
         stub() { printf '#!%s\n%s\n' "$(command -v bash)" "$2" >"$BIN/$1"; chmod +x "$BIN/$1"; }
         stub bench 'echo "bench $*" >>"$LOG"'
         stub bench-offline-migrate 'echo "offline" >>"$LOG"; exit "''${STUB_RC:-0}"'
-        stub python-stub 'echo "python $*" >>"$LOG"; echo "PTOSC=''${FRAPPE_OFFLINE_MIGRATE_PT_OSC:-} THRESHOLD=''${FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD:-}" >>"$LOG"'
+        stub python-stub 'echo "python $*" >>"$LOG"; echo "PTOSC=''${FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC:-} THRESHOLD=''${FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD:-}" >>"$LOG"'
         export PATH="$BIN:$PATH" LOG="$PWD/log" FRAPPE_BENCH_ROOT="$PWD/bench" FRAPPE_SITE=erp.example.com
 
         run() { : >"$LOG"; bash "$1" "''${@:2}" >/dev/null 2>&1 && RC=0 || RC=$?; }
@@ -92,8 +92,10 @@ in
         echo "bench-offline-migrate:"
         run "$toolOnPath" --plan
         log_is "runs the tool with the bench's interpreter and the caller's flags" "$(printf 'python %s --plan\nPTOSC=/stub/pt-osc THRESHOLD=123456' "${../lib/offline-migrate.py}")"
-        FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=9 FRAPPE_OFFLINE_MIGRATE_PT_OSC=/mine/pt run "$toolOnPath"
+        FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=9 FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=/mine/pt run "$toolOnPath"
         log_is "the caller's environment beats what Nix baked" "$(printf 'python %s\nPTOSC=/mine/pt THRESHOLD=9' "${../lib/offline-migrate.py}")"
+        FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=9 run "$toolOnPath"
+        log_is "so does the old name, which the tool reads itself (nothing baked over it)" "$(printf 'python %s\nPTOSC=/stub/pt-osc THRESHOLD=' "${../lib/offline-migrate.py}")"
         run "$toolOffPath" --plan
         log_is "with the feature off it still plans, with nothing baked but the threshold" "$(printf 'python %s --plan\nPTOSC= THRESHOLD=123456' "${../lib/offline-migrate.py}")"
 

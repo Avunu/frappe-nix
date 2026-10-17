@@ -1,5 +1,5 @@
 # The names the container images are built under, with and without
-# containers.registry: <benchName>/<name> bare, <registry>/<benchName>/<name>
+# containers.registry: <name>/<role> bare, <registry>/<name>/<role>
 # with one, a trailing slash on the registry not doubled. odoo-nix applies the
 # same rule (its tests/containers-eval.nix).
 #
@@ -30,7 +30,7 @@ let
             imports = [ self.flakeModules.default ];
             perSystem.frappe-nix = {
               enable = true;
-              benchName = "acme";
+              name = "acme";
               workspaceRoot = pkgs.emptyDirectory;
               runtime.enable = runtime;
               containers = {
@@ -74,7 +74,7 @@ in
     no() { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }
     eq() { if [ "$2" = "$3" ]; then ok "$1"; else no "$1"$'\n'"      expected: $2"$'\n'"      got:      $3"; fi; }
 
-    eq "no registry: <benchName>/<name>" \
+    eq "no registry: <name>/<role>" \
       "acme/runtime acme/nginx acme/bench" ${lib.escapeShellArg bare}
     eq "a registry prefixes every image" \
       "ghcr.io/avunu/acme/runtime ghcr.io/avunu/acme/nginx ghcr.io/avunu/acme/bench" ${lib.escapeShellArg registry}

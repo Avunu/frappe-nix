@@ -66,6 +66,10 @@ _FLAKE_INLINE_ATTR = re.compile(r'(?:^|[;{\s])(?P<attr>url|follows)\s*=\s*"(?P<v
 MANAGED_INPUTS = ("frappe-nix", "nixpkgs", "frappe", flakelock.PROFILE_INPUT)
 # The files frappe-init --app's templates/app gives an app that has not opted in (S35).
 APP_TEMPLATE = {"flake.nix": "app-template/flake.nix.in", ".envrc": "app-template/envrc"}
+#: What ``templates/app`` gave before: ``frappe-init --app`` wrote these too, so an app
+#: still carrying one opts in without ``--force``. ``flake.nix.v0.in`` is the template
+#: from before CONVENTIONS.md's renames (``siteName``, ``x86_64-darwin``).
+APP_TEMPLATE_BEFORE = {"flake.nix": ("app-template/flake.nix.v0.in",)}
 
 
 @dataclass
@@ -223,14 +227,15 @@ def strip_nix_comments(text: str) -> str:
 
 
 def flake_facts(text: str | None) -> tuple[int | None, list[str], str | None]:
-	"""``frappeVersion``'s major, the sibling names and the ``siteName`` an existing ``flake.nix`` declares."""
+	"""``frappeVersion``'s major, the sibling names and the default site (``defaultSite``, or
+	``siteName`` from before CONVENTIONS.md's Identity options) an existing ``flake.nix`` declares."""
 	if not text:
 		return None, [], None
 	text = strip_nix_comments(text)
 	m = re.search(r'frappeVersion\s*=\s*"version-(\d+)"', text)
 	block = re.search(r"siblings\s*=\s*\[(?P<body>.*?)\];", text, re.S)
 	names = re.findall(r'name\s*=\s*"([^"]+)"', block["body"]) if block else []
-	site = re.search(r'siteName\s*=\s*"([^"$\\]+)"', text)
+	site = re.search(r'\b(?:defaultSite|siteName)\s*=\s*"([^"$\\]+)"', text)
 	return (int(m[1]) if m else None), names, (site[1] if site else None)
 
 
@@ -970,22 +975,25 @@ def _js_oxc(ctx: context.NS) -> bool:
 	return bool(ctx.modules.get("js")) and ctx.cfg.get("js", {}).get("tool", "oxc") == "oxc"
 
 
-def legacy_app_file(path: str, current: str, app: str) -> str | None:
-	"""What ``templates/app`` renders for ``path`` (``flake.nix``, ``.envrc``), with the site,
-	Frappe version and branch the current file names: the file ``frappe-init --app`` wrote."""
+def legacy_app_files(path: str, current: str, app: str) -> list[str]:
+	"""What ``templates/app`` renders for ``path`` (``flake.nix``, ``.envrc``), now and in each
+	earlier version, with the site, Frappe version and branch the current file names: the files
+	``frappe-init --app`` wrote."""
 	template = APP_TEMPLATE.get(path)
 	if template is None:
-		return None
-	text = data_path(template).read_text()
-	site = re.search(r'siteName\s*=\s*"([^"]*)"', current)
+		return []
+	site = re.search(r'\b(?:defaultSite|siteName)\s*=\s*"([^"]*)"', current)
 	version = re.search(r'frappeVersion\s*=\s*"([^"]*)"', current)
 	branch = re.search(r'"github:frappe/frappe/([^"]*)"', current)
-	return (
-		text.replace("@APP_NAME@", app)
+	return [
+		data_path(t)
+		.read_text()
+		.replace("@APP_NAME@", app)
 		.replace("@SITE_NAME@", site[1] if site else "")
 		.replace("@FRAPPE_VERSION@", version[1] if version else "")
 		.replace("@FRAPPE_BRANCH@", branch[1] if branch else "")
-	)
+		for t in (template, *APP_TEMPLATE_BEFORE.get(path, ()))
+	]
 
 
 def _managed_at_head(root: Path, path: str) -> bool:
@@ -1009,7 +1017,7 @@ def _first_opt_in(
 		return None
 	if _managed_at_head(plan.root, path):
 		return None
-	if current == legacy_app_file(path, current, plan.app.name):
+	if current in legacy_app_files(path, current, plan.app.name):
 		return None
 	diff = "".join(
 		difflib.unified_diff(current.splitlines(True), wanted.splitlines(True), "current", "rendered")

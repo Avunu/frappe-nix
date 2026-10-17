@@ -14,6 +14,7 @@ first argument, or run from the repository and it is found relative to here.
 Run directly (``python test_journald.py``) or via ``nix flake check``.
 """
 
+import contextlib
 import importlib
 import importlib.util
 import io
@@ -46,7 +47,7 @@ SITE = "erp.example.com"
 
 
 def clear_env():
-	for name in ("JOURNAL_STREAM", "FRAPPE_SITE", "FRAPPE_LOG_LEVEL"):
+	for name in ("JOURNAL_STREAM", "FRAPPE_SITE", "FRAPPE_NIX_LOG_LEVEL", "FRAPPE_LOG_LEVEL"):
 		os.environ.pop(name, None)
 
 
@@ -189,11 +190,11 @@ def make_frappe_logger():
 
 
 clear_env()
-os.environ["FRAPPE_LOG_LEVEL"] = "warning"
+os.environ["FRAPPE_NIX_LOG_LEVEL"] = "warning"
 os.environ["FRAPPE_SITE"] = SITE
 mod = make_frappe_logger()
 _patches.patch_frappe_logger(mod)
-check("FRAPPE_LOG_LEVEL replaces default_log_level", mod.default_log_level == logging.WARNING)
+check("FRAPPE_NIX_LOG_LEVEL replaces default_log_level", mod.default_log_level == logging.WARNING)
 
 logger = mod.get_logger("payments")
 check("stream_only is forced on", mod.calls[-1] is True, mod.calls)
@@ -211,7 +212,18 @@ same = mod.get_logger("payments")
 check("cached loggers pass through untouched", same is logger and len(logger.handlers) == 1)
 check("the wrapper still identifies itself", getattr(mod.get_logger, "__journald__", None))
 
-os.environ["FRAPPE_LOG_LEVEL"] = "nonsense"
+clear_env()
+os.environ["FRAPPE_LOG_LEVEL"] = "info"
+old_err = io.StringIO()
+with contextlib.redirect_stderr(old_err):
+	old_level = _format.env_level()
+check("the old FRAPPE_LOG_LEVEL is still read", old_level == logging.INFO)
+check("…with a warning naming FRAPPE_NIX_LOG_LEVEL", "set FRAPPE_NIX_LOG_LEVEL" in old_err.getvalue())
+os.environ["FRAPPE_NIX_LOG_LEVEL"] = "error"
+check("the new name wins over the old", _format.env_level() == logging.ERROR)
+clear_env()
+
+os.environ["FRAPPE_NIX_LOG_LEVEL"] = "nonsense"
 mod = make_frappe_logger()
 _patches.patch_frappe_logger(mod)
 check("an unknown level leaves Frappe's default", mod.default_log_level == logging.ERROR)
@@ -322,13 +334,13 @@ sys.path.insert(0, stubs)
 
 clear_env()
 point_journal_at_stderr()
-os.environ["FRAPPE_LOG_LEVEL"] = "info"
+os.environ["FRAPPE_NIX_LOG_LEVEL"] = "info"
 frappe_journald._INSTALLED = False
 frappe_journald.install()
 logger_mod = importlib.import_module("frappe.utils.logger")
 cli = importlib.import_module("bench.cli")
 check("frappe.utils.logger is patched on import", getattr(logger_mod.get_logger, "__journald__", None))
-check("FRAPPE_LOG_LEVEL applied on import", logger_mod.default_log_level == logging.INFO)
+check("FRAPPE_NIX_LOG_LEVEL applied on import", logger_mod.default_log_level == logging.INFO)
 check("bench.cli binds the patched setup_logging", getattr(cli.setup_logging, "__journald__", None))
 clear_env()
 for name in [m for m in sys.modules if m == "frappe" or m.startswith(("frappe.", "bench"))]:

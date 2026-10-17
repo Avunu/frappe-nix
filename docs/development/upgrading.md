@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, and what to commit afterwards.
 order: 9
 tags: [upgrade, flake-update, reconcile]
-updated: 2026-10-16
+updated: 2026-10-17
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -38,12 +38,14 @@ The shell hook does not register submodules, vendor apps, edit `.gitignore` or `
 nix run github:Avunu/frappe-nix -- -y
 ```
 
-The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, until the next minor release; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
+The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, through 1.x, until frappe-nix 2.0.0; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
 
-Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, until the next minor release:
+Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, through 1.x, until frappe-nix 2.0.0:
 
 | Old                                     | New                                |
 | --------------------------------------- | ---------------------------------- |
+| `benchName`                             | `name`                             |
+| `siteName`                              | `defaultSite`                      |
 | `restore.withFiles`                     | `restore.files`                    |
 | `devguard.mail.smtpPort`                | `devguard.mail.port`               |
 | `devguard.scheduler.enable`             | `devguard.jobs.enable`             |
@@ -51,6 +53,25 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 | `devguard.scheduler.extraBlockedJobs`   | `devguard.jobs.extraBlocked`       |
 
 The scheduler guard's environment variables moved with it: `FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED` (was `FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS`), `FRAPPE_DEVGUARD_JOBS_BLOCK_SERVER_SCRIPTS`, `FRAPPE_DEVGUARD_JOBS_ENABLE` and `FRAPPE_DEVGUARD_DISABLE=jobs`. The old ones are read, with a warning, for the same period. Its log lines still read `frappe_devguard[scheduler]`.
+
+The NixOS module moved the same way: `services.frappe` is now `services.frappe-nix`, and a site's `extraConfig` and `extraConfigFiles` are now `settings` and `settingsFiles`, the nixpkgs name for a block that becomes the framework's config file (`site_config.json`). The old names still work, with a NixOS warning, through 1.x, until frappe-nix 2.0.0.
+
+The environment variables frappe-nix's own tools read are all `FRAPPE_NIX_*` now. The old names are still read, with a warning, through 1.x, until frappe-nix 2.0.0:
+
+| Old                                    | New                                        |
+| -------------------------------------- | ------------------------------------------ |
+| `FRAPPE_OFFLINE_MIGRATE`               | `FRAPPE_NIX_OFFLINE_MIGRATE`               |
+| `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` | `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD` |
+| `FRAPPE_OFFLINE_MIGRATE_PT_OSC`        | `FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC`        |
+| `FRAPPE_BENCH_UPDATE_FORCE`            | `FRAPPE_NIX_BENCH_UPDATE_FORCE`            |
+| `FRAPPE_WEB_SOCKET`                    | `FRAPPE_NIX_WEB_SOCKET`                    |
+| `FRAPPE_REPLICA_DB_SOCKET`             | `FRAPPE_NIX_REPLICA_DB_SOCKET`             |
+| `FRAPPE_LOG_LEVEL`                     | `FRAPPE_NIX_LOG_LEVEL`                     |
+| `FRAPPE_TEST_ADMIN_PASSWORD`           | `FRAPPE_NIX_TEST_ADMIN_PASSWORD`           |
+
+`services.frappe-nix` sets both `FRAPPE_NIX_WEB_SOCKET` and `FRAPPE_WEB_SOCKET`, and both log-level names, in the same window, so a bench package built from an older frappe-nix than the module still finds them.
+
+Frappe's own variables (`FRAPPE_SITE`, `FRAPPE_DB_SOCKET`, `FRAPPE_REDIS_CACHE` and the rest) keep their names, and so do the grafts' switches (`FRAPPE_DEVGUARD_*`, `FRAPPE_UNIXSOCK_ENABLED`).
 
 A change to the _options_ a bench's `flake.nix` sets cannot be reconciled from inside the shell. `nodeOfflineHashes` was one such. It stays an evaluation error that names the edit.
 

@@ -29,7 +29,7 @@
 #                       files and then what `frappe-nix sync --write` renders,
 #                       nothing else; --site reaches the table, and so does
 #                       --profile-path; without --site an existing flake's
-#                       siteName is kept, as under --sync; a usage error under `frappe-init --check`
+#                       defaultSite is kept, as under --sync; a usage error under `frappe-init --check`
 #                       is exit 2 or 3, never 1; without --sync/--check the new
 #                       flags are refused where nothing reads them, as main
 #                       refuses an unknown flag (exit 1, nothing written). On
@@ -69,9 +69,12 @@ let
     git -c user.name=t -c user.email=t@t commit -qm fixture
   '';
 
-  # templates/app as frappe-nix `main` has it (9e63c96): the opt-in leaves it alone (S35).
+  # templates/app as frappe-nix `main` has it: the opt-in leaves it alone (S35).
+  # flake.nix moved with Track B's renames (defaultSite, no x86_64-darwin); the one before them
+  # (9e63c96, d09a35c) ships as app-template/flake.nix.v0.in, which an opt-in
+  # still replaces without --force.
   mainTemplate = {
-    "flake.nix" = "d09a35cb2741a87a13dc5365fb1f79246b6a3d2d";
+    "flake.nix" = "ccdf4910a50e81d882b24e41cae945ca7cc8a1db";
     ".envrc" = "a41f435fb8be098715df478ec5e78da83661d45d";
     ".gitignore" = "c2de0b11e743206b8c81c77603a36c58fa72c5e2";
   };
@@ -162,6 +165,8 @@ in
         )}
         cmp ${../../templates/app/flake.nix} "$(frappe-nix data-path app-template/flake.nix.in)" ||
           fail "the package's app-template/flake.nix.in is not templates/app/flake.nix"
+        [ "$(git hash-object "$(frappe-nix data-path app-template/flake.nix.v0.in)")" = d09a35cb2741a87a13dc5365fb1f79246b6a3d2d ] ||
+          fail "the package's app-template/flake.nix.v0.in is not templates/app/flake.nix before Track B"
         cmp ${../../templates/app/.envrc} "$(frappe-nix data-path app-template/envrc)" ||
           fail "the package's app-template/envrc is not templates/app/.envrc"
         block="$(frappe-nix data-path templates/gitignore.block)"
@@ -221,14 +226,14 @@ in
         grep -qx 'profile = "recommended"' pyproject.toml || fail "--standards did not create the table"
         echo "ok   frappe-init --app --standards recommended writes what frappe-nix sync renders, nothing else"
 
-        # --site reaches sync: [tool.frappe-nix] site and the flake's siteName.
+        # --site reaches sync: [tool.frappe-nix] site and the flake's defaultSite.
         cd ../sited
         frappe-init --app --standards minimal --frappe-version version-16 --site custom.localhost --skip-lock > /dev/null
         grep -qx 'site = "custom.localhost"' pyproject.toml || fail "--site is not [tool.frappe-nix] site"
-        grep -q 'siteName = "custom.localhost";' flake.nix || fail "--site is not the flake's siteName"
+        grep -q 'defaultSite = "custom.localhost";' flake.nix || fail "--site is not the flake's defaultSite"
         echo "ok   frappe-init --app --standards --site X renders site X"
 
-        # An existing app flake's siteName survives --app --standards without --site, as it
+        # An existing app flake's defaultSite survives --app --standards without --site, as it
         # does under --sync: a defaulted name would orphan every developer's dev site.
         cd ../legacy
         sed -e 's|@APP_NAME@|bare_app|g' -e 's|@FRAPPE_BRANCH@|version-16|g' \
@@ -240,11 +245,11 @@ in
         mkdir ../legacy-sync && cp -r . ../legacy-sync
         frappe-init --app --standards recommended --frappe-version version-16 --skip-lock > /dev/null
         grep -qx 'site = "legacy.localhost"' pyproject.toml || fail "--app --standards dropped the flake's site"
-        grep -q 'siteName = "legacy.localhost";' flake.nix || fail "--app --standards renamed the flake's siteName"
+        grep -q 'defaultSite = "legacy.localhost";' flake.nix || fail "--app --standards renamed the flake's defaultSite"
         (cd ../legacy-sync && frappe-nix sync --write --standards recommended --frappe-version version-16 > /dev/null 2>&1)
         cmp pyproject.toml ../legacy-sync/pyproject.toml || fail "--app --standards and --sync disagree on pyproject.toml"
         cmp flake.nix ../legacy-sync/flake.nix || fail "--app --standards and --sync disagree on flake.nix"
-        echo "ok   frappe-init --app --standards keeps an existing flake's siteName, as --sync does"
+        echo "ok   frappe-init --app --standards keeps an existing flake's defaultSite, as --sync does"
 
         code_of() {
           set +e

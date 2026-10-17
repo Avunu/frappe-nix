@@ -5,12 +5,12 @@
 # the module never takes pythonEnv/nodejs/benchRoot as options.
 #
 # On each new build the per-site frappe-migrate-<site> oneshot runs
-# `bench migrate`. By default (services.frappe.migrate.*) it first snapshots the
+# `bench migrate`. By default (services.frappe-nix.migrate.*) it first snapshots the
 # database (mysqldump) and, if the migration fails, restores the snapshot and
 # leaves the site in maintenance mode — see the `migrate` options below.
 #
 # Example:
-#   services.frappe = {
+#   services.frappe-nix = {
 #     enable  = true;
 #     package = inputs.bench.packages.x86_64-linux.default;
 #     sites."mysite.example.com" = {
@@ -61,7 +61,7 @@ let
       description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
     };
 
-  cfg = config.services.frappe;
+  cfg = config.services.frappe-nix;
 
   enabledSites = filterAttrs (_: s: s.enable) cfg.sites;
 
@@ -143,10 +143,15 @@ let
       # Frappe's loggers to stderr, never to logs/*.log: stderr is the journal.
       # frappe_journald (grafted into the bench's virtualenv) forces the same for
       # a caller that asks for a file explicitly, and gives each line its <N>
-      # priority prefix; see services.frappe.logging.
+      # priority prefix; see services.frappe-nix.logging.
       FRAPPE_STREAM_LOGGING = "1";
       # Read by frappe_journald as Frappe's default logger level. Frappe's own
       # production default is ERROR, which drops every frappe.logger().warning().
+      FRAPPE_NIX_LOG_LEVEL = lib.toUpper cfg.logging.level;
+      # Its name before (CONVENTIONS.md, Tool-owned variables), for a bench
+      # package built from an older frappe-nix than this module, whose graft
+      # reads only that. The graft prefers the new name. Removed with the
+      # aliases in frappe-nix 2.0.0.
       FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
       # A block-buffered stdout holds print() output back until the buffer fills
       # or the process exits, so a crash loses exactly the lines that explain it,
@@ -174,6 +179,8 @@ let
       # Read by frappe_unixsock. gunicorn takes --bind unix: natively and does
       # not need it, but a `bench serve` run by hand on this host would
       # otherwise open a surprise port on 0.0.0.0.
+      FRAPPE_NIX_WEB_SOCKET = siteCfg.web.socketPath;
+      # The old name too, as FRAPPE_LOG_LEVEL above.
       FRAPPE_WEB_SOCKET = siteCfg.web.socketPath;
     }
     // optionalAttrs (siteCfg.database.socket != "") {
@@ -283,7 +290,7 @@ let
     ++ lib.imap1 (i: f: {
       file = f;
       key = "extra_config_${toString i}";
-    }) siteCfg.extraConfigFiles;
+    }) siteCfg.settingsFiles;
 
   # Script wrapper that sets PYTHONPATH from the package's apps and execs.
   # cwd is left to systemd's WorkingDirectory= (set per-service in
@@ -400,7 +407,7 @@ let
       // optionalAttrs (siteCfg.database.socket != "") {
         db_socket = siteCfg.database.socket;
       }
-      // siteCfg.extraConfig;
+      // siteCfg.settings;
 
       baseConfigFile = pkgs.writeText "site-config-${name}.json" (builtins.toJSON baseConfig);
 
@@ -511,14 +518,14 @@ let
               # --slurpfile binds $extraN to an array of every JSON value in the
               # file, even when the file holds a single object — index [0] to get
               # the object itself before merging.
-              extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.extraConfigFiles;
+              extraMerges = lib.imap1 (i: _f: ". * $extra${toString i}[0]") siteCfg.settingsFiles;
             in
             concatStringsSep " | " ([ base ] ++ lib.optional (secretFiles != [ ]) withSecrets ++ extraMerges);
 
           extraSlurpArgs = concatStringsSep " " (
             lib.imap1 (
               i: _f: ''--slurpfile extra${toString i} "$CREDENTIALS_DIRECTORY/extra_config_${toString i}"''
-            ) siteCfg.extraConfigFiles
+            ) siteCfg.settingsFiles
           );
         in
         ''
@@ -693,8 +700,8 @@ let
         # a half-applied plan is not left behind.
         if [ "$RC" -eq 0 ]; then
           echo "frappe-migrate(${name}): altering large tables online"
-          FRAPPE_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
-          FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
+          FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
+          FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
             ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
             || RC=$?
         fi
@@ -1187,7 +1194,7 @@ let
           )}
           if [ -n "$SITE_CONFIG" ] && ! $DB_FLAGS \
              && ${pkgs.jq}/bin/jq -e '.db_name and .db_password' "$SITE_CONFIG" >/dev/null 2>&1; then
-            echo "bench: adding --no-setup-db: services.frappe already provides $NEW_SITE's database and user (pass any --db-* flag to let Frappe set them up instead)" >&2
+            echo "bench: adding --no-setup-db: services.frappe-nix already provides $NEW_SITE's database and user (pass any --db-* flag to let Frappe set them up instead)" >&2
             exec ${benchBin} new-site --no-setup-db "$@"
           fi
           exec ${benchBin} new-site "$@"
@@ -1377,16 +1384,47 @@ let
       };
     };
 
+  # sites.<name>.<from> renamed to <to>, inside the site submodule. Not
+  # lib.mkRenamedOptionModule: a submodule has no `warnings` to report through,
+  # so doRename does the aliasing and the warning goes on the site's
+  # `deprecations`, which the module's top level turns into `warnings`.
+  # Removed in frappe-nix 2.0.0, never within 1.x.
+  renamedSiteOption =
+    from: to:
+    { name, options, ... }:
+    {
+      imports = [
+        (lib.doRename {
+          from = [ from ];
+          to = [ to ];
+          visible = false;
+          warn = false;
+          use = lib.id;
+        })
+      ];
+      config.deprecations =
+        lib.optional options.${from}.isDefined
+          "The option `services.frappe-nix.sites.\"${name}\".${from}' defined in ${
+            lib.showFiles options.${from}.files
+          } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
+    };
+
   # Site submodule option definition.
   siteModule = types.submodule (
     { name, ... }: {
+      # python-devops-nix CONVENTIONS.md, Framework config blocks.
+      imports = [
+        (renamedSiteOption "extraConfig" "settings")
+        (renamedSiteOption "extraConfigFiles" "settingsFiles")
+      ];
+
       options = {
         enable = mkEnableOption "this Frappe site";
 
         package = mkOption {
           type = types.nullOr types.package;
           default = null;
-          description = "Per-site bench package override. Defaults to services.frappe.package.";
+          description = "Per-site bench package override. Defaults to services.frappe-nix.package.";
         };
 
         siteDir = mkOption {
@@ -1437,7 +1475,7 @@ let
             The same directory rules as web.socketPath apply: access is governed by
             the socket's directory, so give it its own.
 
-            Only used when services.frappe.runtime.enable is false. The unified
+            Only used when services.frappe-nix.runtime.enable is false. The unified
             runtime serves /socket.io from the same process — and the same socket —
             as the web app, so it has no separate realtime listener.
 
@@ -1501,16 +1539,32 @@ let
           description = "File containing the Frappe encryption key. Merged into site_config.json at activation.";
         };
 
-        extraConfig = mkOption {
+        settings = mkOption {
           type = types.attrsOf types.anything;
           default = { };
-          description = "Extra keys merged into the base site_config.json (Nix values, no secrets).";
+          example = lib.literalExpression ''{ host_name = "https://erp.example.com"; monitor = 1; }'';
+          description = ''
+            Keys merged into the site's site_config.json, under Frappe's own
+            spelling (Nix values, no secrets: they land in the store). Was
+            `extraConfig`.
+          '';
         };
 
-        extraConfigFiles = mkOption {
+        settingsFiles = mkOption {
           type = types.listOf types.path;
           default = [ ];
-          description = "JSON files deep-merged into site_config.json at activation (for secrets).";
+          description = ''
+            JSON files deep-merged into site_config.json at activation, for
+            secrets: each is read through LoadCredential, never copied to the
+            store. Was `extraConfigFiles`.
+          '';
+        };
+
+        deprecations = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          internal = true;
+          description = "Renamed options this site sets, each a warning at the top level.";
         };
 
         renamedApps = mkOption {
@@ -1572,7 +1626,33 @@ let
 
 in
 {
-  options.services.frappe = {
+  # The module was services.frappe. It matches the devenv and flake-parts roots
+  # (frappe-nix.*) now, and cannot collide with a future nixpkgs module
+  # (python-devops-nix CONVENTIONS.md, NixOS module path). The whole tree is
+  # aliased, with NixOS's own warning, through 1.x, until frappe-nix 2.0.0.
+  #
+  # lib.mkRenamedOptionModule, but withPriority = false: its priority wrapper
+  # puts a whole tree's definitions under one mkOverride, which leaves a nested
+  # mkIf (`runtime.webThreads = mkIf …`) undischarged at the leaf. Without it
+  # each leaf keeps its own priority and properties.
+  imports = [
+    (lib.doRename {
+      from = [
+        "services"
+        "frappe"
+      ];
+      to = [
+        "services"
+        "frappe-nix"
+      ];
+      visible = false;
+      warn = true;
+      use = lib.trace "Obsolete option `services.frappe' is used. It was renamed to `services.frappe-nix', and the old name goes in frappe-nix 2.0.0.";
+      withPriority = false;
+    })
+  ];
+
+  options.services.frappe-nix = {
     enable = mkEnableOption "Frappe bench production deployment (systemd)";
 
     package = mkOption {
@@ -1803,7 +1883,7 @@ in
         default = "warning";
         description = ''
           Threshold for Frappe's application loggers (`frappe.logger()`) and for
-          bench's own log, passed as FRAPPE_LOG_LEVEL.
+          bench's own log, passed as FRAPPE_NIX_LOG_LEVEL.
 
           Frappe's own production default is error, which silently drops every
           `frappe.logger().warning()`; warning keeps those at no real cost in
@@ -1932,13 +2012,13 @@ in
           mapAttrsToList (opt: p: {
             assertion = lib.hasPrefix "/" p && builtins.dirOf p != "/run" && builtins.dirOf p != "/";
             message =
-              "services.frappe.sites.\"${name}\".${opt} must be an absolute path inside its own"
+              "services.frappe-nix.sites.\"${name}\".${opt} must be an absolute path inside its own"
               + " directory (e.g. /run/frappe-${name}/web.sock), not directly in /run —"
               + " the directory's 0750 mode is what keeps the socket private.";
           }) paths
           ++ lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
             assertion = false;
-            message = "services.frappe.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
+            message = "services.frappe-nix.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
           }
         ) enabledSites
       );
@@ -1946,23 +2026,25 @@ in
       # The unified runtime has no separate realtime process and no gunicorn, so
       # these configure nothing. Say so rather than letting a set value quietly
       # do nothing.
-      warnings = lib.optionals cfg.runtime.enable (
-        lib.concatLists (
-          mapAttrsToList (
-            name: siteCfg:
-            lib.optional (siteCfg.socketio.socketPath != "") (
-              "services.frappe.sites.\"${name}\".socketio.socketPath is ignored when"
-              + " services.frappe.runtime.enable is true: the runtime serves /socket.io"
-              + " on web.socketPath. Remove it, or set runtime.enable = false."
-            )
-          ) enabledSites
-        )
-        ++ lib.optional (cfg.web.workers != 4) (
-          "services.frappe.web.workers is ignored when services.frappe.runtime.enable"
-          + " is true: the runtime sizes web concurrency with"
-          + " services.frappe.runtime.webThreads instead."
-        )
-      );
+      warnings =
+        lib.concatMap (siteCfg: siteCfg.deprecations) (lib.attrValues cfg.sites)
+        ++ lib.optionals cfg.runtime.enable (
+          lib.concatLists (
+            mapAttrsToList (
+              name: siteCfg:
+              lib.optional (siteCfg.socketio.socketPath != "") (
+                "services.frappe-nix.sites.\"${name}\".socketio.socketPath is ignored when"
+                + " services.frappe-nix.runtime.enable is true: the runtime serves /socket.io"
+                + " on web.socketPath. Remove it, or set runtime.enable = false."
+              )
+            ) enabledSites
+          )
+          ++ lib.optional (cfg.web.workers != 4) (
+            "services.frappe-nix.web.workers is ignored when services.frappe-nix.runtime.enable"
+            + " is true: the runtime sizes web concurrency with"
+            + " services.frappe-nix.runtime.webThreads instead."
+          )
+        );
 
       environment.systemPackages = [
         benchCli

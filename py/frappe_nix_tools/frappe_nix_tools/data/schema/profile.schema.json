@@ -501,12 +501,11 @@
             "default": [
               "x86_64-linux",
               "aarch64-linux",
-              "aarch64-darwin",
-              "x86_64-darwin"
+              "aarch64-darwin"
             ],
             "minItems": 1,
             "uniqueItems": true,
-            "description": "Flake systems.",
+            "description": "Flake systems. x86_64-darwin, which nixpkgs 26.11 dropped, is still accepted but no longer a default.",
             "x-app-only": true
           },
           "extra-substituters": {

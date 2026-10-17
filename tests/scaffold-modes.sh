@@ -97,7 +97,7 @@ expect_exit "a value flag at the end of the line, under --check" 2 "--format nee
 
 echo "── renamed flags ────────────────────────────────────────────"
 # CONVENTIONS.md, Scaffolder: --version and --default-site; the old names are
-# read, with a warning, until the next minor release.
+# read, with a warning, through 1.x, until frappe-nix 2.0.0.
 expect_exit "--frappe-version is still read" 0 "scaffold bench 'old' (version-16" \
   --init --dry-run --frappe-version version-16 --name old "$ROOT/old"
 says "--frappe-version is now --version" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"
@@ -142,8 +142,8 @@ expect_exit "--init a bench with an app" 0 "Next steps:" \
   --apps hrms "$ROOT/new"
 cp "$OUT" "$ROOT/new.log"
 cd "$ROOT/new"
-check "flake.nix is the wrapper, named for the bench" grep -q 'benchName = "acme";' flake.nix
-check "flake.nix names the default site" grep -q 'siteName = "acme.localhost";' flake.nix
+check "flake.nix is the wrapper, named for the bench" grep -q 'name = "acme";' flake.nix
+check "flake.nix names the default site" grep -q 'defaultSite = "acme.localhost";' flake.nix
 check "flake.nix pins the preset's python" grep -q 'pkgs.python312' flake.nix
 check "pyproject.toml is the workspace root" grep -q '^name = "acme"' pyproject.toml
 check "README.md is the bench's" grep -qx '# acme' README.md
@@ -245,7 +245,7 @@ expect_exit "--keep-db-root-password --absorb-gitdirs --name --commit" 0 "commit
 cd "$ROOT/flags"
 check_eq "--keep-db-root-password keeps it" s3cret "$(jq -r .mariadb_root_password sites/common_site_config.json)"
 check "--absorb-gitdirs leaves apps/frappe a gitfile" test -f apps/frappe/.git
-check "--name names the bench" grep -q 'benchName = "flagged";' flake.nix
+check "--name names the bench" grep -q 'name = "flagged";' flake.nix
 check_eq "--commit commits the result" "chore: migrate bench to frappe-nix" "$(git log -1 --format=%s)"
 check "…with nothing left staged" git diff --cached --quiet
 cd "$ROOT"

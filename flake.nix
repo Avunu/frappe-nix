@@ -90,7 +90,6 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
         "aarch64-darwin"
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
@@ -404,6 +403,9 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
+        # Track B's renames: each old option name still reaches the new one,
+        # and is listed for its deprecation warning.
+        // import ./tests/renames.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }
@@ -464,14 +466,14 @@
           inherit pkgs;
           frappe-init = frappeInit pkgs;
         }
-        # The journald fields and services.frappe.logging, at evaluation. Linux
+        # The journald fields and services.frappe-nix.logging, at evaluation. Linux
         # only because it evaluates a NixOS system, but no VM: cheap enough for
         # every PR.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           import ./tests/logging-fields.nix { inherit self pkgs; }
-          # What services.frappe.migrate.offline puts in the migrate unit, on and off.
+          # What services.frappe-nix.migrate.offline puts in the migrate unit, on and off.
           // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
-          # What services.frappe.chromium and .wkhtmltopdf put in the units and the
+          # What services.frappe-nix.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
           // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }
           # The container image names, with and without containers.registry.

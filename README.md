@@ -12,7 +12,7 @@ Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench pro
 -   a `benchRoot` derivation that assembles the whole `/bench` tree
 -   a **`builtBench`** package that runs `bench build` at build time (immutable assets) — the production-ready deployable consumed by both the NixOS module and OCI containers
 -   **OCI container images** — `runtime`, `nginx`, `bench-cli`, or the eight-image split set (web, scheduler, three workers, socketio, nginx, bench-cli) with `runtime.enable = false`
--   a multi-tenant **NixOS module** (`services.frappe`) with per-site systemd units
+-   a multi-tenant **NixOS module** (`services.frappe-nix`) with per-site systemd units
 -   a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …)
 
 It is consumed as a [flake-parts](https://flake.parts/) module, from a bench repository or — see [Develop a single app](docs/scaffolding/app-mode.md) — from one Frappe app's own repository, where the bench around it is generated from flake inputs instead of committed.
@@ -27,7 +27,7 @@ It is consumed as a [flake-parts](https://flake.parts/) module, from a bench rep
 | work in the dev shell | [The development shell](docs/development/README.md), [Everyday commands](docs/development/commands.md), [Development guard rails](docs/development/guard-rails.md) |
 | build images or deploy | [From development to production](docs/production/README.md), [Build production images](docs/production/images.md), [Run Frappe as a NixOS service](docs/production/nixos-service.md) |
 | manage secrets and restore production data | [Secrets](docs/development/secrets.md), [Restore a production backup](docs/development/restore-from-production.md) |
-| look up an option | [Dev shell options](docs/reference/dev-shell-options.md), [Secrets options](docs/reference/secrets-options.md), [`services.frappe` options](docs/reference/nixos-options.md) |
+| look up an option | [Dev shell options](docs/reference/dev-shell-options.md), [Secrets options](docs/reference/secrets-options.md), [`services.frappe-nix` options](docs/reference/nixos-options.md) |
 | fix an error | [FAQ and troubleshooting](docs/reference/troubleshooting.md) |
 
 ## Requirements
@@ -99,15 +99,15 @@ This is the **bench** shape — a repository that holds `apps/*`. For a single a
       { inputs, self, ... }:
       {
         imports = [ frappe-nix.flakeModules.default ];
-        systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
+        systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
 
         perSystem =
           { pkgs, ... }:
           {
             frappe-nix = {
               enable = true;
-              benchName = "mybench";          # container image prefix: mybench/runtime, …
-              siteName = "mysite.localhost";  # → FRAPPE_SITE (empty for multi-tenancy)
+              name = "mybench";          # container image prefix: mybench/runtime, …
+              defaultSite = "mysite.localhost";  # → FRAPPE_SITE (empty for multi-tenancy)
               workspaceRoot = ./.;
               python = pkgs.python312;
               nodejs = pkgs.nodejs_22;
@@ -136,7 +136,7 @@ provision-site          # (first run, in another shell) create the site + instal
 | Output | Purpose |
 | --- | --- |
 | flakeModules.default | The flake-parts module — imports it and configure perSystem.frappe-nix. |
-| nixosModules.default | Standalone NixOS module exposing services.frappe (multi-tenant production systemd). |
+| nixosModules.default | Standalone NixOS module exposing services.frappe-nix (multi-tenant production systemd). |
 | lib.secrets | (in a consuming bench) The declared .age paths and recipients, so a deployment can read the same ciphertext — see [Secrets](#secrets). |
 | lib.mkFlake | flake-parts.lib.mkFlake wrapper that merges frappe-nix's inputs into the consumer's. |
 | lib.overrides | Composable Python package overrides for native deps (mysqlclient, pycups, python-ldap, pyvips, cairocffi). |
@@ -152,7 +152,7 @@ When `frappe-nix.enable` is set, the module adds these **packages** to your flak
 
 and one **app** (`nix run .#<name>`): `relock`, which runs `uv lock` from a `uv` that does not come from the workspace, so it still works when a stale `uv.lock` stops the dev shell from opening. In app mode it also writes `nix/uv.lock` (and `nix/node-locks/`) back into the repo. See [Dependencies and locks](docs/development/locks.md).
 
-With `containers.enable = true` it additionally builds (named `<benchName>/<name>:latest`, or `<registry>/<benchName>/<name>:latest` with `containers.registry` set): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`. See [Build production images](docs/production/images.md).
+With `containers.enable = true` it additionally builds (named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`. See [Build production images](docs/production/images.md).
 
 ## The unified runtime
 
@@ -164,7 +164,7 @@ Nothing to do for a new bench: `frappe-init` writes the dependency into `pyproje
 
 What lands is three things: `frappe-runtime` in `[project].dependencies`; a `[tool.uv.sources]` entry pointing at this repository's `runtime/` subdirectory; and `hatchling` in `[tool.uv.extra-build-dependencies]`. The declaration exists for uv's resolver and is a placeholder, not a version pin: frappe-nix points uv2nix's `srcOverrides` at its own `runtime/` directory, so a bump is `nix flake update frappe-nix` — no relock in any bench. A frappe-runtime release that adds a new dependency does need `nix run .#relock -- --upgrade-package frappe-runtime` once.
 
-`runtime.enable = false` goes back to the split processes and the Node realtime server, in both the dev shell and `services.frappe`.
+`runtime.enable = false` goes back to the split processes and the Node realtime server, in both the dev shell and `services.frappe-nix`.
 
 ## Development shell
 
@@ -190,7 +190,7 @@ frappe-nix.secrets = {
 };
 ```
 
-There is no `secrets.nix`: the recipient list in `flake.nix` is the only place it is written down, and `check-secrets` proves the ciphertext agrees. With secrets declared, `setup-backup-access` and `bench restore` clone production into the dev shell, and `services.frappe` can read the same ciphertext through `lib.secrets`. See [Secrets](docs/development/secrets.md) and [Restore a production backup](docs/development/restore-from-production.md).
+There is no `secrets.nix`: the recipient list in `flake.nix` is the only place it is written down, and `check-secrets` proves the ciphertext agrees. With secrets declared, `setup-backup-access` and `bench restore` clone production into the dev shell, and `services.frappe-nix` can read the same ciphertext through `lib.secrets`. See [Secrets](docs/development/secrets.md) and [Restore a production backup](docs/development/restore-from-production.md).
 
 ## Local apps
 
@@ -199,13 +199,13 @@ An app lives in a bench in one of two shapes: a **git submodule** (`bench-get-ap
 ## Production
 
 -   [Build production images](docs/production/images.md) — the immutable `builtBench` and the OCI images made from it.
--   [Run Frappe as a NixOS service](docs/production/nixos-service.md) — `services.frappe`: per-site units, secrets, MariaDB, Redis, nginx.
+-   [Run Frappe as a NixOS service](docs/production/nixos-service.md) — `services.frappe-nix`: per-site units, secrets, MariaDB, Redis, nginx.
 -   [Operate a deployed site](docs/production/operations.md) — creating or restoring a site, snapshot-protected migrations on deploy, runtime tuning.
 -   [Logging](docs/production/logging.md) — everything goes to the journal, with `APP_SERVICE` and `APP_SITE` fields.
 
 ## Options
 
-Every option, with its type and default, is in the reference: [`perSystem.frappe-nix`](docs/reference/dev-shell-options.md), [`frappe-nix.secrets`](docs/reference/secrets-options.md) and [`services.frappe`](docs/reference/nixos-options.md).
+Every option, with its type and default, is in the reference: [`perSystem.frappe-nix`](docs/reference/dev-shell-options.md), [`frappe-nix.secrets`](docs/reference/secrets-options.md) and [`services.frappe-nix`](docs/reference/nixos-options.md).
 
 ## Layout
 

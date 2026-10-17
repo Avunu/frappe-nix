@@ -1,4 +1,4 @@
-# NixOS VM test for services.frappe.chromium and services.frappe.wkhtmltopdf: a
+# NixOS VM test for services.frappe-nix.chromium and services.frappe-nix.wkhtmltopdf: a
 # PDF rendered the way each of Frappe's generators renders one, from inside a
 # site's own unit.
 #
@@ -233,7 +233,7 @@ in
       virtualisation.memorySize = 2048;
       environment.systemPackages = [ pkgs.poppler-utils ];
 
-      services.frappe = {
+      services.frappe-nix = {
         enable = true;
         package = stubBench;
         chromium.enable = true;
@@ -247,8 +247,8 @@ in
   testScript =
     { nodes, ... }:
     let
-      chromiumExe = lib.getExe nodes.machine.services.frappe.chromium.package;
-      wkhtmltopdfExe = "${nodes.machine.services.frappe.wkhtmltopdf.package}/bin/wkhtmltopdf";
+      chromiumExe = lib.getExe nodes.machine.services.frappe-nix.chromium.package;
+      wkhtmltopdfExe = "${nodes.machine.services.frappe-nix.wkhtmltopdf.package}/bin/wkhtmltopdf";
     in
     ''
       start_all()

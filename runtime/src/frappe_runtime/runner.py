@@ -614,10 +614,10 @@ def main() -> None:
 	# "IncorrectSitePath: 404 Not Found: <site> does not exist". A re-exec keeps the
 	# cwd, so enter_sites_dir() must give the same cwd when it runs again from sites/.
 	enter_sites_dir()
-	# INFO, not the level services.frappe.logging.level sets: what reaches the root
+	# INFO, not the level services.frappe-nix.logging.level sets: what reaches the root
 	# logger here is mostly the runner's own lifecycle (restarts, drains), which is
 	# what an operator reads the unit's journal for. Frappe's application loggers
-	# do not propagate to it; FRAPPE_LOG_LEVEL governs those.
+	# do not propagate to it; FRAPPE_NIX_LOG_LEVEL governs those.
 	setup_logging(logging.INFO)
 	if config.verbose:
 		logging.getLogger("frappe.realtime.packets").setLevel(logging.INFO)

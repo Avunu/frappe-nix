@@ -270,6 +270,15 @@ class TestDetect(unittest.TestCase):
 			self.assertEqual(detect.existing_bench_name(), "")
 			Path("flake.nix").write_text('{\n  frappe-nix = {\n    benchName = "acme";\n  };\n}\n')
 			self.assertEqual(detect.existing_bench_name(), "acme")
+			# The name now (CONVENTIONS.md, Identity options); a nested `name` is not it.
+			Path("flake.nix").write_text(
+				'{\n  inputs.frappe-nix.url = "x";\n  frappe-nix = {\n'
+				'    app = { name = "inner"; };\n    siblings = [ { name = "erpnext"; } ];\n'
+				'    # name = "comment";\n    name = "acme2";\n  };\n}\n'
+			)
+			self.assertEqual(detect.existing_bench_name(), "acme2")
+			Path("flake.nix").write_text('{\n  frappe-nix = {\n    app = { name = "inner"; };\n  };\n}\n')
+			self.assertEqual(detect.existing_bench_name(), "")
 			with contextlib.redirect_stdout(io.StringIO()):
 				self.assertEqual(command.decide_mode("auto", False), "migrate")
 
@@ -379,7 +388,7 @@ class TestTemplate(unittest.TestCase):
 		self.addCleanup(subprocess.run, ["rm", "-rf", str(tmp)], check=False)
 		src = tmp / "tpl"
 		(src / "sub").mkdir(parents=True)
-		(src / "flake.nix").write_text('benchName = "@BENCH_NAME@"; python = pkgs.@PYTHON@;\n')
+		(src / "flake.nix").write_text('name = "@BENCH_NAME@"; python = pkgs.@PYTHON@;\n')
 		(src / "pyproject.toml").write_text('name = "@PROJECT_NAME@"\no = "@OVERRIDES@"\n')
 		(src / "sub/keep").write_text("mine\n")
 		(src / ".gitignore").write_text("env\n")
@@ -402,7 +411,7 @@ class TestTemplate(unittest.TestCase):
 			template.install_template(st, keep=True)
 			template.install_gitignore_block(st)
 			template.install_gitignore_block(st)
-		self.assertEqual((dest / "flake.nix").read_text(), 'benchName = "acme"; python = pkgs.python312;\n')
+		self.assertEqual((dest / "flake.nix").read_text(), 'name = "acme"; python = pkgs.python312;\n')
 		self.assertEqual((dest / "pyproject.toml").read_text(), 'name = "acme-bench"\no = []\n')
 		self.assertEqual((dest / "sub/keep").read_text(), "theirs\n")
 		self.assertIn(". .gitignore already current", out.getvalue())

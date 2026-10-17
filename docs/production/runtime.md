@@ -20,7 +20,7 @@ Two things follow beyond the process count:
 | Place                 | What runs                                                                                                                                                                        |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The development shell | A `runtime` process on a unix socket behind nginx, with `--dev` (reload on a Python change, and serves `/assets` and `/files`) and `runtime.jobThreads` job threads (default 2). |
-| `services.frappe`     | One `frappe-<SITE>` systemd unit per site. See [Run Frappe as a NixOS service](nixos-service.md).                                                                                |
+| `services.frappe-nix`     | One `frappe-<SITE>` systemd unit per site. See [Run Frappe as a NixOS service](nixos-service.md).                                                                                |
 | Container images      | The `runtime` image runs `frappe-runtime --host 0.0.0.0 --port 8000 --job-threads 4`, without `--dev`. See [Build production images](images.md).                                 |
 
 The package also installs a second command, `frappe-realtime`, which runs the realtime server alone, for a stack that keeps gunicorn.
@@ -63,7 +63,7 @@ Set `runtime.src = null` to hand version control back to `uv.lock`.
 
 ## Going back
 
-`runtime.enable = false` restores the split processes and the Node realtime server, in both the dev shell and `services.frappe`. Everything that shape needs is still there and still tested: `socketio.socketPath`, `socketio.port`, `web.workers`, the loopback listener and the per-image container set. `checks.socket` covers the split shape, and `checks.socket-runtime` covers the unified one.
+`runtime.enable = false` restores the split processes and the Node realtime server, in both the dev shell and `services.frappe-nix`. Everything that shape needs is still there and still tested: `socketio.socketPath`, `socketio.port`, `web.workers`, the loopback listener and the per-image container set. `checks.socket` covers the split shape, and `checks.socket-runtime` covers the unified one.
 
 ## Realtime handlers
 

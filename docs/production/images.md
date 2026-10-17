@@ -55,12 +55,12 @@ Enable the images in your bench flake:
 ```nix
 frappe-nix = {
   enable = true;
-  benchName = "<BENCH_NAME>";
+  name = "<BENCH_NAME>";
   containers.enable = true;
 };
 ```
 
-Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<benchName>/<name>`, or `<registry>/<benchName>/<name>` with `containers.registry` set (see [Building, loading and pushing](#building-loading-and-pushing)). The [unified runtime](runtime.md) is on by default, which gives you three images.
+Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<name>/<role>`, or `<registry>/<name>/<role>` with `containers.registry` set (see [Building, loading and pushing](#building-loading-and-pushing)). The [unified runtime](runtime.md) is on by default, which gives you three images.
 
 | Package     | Image                         | Contents                                                                                     |
 | ----------- | ----------------------------- | -------------------------------------------------------------------------------------------- |

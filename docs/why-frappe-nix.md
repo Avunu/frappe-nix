@@ -27,7 +27,7 @@ The production package, `builtBench`, goes one step further: it runs `bench buil
 On NixOS the server is described by files in git. A change to the database, the web server or the number of workers is a commit that someone can review, and the history answers "who changed this and why" without detective work. A site in frappe-nix is a few lines of Nix:
 
 ```nix
-services.frappe = {
+services.frappe-nix = {
   enable = true;
   package = bench.packages.x86_64-linux.default;
   database.createLocally = true;

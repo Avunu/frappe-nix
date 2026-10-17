@@ -771,11 +771,11 @@ class TestFirstOptIn(OptOutCase):
 		self.assertEqual(code, 0, err)
 		self.assertTrue(self.read("flake.nix").startswith("# frappe-nix:managed"))
 
-	def test_the_app_templates_flake_is_replaced_silently(self):
+	def _the_app_templates_flake_is_replaced_silently(self, template: str):
 		from frappe_nix_tools.common import data_path
 
 		text = (
-			data_path("app-template/flake.nix.in")
+			data_path(template)
 			.read_text()
 			.replace("@APP_NAME@", "demo_app")
 			.replace("@FRAPPE_BRANCH@", "version-16")
@@ -787,6 +787,13 @@ class TestFirstOptIn(OptOutCase):
 		self.commit()
 		code, _, err = self.fn("sync", "--write", "--standards", "minimal", "--frappe-version", "version-16")
 		self.assertEqual(code, 0, err)
+
+	def test_the_app_templates_flake_is_replaced_silently(self):
+		self._the_app_templates_flake_is_replaced_silently("app-template/flake.nix.in")
+
+	def test_the_earlier_app_templates_flake_is_replaced_silently(self):
+		# templates/app before CONVENTIONS.md's renames (siteName, x86_64-darwin).
+		self._the_app_templates_flake_is_replaced_silently("app-template/flake.nix.v0.in")
 
 
 class TestObjectSiblings(AppCase):

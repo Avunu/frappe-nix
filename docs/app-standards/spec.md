@@ -203,7 +203,7 @@ frappe-nix/
 │     N3a: app-mode `apps.frappe-init`; import of lib/standards/shell.nix
 │     N1:  port offset salt (opted-in apps, or `ports.worktreeSalt = true`) and FRAPPE_NIX_PORT_OFFSET;
 │          FRAPPE_NIX_CI in enterShell; nixfmt/statix/deadnix in an opted-in app-mode shell; frappe-nix.renamedApps
-├── modules/nixos.nix                          [N1]   (services.frappe.sites.<site>.renamedApps)
+├── modules/nixos.nix                          [N1]   (services.frappe-nix.sites.<site>.renamedApps)
 ├── templates/app/
 │   └── flake.nix, .envrc, .gitignore          unchanged from frappe-nix `main` (S35). `frappe-init --app` without
 │                                                      `--standards` copies exactly this, as today. N3 MUST NOT change
@@ -434,7 +434,7 @@ enable = true                                # example: switch on a module the p
 publisher = "Example Apps Ltd"               # example: an org value for this app only (S37)
 
 [tool.frappe-nix.dev-shell]                  # app-only flake parameters (§2.5); custom inputs go in its local region
-systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin", "x86_64-darwin"]   # flake systems
+systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]   # flake systems
 extra-substituters = []                      # appended to nixConfig.extra-substituters
 extra-trusted-public-keys = []               # appended to nixConfig.extra-trusted-public-keys
 frappe-nix-url = ""                          # "" = github:Avunu/frappe-nix/release-<N>. Any flake URL (a fork, a
@@ -731,7 +731,7 @@ Where an app's own Nix goes:
             formatter = pkgs.nixfmt;
             frappe-nix = {
               enable = true;
-              siteName = "{{ site }}";
+              defaultSite = "{{ site }}";
               app = {
                 enable = true;
                 frappeVersion = "{{ frappe.preset }}";
@@ -2099,7 +2099,7 @@ The nightly script (N4, `py/frappe_nix_tools/frappe_nix_tools/data/ci/nightly.sh
 ```bash
 set -uo pipefail
 rc=0
-export FRAPPE_ADMIN_PASSWORD="${FRAPPE_TEST_ADMIN_PASSWORD:-admin}"
+export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-${FRAPPE_TEST_ADMIN_PASSWORD:-admin}}"
 export FRAPPE_NIX_ARTIFACT_DIR="$PWD/.dev-dist/nightly"; mkdir -p "$FRAPPE_NIX_ARTIFACT_DIR"
 frappe-test --ci --keep-up || rc=$?
 bench build || rc=1
@@ -2531,7 +2531,7 @@ frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
 
 - `FRAPPE_NIX_CI`;
 - `GITHUB_STEP_SUMMARY`;
-- `FRAPPE_TEST_ADMIN_PASSWORD` (default `admin`).
+- `FRAPPE_NIX_TEST_ADMIN_PASSWORD` (default `admin`; `FRAPPE_TEST_ADMIN_PASSWORD`, its name before, is read with a warning through 1.x).
 
 **Defaults.**
 
@@ -3039,7 +3039,7 @@ Exit 0, or 1 when the tree is dirty or the pair is a replace.
 
 **Replace path** (generic; the Avunu fleet's case is jailbreak → data_steward, A.2). data_steward is a new app with its own module (`Data Steward`) and doctypes (`Data Steward Settings`), so it never collides with jailbreak's `Jailbreak` Module Def or `Jailbreak Settings` while both are installed; Q5's keep-the-module-names rule doesn't apply to it. Its `after_install` copies the Jailbreak Settings values across, mapping each capability, and is idempotent. Wiring:
 
-- **NixOS:** `services.frappe.sites.<site>.replacedApps = { jailbreak = "data_steward"; }`. Inside the existing snapshot and rollback, after `setMaintenance on`: `bench --site S install-app data_steward` (if not installed), then `bench --site S uninstall-app jailbreak --yes --no-backup` (the snapshot is the backup), then migrate as usual. When jailbreak isn't installed it is a no-op.
+- **NixOS:** `services.frappe-nix.sites.<site>.replacedApps = { jailbreak = "data_steward"; }`. Inside the existing snapshot and rollback, after `setMaintenance on`: `bench --site S install-app data_steward` (if not installed), then `bench --site S uninstall-app jailbreak --yes --no-backup` (the snapshot is the backup), then migrate as usual. When jailbreak isn't installed it is a no-op.
 - **devenv:** `frappe-nix.replacedApps` does the same in `reconcile-apps`.
 - jailbreak's whitelisted `assert_capability` and `check_capability` lived in `jailbreak/__init__.py`; in data_steward they are `data_steward.api.assert_capability` and `data_steward.api.check_capability` (L5 forbids code in `__init__.py`). The JS namespace changes from `jailbreak.check_capability(...)` to `data_steward.check_capability(...)` in `public/js/data_steward.js`, and capabilities are delivered at boot (A.2). No shim is kept: the old app is uninstalled, so nothing can call the old paths.
 
@@ -3074,7 +3074,7 @@ When OLD isn't installed, it prints `OLD not installed on S: nothing to do` and 
 
 **Wiring:**
 
-- **NixOS:** `services.frappe.sites.<site>.renamedApps = { esign = "esign_webforms"; }` runs the site half right after `setMaintenance on`, and before offline-migrate and `bench migrate`, inside the existing snapshot and rollback.
+- **NixOS:** `services.frappe-nix.sites.<site>.renamedApps = { esign = "esign_webforms"; }` runs the site half right after `setMaintenance on`, and before offline-migrate and `bench migrate`, inside the existing snapshot and rollback.
 - **devenv:** `frappe-nix.renamedApps` makes `reconcile-apps` run the same step before `install-app`.
 - **Before production:** pause the scheduler and drain RQ (rename-mechanics track, deploy order).
 
@@ -3119,8 +3119,8 @@ Everything else, including app materialisation, the env symlink and bench patche
 
 **Ports.** A new option `frappe-nix.ports.worktreeSalt` defaults to the opt-in test of `lib/standards/shell.nix` (true with `[tool.frappe-nix]`, false without), so a non-opted-in app's linked worktrees keep today's ports; any app may set it either way. In app mode, define `seed`:
 
-- `cfg.benchName + "@" + builtins.getEnv "PWD"` when `ports.worktreeSalt` is true and `PWD/.git` is a regular file, which means a linked worktree;
-- otherwise `cfg.benchName`, which keeps today's ports.
+- `cfg.name + "@" + builtins.getEnv "PWD"` when `ports.worktreeSalt` is true and `PWD/.git` is a regular file, which means a linked worktree;
+- otherwise `cfg.name`, which keeps today's ports.
 
 The new option `frappe-nix.ports.offset` defaults to `portOffsetFor seed`. The environment variable `FRAPPE_NIX_PORT_OFFSET`, read with `builtins.getEnv` (evaluation is already impure), overrides it when it is a number from 0 to 899.
 
@@ -4215,7 +4215,7 @@ The implementing PRs record their deviations from the spec here, one row each, a
 | N3 | §2.6, §3.6 | `.envrc` carries the standard §3.6 header. | One header text for every `#` file. |
 | N3 | §3.2 | A local region is checked structurally (hook ids, dependabot `ecosystem`/`directory` pairs, EditorConfig sections, flake inputs); the merged YAML and Nix are not parsed. | prek, zizmor, actionlint and `nix flake lock` parse them, and sync runs no `nix` under `--check`. |
 | N3 | §2.4 | A file whose module is on but whose `when` turned false is deleted when it equals the current render or still opens with its managed header and has empty local regions. | The previous context is not known to the run that sees the condition change. |
-| N3 | §3.3 step 1 | Creating `[tool.frappe-nix]` writes `siblings` only when there are any, carries an existing flake's `siteName` as `site` (or `--site`) when it isn't `<app-hyphen>.localhost`, and sets `build = true` when `package.json` has a `build` script and nothing sync can see builds. Nix comments in the existing flake are ignored. | `minimal` must add exactly `schema`, `profile` and `frappe-major` (§7); an app's dev site must not be orphaned; the created table must not fail its own §2.8 rule; `templates/app/flake.nix` shows siblings in comments. |
+| N3 | §3.3 step 1 | Creating `[tool.frappe-nix]` writes `siblings` only when there are any, carries an existing flake's `defaultSite` as `site` (or `--site`) when it isn't `<app-hyphen>.localhost`, and sets `build = true` when `package.json` has a `build` script and nothing sync can see builds. Nix comments in the existing flake are ignored. | `minimal` must add exactly `schema`, `profile` and `frappe-major` (§7); an app's dev site must not be orphaned; the created table must not fail its own §2.8 rule; `templates/app/flake.nix` shows siblings in comments. |
 | N3 | §1.2 | New: `.prekignore` (`tests/fixtures/`); the fixture's Python sources, README and screenshot spec gain test_utils' copyright stamps, and its `after_request` hook takes only `response`; `docs/scaffolding/app-mode.md` and `docs/reference/scaffolder.md` describe the opt-in, `--sync` and `--check`. | prek discovers nested configs as projects, so frappe-nix's own lint would run the fixture's hooks; the fixture must pass its own hooks under example-org (test_utils on); frappe passes only the parameters a hook accepts. |
 | N3 | §7 N3 | `selftest-scaffold`'s Bootstrap shape "no `flake.nix` and no `flake.lock`" (`no-flake`) deletes `flake.nix` and `.envrc` but keeps a `flake.lock` that holds only the fixture's `frappe` node; phase A locks frappe-nix and nixpkgs around it. Phase A's decision to lock when there is no `flake.lock` is covered by `test_bootstrap.py` (`test_no_lock_locks_once`, with a stand-in `nix`), not by a real lock. | With no lock at all, relock resolves whatever `version-16` is that day, so the job would fail on Frappe's moving head rather than on sync. |
 | N3 | §7 N3 | The fixture's `flake.lock` pins frappe-nix by commit (the N3a merge, e97d588) with the `release-1` original until `release-1` exists, and frappe at f20f92d (the dev environment's frappe); the self-tests override frappe-nix. `selftest-scaffold` checks carbon_frappe at a pinned commit (e275a30): exit 2 with the opt-in hint, and with a table added a drift report that is exit 1 or 2, never 3. `tsc --build` uses a stand-in `marketplace/shots.d.ts` until N5 renders it. | `release-1` is created by N6's first release. The fixture's own frappe keeps relock independent of version-16's head. |
@@ -4236,7 +4236,7 @@ The implementing PRs record their deviations from the spec here, one row each, a
 | N3 | §3.1 | A manifest entry may also carry `handler`, `command`, `phase` and `header_note`; `module` may be a list (any of them); a fragment may carry `floors` by kind (`npm-js`, `npm-ts`, `npm-frappe-types`, `npm-scss`, `uv`). A retire rule is `{paths, rule, module, with?, when?, contains?, except?, unmanaged?, only_section?, deps_in_project?}`, `contains` being regular expressions as in a profile's `[[retire]]`. | The merge and block strategies need per-file rules; the floors are per module; a retire rule needs its function's module and the ones it acts with. |
 | N3 | §3.3 step 3, S32 | Before `release-1` exists, a sync that would lock it (the default URL, not a `dev-shell.frappe-nix-url`) refuses up front (exit 3, nothing written). Hidden `frappe-nix sync --write --phase preflight`, which `frappe-init --app` runs on an app that opts in or has opted in (under `--dry-run` too) before it writes anything, builds phase A's plan with the same flags and refuses what phase A would: an invalid table, a `--standards` or `--frappe-version` the table contradicts (exit 2; `--frappe-version` is otherwise ignored once the table exists, so it is refused rather than shown in the plan and dropped), an unknown profile, and the missing release branch of the URL phase A would lock (so a `dev-shell.frappe-nix-url` passes). Without `--frappe-version`, `frappe-init --app` on an app that opted in takes `frappe-major` from its table instead of asking. | Otherwise `nix flake lock` fails halfway with a GitHub 422 and a half-staged tree, and an invalid configuration left templates/app's files written and staged. |
 | N3 | §3.3 step 5 | "Turns a module on" means on now and off in `HEAD`'s committed configuration (or no table there): the `run frappe-nix repo doctor` notice is printed once, on that run, like the notices of step 6. It is printed before N4 ships `repo doctor`. | The configuration is what `HEAD` committed and what is being written; a sync run after the change is committed has nothing to compare with, as for the retraction notices. |
-| N3 | §3.3 step 1 | `frappe-nix sync --site <name>` sets `[tool.frappe-nix] site` when `--standards` creates the table; `frappe-init --app --site` passes it through, and only a `--site` the user gave: without one, an existing flake's `siteName` is kept, as under `--sync`. | The old template substituted the site; the managed flake renders `site`. |
+| N3 | §3.3 step 1 | `frappe-nix sync --site <name>` sets `[tool.frappe-nix] site` when `--standards` creates the table; `frappe-init --app --site` passes it through, and only a `--site` the user gave: without one, an existing flake's `defaultSite` is kept, as under `--sync`. | The old template substituted the site; the managed flake renders `site`. |
 | N3 | §2.12, §2.14 | `[tool.test_utils.static-analysis] whitelist` (module `test-utils`) must contain `frappe.*` and each sibling's `<name>.*` (merged: app entries are kept). | prek runs outside a bench, so static_analysis has no frappe sources. |
 | N3 | §2.14 | `validate_copyright` also excludes `scripts/`, `ci/`, executable files and the org profile's `[[extra-files]]` paths. | A stamp above `#!/usr/bin/env node` breaks the script; an extra file without a header would be stamped and rewritten by sync in turn. |
 | N3 | §2.1, §2.12 | The locked oxlint rules are matched by bare rule name, and a `categories` key in an override is refused too, while `js.locked-rules` is on; the F401/E402 per-file-ignores rule uses ruff's glob semantics and also reads `extend-per-file-ignores` and the top-level `[tool.ruff]` spellings. | oxlint treats every plugin spelling as the locked rule; ruff's `*` crosses `/` and matches basenames. |

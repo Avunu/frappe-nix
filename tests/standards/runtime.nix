@@ -2,7 +2,7 @@
 # running bench. selftest-runtime.yml runs the rest against the fixture app.
 #
 #   standards-ports           the port offset: the primary checkout's is today's
-#                            (a hash of benchName); a linked worktree's differs
+#                            (a hash of name); a linked worktree's differs
 #                            only with ports.worktreeSalt, which defaults to the
 #                            opt-in test (on for an app with [tool.frappe-nix],
 #                            off without); FRAPPE_NIX_PORT_OFFSET parses and
@@ -58,7 +58,7 @@ let
       config = benchFlake (_: {
         frappe-nix = {
           enable = true;
-          benchName = "example-bench";
+          name = "example-bench";
           workspaceRoot = ../fixtures/lock-audit;
         }
         // extra;
@@ -81,7 +81,7 @@ let
     (benchFlake (_: {
       frappe-nix = {
         enable = true;
-        benchName = "example-bench";
+        name = "example-bench";
         workspaceRoot = ../fixtures/lock-audit;
       };
     })).devenv.shells.default.process.manager.before;
@@ -107,7 +107,7 @@ let
     args:
     ports.seed (
       {
-        benchName = "standards-fixture";
+        name = "standards-fixture";
         salt = true;
         pwd = "/src/standards-fixture";
         gitKind = "directory";
@@ -182,7 +182,7 @@ let
     assert lib.assertMsg (
       !(saltDefault plainApp)
     ) "ports.worktreeSalt is on for an app without [tool.frappe-nix]";
-    # The primary checkout (.git is a directory) keeps the bench-name hash.
+    # The primary checkout (.git is a directory) keeps the name hash.
     assert lib.assertMsg (seed { } == "standards-fixture") "the primary checkout's seed is salted";
     assert lib.assertMsg (
       seed {
@@ -250,7 +250,7 @@ let
       frappe-nix-node-modules "$FRAPPE_BENCH_ROOT" frappe
     ''}
     ${ciMode.banner {
-      benchName = "standards-fixture";
+      name = "standards-fixture";
       interactive = "echo interactive-banner";
     }}
     echo "DEVENV_IN_DIRENV_SHELL=''${DEVENV_IN_DIRENV_SHELL:-unset} PC_TUI_ENABLED=''${PC_TUI_ENABLED:-unset}"
@@ -339,7 +339,7 @@ let
     inherit pkgs lib;
     python = pkgs.python314;
     workspaceRoot = devGroupFixture;
-    benchName = "standards-dev-group";
+    name = "standards-dev-group";
     inherit (inputs)
       pyproject-nix
       pyproject-build-systems

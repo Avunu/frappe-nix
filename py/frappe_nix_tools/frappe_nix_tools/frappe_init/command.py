@@ -102,7 +102,7 @@ def dispatch(st: Run) -> None:
 
 	a = st.args
 	for old in a.renamed:
-		st.warn(f"{old} is now {RENAMED[old]}; the old name goes in the next minor release")
+		st.warn(f"{old} is now {RENAMED[old]}; the old name works through 1.x and goes in frappe-nix 2.0.0")
 
 	# --sync / --check: the app in the current directory (or the target given),
 	# handed to `frappe-nix sync`, which checks that it is one.

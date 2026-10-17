@@ -1,12 +1,12 @@
 ---
 title: Operate a deployed site
-description: Create or restore a site on a services.frappe host, deploy upgrades with snapshot-protected migrations, tune the runtime and find where things live.
+description: Create or restore a site on a services.frappe-nix host, deploy upgrades with snapshot-protected migrations, tune the runtime and find where things live.
 order: 4
 tags: [operations, migrations, backups, runtime-tuning]
 updated: 2026-10-16
 ---
 
-This page covers the operational side of a [`services.frappe`](nixos-service.md) host: getting a site installed, upgrading it safely, tuning the runtime and knowing where the state is.
+This page covers the operational side of a [`services.frappe-nix`](nixos-service.md) host: getting a site installed, upgrading it safely, tuning the runtime and knowing where the state is.
 
 ## Create or restore the site
 
@@ -36,7 +36,7 @@ sudo env FRAPPE_SITE=site1.example.com bench new-site site1.example.com --force 
 
 `FRAPPE_SITE` tells the wrapper which site directory to use, so set it even though it repeats the site name. Two things differ from a stock bench:
 
-- The wrapper adds `--no-setup-db`, and says so on stderr. The site's database and its user already exist: the module creates them for `database.createLocally`, and for an external database they are yours, named by the `database.*` options. Frappe's default would create them again over a MariaDB root login. A local MariaDB lets only OS root log in as root, through `unix_socket`, and the wrapper runs as `frappe`. The wrapper adds the flag only for a site declared in `services.frappe` whose `site_config.json` has a database name and password. It adds nothing when you pass any of Frappe's database flags yourself (`--db-root-username`, `--db-root-password`, `--db-host`, `--setup-db` and the rest), and then the command runs exactly as you typed it.
+- The wrapper adds `--no-setup-db`, and says so on stderr. The site's database and its user already exist: the module creates them for `database.createLocally`, and for an external database they are yours, named by the `database.*` options. Frappe's default would create them again over a MariaDB root login. A local MariaDB lets only OS root log in as root, through `unix_socket`, and the wrapper runs as `frappe`. The wrapper adds the flag only for a site declared in `services.frappe-nix` whose `site_config.json` has a database name and password. It adds nothing when you pass any of Frappe's database flags yourself (`--db-root-username`, `--db-root-password`, `--db-host`, `--setup-db` and the rest), and then the command runs exactly as you typed it.
 - `--force` is required, and the wrapper never adds it. `frappe-init-<SITE>` has already created the site directory and its `site_config.json`. Without the flag, Frappe stops with `Site … already exists`. Frappe keeps that `site_config.json`. Do not pass `--force` for a site that is already installed: it drops and recreates Frappe's core tables in the existing database.
 
 If a `bench new-site` fails, Frappe removes the whole site directory, `site_config.json` included. Run `sudo systemctl restart frappe-init-<SITE>.service` to recreate them before you try again.

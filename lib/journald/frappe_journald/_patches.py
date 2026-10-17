@@ -36,7 +36,7 @@ def patch_frappe_logger(module):
 	  ``%(asctime)s %(levelname)s {module} %(message)s``, repeats what journald
 	  records natively and carries no site.
 
-	``FRAPPE_LOG_LEVEL`` replaces ``default_log_level`` rather than being applied
+	``FRAPPE_NIX_LOG_LEVEL`` replaces ``default_log_level`` rather than being applied
 	per logger: ``get_logger`` reads it as ``frappe.log_level or
 	default_log_level``, so an explicit ``set_log_level()`` — or the console's
 	``frappe.log_level = 20`` while it stores history — still wins, exactly as it

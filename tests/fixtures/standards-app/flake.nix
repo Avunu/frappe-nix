@@ -34,7 +34,6 @@
         systems = [
           "aarch64-darwin"
           "aarch64-linux"
-          "x86_64-darwin"
           "x86_64-linux"
         ];
 
@@ -44,7 +43,7 @@
             formatter = pkgs.nixfmt;
             frappe-nix = {
               enable = true;
-              siteName = "standards-fixture.localhost";
+              defaultSite = "standards-fixture.localhost";
               app = {
                 enable = true;
                 frappeVersion = "version-16";

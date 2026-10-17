@@ -6,10 +6,10 @@ tags: [options, reference, devenv]
 updated: 2026-10-15
 ---
 
-These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe`](nixos-options.md).
+These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
 
 > [!NOTE]
-> `devguard.mail.port`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `benchName`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
+> `devguard.mail.port`, `devguard.mail.httpPort` and `devguard.mail.pop3.port` default to a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
 
 ## Core
 
@@ -18,8 +18,8 @@ The options every bench sets.
 | Option          | Type         | Default                                          | Notes                                                                                                                                                                                      |
 | --------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `enable`        | bool         | `false`                                          | Enable the dev shell and the packages.                                                                                                                                                     |
-| `benchName`     | str          | required (the normalized `app.name` in app mode) | Identifier for environment names and the container image prefix. It also seeds the per-bench port offsets.                                                                                 |
-| `siteName`      | str          | `""`                                             | `FRAPPE_SITE`. Empty means multi-tenancy, with the site set per shell through `.env`.                                                                                                      |
+| `name`             | str          | required (the normalized `app.name` in app mode) | The project's identity, a slug. It seeds the per-bench port offsets and names the container images, the dev processes' systemd scope and the shell's messages; devenv's own `name` defaults to it. Formerly `benchName`. |
+| `defaultSite`      | str          | `""`                                             | Frappe's `default_site`, and the shell's `FRAPPE_SITE`. Empty means multi-tenancy, with the site set per shell through `.env`. Formerly `siteName`. |
 | `workspaceRoot` | path or null | `null`                                           | The bench root, where `pyproject.toml` and `apps/` live, usually `./.`. Required in bench mode. It must stay `null` in app mode, where frappe-nix assembles the workspace itself.          |
 | `python`        | package      | `pkgs.python312`                                 | Python interpreter. In app mode, the `app.frappeVersion` preset's.                                                                                                                         |
 | `nodejs`        | package      | `pkgs.nodejs_22`                                 | Node.js for frontend builds and the Node realtime server. In app mode, the `app.frappeVersion` preset's.                                                                                   |
@@ -93,7 +93,7 @@ Runs `devenv up` in a systemd scope of its own. See [Memory and disk](../develop
 
 ## Runtime
 
-The unified `frappe-runtime` process. See [The unified runtime](../production/runtime.md). The production counterparts are under [`services.frappe.runtime`](nixos-options.md#top-level-options).
+The unified `frappe-runtime` process. See [The unified runtime](../production/runtime.md). The production counterparts are under [`services.frappe-nix.runtime`](nixos-options.md#top-level-options).
 
 | Option               | Type         | Default                       | Notes                                                                                                                                    |
 | -------------------- | ------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -109,7 +109,7 @@ See [The development shell](../development/README.md#ports-and-sockets).
 | Option           | Type         | Default | Notes                                                                                                                                                              |
 | ---------------- | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `sockets.enable` | bool         | `true`  | Put MariaDB, Redis, the realtime server and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs Frappe 15.46 or newer. |
-| `ports.offset`   | int, 0–899   | a hash of `benchName` | The offset every TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `benchName@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
+| `ports.offset`   | int, 0–899   | a hash of `name` | The offset every TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `<name>@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
 | `ports.worktreeSalt` | bool     | whether the app opted in to the app standards | App mode: salt a linked worktree's `ports.offset` with its path, so two worktrees of one app run at once, and have `devenv up` stop and name a taken port. On by default only with a `[tool.frappe-nix]` table; any app may set it. Bench mode ignores it. |
 | `ports.base`     | port or null | `null`  | The web port, overriding `8000 + ports.offset`. Mailpit and MariaDB keep theirs.                                                                                 |
 
@@ -117,7 +117,7 @@ See [The development shell](../development/README.md#ports-and-sockets).
 
 | Option                       | Type        | Default          | Notes                                                                                                                                                                                                           |
 | ---------------------------- | ----------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `appsReconcile.enable`       | bool        | `siteName != ""` | Install whatever `sites/apps.txt` names that `siteName`'s site does not have installed yet, on every `devenv up`. See [Apps in a bench](../development/apps.md#installed-app-drift).                            |
+| `appsReconcile.enable`       | bool        | `defaultSite != ""` | Install whatever `sites/apps.txt` names that `defaultSite`'s site does not have installed yet, on every `devenv up`. See [Apps in a bench](../development/apps.md#installed-app-drift).                            |
 | `renamedApps`                | attrs of str | `{ }`           | Apps renamed in place, `OLD = NEW`: `reconcile-apps` runs `frappe-rename-app --site` before it installs anything. See [Renaming an app](../app-standards/rename.md).                                                    |
 | `replacedApps`               | attrs of str | `{ }`           | Apps replaced by a new app, `OLD = NEW`: `reconcile-apps` installs NEW and uninstalls OLD on a site that has OLD. See [Renaming an app](../app-standards/rename.md#replacing-an-app-instead).                       |
 | `assets.reassert.hooks`      | list of str | `[ ]`            | `bench execute` targets run when `sites/assets/assets.json` names a bundle file that does not exist on disk. Empty by default, so it names no app. See [Asset builds](../development/assets.md#assetsreassert). |
@@ -134,12 +134,12 @@ Each guard is independently switchable, and `devguard.enable = false` turns them
 | `devguard.egress.allowHosts`             | list of str       | `[ ]`                            | Hostnames (`*.` for subdomains), addresses or CIDRs to let through. Shared with `integrations.allowHosts`.   |
 | `devguard.mail.enable`                   | bool              | `true`                           | Route all outgoing mail to Mailpit, and refuse IMAP and POP3.                                                |
 | `devguard.mail.host`                     | str               | `"127.0.0.1"`                    | Interface Mailpit binds and Frappe is redirected to.                                                         |
-| `devguard.mail.port`                     | port              | 19000 plus a hash of `benchName` | Catcher SMTP port (per bench). Formerly `devguard.mail.smtpPort`.                                            |
-| `devguard.mail.httpPort`                 | port              | 20000 plus a hash of `benchName` | Mailpit web UI port (per bench).                                                                             |
+| `devguard.mail.port`                     | port              | 19000 plus a hash of `name` | Catcher SMTP port (per bench). Formerly `devguard.mail.smtpPort`.                                            |
+| `devguard.mail.httpPort`                 | port              | 20000 plus a hash of `name` | Mailpit web UI port (per bench).                                                                             |
 | `devguard.mail.sender`                   | str               | `"notifications@example.com"`    | From address used only on sites with no outgoing Email Account at all.                                       |
 | `devguard.mail.unmute`                   | bool              | `true`                           | Ignore `mute_emails` in `site_config.json`.                                                                  |
 | `devguard.mail.pop3.enable`              | bool              | `false`                          | Serve incoming mail from Mailpit's POP3 listener instead of blocking it.                                     |
-| `devguard.mail.pop3.port`                | port              | 21000 plus a hash of `benchName` | Mailpit POP3 port (per bench).                                                                               |
+| `devguard.mail.pop3.port`                | port              | 21000 plus a hash of `name` | Mailpit POP3 port (per bench).                                                                               |
 | `devguard.mail.pop3.user`                | str               | `"dev"`                          | Mailpit POP3 username (local development only).                                                              |
 | `devguard.mail.pop3.password`            | str               | `"dev"`                          | Mailpit POP3 password (local development only).                                                              |
 | `devguard.backups.enable`                | bool              | `true`                           | Block Dropbox, S3, Google Drive and Frappe Cloud backup upload.                                              |
@@ -176,7 +176,7 @@ Alter large tables online in front of `bench migrate`. See [Migrate large tables
 | Option                        | Type | Default  | Notes                                                                                                                                                                                           |
 | ----------------------------- | ---- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `offlineMigrate.enable`       | bool | `false`  | Run `bench-offline-migrate` in front of every `bench migrate`, so the ALTERs of large tables cannot lock them. Adds percona-toolkit to the closure.                                             |
-| `offlineMigrate.rowThreshold` | int  | `100000` | Rows at which a table is altered online. `0` sends every table with a pending change through pt-online-schema-change. Overridable with `FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD` or `--threshold`. |
+| `offlineMigrate.rowThreshold` | int  | `100000` | Rows at which a table is altered online. `0` sends every table with a pending change through pt-online-schema-change. Overridable with `FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD` or `--threshold`. |
 
 ## Containers
 
@@ -185,4 +185,4 @@ See [Build production images](../production/images.md).
 | Option                | Type | Default | Notes                                                                                                                                                                                                                                             |
 | --------------------- | ---- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `containers.enable`   | bool | `false` | Build the OCI images.                                                                                                                                                                                                                             |
-| `containers.registry` | str  | `""`    | Registry prefix for the image names: `"ghcr.io/avunu"` names them `ghcr.io/avunu/<benchName>/<name>`. A trailing slash is dropped. frappe-nix does not push. See [Build production images](../production/images.md#building-loading-and-pushing). |
+| `containers.registry` | str  | `""`    | Registry prefix for the image names: `"ghcr.io/avunu"` names them `ghcr.io/avunu/<name>/<role>`. A trailing slash is dropped. frappe-nix does not push. See [Build production images](../production/images.md#building-loading-and-pushing). |

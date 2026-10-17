@@ -1243,7 +1243,15 @@ class TestSiteCarried(AppCase):
 		self.assertEqual(self.fn("sync", "--write", "--standards", "recommended", "--force")[0], 0)
 		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["frappe-nix"]
 		self.assertEqual(cfg["site"], "demo.localhost")
-		self.assertIn('siteName = "demo.localhost"', self.read("flake.nix"))
+		self.assertIn('defaultSite = "demo.localhost"', self.read("flake.nix"))
+
+	def test_default_site_is_read_too(self):
+		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.frappe-nix]")[0])
+		self.write("flake.nix", '{ frappeVersion = "version-16"; defaultSite = "new.localhost"; }\n')
+		self.commit()
+		self.assertEqual(self.fn("sync", "--write", "--standards", "recommended", "--force")[0], 0)
+		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["frappe-nix"]
+		self.assertEqual(cfg["site"], "new.localhost")
 
 
 class TestSiteOption(AppCase):
@@ -1263,7 +1271,7 @@ class TestSiteOption(AppCase):
 		self.assertEqual(code, 0, err)
 		cfg = tomllib.loads(self.read("pyproject.toml"))["tool"]["frappe-nix"]
 		self.assertEqual(cfg["site"], "custom.localhost")
-		self.assertIn('siteName = "custom.localhost"', self.read("flake.nix"))
+		self.assertIn('defaultSite = "custom.localhost"', self.read("flake.nix"))
 
 	def test_default_site_option_adds_no_key(self):
 		self.write("pyproject.toml", self.read("pyproject.toml").split("[tool.frappe-nix]")[0])

@@ -75,7 +75,7 @@ An install that was cut short looks finished to yarn. Shell entry detects exactl
 
 ### A page of an app I just added returns 404, or throws
 
-The app is importable but not installed on the site. With `siteName` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `provision-site` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
+The app is importable but not installed on the site. With `defaultSite` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `provision-site` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
 
 ### `bench update --reset` is not accepted
 
@@ -141,7 +141,7 @@ The unit restored the pre-migrate snapshot and left the site in maintenance mode
 
 ### Edits to `site_config.json` disappear
 
-The init unit regenerates it on every start. Put non-secret settings in `extraConfig` and secrets in `extraConfigFiles`. See [Secrets](../production/nixos-service.md#secrets).
+The init unit regenerates it on every start. Put non-secret settings in `settings` and secrets in `settingsFiles`. See [Secrets](../production/nixos-service.md#secrets).
 
 ### The module warns that `socketio.socketPath` or `web.workers` is ignored
 
@@ -163,7 +163,7 @@ With `web.port` the runtime binds `0.0.0.0`. Keep the port closed in the firewal
 
 ### Can I use it on macOS?
 
-The scaffolded flake lists `aarch64-darwin` and `x86_64-darwin` among its systems, and features such as the memory scope are written to do nothing where they do not apply. Production needs a NixOS host for the module, or any host that runs OCI images.
+The scaffolded flake lists `aarch64-darwin` among its systems (not `x86_64-darwin`, which nixpkgs 26.11 dropped), and features such as the memory scope are written to do nothing where they do not apply. Production needs a NixOS host for the module, or any host that runs OCI images.
 
 ### Do I have to adopt it for production too?
 

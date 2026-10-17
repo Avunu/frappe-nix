@@ -61,7 +61,7 @@ the Nix linters and the shell checks among them), a JUnit report and the step su
   --site SITE        the site (default: $FRAPPE_SITE)
   --reuse-site       keep an existing site instead of recreating it
   --recreate-site    recreate an existing site: DROPS ITS DATABASE and resets
-                     Administrator's password to $FRAPPE_TEST_ADMIN_PASSWORD (admin).
+                     Administrator's password to $FRAPPE_NIX_TEST_ADMIN_PASSWORD (admin).
                      Without --ci, an existing site needs one of the two (or a yes
                      at the prompt on a terminal); --ci recreates it
   --keep-up          leave the bench running afterwards (default: stop what this started)

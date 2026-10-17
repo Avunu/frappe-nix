@@ -1,5 +1,5 @@
 # pt-online-schema-change, runnable from anywhere — what lib/offline-migrate.py
-# alters large tables with, handed to it through FRAPPE_OFFLINE_MIGRATE_PT_OSC.
+# alters large tables with, handed to it through FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC.
 #
 # nixpkgs' percona-toolkit scripts start with `#!/usr/bin/env perl` and nothing
 # puts perl on the PATH of a systemd unit or a shell that did not ask for it, so
