@@ -16,6 +16,12 @@
 #   standards-readme         on the same fixture: sync renders the README blocks, with
 #                            example-org's support override; `frappe-listing readme --check`
 #                            passes; a removed marker is exit 2 naming its block
+#   standards-listing-mysqlclient
+#                            the frappe-listing wrapper exports MYSQLCLIENT_CFLAGS and
+#                            MYSQLCLIENT_LDFLAGS (L9's ImportCheck builds frappe's
+#                            mysqlclient), as defaults a caller's value overrides; with only
+#                            those and no pkg-config, mysqlclient's sdist builds offline and
+#                            MySQLdb imports without LD_LIBRARY_PATH
 {
   pkgs,
   frappeNixTools,
@@ -110,6 +116,37 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     echo "ok   an empty org.brand.tile-color is exit 2 naming it"
     touch "$out"
   '';
+
+  standards-listing-mysqlclient =
+    let
+      python = pkgs.python3.withPackages (ps: [
+        ps.pip
+        ps.setuptools
+      ]);
+    in
+    pkgs.runCommandCC "standards-listing-mysqlclient-check" { nativeBuildInputs = [ python ]; } ''
+      set -euo pipefail
+      fail() { echo "FAIL $*" >&2; exit 1; }
+      export HOME="$TMPDIR"
+      wrapper=${tools.frappe-listing}/bin/frappe-listing
+      grep '^export MYSQLCLIENT_' "$wrapper" > flags.sh || fail "the wrapper exports no MYSQLCLIENT_* flags"
+
+      MYSQLCLIENT_CFLAGS=-Icaller bash -c '. ./flags.sh; [ "$MYSQLCLIENT_CFLAGS" = -Icaller ]' ||
+        fail "a caller's MYSQLCLIENT_CFLAGS does not win over the wrapper's default"
+      echo "ok   a caller's MYSQLCLIENT_CFLAGS wins over the wrapper's default"
+
+      unset MYSQLCLIENT_CFLAGS MYSQLCLIENT_LDFLAGS LD_LIBRARY_PATH PKG_CONFIG_PATH
+      . ./flags.sh
+      [ -n "$MYSQLCLIENT_CFLAGS" ] && [ -n "$MYSQLCLIENT_LDFLAGS" ] || fail "the wrapper's flags are empty"
+      ! command -v pkg-config > /dev/null || fail "pkg-config is on PATH, so the flags are not what is tested"
+      python -m pip install -q --no-index --no-build-isolation --no-deps --target site \
+        ${pkgs.python3.pkgs.mysqlclient.src} > pip.log 2>&1 || { cat pip.log; fail "mysqlclient does not build with the wrapper's flags"; }
+      echo "ok   mysqlclient ${pkgs.python3.pkgs.mysqlclient.version} builds from its sdist with only the wrapper's flags"
+      PYTHONPATH=site python -c 'import MySQLdb; print(MySQLdb._mysql.get_client_info())' > info ||
+        fail "MySQLdb does not import without LD_LIBRARY_PATH"
+      echo "ok   MySQLdb imports without LD_LIBRARY_PATH (client $(cat info))"
+      touch "$out"
+    '';
 
   standards-readme = pkgs.runCommand "standards-readme-check" { inherit nativeBuildInputs; } ''
     set -euo pipefail
