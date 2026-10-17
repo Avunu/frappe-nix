@@ -7,15 +7,9 @@ real servers, the scheduler's IMAP poll stops hammering production mailboxes,
 and an app-level ``override_email_send`` hook cannot route around SMTP.
 """
 
+from .._frappe import disarm_subclasses, redirect_kwargs, with_in_install
 from .._hook import on_import
-from .._patch import (
-	announce,
-	disarm_subclasses,
-	redirect_kwargs,
-	require,
-	require_any,
-	with_in_install,
-)
+from .._patch import announce, require, require_any
 from .._settings import DevGuardBlocked, settings
 from .mail_stdlib import announce_mail
 
@@ -64,7 +58,7 @@ def _patch_frappe(module):
 	original = require(module, "are_emails_muted")
 
 	def are_emails_muted():
-		if enabled() and settings().mail_unmute:
+		if enabled() and settings().flag(NAME, "unmute"):
 			# A site_config restored from production often carries
 			# ``mute_emails``, which would drop mail before it ever reached the
 			# catcher and read as "the mail guard is broken".
@@ -131,7 +125,7 @@ def _synthetic_account(cls):
 		{
 			"name": ACCOUNT_NAME,
 			"email_account_name": ACCOUNT_NAME,
-			"email_id": st.mail_sender,
+			"email_id": st.text(NAME, "sender", "notifications@example.com"),
 			"enable_outgoing": 1,
 			"default_outgoing": 1,
 			"enable_incoming": 0,

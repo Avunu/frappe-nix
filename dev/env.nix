@@ -15,7 +15,12 @@ let
     inherit pkgs lib python;
     workspaceRoot = ./.;
     benchName = "frappe-nix";
-    inherit (inputs) pyproject-nix pyproject-build-systems uv2nix;
+    inherit (inputs)
+      pyproject-nix
+      pyproject-build-systems
+      uv2nix
+      python-devops-nix
+      ;
     extraOverrides = (import ../lib/overrides.nix).mysqlclient {
       inherit pkgs;
       inherit (pkgs) mariadb;
@@ -29,7 +34,8 @@ let
     '';
     # No grafts: devguard, unixsock, journald and nodebuild are put on the path
     # from the working tree (PYTHONPATH, ty.toml extra-paths), so an edit is live
-    # instead of shadowed by a copy in the store.
+    # instead of shadowed by a copy in the store. The files python-devops-nix
+    # supplies to them are copied in on shell entry (dev/devenv.nix).
   };
 in
 {

@@ -18,6 +18,10 @@
 
 let
   dev = import ./env.nix { inherit pkgs inputs; };
+  grafts = import ../lib/grafts.nix {
+    inherit pkgs;
+    inherit (inputs) python-devops-nix;
+  };
   root = config.devenv.root;
   system = pkgs.stdenv.hostPlatform.system;
 in
@@ -87,6 +91,11 @@ in
   enterShell = ''
     # Where a bench keeps its virtualenv, so editor settings carry over.
     ln -sfn ${dev.devPythonEnv} "${root}/env"
+
+    # The files a build merges into lib/devguard and the other grafts from
+    # python-devops-nix (the devguard core, _hook.py), so the interpreter and
+    # the editor see the packages a bench ships. .gitignore lists them.
+    ${grafts.copyVendored ''"${root}"''}
 
     # The commit hook for .pre-commit-config.yaml. Idempotent; a failure (say a
     # core.hooksPath of your own) is shown and does not stop the shell.

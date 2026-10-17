@@ -1,20 +1,38 @@
-"""Self-contained tests for the Frappe-independent parts of frappe_devguard.
+"""Tests for frappe-nix's side of frappe_devguard, as a bench's virtualenv
+carries it.
 
-Runs without Frappe, without a site and without network access: stub SMTP/POP3
-servers stand in for Mailpit, and the assertions are about *where the socket
-landed*, which is the only property that actually matters.
+Run: python3 -I test_devguard.py <site-packages>
 
-Run directly (``python test_devguard.py``) or via ``nix flake check``.
+<site-packages> is a virtualenv's, after python-devops-nix's
+lib.python.withGrafts put frappe_devguard in it: the devguard core
+(python/devguard) merged with lib/devguard/frappe_devguard by
+lib.devguard.mkPackage, with settings baked in. ``site.addsitedir`` runs its
+.pth file the way interpreter start-up does, so the guards are installed
+exactly as in a bench. ``checks.devguard`` runs this on every interpreter
+lib/frappe-presets.json names.
+
+The core (the post-import hook, settings resolution, the patch helpers, the
+egress and mail transport guards) is python-devops-nix's and tested there,
+against a stub product. What is tested here is frappe-nix's: the names a bench
+relies on (the .pth file, the log prefix), _product.py, _frappe.py and the
+Frappe guards, with stub modules standing in for Frappe and botocore. No
+Frappe, no site and no network.
 """
 
+import contextlib
+import io
 import os
+import site
 import socket
-import socketserver
 import sys
-import threading
+import types
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
+SITE = os.path.abspath(sys.argv[1])
+
+# Keep a developer's own settings, and their shell's runtime file, out of it.
+for _key in [k for k in os.environ if k.startswith("FRAPPE_DEVGUARD_")]:
+	del os.environ[_key]
+os.environ.pop("DEVENV_RUNTIME", None)
 
 FAILURES = []
 
@@ -40,458 +58,148 @@ def expect_raises(label, exc_type, fn):
 		FAILURES.append(label)
 
 
+def stderr_of(fn):
+	"""What FN wrote to stderr, and the exception it raised (or None)."""
+	buffer = io.StringIO()
+	raised = None
+	with contextlib.redirect_stderr(buffer):
+		try:
+			fn()
+		except Exception as exc:  # recorded for the caller
+			raised = exc
+	return buffer.getvalue(), raised
+
+
 # --------------------------------------------------------------------------
-# stub servers
+# the graft: what a bench's virtualenv carries
 # --------------------------------------------------------------------------
 
-
-class _LineServer(socketserver.ThreadingTCPServer):
-	allow_reuse_address = True
-	daemon_threads = True
-	greeting = b""
-	replies: dict[bytes, bytes] = {}  # noqa: RUF012 - replaced per server, never mutated
-	default_reply = b""
-	quit_command = b""
-
-
-class _Handler(socketserver.BaseRequestHandler):
-	def handle(self):
-		stream = self.request.makefile("rwb")
-		stream.write(self.server.greeting)
-		stream.flush()
-		while True:
-			line = stream.readline()
-			if not line:
-				return
-			command = (line.split() or [b""])[0].upper()
-			stream.write(self.server.replies.get(command, self.server.default_reply))
-			stream.flush()
-			if command == self.server.quit_command:
-				return
-
-
-def start_server(greeting, replies, default_reply, quit_command):
-	server = _LineServer(("127.0.0.1", 0), _Handler)
-	server.greeting = greeting
-	server.replies = replies
-	server.default_reply = default_reply
-	server.quit_command = quit_command
-	threading.Thread(target=server.serve_forever, daemon=True).start()
-	return server, server.server_address[1]
-
-
-smtp_server, SMTP_PORT = start_server(
-	b"220 stub ESMTP\r\n",
-	{b"EHLO": b"250 stub\r\n", b"HELO": b"250 stub\r\n", b"QUIT": b"221 bye\r\n"},
-	b"250 ok\r\n",
-	b"QUIT",
-)
-pop3_server, POP3_PORT = start_server(
-	b"+OK stub POP3\r\n",
-	{b"QUIT": b"+OK bye\r\n"},
-	b"+OK\r\n",
-	b"QUIT",
+pths = sorted(name for name in os.listdir(SITE) if name.endswith(".pth"))
+check("the .pth file is zzz-frappe-devguard.pth", pths == ["zzz-frappe-devguard.pth"], pths)
+with open(os.path.join(SITE, "zzz-frappe-devguard.pth")) as _handle:
+	_line = _handle.read()
+check(
+	"and it imports and installs frappe_devguard",
+	_line == "import frappe_devguard; frappe_devguard.install()\n",
+	repr(_line),
 )
 
-os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "127.0.0.1"
-os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = str(SMTP_PORT)
-os.environ["FRAPPE_DEVGUARD_MAIL_POP3_PORT"] = str(POP3_PORT)
-for stale in ("FRAPPE_DEVGUARD_ENABLED", "FRAPPE_DEVGUARD_DISABLE", "FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"):
-	os.environ.pop(stale, None)
-
-import imaplib
-import poplib
-import smtplib
+site.addsitedir(SITE)  # runs the .pth: exactly what interpreter start-up does
 
 import frappe_devguard
-from frappe_devguard import DevGuardBlocked, DevGuardPatchError
+from frappe_devguard import DevGuardBlocked, DevGuardPatchError, _frappe, _patch, _product
+from frappe_devguard._frappe import disarm_subclasses, redirect_kwargs
+from frappe_devguard._patch import require
 
-frappe_devguard.install()  # exactly what the .pth bootstrap does
-
-from frappe_devguard._hook import on_import
-from frappe_devguard._patch import disarm_subclasses, redirect_kwargs, require
-
-# An unresolvable host is the point: if any of these reach DNS, the redirect
-# did not happen and the test fails with gaierror rather than passing quietly.
-ELSEWHERE = "smtp.devguard-must-not-resolve.invalid"
-
-
-# --------------------------------------------------------------------------
-# settings
-# --------------------------------------------------------------------------
-
-check("settings read from env", frappe_devguard.settings().mail_port == SMTP_PORT)
-check("mail guard enabled by default", frappe_devguard.settings().guard_enabled("mail"))
-check("incoming blocked by default", frappe_devguard.settings().block_incoming)
-
-# The runtime file carries Mailpit's *allocated* ports, which only `devenv up`
-# knows. It has to sit below env (so a single command can still be re-pointed)
-# and above baked (so it wins when present) — but crucially it must NOT be the
-# only source, or a bench outside devenv would fall back to the stock 1025 and
-# mail into another project's catcher.
-import json
-import tempfile
-
-from frappe_devguard import _settings as _dgs
-
-_runtime_dir = tempfile.mkdtemp()
-_runtime_file = os.path.join(_runtime_dir, "devguard-runtime.json")
-with open(_runtime_file, "w") as _handle:
-	json.dump({"guards": {"mail": {"port": 24680, "http_port": 24681}}}, _handle)
-
-_saved_port = os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT", None)
-os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
-_dgs._RUNTIME_CACHE.clear()
-check("runtime file supplies the allocated port", frappe_devguard.settings().mail_port == 24680)
-check("runtime file supplies the UI port", frappe_devguard.settings().mail_http_port == 24681)
 check(
-	"settings not in the runtime file still fall through",
-	frappe_devguard.settings().mail_sender == "notifications@example.com",
+	"frappe_devguard is imported from the graft",
+	os.path.dirname(os.path.dirname(frappe_devguard.__file__)) == SITE,
+	frappe_devguard.__file__,
 )
-
-os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = "24999"
-check("env still outranks the runtime file", frappe_devguard.settings().mail_port == 24999)
-os.environ.pop("FRAPPE_DEVGUARD_MAIL_PORT")
-
-os.environ["FRAPPE_DEVGUARD_RUNTIME"] = os.path.join(_runtime_dir, "does-not-exist.json")
-_dgs._RUNTIME_CACHE.clear()
 check(
-	"a missing runtime file falls back rather than raising",
-	frappe_devguard.settings().mail_port == 1025,
+	"its settings are FRAPPE_DEVGUARD_*",
+	frappe_devguard._settings.env_name("mail", "port") == "FRAPPE_DEVGUARD_MAIL_PORT",
 )
-
-with open(_runtime_file, "w") as _handle:
-	_handle.write("{not json")
-os.environ["FRAPPE_DEVGUARD_RUNTIME"] = _runtime_file
-_dgs._RUNTIME_CACHE.clear()
 check(
-	"an unreadable runtime file falls back rather than raising",
-	frappe_devguard.settings().mail_port == 1025,
+	"the guards installed are the core's then frappe-nix's",
+	[guard.NAME for guard in frappe_devguard.all_guards()]
+	== [
+		"egress",
+		"mail",
+		"mail",
+		"backups",
+		"objectstore",
+		"integrations",
+		"google",
+		"webhooks",
+		"plaid",
+		"jobs",
+	],
+	[guard.NAME for guard in frappe_devguard.all_guards()],
 )
-
-os.environ.pop("FRAPPE_DEVGUARD_RUNTIME")
-_dgs._RUNTIME_CACHE.clear()
-if _saved_port is not None:
-	os.environ["FRAPPE_DEVGUARD_MAIL_PORT"] = _saved_port
-
-
-# --------------------------------------------------------------------------
-# SMTP is redirected
-# --------------------------------------------------------------------------
-
-session = smtplib.SMTP(ELSEWHERE, 25)
 check(
-	"SMTP() lands on the catcher",
-	session.sock.getpeername()[1] == SMTP_PORT,
-	session.sock.getpeername(),
+	"the transport guards are patched at start-up",
+	frappe_devguard.status().get("socket.socket.connect") == "patched",
+	frappe_devguard.status(),
 )
-check("SMTP.login is faked", session.login("someone", "hunter2")[0] == 235)
-check("SMTP.starttls is a no-op", session.starttls()[0] == 220)
-session.quit()
 
-session = smtplib.SMTP()
-session.connect(ELSEWHERE, 587)
+# -- the baked settings (lib.devguard.mkPackage's _baked.json) --
+
+st = frappe_devguard.settings()
+check("baked settings reach the guards", st.mail_port == 2525, st.mail_port)
 check(
-	"explicit .connect() lands on the catcher",
-	session.sock.getpeername()[1] == SMTP_PORT,
-	session.sock.getpeername(),
+	"the baked job denylist adds to frappe-nix's",
+	"baked.tasks.push" in st.blocked_jobs
+	and "frappe.integrations.doctype.google_drive.google_drive.daily_backup" in st.blocked_jobs,
+	st.blocked_jobs,
 )
-session.quit()
+check("frappe-nix's mail defaults are merged in", st.text("mail", "sender") == "notifications@example.com")
+check("objectstore defaults to local mode", st.text("objectstore", "mode") == "local")
 
-session = smtplib.SMTP_SSL(ELSEWHERE, 465)
-check(
-	"SMTP_SSL lands on the catcher in plaintext",
-	session.sock.getpeername()[1] == SMTP_PORT and not hasattr(session.sock, "cipher"),
-	session.sock.getpeername(),
-)
-session.quit()
+# -- the log lines: frappe_devguard[<guard>], unchanged by the move to the core --
 
-check("SMTP_SSL is still the stdlib class", smtplib.SMTP_SSL.__module__ == "smtplib")
+BLOCKED = ("192.0.2.1", 9)  # TEST-NET-1: nothing answers there
 
 
-# --------------------------------------------------------------------------
-# incoming is blocked
-# --------------------------------------------------------------------------
-
-expect_raises("IMAP4 is blocked", DevGuardBlocked, lambda: imaplib.IMAP4(ELSEWHERE, 143))
-expect_raises("IMAP4_SSL is blocked", DevGuardBlocked, lambda: imaplib.IMAP4_SSL(ELSEWHERE, 993))
-expect_raises("POP3 is blocked", DevGuardBlocked, lambda: poplib.POP3(ELSEWHERE, 110))
-expect_raises("POP3_SSL is blocked", DevGuardBlocked, lambda: poplib.POP3_SSL(ELSEWHERE, 995))
-check("DevGuardBlocked is an OSError", issubclass(DevGuardBlocked, OSError))
-
-
-# --------------------------------------------------------------------------
-# incoming redirected to the catcher's POP3 when enabled
-# --------------------------------------------------------------------------
-
-os.environ["FRAPPE_DEVGUARD_MAIL_POP3_ENABLED"] = "1"
-mailbox = poplib.POP3(ELSEWHERE, 110)
-check(
-	"POP3 lands on the catcher when enabled",
-	mailbox.sock.getpeername()[1] == POP3_PORT,
-	mailbox.sock.getpeername(),
-)
-check("POP3 credentials are substituted", mailbox.user("real@example.com").startswith(b"+OK"))
-mailbox.quit()
-
-mailbox = poplib.POP3_SSL(ELSEWHERE, 995)
-check(
-	"POP3_SSL lands on the catcher in plaintext",
-	mailbox.sock.getpeername()[1] == POP3_PORT,
-	mailbox.sock.getpeername(),
-)
-mailbox.quit()
-
-expect_raises(
-	"IMAP stays blocked in POP3 mode",
-	DevGuardBlocked,
-	lambda: imaplib.IMAP4(ELSEWHERE, 143),
-)
-os.environ.pop("FRAPPE_DEVGUARD_MAIL_POP3_ENABLED")
-
-
-# --------------------------------------------------------------------------
-# disabling restores stock behaviour
-# --------------------------------------------------------------------------
-
-for label, var, value in (
-	("globally", "FRAPPE_DEVGUARD_ENABLED", "0"),
-	("per guard", "FRAPPE_DEVGUARD_DISABLE", "backups,mail"),
-):
-	os.environ[var] = value
-	check(f"mail guard reports disabled ({label})", not frappe_devguard.settings().guard_enabled("mail"))
-	expect_raises(
-		f"disabled SMTP resolves the real host ({label})",
-		socket.gaierror,
-		lambda: smtplib.SMTP(ELSEWHERE, 25, timeout=5),
-	)
-	expect_raises(
-		f"disabled IMAP resolves the real host ({label})",
-		socket.gaierror,
-		lambda: imaplib.IMAP4(ELSEWHERE, 143),
-	)
-	session = smtplib.SMTP("127.0.0.1", SMTP_PORT)
-	check(f"disabled SMTP still connects normally ({label})", session.sock.getpeername()[1] == SMTP_PORT)
-	session.quit()
-	os.environ.pop(var)
-
-os.environ["FRAPPE_DEVGUARD_DISABLE"] = "backups"
-check(
-	"disabling one guard leaves the others alone",
-	frappe_devguard.settings().guard_enabled("mail")
-	and not frappe_devguard.settings().guard_enabled("backups"),
-)
-os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
-
-
-# --------------------------------------------------------------------------
-# egress: every non-loopback connect() is refused
-#
-# 192.0.2.0/24 is TEST-NET-1, where nothing ever answers. A connection the guard
-# lets through therefore fails at the network instead (unreachable in the build
-# sandbox, a timeout elsewhere), which is how "let through" is told apart from
-# "refused". Names under .test are reserved too; a stand-in resolver maps the
-# few the checks need, so nothing here depends on real DNS.
-# --------------------------------------------------------------------------
-
-import asyncio
-import urllib.error
-import urllib.request
-
-from frappe_devguard.guards import egress, integrations
-
-BLOCKED = ("192.0.2.1", 9)
-
-_DNS = {
-	"api.gocardless.test": "192.0.2.10",
-	"api.allowed.test": "192.0.2.11",
-	"cdn.allowed.test": "192.0.2.12",
-	"alias.test": "127.0.0.1",
-}
-_real_resolver = egress._getaddrinfo
-
-
-def _stand_in_dns(host, port, *args, **kwargs):
-	name = host.decode() if isinstance(host, bytes) else host
-	if isinstance(name, str) and name.endswith((".test", ".invalid")):
-		if name not in _DNS:
-			raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
-		return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (_DNS[name], port or 0))]
-	return _real_resolver(host, port, *args, **kwargs)
-
-
-egress._getaddrinfo = _stand_in_dns
-
-
-def let_through(fn):
-	"""Whether the guard let FN's connection through, whatever the network said."""
-	try:
-		fn()
-	except DevGuardBlocked:
-		return False
-	except OSError as exc:
-		# urllib wraps the socket error; the guard's refusal is its reason.
-		return not isinstance(getattr(exc, "reason", None), DevGuardBlocked)
-	return True
-
-
-def connect(address, method="connect"):
+def connect(address):
 	sock = socket.socket()
 	sock.settimeout(0.3)
 	try:
-		return getattr(sock, method)(address)
+		return sock.connect(address)
 	finally:
 		sock.close()
 
 
-def blocked_message(fn):
-	try:
-		fn()
-	except DevGuardBlocked as exc:
-		return str(exc)
-	return ""
-
-
-check("egress guard enabled by default", frappe_devguard.settings().guard_enabled("egress"))
+_log, _raised = stderr_of(lambda: connect(BLOCKED))
+check("a refusal raises DevGuardBlocked", isinstance(_raised, DevGuardBlocked), repr(_raised))
 check(
-	"socket.connect and getaddrinfo are patched",
-	frappe_devguard.status().get("socket.socket.connect") == "patched"
-	and frappe_devguard.status().get("socket.getaddrinfo") == "patched",
-	frappe_devguard.status(),
-)
-
-# -- what always passes --
-
-session = socket.create_connection(("127.0.0.1", SMTP_PORT), timeout=2)
-check("loopback connects", session.getpeername()[1] == SMTP_PORT)
-session.close()
-check("localhost by name connects", connect(("localhost", SMTP_PORT), "connect_ex") == 0)
-
-_unix_dir = tempfile.mkdtemp()
-_unix_path = os.path.join(_unix_dir, "s")
-_unix_server = socket.socket(socket.AF_UNIX)
-_unix_server.bind(_unix_path)
-_unix_server.listen(1)
-_unix_client = socket.socket(socket.AF_UNIX)
-_unix_client.connect(_unix_path)
-print("ok   unix sockets connect")
-_unix_client.close()
-_unix_server.close()
-
-# -- what is refused, and how --
-
-check("a non-loopback connect is refused", not let_through(lambda: connect(BLOCKED)))
-check("so is connect_ex", not let_through(lambda: connect(BLOCKED, "connect_ex")))
-check(
-	"so is create_connection",
-	not let_through(lambda: socket.create_connection(BLOCKED, timeout=0.3)),
+	"whose message is frappe_devguard[egress]: …",
+	str(_raised).startswith("frappe_devguard[egress]: blocked connection to 192.0.2.1:9"),
+	str(_raised),
 )
 check(
-	"the refusal names the destination",
-	"192.0.2.1:9" in blocked_message(lambda: connect(BLOCKED)),
-	blocked_message(lambda: connect(BLOCKED)),
-)
-expect_raises(
-	"urllib surfaces it as a URLError",
-	urllib.error.URLError,
-	lambda: urllib.request.urlopen("http://192.0.2.1:9/", timeout=0.3),
+	"the banner is WARNING frappe_devguard[egress] ACTIVE -- …",
+	"WARNING frappe_devguard[egress] ACTIVE -- outbound connections from this process are refused" in _log,
+	_log,
 )
 check(
-	"whose reason is the guard",
-	not let_through(lambda: urllib.request.urlopen("http://192.0.2.1:9/", timeout=0.3)),
+	"and it names frappe-nix's option and variables",
+	"devguard.egress.allowHosts" in _log
+	and "FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS=host[,host...]" in _log
+	and "FRAPPE_DEVGUARD_DISABLE=egress" in _log,
+	_log,
 )
-expect_raises(
-	"asyncio connections are refused too",
-	DevGuardBlocked,
-	lambda: asyncio.run(asyncio.open_connection(*BLOCKED)),
+check(
+	"the refusal is logged as WARNING frappe_devguard[egress] …",
+	"WARNING frappe_devguard[egress] blocked connection to 192.0.2.1:9" in _log,
+	_log,
 )
 
-# What reached production: an SDK (gocardless_pro, through requests and
-# urllib3) resolves the API host and connects by address. The refusal says
-# which name the address came from.
+_exc = None
+try:
+	require(types.SimpleNamespace(), "no_such_target")
+except DevGuardPatchError as exc:
+	_exc = exc
 check(
-	"an SDK connecting by name is refused",
-	not let_through(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
-)
-check(
-	"and the refusal names the host it resolved",
-	"(api.gocardless.test)"
-	in blocked_message(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
+	"a moved target names Frappe and frappe-nix",
+	_exc is not None
+	and str(_exc).startswith("frappe_devguard: ")
+	and "Frappe's internals have moved" in str(_exc)
+	and "Update frappe-nix, or set FRAPPE_DEVGUARD_ENABLED=0" in str(_exc),
+	str(_exc),
 )
 
-os.environ["FRAPPE_DEVGUARD_DISABLE"] = "mail"
-expect_raises(
-	"with the mail guard off, SMTP to a real server is still refused",
-	DevGuardBlocked,
-	lambda: smtplib.SMTP("192.0.2.25", 25, timeout=1),
-)
-os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
 
-# -- the allowlist --
+# --------------------------------------------------------------------------
+# one list for egress and integrations (_product.EGRESS_ALLOW)
+# --------------------------------------------------------------------------
 
-os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = (
-	"203.0.113.0/24, api.example.test, *.corp.test, 198.51.100.7, api.allowed.test"
-)
-for _host in (
-	"127.0.0.1",
-	"::1",
-	"::ffff:127.0.0.1",
-	"0.0.0.0",
-	"localhost",
-	"site.localhost",
-	"alias.test",  # a name that resolves only to loopback
-	"203.0.113.50",
-	"api.example.test",
-	"API.example.test.",
-	"a.corp.test",
-	"corp.test",
-	"198.51.100.7",
-):
-	check(f"allowed: {_host}", egress._allowed(_host))
-for _host in (
-	"192.0.2.1",
-	"203.0.114.1",
-	"example.test",
-	"evilapi.example.test",
-	"corp.test.evil.test",
-	"198.51.100.8",
-	"nxdomain.invalid",
-):
-	check(f"refused: {_host}", not egress._allowed(_host))
-
-# The fix for an allowlist that never matched: connect() is handed the address,
-# never the name, so a hostname entry has to be matched against what resolved.
-check(
-	"an allowlisted name passes when its client resolves first",
-	let_through(lambda: socket.create_connection(("api.allowed.test", 9), timeout=0.3)),
-)
-check(
-	"through urllib too",
-	let_through(lambda: urllib.request.urlopen("http://api.allowed.test:9/", timeout=0.3)),
-)
-check(
-	"the name it came from does not open an unlisted one",
-	not let_through(lambda: socket.create_connection(("api.gocardless.test", 443), timeout=0.3)),
-)
-os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = "*.allowed.test"
-check(
-	"a wildcard entry matches a resolved subdomain",
-	let_through(lambda: socket.create_connection(("cdn.allowed.test", 9), timeout=0.3)),
-)
-os.environ.pop("FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS")
-check(
-	"and dropping the entry refuses it again",
-	not let_through(lambda: socket.create_connection(("cdn.allowed.test", 9), timeout=0.3)),
-)
-
-egress._remember("odd.test", [(socket.AF_UNIX, socket.SOCK_STREAM, 0, "", "/not/an/inet/sockaddr")])
-print("ok   an unexpected resolver answer is ignored, not raised")
-
-# -- one list for egress and integrations --
+from frappe_devguard.guards import egress, integrations
 
 os.environ["FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS"] = "api.sandbox.test"
-check("integrations.allowHosts opens a host to egress", egress._allowed("api.sandbox.test"))
+check("integrations.allowHosts opens a host to egress", egress.listed("api.sandbox.test"))
 os.environ.pop("FRAPPE_DEVGUARD_INTEGRATIONS_ALLOW_HOSTS")
+check("and dropping it closes it again", not egress.listed("api.sandbox.test"))
 
 os.environ["FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS"] = "*.stripe.test"
 check(
@@ -503,57 +211,58 @@ os.environ.pop("FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS")
 check("integrations: loopback is allowed", integrations.allowed("http://127.0.0.1:8000/api"))
 check("integrations: local names are allowed", integrations.allowed("http://site.localhost:8000/"))
 
-# -- the mail catcher --
 
-os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "catcher.devguard.invalid"
-check("the mail catcher's host is always allowed", egress._allowed("catcher.devguard.invalid"))
-os.environ["FRAPPE_DEVGUARD_DISABLE"] = "mail"
-check("unless the mail guard is off", not egress._allowed("catcher.devguard.invalid"))
-os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
-os.environ["FRAPPE_DEVGUARD_MAIL_HOST"] = "127.0.0.1"
+# --------------------------------------------------------------------------
+# _product.py's hooks into Frappe: the logger, and frappe.throw
+# --------------------------------------------------------------------------
 
-# -- passage, for a guard that vetted the call itself --
 
-with egress.passage("objectstore"):
-	check("inside a passage a connection is let through", let_through(lambda: connect(BLOCKED)))
-	_other_thread = []
-	_thread = threading.Thread(target=lambda: _other_thread.append(let_through(lambda: connect(BLOCKED))))
-	_thread.start()
-	_thread.join()
-	check("but not one another thread makes", _other_thread == [False], _other_thread)
-check("after it, refused again", not let_through(lambda: connect(BLOCKED)))
-try:
-	with egress.passage("objectstore"):
-		raise RuntimeError("boom")
-except RuntimeError:
+class StubThrow(Exception):
 	pass
-check("a passage ends even when its block raises", not egress.in_passage())
-
-# -- turning it off --
-
-for _var, _value in (("FRAPPE_DEVGUARD_DISABLE", "egress"), ("FRAPPE_DEVGUARD_ENABLED", "0")):
-	os.environ[_var] = _value
-	check(f"{_var}={_value} lets a connection through", let_through(lambda: connect(BLOCKED)))
-	os.environ.pop(_var)
-check("and unsetting it refuses again", not let_through(lambda: connect(BLOCKED)))
 
 
-# --------------------------------------------------------------------------
-# post-import hook
-# --------------------------------------------------------------------------
+LOGGED = []
+_frappe_stub = types.ModuleType("frappe")
+_frappe_stub.logger = lambda name: types.SimpleNamespace(
+	warning=lambda message: LOGGED.append((name, message))
+)
 
-fired = []
-on_import("json.decoder", lambda module: fired.append(module.__name__))
-sys.modules.pop("json.decoder", None)
-sys.modules.pop("json", None)
-import json
 
-check("post-import hook fires", fired == ["json.decoder"], fired)
-check("hooked module still works", json.loads('{"a": 1}') == {"a": 1})
+def _stub_throw(message, title=None):
+	raise StubThrow(f"{title}: {message}")
 
-already = []
-on_import("base64", lambda module: already.append(module.__name__))
-check("hook on an imported module fires immediately", already == ["base64"], already)
+
+_frappe_stub.throw = _stub_throw
+sys.modules["frappe"] = _frappe_stub
+
+_log, _ = stderr_of(lambda: _patch.warn("backups", "hello"))
+check(
+	"warn writes WARNING frappe_devguard[backups] …", _log == "WARNING frappe_devguard[backups] hello\n", _log
+)
+check(
+	"and to Frappe's logger",
+	LOGGED == [("frappe_devguard", "[backups] hello")],
+	LOGGED,
+)
+
+_log, _raised = stderr_of(lambda: _frappe.throw("backups", "upload refused"))
+check(
+	"throw surfaces the refusal through frappe.throw",
+	isinstance(_raised, StubThrow) and str(_raised) == "Blocked by frappe-devguard: upload refused",
+	repr(_raised),
+)
+check("after logging it", "WARNING frappe_devguard[backups] upload refused" in _log, _log)
+_raised = stderr_of(_frappe.throwing("backups", "Dropbox backup", "refused", banner="no uploads"))[1]
+check(
+	"throwing names what it replaced",
+	isinstance(_raised, StubThrow) and "Dropbox backup: refused" in str(_raised),
+	repr(_raised),
+)
+
+_frappe_stub.logger = None  # a logger that fails must not fail the guard
+_log, _raised = stderr_of(lambda: _patch.warn("backups", "still here"))
+check("a failing logger is swallowed", _raised is None and "still here" in _log, repr(_raised))
+del sys.modules["frappe"]
 
 
 # --------------------------------------------------------------------------
@@ -630,7 +339,7 @@ class FakeEmailAccount:
 
 record = _synthetic_account(FakeEmailAccount).record
 check("synthetic account targets the catcher", record["smtp_server"] == "127.0.0.1")
-check("synthetic account uses the catcher port", record["smtp_port"] == SMTP_PORT)
+check("synthetic account uses the catcher port", record["smtp_port"] == 2525)
 check("synthetic account carries no password", "password" not in record)
 check(
 	"synthetic account cannot negotiate TLS",
@@ -670,7 +379,7 @@ def stub_frappe(container=list):
 
 
 frappe_stub = stub_frappe()
-from frappe_devguard._patch import assert_not_overridden, rewhitelist
+from frappe_devguard._frappe import assert_not_overridden, rewhitelist
 
 
 def register(registry, fn):
@@ -728,11 +437,18 @@ print("ok   assert_not_overridden tolerates an unrelated override map")
 
 # --------------------------------------------------------------------------
 # scheduler denylist — exact match only
+#
+# Its settings are the shared jobs tree: jobs.blocked_jobs (frappe-nix's
+# built-in list, in _product.py) and jobs.extra_blocked (devguard.jobs.extraBlocked).
 # --------------------------------------------------------------------------
 
+from frappe_devguard.guards import scheduler
 from frappe_devguard.guards.scheduler import blocked_jobs
 
-jobs = blocked_jobs()
+jobs = set(_product.DEFAULTS["guards"]["jobs"]["blocked_jobs"])
+check(
+	"blocked_jobs is the built-in list and the baked additions", blocked_jobs() == jobs | {"baked.tasks.push"}
+)
 check(
 	"core backup jobs are blocked",
 	"frappe.integrations.doctype.s3_backup_settings.s3_backup_settings.take_backups_daily" in jobs,
@@ -756,13 +472,82 @@ check(
 )
 check("seven entries per layout are listed", len(jobs) == 14, len(jobs))
 
-os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.push_backup"
+os.environ["FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED"] = "myapp.tasks.push_backup"
 check(
 	"extra jobs are unioned in, not replacing",
-	"myapp.tasks.push_backup" in blocked_jobs() and len(blocked_jobs()) == 15,
+	blocked_jobs() == jobs | {"myapp.tasks.push_backup"},
 	len(blocked_jobs()),
 )
+os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
+
+check("the guard's settings key is jobs", scheduler.NAME == "jobs")
+
+# The pre-rename variables are carried over, with a warning, until the next
+# minor release.
+os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.legacy"
+_log, _ = stderr_of(scheduler._adopt_renamed)
+check(
+	"FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS still adds a job",
+	"myapp.tasks.legacy" in blocked_jobs(),
+)
+check(
+	"with a warning naming its replacement, under frappe_devguard[scheduler]",
+	"WARNING frappe_devguard[scheduler] FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS is deprecated; "
+	"use FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED" in _log,
+	_log,
+)
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
+os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "scheduler"
+_log, _adopted = stderr_of(
+	lambda: check("DISABLE=scheduler still turns the guard off", not scheduler._adopt_renamed())
+)
+check("with a warning", "FRAPPE_DEVGUARD_DISABLE=jobs" in _log, _log)
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+
+
+# What a skipped job logs: frappe_devguard[scheduler], the framework's word.
+class FakeJob:
+	method = "frappe.integrations.doctype.google_drive.google_drive.daily_backup"
+	ran = False
+
+	def get(self, key, default=None):
+		return default
+
+	def db_set(self, *_args, **_kwargs):
+		pass
+
+
+_sjt = types.ModuleType("frappe.core.doctype.scheduled_job_type.scheduled_job_type")
+
+
+class ScheduledJobType:
+	def execute(self):
+		self.ran = True
+
+
+_sjt.ScheduledJobType = ScheduledJobType
+scheduler._patch_scheduled_job_type(_sjt)
+_frappe_stub = types.ModuleType("frappe")
+_frappe_stub.db = types.SimpleNamespace(commit=lambda: None)
+_frappe_utils = types.ModuleType("frappe.utils")
+_frappe_utils.now_datetime = lambda: None
+sys.modules["frappe"], sys.modules["frappe.utils"] = _frappe_stub, _frappe_utils
+_job = FakeJob()
+_log, _raised = stderr_of(lambda: ScheduledJobType.execute(_job))
+check("a denylisted job is skipped", _raised is None and not _job.ran, repr(_raised))
+check(
+	"and logged as WARNING frappe_devguard[scheduler] …",
+	"WARNING frappe_devguard[scheduler] ACTIVE -- scheduled jobs that reach production services are skipped"
+	in _log
+	and f"WARNING frappe_devguard[scheduler] skipping scheduled job {FakeJob.method!r}" in _log,
+	_log,
+)
+os.environ["FRAPPE_DEVGUARD_DISABLE"] = "jobs"
+ScheduledJobType.execute(_job)
+check("FRAPPE_DEVGUARD_DISABLE=jobs lets it run", _job.ran)
+os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+del sys.modules["frappe.utils"]
 
 # override_whitelisted_methods is consulted before get_attr, so the cmd strings
 # assert_not_overridden watches have to name both layouts as well.
@@ -1161,9 +946,6 @@ os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
 
 
 del sys.modules["frappe"]
-
-smtp_server.shutdown()
-pop3_server.shutdown()
 
 print()
 if FAILURES:

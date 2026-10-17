@@ -21,6 +21,31 @@ let
     ;
   inherit (flake-parts-lib) mkPerSystemOption;
 
+  # frappe-nix.<from> renamed to frappe-nix.<to>. Not lib.mkRenamedOptionModule:
+  # it reports through a `warnings` option, which perSystem has none of, so the
+  # rename went unannounced (odoo-nix#54 found the same). doRename does the
+  # aliasing, priorities kept; the warning goes on `deprecations`, which the
+  # config below folds into lib.warn. Removed in the next minor release.
+  renamed =
+    fromPath: toPath:
+    { options, ... }:
+    let
+      from = [ "frappe-nix" ] ++ fromPath;
+      to = [ "frappe-nix" ] ++ toPath;
+      fromOpt = lib.getAttrFromPath from options;
+    in
+    {
+      imports = [
+        (lib.doRename {
+          inherit from to;
+          visible = false;
+          warn = false;
+          use = lib.id;
+        })
+      ];
+      config.frappe-nix.deprecations = lib.optional fromOpt.isDefined "The option `${lib.showOption from}' defined in ${lib.showFiles fromOpt.files} has been renamed to `${lib.showOption to}'.";
+    };
+
   # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
   # the values; the names go into the migrate and reconcile scripts too.
   appPairs =
@@ -87,16 +112,77 @@ in
     }:
     {
       # Renames, each kept until the next minor release (PLAN.md, design
-      # rule 2; CONVENTIONS.md, Restore).
-      imports = [
-        (lib.mkRenamedOptionModule
-          [ "frappe-nix" "restore" "withFiles" ]
-          [ "frappe-nix" "restore" "files" ]
-        )
+      # rule 2; CONVENTIONS.md, Restore and devguard).
+      imports = map (pair: renamed (builtins.elemAt pair 0) (builtins.elemAt pair 1)) [
+        [
+          [
+            "restore"
+            "withFiles"
+          ]
+          [
+            "restore"
+            "files"
+          ]
+        ]
+        [
+          [
+            "devguard"
+            "mail"
+            "smtpPort"
+          ]
+          [
+            "devguard"
+            "mail"
+            "port"
+          ]
+        ]
+        [
+          [
+            "devguard"
+            "scheduler"
+            "enable"
+          ]
+          [
+            "devguard"
+            "jobs"
+            "enable"
+          ]
+        ]
+        [
+          [
+            "devguard"
+            "scheduler"
+            "blockServerScripts"
+          ]
+          [
+            "devguard"
+            "jobs"
+            "blockServerScripts"
+          ]
+        ]
+        [
+          [
+            "devguard"
+            "scheduler"
+            "extraBlockedJobs"
+          ]
+          [
+            "devguard"
+            "jobs"
+            "extraBlocked"
+          ]
+        ]
       ];
 
       options.frappe-nix = {
         enable = mkEnableOption "Frappe bench devenv shell";
+
+        deprecations = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          internal = true;
+          description = "Renamed options in use, each warned about (lib.warn) when the shell's config is evaluated.";
+        };
 
         benchName = mkOption {
           type = types.str;
@@ -930,7 +1016,7 @@ in
               description = "Interface Mailpit binds and Frappe is redirected to.";
             };
 
-            smtpPort = mkOption {
+            port = mkOption {
               type = types.port;
               default = 19000 + portOffsetOf config.frappe-nix;
               defaultText = lib.literalMD "`19000` + `ports.offset`";
@@ -954,7 +1040,7 @@ in
               type = types.port;
               default = 20000 + portOffsetOf config.frappe-nix;
               defaultText = lib.literalMD "`20000` + `ports.offset`";
-              description = "Mailpit web UI port. Per-bench by default; see smtpPort.";
+              description = "Mailpit web UI port. Per-bench by default; see port.";
             };
 
             sender = mkOption {
@@ -1000,7 +1086,7 @@ in
                 type = types.port;
                 default = 21000 + portOffsetOf config.frappe-nix;
                 defaultText = lib.literalMD "`21000` + `ports.offset`";
-                description = "Mailpit POP3 port. Per-bench by default; see smtpPort.";
+                description = "Mailpit POP3 port. Per-bench by default; see port.";
               };
 
               user = mkOption {
@@ -1193,12 +1279,14 @@ in
             };
           };
 
-          scheduler = {
+          jobs = {
             enable = mkOption {
               type = types.bool;
               default = true;
               description = ''
-                Refuse scheduled jobs that reach production services.
+                Refuse scheduled jobs that reach production services (the
+                scheduler guard; its log lines read
+                `frappe_devguard[scheduler]`).
 
                 The backstop for what the named guards do not know about: a
                 third-party app's backup job, and Server Script scheduler
@@ -1213,11 +1301,11 @@ in
               description = ''
                 Skip Scheduled Job Types backed by a Server Script. Their
                 method is a scrubbed script name rather than a dotted path, so
-                blockedJobs cannot match them.
+                the denylist cannot match them.
               '';
             };
 
-            extraBlockedJobs = mkOption {
+            extraBlocked = mkOption {
               type = types.listOf types.str;
               default = [ ];
               description = ''
@@ -1510,7 +1598,9 @@ in
         ...
       }:
       let
-        cfg = config.frappe-nix;
+        # Every read of cfg goes through the rename warnings first (perSystem
+        # has no `warnings` option to collect them).
+        cfg = lib.foldr lib.warn config.frappe-nix config.frappe-nix.deprecations;
 
         appMode = cfg.app.enable;
 
@@ -1881,32 +1971,11 @@ in
         dbBase = portBases.db;
 
         # These carry the per-bench offset through their option defaults, so a
-        # consumer overriding devguard.mail.smtpPort still drives both Mailpit
+        # consumer overriding devguard.mail.port still drives both Mailpit
         # and the address Frappe is redirected to, exactly as before.
-        mailpitSmtpBase = mc.smtpPort;
+        mailpitSmtpBase = mc.port;
         mailpitHttpBase = mc.httpPort;
         mailpitPop3Base = mc.pop3.port;
-
-        # Render a Nix value as a Python literal, so the baked settings file
-        # can mirror the option tree instead of being hand-spelled per key.
-        toPy =
-          value:
-          if builtins.isBool value then
-            (if value then "True" else "False")
-          else if builtins.isInt value then
-            toString value
-          else if builtins.isString value then
-            builtins.toJSON value
-          else if builtins.isList value then
-            "[" + lib.concatMapStringsSep ", " toPy value + "]"
-          else if builtins.isAttrs value then
-            "{"
-            + lib.concatStringsSep ", " (
-              lib.mapAttrsToList (name: inner: "${builtins.toJSON name}: ${toPy inner}") value
-            )
-            + "}"
-          else
-            throw "frappe-nix: cannot render ${builtins.typeOf value} as a Python literal";
 
         # Single source of truth: the same values reach Mailpit through
         # MAILPIT_* and Frappe through these baked defaults, so the two can
@@ -1920,8 +1989,7 @@ in
             };
             mail = {
               inherit (mc) enable;
-              inherit (mc) host;
-              port = mc.smtpPort;
+              inherit (mc) host port;
               http_port = mc.httpPort;
               inherit (mc) sender;
               inherit (mc) unmute;
@@ -1943,95 +2011,46 @@ in
             google.enable = dg.google.enable;
             webhooks.enable = dg.webhooks.enable;
             plaid.enable = dg.plaid.enable;
-            scheduler = {
-              enable = dg.scheduler.enable;
-              block_server_scripts = dg.scheduler.blockServerScripts;
-              # Unioned with the built-in list, which lives in Python so the
-              # two never drift.
-              extra_blocked_jobs = dg.scheduler.extraBlockedJobs;
+            # The shared job denylist (CONVENTIONS.md, Job denylist), which
+            # guards/scheduler.py enforces.
+            jobs = {
+              inherit (dg.jobs) enable;
+              block_server_scripts = dg.jobs.blockServerScripts;
+              # Unioned with the built-in list (blocked_jobs), which lives in
+              # _product.py so the two never drift.
+              extra_blocked = dg.jobs.extraBlocked;
             };
           };
         };
 
-        # Own content hash, so unrelated frappe-nix edits don't churn the
-        # development virtualenv. Bytecode caches are filtered out so running
-        # the tests in place can't change it either.
-        devguardSrc = builtins.path {
-          path = ../lib/devguard;
-          name = "frappe-devguard-src";
-          filter = path: _type: baseNameOf path != "__pycache__";
+        # The graft packages (lib/grafts.nix): frappe_devguard from
+        # python-devops-nix's devguard core and lib/devguard, with
+        # devguardConfig baked in as _baked.json; the others with the shared
+        # _hook.py. Each has its own content hash, so unrelated frappe-nix
+        # edits don't churn the virtualenvs.
+        grafts = import ../lib/grafts.nix {
+          inherit pkgs;
+          inherit (inputs) python-devops-nix;
         };
-
-        devguardBaked = pkgs.writeText "frappe-devguard-baked.py" ''
-          # Generated by frappe-nix from `frappe-nix.devguard`. Every value is
-          # overridden at runtime by the matching FRAPPE_DEVGUARD_* variable.
-          BAKED = ${toPy devguardConfig}
-        '';
-
-        devguardPkg = pkgs.runCommand "frappe-devguard" { } ''
-          mkdir -p "$out"
-          cp -r ${devguardSrc}/frappe_devguard "$out/"
-          chmod -R u+w "$out"
-          cp ${devguardBaked} "$out/frappe_devguard/_baked.py"
-        '';
+        devguardPkg = grafts.devguard devguardConfig;
 
         mailpitPop3Auth = pkgs.writeText "mailpit-pop3-auth" ''
           ${mc.pop3.user}:${mc.pop3.password}
         '';
 
-        # Unlike devguard there is nothing to bake: every setting frappe_unixsock
-        # reads is a runtime fact (the path of a socket some other process in
-        # this bench is listening on), not a policy decision, so the environment
-        # is the only source and there is nothing that could drift.
-        unixsockPkg = pkgs.runCommand "frappe-unixsock" { } ''
-          mkdir -p "$out"
-          cp -r ${
-            builtins.path {
-              path = ../lib/unixsock;
-              name = "frappe-unixsock-src";
-              filter = path: _type: baseNameOf path != "__pycache__";
-            }
-          }/frappe_unixsock "$out/"
-        '';
-
-        # Nothing to bake either: frappe_journald keys off JOURNAL_STREAM, which
-        # systemd sets, and FRAPPE_LOG_LEVEL, which services.frappe sets.
-        journaldPkg = pkgs.runCommand "frappe-journald" { } ''
-          mkdir -p "$out"
-          cp -r ${
-            builtins.path {
-              path = ../lib/journald;
-              name = "frappe-journald-src";
-              filter = path: _type: baseNameOf path != "__pycache__";
-            }
-          }/frappe_journald "$out/"
-        '';
-
-        # Nothing to bake: frappe_nodebuild reads the preload's path from
-        # FRAPPE_NIX_ESBUILD_PRELOAD, which the shell and builtBench export.
-        nodebuildPkg = pkgs.runCommand "frappe-nodebuild" { } ''
-          mkdir -p "$out"
-          cp -r ${
-            builtins.path {
-              path = ../lib/nodebuild;
-              name = "frappe-nodebuild-src";
-              filter = path: _type: baseNameOf path != "__pycache__";
-            }
-          }/frappe_nodebuild "$out/"
-        '';
-
-        # Nothing to bake: the two routes are fixed, and mirror the umbrella
-        # wrapper's `case` in lib/scripts.nix. Dev env only; lib/python.nix.
-        benchcliPkg = pkgs.runCommand "frappe-benchcli" { } ''
-          mkdir -p "$out"
-          cp -r ${
-            builtins.path {
-              path = ../lib/benchcli;
-              name = "frappe-benchcli-src";
-              filter = path: _type: baseNameOf path != "__pycache__";
-            }
-          }/frappe_benchcli "$out/"
-        '';
+        # Unlike devguard there is nothing to bake into the others:
+        # frappe_unixsock reads only runtime facts (the paths of sockets other
+        # processes in this bench listen on); frappe_journald keys off
+        # JOURNAL_STREAM, which systemd sets, and FRAPPE_LOG_LEVEL;
+        # frappe_nodebuild reads the preload's path from
+        # FRAPPE_NIX_ESBUILD_PRELOAD; frappe_benchcli's two routes are fixed,
+        # and mirror the umbrella wrapper's `case` in lib/scripts.nix.
+        inherit (grafts)
+          unixsock
+          journald
+          nodebuild
+          benchcli
+          ;
 
         # `bench watch`, with the esbuild target `bench build` uses, only the
         # apps someone edits, no right-to-left rebuilds and native Sass. See
@@ -2078,7 +2097,7 @@ in
             };
           inherit (inputs) pyproject-nix;
           inherit (inputs) pyproject-build-systems;
-          inherit (inputs) uv2nix;
+          inherit (inputs) uv2nix python-devops-nix;
           extraOverrides = lib.composeManyExtensions [
             builtinOverrides
             cfg.pythonOverrides
@@ -2087,16 +2106,16 @@ in
           # Both envs, and therefore builtBench, the containers and the NixOS
           # module. Independent of devguard.enable: turning the guards off must
           # not silently put the web server back on TCP.
-          unixsock = unixsockPkg;
+          inherit unixsock;
           # Both envs too; it only acts under a systemd unit, so the dev shell,
           # the OCI images and a terminal on the host keep stock output.
-          journald = journaldPkg;
+          inherit journald;
           # Both envs: builtBench builds its assets with prodPythonEnv's bench.
-          nodebuild = nodebuildPkg;
+          inherit nodebuild;
           # The dev env only, whatever devguard.enable says: it is routing, not
           # a guard, and the shell's `bench` is not the only one a terminal can
           # reach.
-          benchcli = benchcliPkg;
+          inherit benchcli;
         };
 
         # A bench still carrying the hash-era options gets a sentence, not an
@@ -2761,6 +2780,11 @@ in
               # unbuilt. The preload carries on, builds the rest and still exits
               # 1. Not builtBench, which should stop at the first failure.
               FRAPPE_NIX_KEEP_GOING = "1";
+              # The shell's statement that devguard is on (devguard.enable),
+              # for frappe-nix's own tools, as odoo-nix's ODOO_NIX_DEVGUARD
+              # (CONVENTIONS.md, Tool-owned variables). frappe_devguard does
+              # not read it; FRAPPE_DEVGUARD_* is its own.
+              FRAPPE_NIX_DEVGUARD = if dg.enable then "1" else "0";
 
               FRAPPE_BENCH_ROOT = benchPath;
               SITES_PATH = benchPath + "/sites";

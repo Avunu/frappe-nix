@@ -70,7 +70,7 @@ let
       inherit (config.frappe-nix.ports) offset;
       web = shell.processes.nginx.ports.main.allocate;
       db = shell.processes.mysql.ports.main.allocate;
-      smtp = mail.smtpPort;
+      smtp = mail.port;
       http = mail.httpPort;
       pop3 = mail.pop3.port;
     };
@@ -340,7 +340,12 @@ let
     python = pkgs.python314;
     workspaceRoot = devGroupFixture;
     benchName = "standards-dev-group";
-    inherit (inputs) pyproject-nix pyproject-build-systems uv2nix;
+    inherit (inputs)
+      pyproject-nix
+      pyproject-build-systems
+      uv2nix
+      python-devops-nix
+      ;
     lockAuditRelock = ''
       tests/standards/fixtures/bench-dev-group no longer matches its uv.lock:
 

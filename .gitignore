@@ -7,3 +7,13 @@ patches.txt
 result
 result-*
 .direnv
+# python-devops-nix's shared Python, which lib/grafts.nix merges into these
+# packages at build time; frappe-nix's dev shell copies it in for the editor.
+/lib/devguard/frappe_devguard/__init__.py
+/lib/devguard/frappe_devguard/_hook.py
+/lib/devguard/frappe_devguard/_patch.py
+/lib/devguard/frappe_devguard/_settings.py
+/lib/devguard/frappe_devguard/guards/__init__.py
+/lib/devguard/frappe_devguard/guards/egress.py
+/lib/devguard/frappe_devguard/guards/mail_stdlib.py
+/lib/*/frappe_*/_hook.py

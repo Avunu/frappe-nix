@@ -5,7 +5,9 @@ python = "./env"
 python-version = "3.11"
 # The working tree's packages. They reach the dev env through PYTHONPATH and an
 # editable .pth that runs code at startup, which a static checker does not do.
-# Keep in step with sourceRoots in dev/env.nix.
+# Keep in step with sourceRoots in dev/env.nix. The files python-devops-nix
+# supplies to them (lib/grafts.nix's `vendored`) are copied in by the dev
+# shell and by the ty check.
 extra-paths = [
     "runtime/src",
     "lib/devguard",
@@ -17,10 +19,6 @@ extra-paths = [
 
 [src]
 exclude = ["tests/fixtures"]
-
-[analysis]
-# Written by lib/devguard.nix at build time from the Nix options.
-allowed-unresolved-imports = ["frappe_devguard._baked"]
 
 # The suites stand Frappe, bench, botocore and socketio up as hand-built stub
 # modules and fakes, so the shapes ty infers for those are the stubs', not the

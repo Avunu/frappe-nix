@@ -8,6 +8,10 @@
 
 let
   dev = import ./env.nix { inherit pkgs inputs; };
+  grafts = import ../lib/grafts.nix {
+    inherit pkgs;
+    inherit (inputs) python-devops-nix;
+  };
 in
 {
   # dev/frappe-ruff.toml and the ruff pins against the Frappe dev/uv.lock pins:
@@ -29,11 +33,14 @@ in
 
   # The whole tree, not what changed: editing one module can break a caller in
   # another. --python is explicit because the sandbox has no ./env link for
-  # ty.toml's default to find.
+  # ty.toml's default to find. The graft packages are checked as a build
+  # merges them: python-devops-nix's devguard core and _hook.py copied in
+  # (lib/grafts.nix), so their imports resolve.
   ty = pkgs.runCommand "frappe-nix-ty" { nativeBuildInputs = [ dev.devPythonEnv ]; } ''
     cp -r ${../.} src
     chmod -R u+w src
     cd src
+    ${grafts.copyVendored "."}
     ty check --python ${dev.devPythonEnv}
     touch "$out"
   '';
