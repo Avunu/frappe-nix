@@ -1,8 +1,20 @@
 # Nightly (docs: ci.md, §4.6): the integration suites, and the reminders that the pinned
 # frappe-nix or standards profile is behind. Never a required check.
 {% set publish = modules.listing and cfg.listing.publish %}
-{# The locked frappe-nix revision; a lock without one (a path: override, frappe-nix's own self-tests) keeps the file's pin. #}
-{% macro uses(workflow) %}{% if frappe_nix.rev %}{{ frappe_nix.owner }}/{{ frappe_nix.name }}/.github/workflows/{{ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}{% else %}{{ pin(frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" ~ workflow, "", "v" ~ frappe_nix.version) }}{% endif %}{% endmacro %}
+{# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
+   lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
+{% macro uses(workflow) %}
+{% set at = frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" %}
+{% if frappe_nix.rev %}
+{{ at ~ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+{%- else %}
+{% set kept = pin(at ~ workflow, "", "v" ~ frappe_nix.version) %}
+{% if "@ #" in kept %}
+{% set kept = pin(at ~ "app-lint.yml", "", "v" ~ frappe_nix.version).replace("app-lint.yml", workflow) %}
+{% endif %}
+{{ kept }}
+{%- endif %}
+{% endmacro %}
 name: nightly
 on:
 {% if cfg.ci.schedules.nightly %}
