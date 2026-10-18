@@ -8,14 +8,17 @@ name: Docs
 #
 # The job stays named `build`: its check, `build / Check`, is the one the main ruleset requires. A
 # required check has to report on every pull request or the ones that do not touch the pages wait for
-# it for ever, so this workflow has no `paths:` filter (it takes about 30 seconds).
+# it for ever, so this workflow has no `paths:` filter (it takes about 30 seconds). The release PR is
+# pushed with GITHUB_TOKEN, which raises no pull_request event, so release.yml's dispatch-ci runs it by
+# workflow_dispatch on that branch.
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: docs-${{ github.event.pull_request.number }}
+  group: docs-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
