@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
+from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from helpers import run_cli
 
 PYPROJECT = """[project]
@@ -91,8 +92,20 @@ def write_profile(root: Path, rel: str = ".standards-profile", text: str = EXAMP
 
 
 def git(root: Path, *args: str) -> str:
+	"""``git -C root <args>`` as user t. The repositories are temporary: no detached auto
+	maintenance still writing in one when its directory is removed."""
 	return subprocess.run(
-		["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(root), *args],
+		[
+			"git",
+			"-c",
+			"user.name=t",
+			"-c",
+			"user.email=t@example.com",
+			*NO_AUTO_MAINTENANCE,
+			"-C",
+			str(root),
+			*args,
+		],
 		check=True,
 		capture_output=True,
 		text=True,

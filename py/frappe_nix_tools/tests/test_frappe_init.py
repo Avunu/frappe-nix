@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from frappe_nix_tools.cli_config import ENV
+from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from frappe_nix_tools.frappe_init import args as fargs
 from frappe_nix_tools.frappe_init import command, config, detect, presets, template, ui
 from frappe_nix_tools.frappe_init.args import UsageError, parse_args
@@ -54,7 +55,7 @@ PRESETS = {
 
 
 def git(*argv: str, cwd: Path) -> None:
-	subprocess.run(["git", *argv], cwd=cwd, check=True, capture_output=True)
+	subprocess.run(["git", *NO_AUTO_MAINTENANCE, *argv], cwd=cwd, check=True, capture_output=True)
 
 
 @contextlib.contextmanager

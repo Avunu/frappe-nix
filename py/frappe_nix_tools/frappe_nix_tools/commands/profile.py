@@ -166,7 +166,12 @@ def _throwaway(root: Path, profile: Path, extra: str, required: list[str], files
 			"app",
 		],
 	):
-		subprocess.run(["git", "-C", str(app), *argv], check=True, capture_output=True, env=env)
+		subprocess.run(
+			["git", "-C", str(app), *repo.NO_AUTO_MAINTENANCE, *argv],
+			check=True,
+			capture_output=True,
+			env=env,
+		)
 	return app
 
 

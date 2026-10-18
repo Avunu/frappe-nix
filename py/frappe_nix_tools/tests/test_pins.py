@@ -12,6 +12,7 @@ from unittest import mock
 
 from frappe_nix_tools.common import flakelock, nar, pins
 from frappe_nix_tools.common.pins import TOKEN, pin_path
+from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from frappe_nix_tools.common.report import ConfigError, EnvError
 from helpers import TREE_NAR_HASH, make_tree
 
@@ -166,7 +167,7 @@ class TestPins(unittest.TestCase):
 
 
 def git(cwd, *args):
-	subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+	subprocess.run(["git", "-C", str(cwd), *NO_AUTO_MAINTENANCE, *args], check=True, capture_output=True)
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

@@ -15,6 +15,14 @@ from frappe_nix_tools.common.report import EnvError
 _SCP = re.compile(r"(?:[^@/]+@)?(?P<host>[A-Za-z0-9.-]+):(?!//)(?P<path>[^:]+)")
 _URL = re.compile(r"(?:ssh|https?|git)://(?:[^@/]+@)?(?P<host>[A-Za-z0-9.-]+)(?::\d+)?/(?P<path>.+)")
 
+# git options for a repository that is about to be removed. Since git 2.47, `commit`, `fetch`
+# (also the lazy fetch a blob-less clone's checkout makes) and `merge` start a detached
+# `git maintenance run --auto`, which can still be writing under .git when the directory is
+# removed: `rmtree` then fails with "Directory not empty". `-c` reaches the git processes
+# these start too (as GIT_CONFIG_PARAMETERS), but not a local remote's receive-pack, which
+# reads only that repository's own configuration.
+NO_AUTO_MAINTENANCE = ("-c", "maintenance.auto=false", "-c", "gc.auto=0")
+
 
 def git(root: Path, *args: str) -> str:
 	"""Run ``git -C root <args>`` and return its stdout; a failure is an ``EnvError``."""
