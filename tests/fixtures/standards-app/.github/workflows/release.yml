@@ -20,7 +20,7 @@ jobs:
       pull-requests: write
       actions: write
       checks: read
-    uses: Avunu/frappe-nix/.github/workflows/app-release.yml@e97d588cf5805dfb382b210379fafa0223013285 # v0.0.0
+    uses: Avunu/frappe-nix/.github/workflows/app-release.yml@e97d588cf5805dfb382b210379fafa0223013285 # v1.0.0
     with:
       app: standards_fixture
       integration-branch: develop
