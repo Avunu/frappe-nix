@@ -852,13 +852,14 @@ in
                 inherit (config.frappe-nix) name;
                 bases = portBases;
                 baseService = "http";
+                # No closing period: lib.ports adds its own ". Derived from …".
                 descriptions = {
-                  http = "The web port: nginx, or the server itself without sockets.";
-                  db = "MariaDB's port. Unbound in socket mode, but the bench's own number.";
-                  socketio = "The Node realtime server's, with `runtime.enable = false` and no sockets.";
-                  smtp = "Mailpit's SMTP port: `mailpit.port`'s default.";
-                  mailUi = "Mailpit's web UI: `mailpit.httpPort`'s default.";
-                  pop3 = "Mailpit's POP3 port: `mailpit.pop3.port`'s default.";
+                  http = "The web port: nginx, or the server itself without sockets";
+                  db = "MariaDB's port. Unbound in socket mode, but the bench's own number";
+                  socketio = "The Node realtime server's, with `runtime.enable = false` and no sockets";
+                  smtp = "Mailpit's SMTP port: `mailpit.port`'s default";
+                  mailUi = "Mailpit's web UI: `mailpit.httpPort`'s default";
+                  pop3 = "Mailpit's POP3 port: `mailpit.pop3.port`'s default";
                 };
                 saltDefault =
                   config.frappe-nix.app.enable
