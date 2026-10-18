@@ -40,13 +40,16 @@
   pkgs,
   # The app's pyproject.toml (a path), or null: not opted in.
   pyproject ? null,
+  # For frappe-init's first clone of an app (lib/init.nix); null in the
+  # checks that only read this file's shape.
+  python-devops-nix ? null,
 }:
 
 let
   inherit (pkgs) lib;
 
   outputs = import ./outputs.nix { inherit pkgs; };
-  frappeInit = import ../init.nix { inherit pkgs; };
+  frappeInit = import ../init.nix { inherit pkgs python-devops-nix; };
 
   optInLine = line: builtins.match "[[:space:]]*\\[{1,2}tool\\.frappe-nix[].].*" line != null;
   optedInText =

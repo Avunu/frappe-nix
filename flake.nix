@@ -166,6 +166,13 @@
       checks = forAllSystems (
         pkgs:
         let
+          inherit (pkgs) lib;
+          # python-devops-nix's development shell pieces, as the dev shell has
+          # them (lib/shell-tools.nix).
+          shellTools = import ./lib/shell-tools.nix {
+            inherit pkgs;
+            base = inputs.python-devops-nix.lib;
+          };
           grafts = import ./lib/grafts.nix {
             inherit pkgs;
             inherit (inputs) python-devops-nix;
@@ -244,8 +251,12 @@
 
           # The datadir's btrfs NOCOW attribute: set on a fresh one, reported on
           # one already holding data, and the one-off copy that fixes that.
-          # Branches on the sandbox's own filesystem, so it checks the real
-          # attribute on a btrfs builder and the no-op path everywhere else.
+          # python-devops-nix's own test (lib.dbNocow), run against frappe-nix's
+          # command in its shape: MariaDB's datadir strategy, a server found by
+          # --datadir= on its command line. Branches on the sandbox's own
+          # filesystem, so it checks the real attribute on a btrfs builder and
+          # the no-op path everywhere else (frappe-nix#92: off btrfs, migrate
+          # has nothing to do even with a server running).
           db-nocow =
             pkgs.runCommand "frappe-nix-db-nocow-check"
               {
@@ -255,8 +266,8 @@
                 ];
               }
               ''
-                bash ${./tests/db-nocow.sh} \
-                  ${import ./lib/db-nocow.nix { inherit pkgs; }}/bin/frappe-nix-db-nocow \
+                bash ${inputs.python-devops-nix}/tests/db-nocow.sh \
+                  ${lib.getExe shellTools.dbNocow} datadir cmdline frappe-nix \
                   2>&1 | tee "$out"
               '';
 
@@ -293,12 +304,13 @@
               node ${./tests/sass-embedded.js} ${sassEmbedded}/${sassEmbedded.module} 2>&1 | tee "$out"
             '';
 
-          # What shell entry does about apps/: checks out a fresh clone's apps
+          # What shell entry does about apps/ (`frappe-nix-sources enter`,
+          # python-devops-nix's lib.sources): checks out a fresh clone's apps
           # once, and past that touches nothing — entry once checked out any
           # submodule it found without a checkout, re-cloning apps that had
           # been removed.
-          apps-report =
-            pkgs.runCommand "frappe-nix-apps-report-check"
+          sources =
+            pkgs.runCommand "frappe-nix-sources-check"
               {
                 nativeBuildInputs = [
                   pkgs.git
@@ -307,8 +319,8 @@
               }
               ''
                 export HOME="$PWD"
-                bash ${./tests/apps-report.sh} \
-                  ${import ./lib/apps-report.nix { inherit pkgs; }}/bin/frappe-nix-apps-report \
+                bash ${./tests/sources.sh} \
+                  ${lib.getExe shellTools.sources} \
                   2>&1 | tee "$out"
               '';
 

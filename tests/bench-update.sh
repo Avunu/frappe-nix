@@ -297,7 +297,7 @@ check "and points at the .gitmodules entry" grep -q 'submodule.apps/frappe.branc
 git config -f .gitmodules submodule.apps/frappe.branch version-16
 
 echo "── a partial clone keeps its branch's folders ───────────────────"
-# The clone shell entry makes (lib/apps-report.nix): version-16 with every
+# The clone shell entry makes (python-devops-nix's lib.sources): version-16 with every
 # commit's folders, anything else commits only (tree:0, its configured filter).
 # A pull fetches version-16, and must ask for the folders, or the new commits
 # arrive as commits alone.

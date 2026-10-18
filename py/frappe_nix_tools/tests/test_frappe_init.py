@@ -69,7 +69,7 @@ def chdir(path: Path):
 
 
 def run_state(**argv) -> Run:
-	cfg = config.InitConfig(presets="", template="", app_template="")
+	cfg = config.InitConfig(presets="", template="", app_template="", sources=None)
 	return Run(args=fargs.InitArgs(**argv), config=cfg, presets=presets.parse(PRESETS))
 
 
@@ -151,12 +151,17 @@ class TestArgs(unittest.TestCase):
 
 class TestConfigAndPresets(unittest.TestCase):
 	def test_config_keys(self):
-		cfg = config.parse({"presets": "/p", "template": "/t", "appTemplate": "/a"})
-		self.assertEqual(cfg, config.InitConfig("/p", "/t", "/a"))
-		with self.assertRaisesRegex(config.ConfigError, r"missing key\(s\): appTemplate"):
+		cfg = config.parse({"presets": "/p", "template": "/t", "appTemplate": "/a", "sources": "/s"})
+		self.assertEqual(cfg, config.InitConfig("/p", "/t", "/a", "/s"))
+		self.assertIsNone(
+			config.parse({"presets": "/p", "template": "/t", "appTemplate": "/a", "sources": None}).sources
+		)
+		with self.assertRaisesRegex(config.ConfigError, r"missing key\(s\): appTemplate, sources"):
 			config.parse({"presets": "/p", "template": "/t"})
 		with self.assertRaisesRegex(config.ConfigError, r"unknown key\(s\): extra"):
-			config.parse({"presets": "/p", "template": "/t", "appTemplate": "/a", "extra": 1})
+			config.parse(
+				{"presets": "/p", "template": "/t", "appTemplate": "/a", "sources": "/s", "extra": 1}
+			)
 		with (
 			mock.patch.dict(os.environ, {}, clear=True),
 			self.assertRaisesRegex(config.ConfigError, "nix run"),
@@ -499,7 +504,15 @@ class TestMain(unittest.TestCase):
 			path = Path(tmp, "cfg.json")
 			Path(tmp, "presets.json").write_text(json.dumps(PRESETS))
 			path.write_text(
-				json.dumps(cfg or {"presets": f"{tmp}/presets.json", "template": tmp, "appTemplate": tmp})
+				json.dumps(
+					cfg
+					or {
+						"presets": f"{tmp}/presets.json",
+						"template": tmp,
+						"appTemplate": tmp,
+						"sources": None,
+					}
+				)
 			)
 			with (
 				mock.patch.dict(os.environ, {ENV: str(path)}),

@@ -15,7 +15,9 @@
   pkgs,
   # For frappe-nix-build-deps-sync on PATH, which derives a new bench's
   # [tool.uv.extra-build-dependencies] block from the lock frappe-init writes
-  # (lib/build-deps.nix). Null leaves the template's entries as they are.
+  # (lib/build-deps.nix), and frappe-nix-sources, whose `clone` is an app's
+  # first clone (lib/shell-tools.nix). Null leaves the template's entries as
+  # they are, and a frappe-init that cannot scaffold a bench.
   python-devops-nix ? null,
 }:
 
@@ -69,6 +71,16 @@ let
       presets = "${./frappe-presets.json}";
       template = "${../templates/bench}";
       appTemplate = "${../templates/app}";
+      sources =
+        if python-devops-nix == null then
+          null
+        else
+          lib.getExe
+            (import ./shell-tools.nix {
+              inherit pkgs;
+              base = python-devops-nix.lib;
+              python = frappeNixTools.pythonModule;
+            }).sources;
     }
   );
 in

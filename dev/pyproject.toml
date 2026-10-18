@@ -25,7 +25,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    # lib/banner.py's one dependency (it runs under python-devops-nix's lib.python.rich).
+    # py/frappe_nix_tools's prompts and output (rich, from nixpkgs there), so ty resolves them.
     "rich",
     "ruff==0.14.10",
     # py/frappe_nix_tools's one dependency frappe does not bring (jinja2, packaging and

@@ -59,7 +59,8 @@ let
       description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
     };
 
-  # Per-bench port offset, 0..899, hashed from the bench name (lib/ports.nix).
+  # Per-bench port offset, 0..899, hashed from the bench name: python-devops-nix's
+  # lib.ports (PLAN.md, Phase 5), which every port below comes from.
   #
   # NOT from the project path, though that is the obvious choice and is what
   # devenv itself hashes for DEVENV_RUNTIME. In bench mode the web port has to be
@@ -74,8 +75,26 @@ let
   # collide. App mode salts a linked worktree's offset with its path (its bench
   # is generated, so nothing committed moves), and FRAPPE_NIX_PORT_OFFSET picks
   # one by hand; see the `ports.offset` option.
-  ports = import ../lib/ports.nix { inherit lib; };
-  envPortOffset = ports.parseEnvOffset (builtins.getEnv "FRAPPE_NIX_PORT_OFFSET");
+  ports = inputs.python-devops-nix.lib.ports;
+  portVariable = {
+    label = "frappe-nix";
+    variable = "FRAPPE_NIX_PORT_OFFSET";
+  };
+  # Parsed once, here, so a bad value warns once: lib.ports.options gets the
+  # parsed value back as a string (never a bad one), and portOffsetOf the number.
+  envPortOffset = ports.parseEnvOffset portVariable (builtins.getEnv portVariable.variable);
+  # Each service's base; its port is the base plus the offset in force. `http`
+  # is nginx's (or, with sockets off, the web server's); `db` names MariaDB's
+  # allocated but unbound port under sockets; smtp, mailUi and pop3 are
+  # Mailpit's, the mailpit.* defaults.
+  portBases = {
+    http = 8000;
+    db = 3306;
+    socketio = 9000;
+    smtp = 19000;
+    mailUi = 20000;
+    pop3 = 21000;
+  };
   # The offset a perSystem frappe-nix config resolves to. FRAPPE_NIX_PORT_OFFSET
   # is app mode's only (spec §5.12): bench mode writes the web port into its
   # committed sites/common_site_config.json, so it keeps `ports.offset`.
@@ -110,18 +129,6 @@ in
       pkgs,
       ...
     }:
-    let
-      # The per-service ports (`ports.http` and the rest), from `ports.offset`.
-      bases = ports.basesFor (portOffsetOf config.frappe-nix);
-      portOption =
-        description: default: defaultText:
-        mkOption {
-          type = types.port;
-          inherit default;
-          defaultText = lib.literalMD defaultText;
-          description = "${description} Derived from `ports.offset`, for the module to read; set it (`lib.mkForce`) only to fix one service's port.";
-        };
-    in
     {
       # Renames, each kept through 1.x, until frappe-nix 2.0.0 (PLAN.md, design
       # rule 2; CONVENTIONS.md, Identity options, Restore, devguard and the
@@ -676,7 +683,7 @@ in
               write into a new extent — compressed first, on the compressed
               mounts btrfs desktops usually have — and every fsync into a
               filesystem transaction that other programs' saves wait behind.
-              See lib/db-nocow.nix.
+              See python-devops-nix's lib.dbNocow.
 
               The attribute only reaches files created after it is set, so
               shell entry sets it on a datadir that is missing or still empty.
@@ -829,103 +836,96 @@ in
           };
         };
 
-        ports = {
-          worktreeSalt = mkOption {
-            type = types.bool;
-            default =
-              config.frappe-nix.app.enable
-              && (import ../lib/standards/shell.nix {
-                inherit pkgs;
-                pyproject = config.frappe-nix.app.src + "/pyproject.toml";
-              }).optedIn;
-            defaultText = lib.literalMD "whether the app opted in to the app standards (a `[tool.frappe-nix]` table in its pyproject.toml)";
-            description = ''
-              App mode: salt `ports.offset` with the checkout's path in a linked
-              worktree (`git worktree add`, whose `.git` is a file), so a second
-              worktree of the same app gets its own ports. The primary checkout
-              keeps the `name` hash either way. It also has `devenv up` stop
-              and name a TCP port that is already taken.
-
-              On by default only for an app that opted in to the app standards
-              (docs/app-standards/spec.md §5.12, S35), so the linked worktrees of
-              an app that has not keep the ports they had. Any app may set it
-              either way. Bench mode ignores it: its web port is committed.
-            '';
-          };
-
-          offset = mkOption {
-            type = types.ints.between 0 899;
-            default = ports.offsetFor (
-              ports.seed {
+        # python-devops-nix's lib.ports.options: worktreeSalt, offset, base and
+        # one port per service (`ports.http` and the rest), each derived from
+        # the offset in force for the rest of the module to read. Not readOnly:
+        # that would refuse the rare fixed port for one service (`lib.mkForce`),
+        # since the default counts as a definition. The salt and
+        # FRAPPE_NIX_PORT_OFFSET are app mode's only (spec §5.12). frappe-nix's
+        # own descriptions of the first three, which name the modes.
+        ports =
+          let
+            tree = ports.options (
+              portVariable
+              // {
+                cfg = config.frappe-nix.ports;
                 inherit (config.frappe-nix) name;
-                salt = config.frappe-nix.app.enable && config.frappe-nix.ports.worktreeSalt;
-                pwd = builtins.getEnv "PWD";
-                gitKind = ports.gitKindAt (builtins.getEnv "PWD");
+                bases = portBases;
+                baseService = "http";
+                # No closing period: lib.ports adds its own ". Derived from …".
+                descriptions = {
+                  http = "The web port: nginx, or the server itself without sockets";
+                  db = "MariaDB's port. Unbound in socket mode, but the bench's own number";
+                  socketio = "The Node realtime server's, with `runtime.enable = false` and no sockets";
+                  smtp = "Mailpit's SMTP port: `mailpit.port`'s default";
+                  mailUi = "Mailpit's web UI: `mailpit.httpPort`'s default";
+                  pop3 = "Mailpit's POP3 port: `mailpit.pop3.port`'s default";
+                };
+                saltDefault =
+                  config.frappe-nix.app.enable
+                  && (import ../lib/standards/shell.nix {
+                    inherit pkgs;
+                    pyproject = config.frappe-nix.app.src + "/pyproject.toml";
+                  }).optedIn;
+                saltApplies = config.frappe-nix.app.enable;
+                envApplies = config.frappe-nix.app.enable;
+                # Already parsed (and warned about) once, above.
+                envValue = if envPortOffset == null then "" else toString envPortOffset;
               }
             );
-            defaultText = lib.literalMD "a hash of `name`, salted with the checkout's path in an app-mode linked worktree when `ports.worktreeSalt` is on";
-            description = ''
-              The offset every TCP port of this bench is derived from: the web
-              port (nginx) is `8000 + offset`, MariaDB's unbound port `3306 +
-              offset`, and Mailpit's SMTP, web UI and POP3 ports `19000`, `20000`
-              and `21000 + offset`.
+          in
+          tree
+          // {
+            worktreeSalt = tree.worktreeSalt // {
+              defaultText = lib.literalMD "whether the app opted in to the app standards (a `[tool.frappe-nix]` table in its pyproject.toml)";
+              description = ''
+                App mode: salt `ports.offset` with the checkout's path in a linked
+                worktree (`git worktree add`, whose `.git` is a file), so a second
+                worktree of the same app gets its own ports. The primary checkout
+                keeps the `name` hash either way. It also has `devenv up` stop
+                and name a TCP port that is already taken.
 
-              By default it is a hash of `name`, so every bench lands
-              somewhere different and every clone of one bench lands in the same
-              place, which keeps the port out of a bench's committed
-              sites/common_site_config.json. In app mode with
-              `ports.worktreeSalt` on, a linked worktree (`git worktree add`,
-              whose `.git` is a file) hashes `<name>@<path>` instead, so a
-              second worktree of the same app gets its own ports; the primary
-              checkout keeps the `name` hash.
+                On by default only for an app that opted in to the app standards
+                (docs/app-standards/spec.md §5.12, S35), so the linked worktrees of
+                an app that has not keep the ports they had. Any app may set it
+                either way. Bench mode ignores it: its web port is committed.
+              '';
+            };
+            offset = tree.offset // {
+              defaultText = lib.literalMD "a hash of `name`, salted with the checkout's path in an app-mode linked worktree when `ports.worktreeSalt` is on";
+              description = ''
+                The offset every TCP port of this bench is derived from: the web
+                port (nginx) is `8000 + offset`, MariaDB's unbound port `3306 +
+                offset`, and Mailpit's SMTP, web UI and POP3 ports `19000`, `20000`
+                and `21000 + offset`.
 
-              The ports are fixed when the shell is evaluated: devenv's port
-              allocator does not move them under flake integration. In app mode
-              with `ports.worktreeSalt` on, `devenv up` stops and names one that
-              is already taken. In app mode, `FRAPPE_NIX_PORT_OFFSET` (0 to 899)
-              picks another offset for the shell and wins over this option; bench
-              mode ignores it, because its web port is committed.
-            '';
-            example = 123;
+                By default it is a hash of `name`, so every bench lands
+                somewhere different and every clone of one bench lands in the same
+                place, which keeps the port out of a bench's committed
+                sites/common_site_config.json. In app mode with
+                `ports.worktreeSalt` on, a linked worktree (`git worktree add`,
+                whose `.git` is a file) hashes `<name>@<path>` instead, so a
+                second worktree of the same app gets its own ports; the primary
+                checkout keeps the `name` hash.
+
+                The ports are fixed when the shell is evaluated: devenv's port
+                allocator does not move them under flake integration. In app mode
+                with `ports.worktreeSalt` on, `devenv up` stops and names one that
+                is already taken. In app mode, `FRAPPE_NIX_PORT_OFFSET` (0 to 899)
+                picks another offset for the shell and wins over this option; bench
+                mode ignores it, because its web port is committed.
+              '';
+            };
+            base = tree.base // {
+              description = ''
+                The web port, overriding `8000 + ports.offset`. Only the web port:
+                Mailpit and MariaDB keep theirs from `ports.offset`.
+
+                It is the port nginx binds, not a starting point: nothing moves it
+                if it is taken.
+              '';
+            };
           };
-
-          base = mkOption {
-            type = types.nullOr types.port;
-            default = null;
-            description = ''
-              The web port, overriding `8000 + ports.offset`. Only the web port:
-              Mailpit and MariaDB keep theirs from `ports.offset`.
-
-              It is the port nginx binds, not a starting point: nothing moves it
-              if it is taken.
-            '';
-            example = 8200;
-          };
-
-          # One port per service, each derived from `offset` (lib/ports.nix
-          # basesFor), for the rest of the module to read. Not readOnly: that
-          # would refuse the rare fixed port for one service (`lib.mkForce`),
-          # since the default counts as a definition.
-          http = portOption "The web port: nginx, or the server itself without sockets." (
-            if config.frappe-nix.ports.base != null then config.frappe-nix.ports.base else bases.web
-          ) "`ports.base`, else `8000` + `ports.offset`";
-          db =
-            portOption "MariaDB's port. Unbound in socket mode, but the bench's own number." bases.db
-              "`3306` + `ports.offset`";
-          socketio =
-            portOption "The Node realtime server's, with `runtime.enable = false` and no sockets."
-              bases.socketio
-              "`9000` + `ports.offset`";
-          smtp =
-            portOption "Mailpit's SMTP port: `mailpit.port`'s default." bases.mailSmtp
-              "`19000` + `ports.offset`";
-          mailUi =
-            portOption "Mailpit's web UI: `mailpit.httpPort`'s default." bases.mailHttp
-              "`20000` + `ports.offset`";
-          pop3 =
-            portOption "Mailpit's POP3 port: `mailpit.pop3.port`'s default." bases.mailPop3
-              "`21000` + `ports.offset`";
-        };
 
         pythonOverrides = mkOption {
           type = types.functionTo (types.functionTo types.attrs);
@@ -2250,11 +2250,21 @@ in
         # and the rest empty otherwise. See lib/standards/shell.nix.
         standardsShell = import ../lib/standards/shell.nix {
           inherit pkgs;
+          inherit (inputs) python-devops-nix;
           pyproject = cfg.app.src + "/pyproject.toml";
         };
 
-        # FRAPPE_NIX_CI's enterShell snippets. See lib/ci-mode.nix.
-        ciMode = import ../lib/ci-mode.nix { inherit lib; };
+        # python-devops-nix's development shell pieces (PLAN.md, Phase 5),
+        # configured for frappe-nix: see lib/shell-tools.nix. On the bench's
+        # own interpreter, so the shell carries no second Python.
+        shellTools = import ../lib/shell-tools.nix {
+          inherit pkgs;
+          base = inputs.python-devops-nix.lib;
+          inherit (cfg) python;
+        };
+
+        # FRAPPE_NIX_CI's enterShell snippets (lib.ciMode).
+        inherit (shellTools) ciMode;
 
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
@@ -2334,7 +2344,6 @@ in
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.
         benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
-        appsReportTool = import ../lib/apps-report.nix { inherit pkgs; };
 
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
@@ -2348,9 +2357,9 @@ in
         # lib/offline-migrate.py.
         ptOscTool = import ../lib/offline-migrate.nix { inherit pkgs; };
 
-        # Keeps the MariaDB datadir off btrfs copy-on-write — see
-        # lib/db-nocow.nix and the mariadb.noCow option.
-        dbNocowTool = import ../lib/db-nocow.nix { inherit pkgs; };
+        # Keeps the MariaDB datadir off btrfs copy-on-write: python-devops-nix's
+        # lib.dbNocow (lib/shell-tools.nix) and the mariadb.noCow option.
+        dbNocowTool = shellTools.dbNocow;
 
         # [tool.uv.extra-build-dependencies], derived from uv.lock after every
         # relock where the bench has the managed block (lib/build-deps.nix).
@@ -2385,15 +2394,138 @@ in
         runtimeDeclared = builtins.elem "frappe-runtime" pythonEnvs.rootDepNames;
         runtimeActive = cfg.runtime.enable && runtimeDeclared;
 
-        # The dev-shell welcome banner (rich-rendered, lib/banner.py), on
-        # python-devops-nix's lib.python.rich: nixpkgs' rich for cfg.python,
-        # kept out of the bench's own environment, rather than hand-drawn
-        # box-drawing-character `echo` lines, which are fragile to keep
-        # column-aligned by hand and degrade ungracefully (no width awareness)
-        # compared to a real renderer.
-        richPython = inputs.python-devops-nix.lib.python.rich {
-          inherit (cfg) python;
+        # The dev-shell welcome banner: python-devops-nix's lib.banner, which
+        # renders this spec with rich (nixpkgs' rich for cfg.python, kept out
+        # of the bench's own environment). What is only known when the shell
+        # starts is an @name@ placeholder, filled in enterShell (bannerVars).
+        bannerSpec = {
+          title = "${cfg.name} — Frappe Bench dev environment";
+          commands = [
+            {
+              command = "devenv up";
+              description = "start all services";
+            }
+          ]
+          ++ lib.optional (cfg.defaultSite != "") {
+            command = "default site";
+            description = cfg.defaultSite;
+          }
+          ++ (
+            if appMode then
+              [
+                {
+                  command = "bench-update";
+                  description = "migrate + build";
+                }
+                {
+                  command = "nix flake update";
+                  description = "move the pinned apps";
+                }
+                {
+                  command = "nix run .#relock";
+                  description = "after any pin or manifest change";
+                }
+              ]
+            else
+              [
+                {
+                  command = "bench-update";
+                  description = "pull + migrate + build";
+                }
+                {
+                  command = "bench-update --pull";
+                  description = "pull app submodules only";
+                }
+              ]
+          )
+          ++ [
+            {
+              command = "bench-migrate";
+              description = "run DB migrations";
+            }
+            {
+              command = "bench-build";
+              description = "build JS/CSS assets";
+            }
+            {
+              command = "bench-clear-cache";
+              description = "clear Frappe cache";
+            }
+            {
+              command = "bench-console";
+              description = "open Frappe Python REPL";
+            }
+          ];
+          urls = [
+            {
+              label = "URL";
+              url = "http://127.0.0.1:@port@";
+            }
+          ];
+          facts = [
+            {
+              label = "Python";
+              value = "${pythonEnvs.devPythonEnv}/bin/python";
+            }
+            {
+              label = "Bench root";
+              value = "@benchRoot@";
+            }
+          ]
+          ++ lib.optional appMode {
+            label = "App";
+            value = [
+              "apps/${cfg.app.name} → this repository (edits are live)"
+              "the bench is generated; deleting it costs a re-copy, not the database"
+            ];
+          }
+          ++ lib.optional sockets {
+            label = "Sockets";
+            value = "@runtime@/{mysql,redis,socketio,web}.sock";
+          }
+          ++ lib.optional (!mailGuard && mailpitEnabled) {
+            label = "Mail";
+            value = "the mail guard is off, so mail goes where each site sends it. ${mailpitUi} is up";
+          }
+          ++ lib.optional (cfg.defaultSite != "") {
+            label = "Site";
+            value = cfg.defaultSite;
+          };
+          # A persistent, project-level decision when off: while it stands,
+          # bench restore will not carry production's encryption key
+          # (restore.requireDevguard).
+          guard = {
+            inherit (dg) enable;
+            egress = {
+              inherit (dg.egress) enable;
+              allow = egressAllowHosts;
+            };
+            mail = {
+              enable = mailGuard;
+              url = lib.optionalString mailpitEnabled "http://${mp.host}:${toString mailpitHttpBase}";
+              incoming = if mailpitEnabled && mp.pop3.enable then "served from Mailpit POP3" else "blocked";
+            };
+          };
+          notes =
+            lib.optional (mailGuard && !mailpitEnabled) {
+              text = "⚠  Mailpit is off (mailpit.enable), so the mail the guard redirects to it fails to send.";
+              style = "yellow";
+            }
+            ++ lib.optionals (cfg.runtime.enable && !runtimeDeclared) (
+              map
+                (text: {
+                  inherit text;
+                  style = "yellow";
+                })
+                [
+                  "⚠  frappe-runtime is not in this shell's Python environment (uv.lock predates it):"
+                  "   'devenv up' runs the split web/socketio/worker/scheduler processes until you"
+                  "   re-enter the shell after the reconcile above has landed."
+                ]
+            );
         };
+        # Mailpit's web UI, as the banner names it.
+        mailpitUi = "Mailpit (http://${mp.host}:${toString mailpitHttpBase})";
 
         nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
 
@@ -2959,7 +3091,7 @@ in
             imports = lib.optional appMode standardsShell.devenvModule;
 
             enterShell = ''
-              # CI mode (FRAPPE_NIX_CI, lib/ci-mode.nix): read here, at entry, so
+              # CI mode (FRAPPE_NIX_CI, lib.ciMode): read here, at entry, so
               # one shell derivation serves both. It skips the apps report, the
               # node_modules steps and the banner below; everything else runs.
               ${ciMode.exports}
@@ -2971,8 +3103,9 @@ in
                 # removal, a stray nested repo — and touch none of those. Shell
                 # entry runs on every `nix develop` and direnv reload; past a
                 # clone's first entry, only you, or `bench update --pull`, move
-                # a submodule. See lib/apps-report.nix.
-                ${ciMode.unlessCi ''${appsReportTool}/bin/frappe-nix-apps-report "$FRAPPE_BENCH_ROOT" || true''}
+                # a submodule. python-devops-nix's lib.sources (lib/shell-tools.nix);
+                # it always exits 0.
+                ${ciMode.unlessCi ''${lib.getExe shellTools.sources} enter "$FRAPPE_BENCH_ROOT" || true''}
 
                 # sites/apps.txt and sites/apps.json are generated from the
                 # workspace members and the submodule checkouts — and committed,
@@ -3016,8 +3149,8 @@ in
                 # Before anything writes to the datadir: the btrfs NOCOW
                 # attribute only reaches files created after it is set. The
                 # mariadbd wrapper writes its temp files to mysql-tmp. See
-                # lib/db-nocow.nix.
-                ${dbNocowTool}/bin/frappe-nix-db-nocow prepare \
+                # lib.dbNocow (lib/shell-tools.nix).
+                ${lib.getExe dbNocowTool} prepare \
                   "''${MYSQL_HOME:-$DEVENV_STATE/mysql}" "$DEVENV_STATE/mysql-tmp" || true
               ''}
 
@@ -3076,35 +3209,16 @@ in
                   # the running nginx might have moved on.
                   _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
 
-                  ${richPython}/bin/python ${../lib/banner.py} \
-                    --name ${lib.escapeShellArg cfg.name} \
-                    --python-bin ${lib.escapeShellArg "${pythonEnvs.devPythonEnv}/bin/python"} \
-                    --bench-root "$FRAPPE_BENCH_ROOT" \
-                    --port "''${_port:-${toString webBase}}" \
-                    ${lib.optionalString appMode "--app-mode --app-name ${lib.escapeShellArg cfg.app.name}"} \
-                    ${
-                      lib.optionalString (cfg.defaultSite != "") "--default-site ${lib.escapeShellArg cfg.defaultSite}"
-                    } \
-                    ${lib.optionalString sockets ''--sockets --devenv-runtime "$DEVENV_RUNTIME"''} \
-                    ${
-                      if !dg.enable then
-                        "--devguard-off"
-                      else
-                        lib.optionalString dg.egress.enable (
-                          "--egress"
-                          + lib.optionalString (
-                            egressAllowHosts != [ ]
-                          ) " --egress-allow ${lib.escapeShellArg (lib.concatStringsSep ", " egressAllowHosts)}"
-                        )
-                    } \
-                    ${lib.optionalString mailGuard "--mail"} \
-                    ${
-                      lib.optionalString mailpitEnabled (
-                        "--mailpit --mail-host ${lib.escapeShellArg mp.host} --mail-http-port ${toString mailpitHttpBase}"
-                        + lib.optionalString mp.pop3.enable " --mail-pop3"
-                      )
-                    } \
-                    ${lib.optionalString (cfg.runtime.enable && !runtimeDeclared) "--runtime-warn"}
+                  ${inputs.python-devops-nix.lib.banner.script {
+                    inherit pkgs;
+                    inherit (shellTools) banner;
+                    spec = bannerSpec;
+                    vars = {
+                      port = "\${_port:-${toString webBase}}";
+                      benchRoot = "$FRAPPE_BENCH_ROOT";
+                    }
+                    // lib.optionalAttrs sockets { runtime = "$DEVENV_RUNTIME"; };
+                  }}
                 '';
               }}
             '';

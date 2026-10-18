@@ -1,5 +1,6 @@
 """What lib/init.nix bakes into ``frappe-init``: the store paths of the presets
-file and the two templates, as JSON (frappe_nix_tools.cli_config).
+file, the two templates and the sources command, as JSON
+(frappe_nix_tools.cli_config).
 
 ``frappe-init`` runs before any bench exists, so this is all it reads; it has
 no dev shell and no bench configuration.
@@ -22,6 +23,10 @@ class InitConfig:
 	template: str
 	# templates/app: the files app mode writes into an app's repository.
 	app_template: str
+	# frappe-nix-sources (python-devops-nix's lib.sources, lib/shell-tools.nix):
+	# an app's first clone is its `clone`, the shape shell entry makes. Null in
+	# a frappe-init built without python-devops-nix, which cannot scaffold.
+	sources: str | None
 
 
 def parse(data: Any) -> InitConfig:
