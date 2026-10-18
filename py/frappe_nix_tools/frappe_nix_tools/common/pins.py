@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from frappe_nix_tools.common import flakelock, nar
+from frappe_nix_tools.common import flakelock, nar, repo
 from frappe_nix_tools.common.report import ConfigError, EnvError
 
 PINS_DIR = ".dev-dist/pins"
@@ -160,9 +160,18 @@ def _git_env(pin: flakelock.Pin) -> dict[str, str]:
 
 
 def _git(pin: flakelock.Pin, *args: str, cwd: Path | None = None) -> None:
+	"""``git <args>`` for a pin's clone, which is removed (its ``.git``) or rebuilt soon after:
+	no detached auto maintenance (``repo.NO_AUTO_MAINTENANCE``)."""
 	token = _token()
 	try:
-		subprocess.run(["git", *args], cwd=cwd, env=_git_env(pin), check=True, capture_output=True, text=True)
+		subprocess.run(
+			["git", *repo.NO_AUTO_MAINTENANCE, *args],
+			cwd=cwd,
+			env=_git_env(pin),
+			check=True,
+			capture_output=True,
+			text=True,
+		)
 	except FileNotFoundError as e:
 		raise EnvError("git is not on PATH") from e
 	except subprocess.CalledProcessError as e:

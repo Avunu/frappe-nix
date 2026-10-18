@@ -109,7 +109,8 @@ def settings(t: Target, fork: str | None, upstream: str | None) -> tuple[str, st
 def _git(cwd: Path, *args: str, env: dict | None = None) -> str:
 	try:
 		proc = subprocess.run(
-			["git", "-C", str(cwd), *args],
+			# The clone lives in a temporary directory: no detached maintenance left behind in it.
+			["git", "-C", str(cwd), *repo.NO_AUTO_MAINTENANCE, *args],
 			check=True,
 			capture_output=True,
 			text=True,

@@ -339,6 +339,12 @@ class TestBaseline(ListingCase):
 		self.assertTrue(baseline.problems('{"schema": 1, "findings": [{"rule": "x", "count": 0}]}'))
 
 
+# The local bare remotes take pushes. receive-pack reads only the remote's own configuration
+# (not the pusher's -c), so the remote itself turns off the detached auto maintenance that
+# could still be writing in it when the test's directory is removed.
+NO_RECEIVE_GC = ("--config", "receive.autoGc=false")
+
+
 def make_registry(root: Path) -> Path:
 	"""A bare registry repository with main: apps.json (2-space) listing one other app."""
 	work = root / "registry-work"
@@ -353,7 +359,7 @@ def make_registry(root: Path) -> Path:
 	git(work, "commit", "-q", "-m", "registry")
 	bare = root / "example" / "marketplace"
 	bare.parent.mkdir(parents=True)
-	subprocess.run(["git", "clone", "-q", "--bare", str(work), str(bare)], check=True)
+	subprocess.run(["git", "clone", "-q", "--bare", *NO_RECEIVE_GC, str(work), str(bare)], check=True)
 	return bare
 
 
@@ -376,6 +382,7 @@ class TestRegistry(ListingCase):
 		make_registry(self.remotes)
 		origin = self.remotes / "origin.git"
 		subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+		git(origin, "config", "receive.autoGc", "false")
 		git(self.root, "remote", "add", "origin", str(origin))
 		git(self.root, "push", "-q", "origin", "HEAD:refs/heads/develop", "HEAD:refs/heads/version-16")
 		git(self.root, "fetch", "-q", "origin")
@@ -452,7 +459,15 @@ class TestRegistryPublish(TestRegistry):
 		self.fork = self.remotes / "Example-Org" / "marketplace"
 		self.fork.parent.mkdir(parents=True)
 		subprocess.run(
-			["git", "clone", "-q", "--bare", str(self.remotes / "example" / "marketplace"), str(self.fork)],
+			[
+				"git",
+				"clone",
+				"-q",
+				"--bare",
+				*NO_RECEIVE_GC,
+				str(self.remotes / "example" / "marketplace"),
+				str(self.fork),
+			],
 			check=True,
 		)
 		bin_dir = self.remotes / "bin"

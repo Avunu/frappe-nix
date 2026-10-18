@@ -9,12 +9,13 @@ from pathlib import Path
 from unittest import mock
 
 from frappe_nix_tools.ci import relock
+from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from helpers import run_cli
 
 
 def git(root: Path, *args: str) -> str:
 	return subprocess.run(
-		["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+		["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *NO_AUTO_MAINTENANCE, *args],
 		check=True,
 		capture_output=True,
 		text=True,
