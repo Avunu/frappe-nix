@@ -12,8 +12,9 @@ name: release
 #                   result to the PR branch: every commit on main, the release's included,
 #                   keeps a fixture that `frappe-nix sync --check` passes;
 #   dispatch-ci     a GITHUB_TOKEN push raises no event, so it dispatches check.yml (without
-#                   inputs: `lint` and `flake`, no VM tests) and pr-policy.yml on the release
-#                   PR, each only while its check is absent on the PR's head;
+#                   inputs: `lint` and `flake`, no VM tests), pr-policy.yml and docs.yml (the
+#                   main ruleset's required `build / Check`) on the release PR, each only
+#                   while its check is absent on the PR's head;
 #   fast-forward    moves release-<major> (release-1 for every v1.* tag) to the new tag by a
 #                   REST PATCH with force=false, or creates it on a major's first release, and
 #                   fails unless it then equals the tag. The release-* ruleset
@@ -152,7 +153,8 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           frappe-nix ci dispatch-ci --repo "$REPO" --integration main --package frappe-nix \
-            --context lint=check.yml --context pr-policy=pr-policy.yml
+            --context lint=check.yml --context pr-policy=pr-policy.yml \
+            --context "build / Check=docs.yml"
 
   fast-forward:
     needs: release-please
