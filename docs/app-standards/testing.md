@@ -3,7 +3,7 @@ title: Testing
 description: "frappe-test: the app's tests with coverage, the whitelist and hook test map, the composition check and CI mode."
 order: 3
 tags: [app-standards, testing, coverage, frappe-test]
-updated: 2026-10-07
+updated: 2026-10-17
 ---
 
 `frappe-test` runs an app's tests the way CI's `ci / test` job does, from the app's dev shell. It brings the bench up, prepares a site, runs the tests with coverage measured on the app alone, and then checks what the coverage cannot: that every whitelisted function and hook target ran, and that the app's controller extensions compose with other apps'. The same command, with `--ci`, is the whole test job.
@@ -29,7 +29,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 | Stage | What | Fails with |
 |---|---|---|
 | up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and the web port; a failed `devenv up` (a taken port, say) fails at once. | 10 |
-| site | `provision-site` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps. | 10 |
+| site | `provision-site` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps (without the guards `devguard-disable` names, see [Development guards in a test run](#development-guards-in-a-test-run)). | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |
 | testmap | Every whitelisted function and hook target ran, or is exempt. | 3 |
@@ -64,6 +64,18 @@ A fresh site sends every desk route to the setup wizard, and erpnext's tests nee
 [tool.frappe-nix.tests]
 setup = ["execute:frappe.utils.install.complete_setup_wizard", "execute:my_app.tests.fixtures.create"]
 ```
+
+### Development guards in a test run
+
+The dev shell's [guard rails](../development/guard-rails.md) are on in `frappe-test` too. Most apps never notice, but an app that implements the very thing a guard intercepts cannot test itself under that guard. An email transport is the usual case: the `mail` guard removes `validate`, the SMTP and IMAP methods and the `override_email_send` hook from every Email Account and Email Domain extension, which is the whole of such an app. `devguard-disable` names the guards that the test run goes without:
+
+```toml
+[tool.frappe-nix.tests]
+# This app is a mail transport: the mail guard strips the extensions its tests exercise.
+devguard-disable = ["mail"]
+```
+
+`frappe-test` adds them to `FRAPPE_DEVGUARD_DISABLE` for the processes that run the app's tests: the setup steps, `run-tests`, the testmap and the composition check. It says so when it starts. The dev shell, `devenv up` and the bench `frappe-test` starts (web server, workers, scheduler) keep every guard, so working on the app by hand stays fully guarded. `egress` cannot be listed: it is what keeps a relaxed test run on this machine, so a test that would reach a real mail server or API still fails at the socket. The key is app-only; a profile cannot relax a guard for every app it covers.
 
 ## Coverage
 

@@ -326,6 +326,36 @@ class TestPlan(unittest.TestCase):
 		)
 		self.assertEqual(plan["coverage"], {"target": 60.0, "raise-margin": 0.0})
 
+	def test_devguard_disable(self):
+		self.assertEqual(self.plan(self.APP)["devguard-disable"], [])
+		plan = self.plan(self.APP + '\n[tool.frappe-nix.tests]\ndevguard-disable = ["mail", "webhooks"]\n')
+		self.assertEqual(plan["devguard-disable"], ["mail", "webhooks"])
+		# Not opted in: nothing app-specific, so every guard stays on.
+		plan = self.plan('[project]\nname = "demo"\n')
+		self.assertEqual(plan["devguard-disable"], [])
+
+	def test_devguard_disable_refuses_egress_and_unknown_guards(self):
+		# egress is the backstop that keeps a relaxed run on the machine: never relaxable.
+		for value in ('["egress"]', '["mailx"]', '["mail", "mail"]', '"mail"'):
+			with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+				py = Path(tmp) / "pyproject.toml"
+				py.write_text(self.APP + f"[tool.frappe-nix.tests]\ndevguard-disable = {value}\n")
+				code, _, err = run_cli("test-plan", "--pyproject", str(py))
+				self.assertEqual(code, 2, err)
+				self.assertIn("devguard-disable", err)
+
+	def test_devguard_disable_is_app_only(self):
+		# A profile cannot relax a guard for every app it covers.
+		from frappe_nix_tools.common import config
+		from frappe_nix_tools.common.report import ConfigError
+
+		with self.assertRaisesRegex(ConfigError, "devguard-disable"):
+			config.validate_profile(
+				{"extends": "recommended", "name": "org", "tests": {"devguard-disable": ["mail"]}},
+				"profile org",
+				org=True,
+			)
+
 	def test_opt_in_spelling_disagreement_is_exit_2(self):
 		# The dev shell's line match and TOML disagree: refused whether TOML sees the table
 		# (a quoted key) or only the shell does (the header inside a string).

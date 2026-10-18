@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-07
+updated: 2026-10-17
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -450,6 +450,8 @@ setup = []                                   # steps before the app's tests. Eac
                                              # (bench run-tests --module) or "execute:<dotted callable>".
                                              # Default when empty: "module:erpnext.tests.bootstrap_test_data" if
                                              # erpnext is a sibling, else "execute:frappe.utils.install.complete_setup_wizard"
+devguard-disable = []                        # dev guards frappe-test's test processes run without, e.g. ["mail"]
+                                             # for a mail transport; never egress. The shell and devenv up keep them
 js-coverage-min = 50                         # node:test line-coverage minimum; only used when test/unit/ exists
 
 [tool.frappe-nix.releases]
@@ -3454,7 +3456,7 @@ header = "none"                             # for whole: the §3.6 header kind
 
 An override gets the same context (§2.3) and the same `StrictUndefined` rules. Everything else (tool configs, merged keys, caller workflows) is a contract with a reusable workflow or a check, so it changes through parameters, never through an override; an override of any other path is exit 2. A managed file rendered from an override keeps frappe-nix's header.
 
-**App-only and profile-only keys.** The app keys of §2.1 (top-level `[tool.frappe-nix]` keys and the `[[…]]` lists) and the app-only module parameters (`typescript.browser`, `browser-include`, `web-include`, `paths`, `exclude`, `spa`; `tests.setup`; `releases.bootstrap-sha`; `js.oxlint.ignore`, `globals`, `overrides`; `js.oxfmt.ignore`; `stylelint.globs`) are refused in a profile (exit 2). `schema`, `name`, `description`, `extends`, `requires-frappe-nix`, `retire`, `replace-apps` and `extra-files` are refused in `[tool.frappe-nix]`; a single app that needs them uses an in-repo profile (§8.3). `[known-apps]` is allowed in both: the app's `[tool.frappe-nix.known-apps]` is the last layer, so an app without an org profile can describe a sibling that doesn't follow the Frappe convention.
+**App-only and profile-only keys.** The app keys of §2.1 (top-level `[tool.frappe-nix]` keys and the `[[…]]` lists) and the app-only module parameters (`typescript.browser`, `browser-include`, `web-include`, `paths`, `exclude`, `spa`; `tests.setup`, `devguard-disable`; `releases.bootstrap-sha`; `js.oxlint.ignore`, `globals`, `overrides`; `js.oxfmt.ignore`; `stylelint.globs`) are refused in a profile (exit 2). `schema`, `name`, `description`, `extends`, `requires-frappe-nix`, `retire`, `replace-apps` and `extra-files` are refused in `[tool.frappe-nix]`; a single app that needs them uses an in-repo profile (§8.3). `[known-apps]` is allowed in both: the app's `[tool.frappe-nix.known-apps]` is the last layer, so an app without an org profile can describe a sibling that doesn't follow the Frappe convention.
 
 ### 8.2 Modules
 

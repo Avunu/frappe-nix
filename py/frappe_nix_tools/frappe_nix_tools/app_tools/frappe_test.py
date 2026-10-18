@@ -25,6 +25,11 @@ to read and gets the recommended profile's stages. The coverage target and
 raise margin of the upward ratchet come from the same plan, with or without
 --ci.
 
+[tool.frappe-nix.tests] devguard-disable names development guards that the
+processes running the app's tests (stage 2's setup steps, 3, 5 and 6) go without,
+through FRAPPE_DEVGUARD_DISABLE. The bench devenv up starts, and the dev shell
+itself, keep every guard.
+
 The exit status is the verdict of the first failing stage, 10 for an
 environment failure (stage 1 or 2, an unreadable configuration, or no dev
 shell), 64 (EX_USAGE) for a usage error, and 0 otherwise. Neither collides with
@@ -250,6 +255,22 @@ def ty_diagnostics(output: str) -> int:
 	return int(found[-1]) if found else 0
 
 
+#: The variable the devguard core reads its per-process guard switches from.
+DEVGUARD_DISABLE = "FRAPPE_DEVGUARD_DISABLE"
+
+
+def guards_off_env(guards: list[str], environ: dict[str, str]) -> dict[str, str]:
+	"""ENVIRON with GUARDS added to $FRAPPE_DEVGUARD_DISABLE, keeping what it named.
+
+	The core reads the variable as a comma-separated list; a guard the caller
+	already turned off for one command stays off."""
+	names = [n.strip() for n in environ.get(DEVGUARD_DISABLE, "").split(",") if n.strip()]
+	names += [g for g in guards if g not in names]
+	if not names:
+		return dict(environ)
+	return {**environ, DEVGUARD_DISABLE: ",".join(names)}
+
+
 def stage_status(rc: int) -> str:
 	"""A frappe-nix check's exit status as a stage: 0 ok, 1 failed, else error."""
 	return {0: "ok", 1: "failed"}.get(rc, "error")
@@ -302,6 +323,9 @@ class Run:
 		self.ty_ignores = 0
 		# A bench this run started, to stop at the end unless --keep-up.
 		self.stop_bench = False
+		# The environment of the processes that run the app's tests: the dev
+		# shell's, less the guards [tool.frappe-nix.tests] devguard-disable names.
+		self.test_env: dict[str, str] = dict(os.environ)
 
 	# ── output ──────────────────────────────────────────────────────────────
 	@staticmethod
@@ -325,7 +349,7 @@ class Run:
 		return call(
 			[str(self.bench / "env" / "bin" / "bench"), *args],
 			cwd=self.bench,
-			env={**os.environ, "_FRAPPE_BENCH_RAW": "1"},
+			env={**self.test_env, "_FRAPPE_BENCH_RAW": "1"},
 		)
 
 	# ── 9. report ───────────────────────────────────────────────────────────
@@ -390,6 +414,16 @@ class Run:
 				"::error::frappe-test: could not read the app's configuration (frappe-nix test-plan); see above"
 			)
 		return plan
+
+	def relax_guards(self, guards: list[str]) -> None:
+		"""Turn GUARDS off for the test processes only, and say so."""
+		if not guards:
+			return
+		self.test_env = guards_off_env(guards, self.test_env)
+		say(
+			f"frappe-test: development guards off for the test run: {', '.join(guards)} "
+			"([tool.frappe-nix.tests] devguard-disable); the bench and the dev shell keep them"
+		)
 
 	# ── stages 1 to 6 ───────────────────────────────────────────────────────
 	def bench_stages(self, plan: dict[str, Any], switches: dict[str, bool]) -> None:
@@ -528,7 +562,7 @@ class Run:
 				f"--data-file={self.out / '.coverage'}",
 				f"--source={self.repo / self.app}",
 			]
-		rc = call([*cmd, *run_tests], cwd=self.bench / "sites")
+		rc = call([*cmd, *run_tests], cwd=self.bench / "sites", env=self.test_env)
 		self.endgroup()
 		self.stages["tests"] = "ok" if rc == 0 else "failed"
 
@@ -620,7 +654,8 @@ class Run:
 				str(self.out / "testmap.json"),
 				"--markdown",
 				str(self.out / "testmap.md"),
-			]
+			],
+			env=self.test_env,
 		)
 		self.stages["testmap"] = stage_status(rc)
 		self.endgroup()
@@ -647,7 +682,8 @@ class Run:
 				str(self.out / "composition.json"),
 				"--markdown",
 				str(self.out / "composition.md"),
-			]
+			],
+			env=self.test_env,
 		)
 		self.stages["composition"] = stage_status(rc)
 		self.endgroup()
@@ -792,6 +828,7 @@ class Run:
 				"testmap": pick(a.testmap, a.ci, planned("testmap"), True),
 				"composition": pick(a.composition, a.ci, planned("composition"), True),
 			}
+			self.relax_guards([str(g) for g in plan.get("devguard-disable") or []])
 			if plan.get("opted_in") is True:
 				configured = ", ".join(name for name, on in stages.items() if devshell.truthy(on))
 				say(
