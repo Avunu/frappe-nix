@@ -23,6 +23,11 @@
 #                        devguard.scheduler tree): the old names still set the
 #                        new options and the baked settings, and are listed for
 #                        the evaluation warning. At evaluation; nothing is built.
+#   devguard-test-relax  [tool.frappe-nix.tests] devguard-disable (profile.schema.json)
+#                        accepts every guard the devenv module's devguard tree has
+#                        except egress, and nothing else, so a guard added to the
+#                        tree or renamed cannot drift from what an app may relax
+#                        for its tests. At evaluation; nothing is built.
 {
   self,
   pkgs,
@@ -183,6 +188,24 @@ in
       shellVariable = bench.devenv.shells.default.env.FRAPPE_NIX_DEVGUARD;
     };
   };
+
+  devguard-test-relax =
+    let
+      schema = lib.importJSON ../py/frappe_nix_tools/frappe_nix_tools/data/schema/profile.schema.json;
+      relaxable = schema."$defs".modules.tests.properties.devguard-disable.items.enum;
+      # Every guard in the tree, less the switch for all of them and the alias
+      # tree the Track B rename keeps until 2.0.0 (devguard.scheduler, now jobs).
+      guards = lib.attrNames (
+        lib.filterAttrs (
+          name: value: builtins.isAttrs value && value ? enable && name != "scheduler"
+        ) bench.frappe-nix.devguard
+      );
+    in
+    checks.eval "devguard-test-relax" {
+      message = "devguard-disable's enum in profile.schema.json is the devguard tree's guards, less egress";
+      expected = lib.sort builtins.lessThan (lib.remove "egress" guards);
+      actual = lib.sort builtins.lessThan relaxable;
+    };
 
   devguard-production =
     assert lib.assertMsg (
