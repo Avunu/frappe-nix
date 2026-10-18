@@ -67,6 +67,14 @@
   # App mode: where the generated-but-committed lock files live, relative to
   # the repo root. Only used in messages.
   lockDir ? "nix",
+  # frappe-nix-sources (python-devops-nix's lib.sources, lib/shell-tools.nix):
+  # bench-get-app's clone. Left as a bare name, same convention as the tools
+  # above.
+  sources ? "frappe-nix-sources",
+  # perSystem.frappe-nix.renamedApps and replacedApps (OLD = NEW), which
+  # reconcile-apps applies around its installs.
+  renamedApps ? { },
+  replacedApps ? { },
   # Scripts kept in files of their own, merged over the ones below; see
   # lib/scripts.d/README.md. A parameter so tests can point it at a fixture;
   # null merges none.
@@ -286,7 +294,7 @@ let
       )
     )
   );
-  # What the Python bench commands read (frappe_nix_tools/restore/config.py):
+  # What the Python bench commands read (frappe_nix_tools/bench_config.py):
   # the options and store paths the bash once had interpolated into it, as one
   # generated file. Every key is written; the reader refuses a missing or an
   # unknown one.
@@ -324,6 +332,22 @@ let
         requireDevguard = restore.requireDevguard or true;
         devguard = restore.devguard or true;
       };
+      # get-app, remove-app, new-app and reconcile-apps
+      # (frappe_nix_tools/apps/config.py).
+      apps =
+        let
+          pairs = lib.mapAttrsToList (old: new: { inherit old new; });
+        in
+        {
+          bench = benchBin;
+          python = pythonBin;
+          workspace = workspaceBin;
+          inherit sources;
+          buildDepsSync = buildDepsSyncBin;
+          renameTool = "${./rename/frappe_rename_app.py}";
+          renamedApps = pairs renamedApps;
+          replacedApps = pairs replacedApps;
+        };
     }
   );
   ownScripts = lib.genAttrs (builtins.attrNames (
@@ -1022,198 +1046,23 @@ secretScripts
   # This is what provision-site leaves undone afterwards: a sibling pinned
   # into the flake *after* a site already exists never gets installed by
   # anything else. See https://github.com/Avunu/frappe-nix/issues/32.
+  #
+  # With frappe-nix.renamedApps and replacedApps around it: renames first,
+  # replacements after (docs/app-standards/spec.md §5.10).
+  # py/frappe_nix_tools/frappe_nix_tools/apps/reconcile.py.
   reconcile-apps.exec = ''
-    set -euo pipefail
-    export _FRAPPE_BENCH_RAW=1
-    cd "$FRAPPE_BENCH_ROOT"
-
-    SITE="''${1:-''${FRAPPE_SITE:-}}"
-    if [ -z "$SITE" ]; then
-      echo "reconcile-apps: FRAPPE_SITE is not set and no site was given." >&2
-      echo "  Usage: reconcile-apps <site>   (or set FRAPPE_SITE in .env)" >&2
-      exit 1
-    fi
-
-    if [ ! -d "sites/$SITE" ]; then
-      echo "reconcile-apps: sites/$SITE does not exist yet — run provision-site first."
-      exit 0
-    fi
-    [ -f sites/apps.txt ] || exit 0
-
-    # One at a time. On `devenv up` every process that waits on this task —
-    # runtime, watch, … — runs it from its own `devenv-tasks` wrapper, so
-    # several copies start in the same second, each sees the same missing apps
-    # and each installs them: concurrent `install-app`s fighting over the
-    # site's install_app lock, and their failures land in the Error Log. Held
-    # from before the installed-apps query, so a copy that waited finds the
-    # first one's work done and has nothing left to install. The lock is the
-    # kernel's, not the file's: it goes when the holder does, however it dies.
-    mkdir -p "sites/$SITE/locks"
-    exec 9>"sites/$SITE/locks/reconcile-apps.lock"
-    ${pkgs.util-linux}/bin/flock 9
-
-    installed="$(${benchBin} --site "$SITE" list-apps --format json 2>/dev/null \
-                 | ${pkgs.jq}/bin/jq -r --arg s "$SITE" '.[$s][]? // empty' 2>/dev/null || true)"
-
-    MISSING=""
-    while IFS= read -r app; do
-      [ -z "$app" ] && continue
-      [ "$app" = "frappe" ] && continue
-      # An app frappe-nix.replacedApps is replacing: still on the bench until
-      # every site has dropped it, but never to be installed again
-      # (lib/rename/reconcile.nix sets this; unset, nothing is skipped).
-      case " ''${FRAPPE_NIX_RECONCILE_SKIP:-} " in *" $app "*) continue ;; esac
-      grep -qxF "$app" <<<"$installed" || MISSING="$MISSING $app"
-    done < sites/apps.txt
-
-    [ -n "$MISSING" ] || exit 0
-
-    echo "reconcile-apps: sites/apps.txt names app(s) missing from $SITE's installed apps:$MISSING"
-    FAILED=""
-    for app in $MISSING; do
-      echo "  installing $app…"
-      ${benchBin} --site "$SITE" install-app "$app" || FAILED="$FAILED $app"
-    done
-
-    if [ -n "$FAILED" ]; then
-      echo "reconcile-apps: failed to install:$FAILED — see the error above; continuing." >&2
-      exit 0
-    fi
-    echo "reconcile-apps: $SITE now has every app in sites/apps.txt installed."
+    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} reconcile-apps "$@"
   '';
 
   # Add an existing app as a git submodule and register it in the uv workspace
   # ([tool.uv.workspace] members + [tool.uv.sources]) and sites/apps.txt.
+  #
+  # py/frappe_nix_tools/frappe_nix_tools/apps/get_app.py. Its clone is
+  # python-devops-nix's lib.sources (`frappe-nix-sources clone`), the shape
+  # shell entry gives every app.
   bench-get-app = {
     exec = ''
-      set -euo pipefail
-      export _FRAPPE_BENCH_RAW=1
-
-      usage() {
-        echo "Usage: bench-get-app [--branch <name>] <url-or-alias>"
-        echo ""
-        echo "Adds a Frappe app as a git submodule and integrates it into the workspace."
-        echo "Without --branch the remote's default branch is used; either way the branch"
-        echo "is recorded in .gitmodules, which is what 'bench-update --pull' follows."
-        echo ""
-        echo "Examples:"
-        echo "  bench-get-app helpdesk                              # → frappe/helpdesk"
-        echo "  bench-get-app frappe/payments                      # owner/repo on GitHub"
-        echo "  bench-get-app https://github.com/frappe/hrms.git   # full URL"
-        echo "  bench-get-app --branch version-16 hrms             # a release branch"
-      }
-
-      INPUT=""
-      BRANCH=""
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          -b | --branch)
-            [ -n "''${2:-}" ] || { usage >&2; echo "" >&2; echo "error: $1 needs a branch name" >&2; exit 1; }
-            BRANCH="$2"; shift 2 ;;
-          --branch=*) BRANCH="''${1#*=}"; shift ;;
-          -h | --help) usage; exit 0 ;;
-          -*) usage >&2; echo "" >&2; echo "error: unknown flag: $1" >&2; exit 1 ;;
-          *)
-            [ -z "$INPUT" ] || { usage >&2; echo "" >&2; echo "error: one app at a time" >&2; exit 1; }
-            INPUT="$1"; shift ;;
-        esac
-      done
-      if [ -z "$INPUT" ]; then
-        usage
-        exit 1
-      fi
-
-      cd "$FRAPPE_BENCH_ROOT"
-
-      # Resolve the app source URL:
-      #   full URL (scheme:// or git@…)  → used as-is
-      #   owner/repo                     → https://github.com/owner/repo.git
-      #   bare name                      → https://github.com/frappe/<name>.git
-      if [[ "$INPUT" == *://* ]] || [[ "$INPUT" == git@* ]]; then
-        URL="$INPUT"
-      elif [[ "$INPUT" == */* ]]; then
-        URL="https://github.com/$INPUT.git"
-      else
-        URL="https://github.com/frappe/$INPUT.git"
-      fi
-
-      REPO_NAME=$(basename "$URL" .git)
-      if [ -d "apps/$REPO_NAME" ]; then
-        echo "Error: App '$REPO_NAME' already exists in apps/$REPO_NAME"
-        exit 1
-      fi
-
-      # The directory under apps/ is the Frappe app's name — the package holding
-      # hooks.py, which is what frappe imports (`<app>.hooks`) and what
-      # sites/apps.txt lists — and that is not always the repository's:
-      # frappe/flow_client ships the app `flow`. Stock `bench get-app` renames
-      # its clone to match; a submodule's path is fixed when it is added, so the
-      # name is read first, from a throwaway clone with no checkout and no file
-      # contents (the folder listing is all this needs).
-      probe="$(mktemp -d)"
-      trap 'rm -rf "$probe"' EXIT
-      probe_args=(--quiet --depth 1 --filter=blob:none --no-checkout)
-      if [ -n "$BRANCH" ]; then
-        probe_args+=(-b "$BRANCH")
-      fi
-      git clone "''${probe_args[@]}" "$URL" "$probe"
-      mapfile -t PACKAGES < <(git -C "$probe" ls-tree -r --name-only HEAD | sed -n 's|^\([^/]*\)/hooks\.py$|\1|p')
-      rm -rf "$probe"
-
-      APP_NAME="$REPO_NAME"
-      if [ "''${#PACKAGES[@]}" -eq 0 ]; then
-        echo "  ⚠  $REPO_NAME has no <package>/hooks.py — it does not look like a Frappe app; keeping the name '$REPO_NAME'" >&2
-      elif [ "''${#PACKAGES[@]}" -eq 1 ]; then
-        APP_NAME="''${PACKAGES[0]}"
-      elif ! printf '%s\n' "''${PACKAGES[@]}" | grep -qxF "$REPO_NAME"; then
-        echo "  ⚠  $REPO_NAME has several packages with a hooks.py (''${PACKAGES[*]}) and none is named for it; keeping the name '$REPO_NAME'" >&2
-      fi
-      APP_DIR="apps/$APP_NAME"
-
-      if [ -d "$APP_DIR" ]; then
-        echo "Error: App '$APP_NAME' already exists in $APP_DIR"
-        exit 1
-      fi
-      if [ "$APP_NAME" != "$REPO_NAME" ]; then
-        echo "  $REPO_NAME is the Frappe app '$APP_NAME' ($APP_NAME/hooks.py) — adding it as $APP_DIR"
-      fi
-
-      echo "Adding git submodule: $URL -> $APP_DIR''${BRANCH:+ ($BRANCH)}"
-      # -b both checks the branch out and records it in .gitmodules. That record
-      # is load-bearing: `bench-update --pull` follows it, and a submodule
-      # registered without one is never pulled — this script left every app it
-      # added in that state until 2026-09-14. Without --branch git clones the
-      # remote's default branch; record whatever that turned out to be, so the
-      # checkout and .gitmodules cannot disagree.
-      add_args=()
-      if [ -n "$BRANCH" ]; then
-        add_args+=(-b "$BRANCH")
-      fi
-      git submodule add "''${add_args[@]}" "$URL" "$APP_DIR"
-      # Not --recursive: Frappe apps often ship broken nested submodules that
-      # have no production role and would fail init.
-      git submodule update --init "$APP_DIR"
-      if [ -z "$BRANCH" ]; then
-        BRANCH="$(git -C "$APP_DIR" symbolic-ref --short HEAD)"
-        git config -f .gitmodules "submodule.$APP_DIR.branch" "$BRANCH"
-      fi
-      echo "  recorded branch '$BRANCH' in .gitmodules"
-
-      ${registerWorkspaceMember}
-
-      ${syncRegistry}
-
-      echo "Syncing Python dependencies..."
-      uv sync
-      ${syncBuildDeps}
-
-      echo ""
-      echo "✅ App '$APP_NAME' added successfully!"
-      echo ""
-      echo "Next steps:"
-      echo "  1. Restart devenv: direnv reload --no-eval-cache"
-      echo "  2. Install the app: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
-      echo "  3. If it ships a package.json but no yarn.lock, resolve one for nix build: bench-update --node-locks"
+      FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} get-app "$@"
     '';
     description = "Add a Frappe app from a git URL/alias as a submodule and register it in the uv workspace.";
   };
@@ -1228,221 +1077,11 @@ secretScripts
   # passes straight through — takes an app out of one site's database; this
   # takes it out of the bench, and refuses while any site still has it
   # installed.
+  #
+  # py/frappe_nix_tools/frappe_nix_tools/apps/remove_app.py.
   bench-remove-app = {
     exec = ''
-      set -euo pipefail
-      export _FRAPPE_BENCH_RAW=1
-
-      usage() {
-        cat <<'EOF'
-      Usage: bench-remove-app [--force] [--no-backup] <app>
-
-      Removes <app> from this bench: deinits its git submodule and drops it from
-      .gitmodules (staging only that — any other uncommitted .gitmodules edit
-      stays as it was), removes it from the uv workspace (pyproject.toml),
-      regenerates sites/apps.txt and sites/apps.json, drops node-locks/<app>
-      and sites/assets/<app>, and relocks (uv lock).
-
-      Refuses while any site in this bench has <app> installed — take it out of
-      each first with `bench --site <site> uninstall-app <app>` — and while the
-      submodule's work tree has uncommitted changes.
-
-        --force      skip both checks
-        --no-backup  do not move a vendored app to .frappe-nix-backup/ first
-                     (a submodule is never backed up: `bench get-app` re-adds it)
-      EOF
-      }
-
-      APP=""
-      FORCE=false
-      BACKUP=true
-      while [ "$#" -gt 0 ]; do
-        case "$1" in
-          --force) FORCE=true; shift ;;
-          --no-backup) BACKUP=false; shift ;;
-          -h | --help) usage; exit 0 ;;
-          -*) usage >&2; echo "" >&2; echo "error: unknown flag: $1" >&2; exit 1 ;;
-          *)
-            [ -z "$APP" ] || { usage >&2; echo "" >&2; echo "error: one app at a time" >&2; exit 1; }
-            APP="$1"; shift ;;
-        esac
-      done
-      if [ -z "$APP" ]; then
-        usage >&2
-        exit 1
-      fi
-      case "$APP" in
-        frappe)
-          echo "bench-remove-app: frappe is the framework every other app runs on — it cannot be removed." >&2
-          exit 1 ;;
-        . | .. | */*)
-          echo "bench-remove-app: '$APP' is not an app name." >&2
-          exit 1 ;;
-      esac
-
-      cd "$FRAPPE_BENCH_ROOT"
-      APP_DIR="apps/$APP"
-
-      # ── identity, before anything moves ─────────────────────────────────
-      # KIND is empty when frappe-nix-workspace doesn't know the name — not
-      # under apps/, not in .gitmodules. DIST_NAME is the [tool.uv.sources]
-      # key, which can differ from the directory name (a fork's own
-      # [project].name) and is unreadable once the directory is gone.
-      KIND="$(${workspaceBin} apps --apps-dir apps | awk -F'\t' -v a="$APP" '$1==a{print $2; exit}')"
-      if [ -z "$KIND" ] && ! grep -qF "\"$APP_DIR\"" pyproject.toml; then
-        echo "bench-remove-app: no app '$APP' in this bench — not under apps/, not in" >&2
-        echo ".gitmodules, not a uv workspace member." >&2
-        exit 1
-      fi
-      DIST_NAME=""
-      if [ -d "$APP_DIR" ]; then
-        DIST_NAME="$(${workspaceBin} dist-name --app-dir "$APP_DIR")"
-      fi
-
-      if ! $FORCE; then
-        # ── refuse while a site still runs it ─────────────────────────────
-        # Asked of every site's actual installed apps, the query reconcile-apps
-        # and bench-restore use. A site whose list cannot be read (database
-        # down, broken site) does not count as "not installed": that is exactly
-        # when pulling the code out from under it would go unnoticed until its
-        # next `bench migrate` dies on the import.
-        INSTALLED=""
-        UNREADABLE=""
-        for cfg in sites/*/site_config.json; do
-          [ -e "$cfg" ] || continue
-          s="$(basename "$(dirname "$cfg")")"
-          hit="$(${benchBin} --site "$s" list-apps --format json 2>/dev/null \
-            | ${pkgs.jq}/bin/jq -r --arg s "$s" --arg a "$APP" \
-              '(.[$s] // []) | any(. == $a)' 2>/dev/null)" || hit=""
-          case "$hit" in
-            true) INSTALLED="$INSTALLED $s" ;;
-            false) ;;
-            *) UNREADABLE="$UNREADABLE $s" ;;
-          esac
-        done
-        if [ -n "$INSTALLED" ]; then
-          echo "bench-remove-app: $APP is still installed on:$INSTALLED" >&2
-          echo "Uninstall it from each site first:" >&2
-          for s in $INSTALLED; do
-            echo "    bench --site $s uninstall-app $APP" >&2
-          done
-          echo "or pass --force to remove it anyway." >&2
-          exit 1
-        fi
-        if [ -n "$UNREADABLE" ]; then
-          echo "bench-remove-app: could not read the installed apps of:$UNREADABLE" >&2
-          echo "(is the database up? devenv up) — not removing $APP without knowing" >&2
-          echo "no site still runs it. Pass --force to remove it anyway." >&2
-          exit 1
-        fi
-
-        # deinit -f below discards the submodule's work tree wholesale. Its own
-        # check for local changes is a dry-run `git rm`, which dies on any
-        # unstaged .gitmodules edit (see below) — so ask git status directly.
-        if [ "$KIND" = submodule ]; then
-          dirty="$(git -C "$APP_DIR" status --porcelain 2>/dev/null || true)"
-          if [ -n "$dirty" ]; then
-            echo "bench-remove-app: $APP_DIR has uncommitted changes that removing it would discard:" >&2
-            printf '%s\n' "$dirty" | head -n 20 >&2
-            echo "Commit or discard them, or pass --force to remove it anyway." >&2
-            exit 1
-          fi
-        fi
-      fi
-
-      if [ -z "$KIND" ]; then
-        echo "  $APP_DIR is not on disk and not in .gitmodules — only its workspace registration is left."
-      fi
-
-      # ── out of git ──────────────────────────────────────────────────────
-      case "$KIND" in
-        submodule | submodule-uninitialized)
-          # The submodule's name, which .git/config and .git/modules/ are keyed
-          # on — not always its path (frappe_init/detect.py resolves it the same way).
-          NAME="$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
-            | awk -v p="$APP_DIR" '$2 == p { sub(/^submodule\./, "", $1); sub(/\.path$/, "", $1); print $1; exit }')" || true
-          NAME="''${NAME:-$APP_DIR}"
-          echo "Removing the $APP_DIR submodule…"
-          # Plumbing, not `git rm`: git rm — --cached included — refuses
-          # outright while .gitmodules has any unstaged edit ("please stage your
-          # changes to .gitmodules or stash them to proceed"), the usual state
-          # of a bench mid-work. vendor_app (frappe_init/apps.py) sidesteps it the
-          # same way.
-          if [ "$KIND" = submodule ]; then
-            git submodule deinit -q -f -- "$APP_DIR"
-          fi
-          git config --local --remove-section "submodule.$NAME" 2>/dev/null || true
-          git update-index --force-remove -- "$APP_DIR"
-          rmdir "$APP_DIR" 2>/dev/null || true
-          # .gitmodules' working copy and index copy each lose the section on
-          # their own, so exactly this removal is staged next to the gitlink's —
-          # what `git rm` would stage — and every other edit stays where it was.
-          git config -f .gitmodules --remove-section "submodule.$NAME" 2>/dev/null || true
-          if git cat-file -e :.gitmodules 2>/dev/null; then
-            staged="$(mktemp)"
-            git show :.gitmodules > "$staged"
-            if git config -f "$staged" --remove-section "submodule.$NAME" 2>/dev/null; then
-              git update-index --cacheinfo "100644,$(git hash-object -w "$staged"),.gitmodules"
-            fi
-            rm -f "$staged"
-          fi
-          # Its clone. Left behind, it also makes a later `bench get-app` of the
-          # same app refuse ("A git directory for … is found locally").
-          rm -rf "$(git rev-parse --git-path "modules/$NAME")"
-          if [ -e "$APP_DIR" ]; then
-            echo "  ⚠  $APP_DIR still holds files git never tracked; left in place" >&2
-          fi
-          ;;
-        local)
-          # A local app has no .git of its own — that is what tells it apart
-          # from nested-repo below — so its content lives nowhere but here and,
-          # the committed part of it only, in the bench's history.
-          if $BACKUP; then
-            mkdir -p .frappe-nix-backup
-            dest=".frappe-nix-backup/$APP-$(date +%Y%m%d-%H%M%S)"
-            git rm -r -q -f --cached --ignore-unmatch -- "$APP_DIR"
-            mv "$APP_DIR" "$dest"
-            echo "  moved to $dest — restore with: mv $dest $APP_DIR && git add $APP_DIR"
-          else
-            git rm -r -q -f --ignore-unmatch -- "$APP_DIR"
-            rm -rf "$APP_DIR"
-          fi
-          ;;
-        nested-repo)
-          echo "bench-remove-app: $APP_DIR is a git repository but not a registered submodule —" >&2
-          echo "not removing it automatically. By hand:" >&2
-          echo "    git rm --cached $APP_DIR && rm -rf $APP_DIR" >&2
-          exit 1
-          ;;
-      esac
-
-      # ── out of the workspace, the registry and the build inputs ─────────
-      echo "Removing $APP from the uv workspace…"
-      ${workspaceBin} remove-app --pyproject pyproject.toml --app "$APP" --source-name "$DIST_NAME"
-
-      ${syncRegistry}
-
-      if [ -d "node-locks/$APP" ]; then
-        rm -rf "node-locks/$APP"
-        echo "  - node-locks/$APP"
-      fi
-      # A symlink into apps/<app>/<app>/public — dangling now.
-      if [ -L "sites/assets/$APP" ]; then
-        rm -f "sites/assets/$APP"
-        echo "  - sites/assets/$APP"
-      fi
-
-      echo "Re-locking the Python workspace…"
-      if ! uv lock; then
-        echo "  ⚠  uv lock failed — the dev shell will not evaluate until it resolves. Re-run: uv lock" >&2
-        exit 1
-      fi
-      ${syncBuildDeps}
-
-      echo ""
-      echo "✅ $APP removed from the bench."
-      echo "   Commit the staged removal with pyproject.toml, uv.lock and sites/apps.json,"
-      echo "   then: direnv reload --no-eval-cache"
+      FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} remove-app "$@"
     '';
     description = "Remove a Frappe app from the bench — submodule, .gitmodules, uv workspace, registry, locks — once no site has it installed.";
   };
@@ -1450,49 +1089,11 @@ secretScripts
   # Scaffold a brand-new app and register it in the uv workspace. Wraps
   # `bench new-app`, whose trailing pip-install step fails in the read-only Nix
   # env (expected/ignored).
+  #
+  # py/frappe_nix_tools/frappe_nix_tools/apps/new_app.py.
   bench-new-app = {
     exec = ''
-      set -euo pipefail
-      export _FRAPPE_BENCH_RAW=1
-
-      if [ -z "''${1:-}" ]; then
-        echo "Usage: bench-new-app <app-name>"
-        echo ""
-        echo "Creates a new Frappe app and integrates it into the uv workspace."
-        exit 1
-      fi
-
-      APP_NAME="$1"
-      APP_DIR="apps/$APP_NAME"
-      cd "$FRAPPE_BENCH_ROOT"
-
-      if [ -d "$APP_DIR" ] && [ -f "$APP_DIR/pyproject.toml" ]; then
-        echo "Error: App '$APP_NAME' already exists in $APP_DIR"
-        exit 1
-      fi
-
-      echo "Creating app scaffold with 'bench new-app --no-git $APP_NAME'..."
-      echo "⚠  The pip-install step will fail (read-only Nix env) — this is expected."
-      bench new-app --no-git "$APP_NAME" || true
-
-      if [ ! -f "$APP_DIR/pyproject.toml" ]; then
-        echo "Error: App scaffold was not created at $APP_DIR"
-        exit 1
-      fi
-
-      ${registerWorkspaceMember}
-
-      ${syncRegistry}
-
-      echo "Syncing Python dependencies..."
-      uv sync
-      ${syncBuildDeps}
-
-      command -v direnv >/dev/null 2>&1 && direnv reload || true
-
-      echo ""
-      echo "✅ App '$APP_NAME' created and integrated!"
-      echo "   Install it with: bench --site ''${FRAPPE_SITE:-<site>} install-app $APP_NAME"
+      FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} new-app "$@"
     '';
     description = "Scaffold a new Frappe app and integrate it into the uv workspace.";
   };

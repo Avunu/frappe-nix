@@ -1,118 +1,41 @@
 # Keeps a bench's workspace root — pyproject.toml, and uv.lock when the root
-# moved — in step with what this frappe-nix expects of one. Run from the dev
-# shell's enterShell, so a frappe-nix bump that asks something new of a bench
-# is answered on the next shell entry rather than by a command run from outside
-# it.
+# moved — in step with what this frappe-nix expects of one, on shell entry:
+# `frappe-nix-root-sync <bench-root>`. The logic is Python,
+# py/frappe_nix_tools/frappe_nix_tools/apps/root_sync.py (PLAN.md, Track D,
+# D3), whose docstring has the reasoning; this is its glue: the store paths it
+# needs, as the JSON FRAPPE_NIX_CLI_CONFIG names.
 #
-# The case it was written for: frappe-runtime became a required workspace
-# dependency — it is the process the dev shell runs, and uv2nix can only build
-# what uv.lock names. A bench from before that has no way to know, and the check
-# that noticed lived at *evaluation*: `nix develop` refused to open, and the fix
-# it named (`nix run github:Avunu/frappe-nix -- -y`) had to be run from outside
-# the shell it blocked. Evaluation now degrades instead (modules/devenv.nix runs
-# the split processes for that one session) and this does the reconciling.
-#
-# It is `frappe-nix-workspace ensure-root` — the same call `frappe-init` makes,
-# which adds only what is missing and changes nothing already correct — followed
-# by `uv lock` when, and only when, that changed the file. Not the rest of the
-# reconciler: classifying apps, registering submodules and `git add -A` are a
-# migration's business, not a shell hook's.
-#
-# A lock that fails restores both files. The alternative — a pyproject.toml
-# declaring what uv.lock does not carry — fails the *next* evaluation (see
-# the lock audit in lib/python.nix) and is back to needing `nix run .#relock` from outside,
-# which is exactly the shape this exists to remove. The shell stays openable, the
-# hook says why it could not finish, and the next entry tries again.
-#
-# uv is taken from PATH on purpose: the dev shell carries its own, and the lock
-# should be written by that one, not by a second uv baked in here.
+# `python -I -m` from an environment that holds frappe-nix-tools, as
+# lib/bench-cli.nix runs the bench commands: not the console script, whose
+# wrapper would put its own PATH ahead of the dev shell's (uv is taken from
+# PATH on purpose: the dev shell's own writes the lock).
+
 {
   pkgs,
   # lib/build-deps.nix's `sync`, as a path: after the lock, the managed
   # [tool.uv.extra-build-dependencies] block in step with it. Null skips it.
   buildDepsSync ? null,
+  # frappe-nix-tools (lib/standards/outputs.nix).
+  frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,
 }:
 
 let
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
+  python = pkgs.python314.withPackages (_: [ frappeNixTools ]);
+  # What root_sync.py reads (frappe_nix_tools/apps/root_sync.py, KEYS).
+  config = pkgs.writeText "frappe-nix-root-sync.json" (
+    builtins.toJSON {
+      workspace = "${workspaceTool}/bin/frappe-nix-workspace";
+      # Unrendered: its tokens are all inside strings, so it parses, and
+      # ensure-root reads only the token-free tables from it.
+      template = "${../templates/bench/pyproject.toml}";
+      inherit buildDepsSync;
+    }
+  );
 in
 pkgs.writeShellApplication {
   name = "frappe-nix-root-sync";
-  runtimeInputs = with pkgs; [
-    coreutils
-    diffutils
-    workspaceTool
-  ];
   text = ''
-    if [ "$#" -ne 1 ]; then
-      echo "usage: frappe-nix-root-sync <bench-root>" >&2
-      exit 2
-    fi
-    cd "$1"
-    if [ ! -f pyproject.toml ]; then
-      echo "frappe-nix-root-sync: no pyproject.toml in $PWD" >&2
-      exit 2
-    fi
-
-    # Copies to fall back to. -p keeps the mtimes, so a restored file is the
-    # file it was, to git and to anything that stamps on mtime.
-    keep="$(mktemp -d)"
-    cp -p pyproject.toml "$keep/pyproject.toml"
-    [ ! -f uv.lock ] || cp -p uv.lock "$keep/uv.lock"
-
-    restore() {
-      cp -p "$keep/pyproject.toml" pyproject.toml
-      if [ -f "$keep/uv.lock" ]; then
-        cp -p "$keep/uv.lock" uv.lock
-      else
-        rm -f uv.lock
-      fi
-    }
-
-    # Anything but a completed run — a failed lock, or a ^C in the middle of
-    # one — puts the files back. Interrupting `uv lock` matters: it writes the
-    # lock last, so a pyproject.toml already reconciled next to the old lock is
-    # the exact half-state the audit refuses to evaluate.
-    completed=false
-    finish() {
-      $completed || restore
-      rm -rf "$keep"
-    }
-    trap finish EXIT
-    trap 'exit 130' INT TERM
-
-    # The template unrendered: its tokens are all inside strings, so it parses,
-    # and ensure-root reads only the token-free tables from it — the
-    # extra-build-dependencies and the non-app [tool.uv.sources].
-    if ! frappe-nix-workspace ensure-root \
-      --pyproject pyproject.toml \
-      --template ${../templates/bench/pyproject.toml}; then
-      echo "frappe-nix-root-sync: could not reconcile pyproject.toml — left as it was" >&2
-      exit 1
-    fi
-
-    if cmp -s pyproject.toml "$keep/pyproject.toml"; then
-      completed=true
-      exit 0
-    fi
-
-    echo "pyproject.toml reconciled with frappe-nix (see above) — re-locking the Python workspace…"
-    if ! command -v uv > /dev/null 2>&1; then
-      echo "frappe-nix-root-sync: uv is not on PATH; pyproject.toml restored" >&2
-      exit 1
-    fi
-    if ! uv lock; then
-      echo "" >&2
-      echo "frappe-nix-root-sync: uv lock failed — pyproject.toml and uv.lock restored, so the" >&2
-      echo "  shell keeps opening. Re-entering the shell retries. To resolve it by hand, make the" >&2
-      echo "  additions listed above in pyproject.toml and run 'uv lock' here (uv is on PATH)." >&2
-      exit 1
-    fi
-    ${pkgs.lib.optionalString (buildDepsSync != null) buildDepsSync}
-    completed=true
-
-    echo ""
-    echo "frappe-nix: pyproject.toml and uv.lock updated — commit them, then re-enter the shell"
-    echo "  (direnv reload, or exit and nix develop): this one was built from the previous uv.lock."
+    FRAPPE_NIX_CLI_CONFIG=${config} exec ${python}/bin/python3 -I -m frappe_nix_tools.apps.root_sync "$@"
   '';
 }

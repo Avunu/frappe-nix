@@ -159,5 +159,43 @@ else
   no "concurrent copies install each app once" "installs=$(tr '\n' ' ' <"$INSTALL_LOG")"
 fi
 
+# ── 8. FRAPPE_NIX_RECONCILE_SKIP (frappe-nix.replacedApps): those apps are
+#      never installed, though sites/apps.txt still lists them ──────────────
+printf '{"mysite.local":["frappe"]}' >"$INSTALLED_APPS_JSON"
+FRAPPE_NIX_RECONCILE_SKIP="hrms mynewapp" FRAPPE_SITE=mysite.local run
+if [ "$RC" -eq 0 ] && [ "$(install_count)" -eq 1 ] && installed erpnext && ! installed hrms && ! installed mynewapp; then
+  ok "apps in FRAPPE_NIX_RECONCILE_SKIP are skipped"
+else
+  no "FRAPPE_NIX_RECONCILE_SKIP skips apps" "rc=$RC installs=$(cat "$INSTALL_LOG" 2>/dev/null)"
+fi
+
+# ── 9. a failed install is named, and the task still succeeds ────────────
+FAIL_APP=hrms FRAPPE_SITE=mysite.local run
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "failed to install: hrms"; then
+  ok "a failed install is named on stderr"
+else
+  no "a failed install is named" "rc=$RC out=$OUT"
+fi
+unset FAIL_APP
+
+# ── 10. no sites/apps.txt: nothing to reconcile, exit 0 ──────────────────
+mv "$ROOT/sites/apps.txt" "$WORK/apps.txt"
+FRAPPE_SITE=mysite.local run
+if [ "$RC" -eq 0 ] && [ "$(install_count)" -eq 0 ]; then
+  ok "no sites/apps.txt is a no-op"
+else
+  no "no sites/apps.txt is a no-op" "rc=$RC installs=$(cat "$INSTALL_LOG" 2>/dev/null)"
+fi
+mv "$WORK/apps.txt" "$ROOT/sites/apps.txt"
+
+# ── 11. every app installed already: a message only when it installed some ─
+printf '{"mysite.local":["frappe"]}' >"$INSTALLED_APPS_JSON"
+FRAPPE_SITE=mysite.local run
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "mysite.local now has every app in sites/apps.txt installed"; then
+  ok "says so when the site has every app afterwards"
+else
+  no "says the site is reconciled" "rc=$RC out=$OUT"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

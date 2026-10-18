@@ -1,4 +1,5 @@
-"""The configuration Nix hands the bench command line, as typed dataclasses.
+"""``bench restore``'s section of the configuration Nix hands the bench command
+line (frappe_nix_tools.bench_config), as a typed dataclass.
 
 Nix writes one JSON file per dev shell and the ``bench-*`` shims point
 ``FRAPPE_NIX_CLI_CONFIG`` at it (PLAN.md, Track D: configuration as JSON, not
@@ -12,11 +13,14 @@ Keys are the Nix option names (camelCase); the fields are their snake_case.
 
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from frappe_nix_tools.cli_config import ENV, ConfigError, load_dataclass, read_json
+from frappe_nix_tools.cli_config import ENV, ConfigError
 
-__all__ = ["ENV", "CliConfig", "ConfigError", "Files", "RestoreConfig", "load", "parse"]
+if TYPE_CHECKING:
+	from frappe_nix_tools.bench_config import CliConfig
+
+__all__ = ["ENV", "ConfigError", "Files", "RestoreConfig", "load", "parse"]
 
 Files = Literal["none", "private", "all"]
 
@@ -49,17 +53,15 @@ class RestoreConfig:
 	devguard: bool
 
 
-@dataclass(frozen=True)
-class CliConfig:
-	"""The whole file: one section per command that has configuration."""
+def parse(data: Any) -> "CliConfig":
+	"""The whole file (frappe_nix_tools.bench_config), whose `restore` is this."""
+	from frappe_nix_tools.bench_config import parse as parse_all
 
-	restore: RestoreConfig
-
-
-def parse(data: Any) -> CliConfig:
-	return load_dataclass(CliConfig, data, "config")
+	return parse_all(data)
 
 
-def load(path: str | os.PathLike[str] | None = None) -> CliConfig:
+def load(path: str | os.PathLike[str] | None = None) -> "CliConfig":
 	"""Read the file ``FRAPPE_NIX_CLI_CONFIG`` names (or PATH)."""
-	return parse(read_json(path, hint="run this through the dev shell's bench command"))
+	from frappe_nix_tools.bench_config import load as load_all
+
+	return load_all(path)

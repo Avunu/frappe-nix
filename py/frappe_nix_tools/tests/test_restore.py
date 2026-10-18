@@ -32,8 +32,22 @@ RESTORE = {
 }
 
 
+# The apps commands' section, which the same file carries
+# (frappe_nix_tools.bench_config); tests/test_apps.py checks its schema.
+APPS = {
+	"bench": "bench",
+	"python": "python3",
+	"workspace": "/bin/frappe-nix-workspace",
+	"sources": "/bin/frappe-nix-sources",
+	"buildDepsSync": None,
+	"renameTool": "/lib/frappe_rename_app.py",
+	"renamedApps": [],
+	"replacedApps": [],
+}
+
+
 def restore_config(**overrides):
-	return parse({"restore": {**RESTORE, **overrides}}).restore
+	return parse({"restore": {**RESTORE, **overrides}, "apps": APPS}).restore
 
 
 class TestArgs(unittest.TestCase):
@@ -105,13 +119,13 @@ class TestConfig(unittest.TestCase):
 
 	def test_unknown_and_missing_keys_fail(self):
 		with self.assertRaisesRegex(ConfigError, r"config\.restore: unknown key\(s\): withFiles"):
-			parse({"restore": {**RESTORE, "withFiles": "none"}})
+			parse({"restore": {**RESTORE, "withFiles": "none"}, "apps": APPS})
 		partial = dict(RESTORE)
 		del partial["neutralize"]
 		with self.assertRaisesRegex(ConfigError, r"missing key\(s\): neutralize"):
-			parse({"restore": partial})
+			parse({"restore": partial, "apps": APPS})
 		with self.assertRaisesRegex(ConfigError, "unknown key"):
-			parse({"restore": RESTORE, "update": {}})
+			parse({"restore": RESTORE, "apps": APPS, "update": {}})
 
 	def test_types_are_checked(self):
 		for key, value, message in (
@@ -122,14 +136,14 @@ class TestConfig(unittest.TestCase):
 			("fetch", None, "expected a string"),
 		):
 			with self.subTest(key=key), self.assertRaisesRegex(ConfigError, message):
-				parse({"restore": {**RESTORE, key: value}})
+				parse({"restore": {**RESTORE, key: value}, "apps": APPS})
 
 	def test_load_names_the_variable(self):
 		with mock.patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(ConfigError, ENV):
 			load()
 		with tempfile.TemporaryDirectory() as tmp:
 			path = Path(tmp, "c.json")
-			path.write_text(json.dumps({"restore": RESTORE}))
+			path.write_text(json.dumps({"restore": RESTORE, "apps": APPS}))
 			with mock.patch.dict(os.environ, {ENV: str(path)}):
 				self.assertTrue(load().restore.enable)
 			path.write_text("{")

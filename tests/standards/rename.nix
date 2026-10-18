@@ -149,30 +149,27 @@ let
 
   # --- devenv -----------------------------------------------------------------
 
-  # The wrapper modules/devenv.nix builds, over a stub reconcile-apps body.
-  # The stub logs what lib/scripts.nix's body would install: every app in
-  # sites/apps.txt the site lacks, but for FRAPPE_NIX_RECONCILE_SKIP.
-  reconcile = import ../../lib/rename/reconcile.nix { inherit pkgs lib; } {
-    reconcileExec = ''
-      echo "reconcile $*" >> "$STATE/log"
-      [ -d "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE" ] || exit 0
-      while read -r app; do
-        case " ''${FRAPPE_NIX_RECONCILE_SKIP:-} " in *" $app "*) continue ;; esac
-        grep -qxF "$app" "$STATE/installed" || echo "reconcile would install $app" >> "$STATE/log"
-      done < "$FRAPPE_BENCH_ROOT/sites/apps.txt"
-    '';
-    pythonBin = "${stubEnv}/bin/python";
-    benchBin = "${stubEnv}/bin/bench";
+  # reconcile-apps as modules/devenv.nix renders it (lib/scripts.nix's shim
+  # into frappe_nix_tools/apps/reconcile.py, with the renames and replacements
+  # in its configuration), over the stub bench and python: the real command,
+  # run against stubs. `plain` has neither.
+  reconcileWith =
+    args:
+    (import ../../lib/scripts.nix (
+      {
+        inherit lib pkgs;
+        appsWithNode = [ ];
+        pythonBin = "${stubEnv}/bin/python";
+        benchBin = "${stubEnv}/bin/bench";
+        benchCli = import ../../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
+      }
+      // args
+    )).reconcile-apps.exec;
+  reconcile = reconcileWith {
     renamedApps.esign = "esign_webforms";
     replacedApps.old_app = "new_app";
   };
-  plain = import ../../lib/rename/reconcile.nix { inherit pkgs lib; } {
-    reconcileExec = "echo plain";
-    pythonBin = "python";
-    benchBin = "bench";
-    renamedApps = { };
-    replacedApps = { };
-  };
+  plain = reconcileWith { };
   devenvSource = builtins.readFile ../../modules/devenv.nix;
   # Not lib.hasInfix: its `.*infix.*` regex over a 150 KB file overflows the
   # regex engine's stack on some Nix builds (2.35 on CI's runners).
@@ -418,18 +415,16 @@ in
   '';
 
   standards-rename-devenv =
-    assert lib.assertMsg (
-      plain == "echo plain"
-    ) "reconcile-apps changes with no renamed or replaced apps";
+    assert lib.assertMsg (contains "{p.old for p in config.replaced_apps}" (
+      builtins.readFile ../../py/frappe_nix_tools/frappe_nix_tools/apps/reconcile.py
+    )) "apps/reconcile.py: reconcile-apps does not skip the apps replacedApps is replacing";
     assert lib.assertMsg
-      (contains "case \" ''\${FRAPPE_NIX_RECONCILE_SKIP:-} \" in *\" $app \"*) continue ;; esac" (
-        builtins.readFile ../../lib/scripts.nix
-      ))
-      "lib/scripts.nix: reconcile-apps does not skip FRAPPE_NIX_RECONCILE_SKIP";
-    assert lib.assertMsg (
-      contains "reconcile-apps = scripts.reconcile-apps // {\n                  exec = reconcileAppsExec;" devenvSource
-      && contains "\${reconcileAppsExec}" devenvSource
-    ) "devenv.nix: reconcile-apps or the frappe:apps-reconcile task does not use the wrapper";
+      (
+        contains "inherit (cfg) renamedApps replacedApps;" devenvSource
+        && contains "reconcileAppsExec = scripts.reconcile-apps.exec;" devenvSource
+        && contains "\${reconcileAppsExec}" devenvSource
+      )
+      "devenv.nix: reconcile-apps or the frappe:apps-reconcile task does not get the renames and replacements";
     pkgs.runCommand "standards-rename-devenv-check" { } ''
       set -euo pipefail
       fail() { echo "FAIL $*" >&2; exit 1; }
@@ -439,12 +434,13 @@ in
       # Both are on the bench while the replacement runs.
       printf '%s\n' frappe esign new_app old_app > bench/sites/apps.txt
       cp ${pkgs.writeText "reconcile-apps" reconcile} reconcile-apps
+      cp ${pkgs.writeText "reconcile-apps-plain" plain} reconcile-apps-plain
 
       ${lib.getExe pkgs.bash} reconcile-apps
       cat "$STATE/log"
       line() { grep -nF -- "$1" "$STATE/log" | head -1 | cut -d: -f1; }
       ren="$(line 'frappe_rename_app.py --site dev.localhost --yes esign=esign_webforms')"
-      rec="$(line 'reconcile')" inst="$(line 'install-app new_app')" un="$(line 'uninstall-app old_app --yes --no-backup')"
+      rec="$(line 'list-apps')" inst="$(line 'install-app new_app')" un="$(line 'uninstall-app old_app --yes --no-backup')"
       for v in ren rec inst un; do [ -n "''${!v}" ] || fail "no $v step"; done
       [ "$ren" -lt "$rec" ] && [ "$rec" -lt "$inst" ] && [ "$inst" -lt "$un" ] || fail "order: rename $ren, reconcile $rec, install $inst, uninstall $un"
       grep -q "(in $PWD/bench/sites)" "$STATE/log" || fail "the rename does not run from the bench's sites/"
@@ -453,7 +449,7 @@ in
       : > "$STATE/log"
       ${lib.getExe pkgs.bash} reconcile-apps
       ! grep -q 'install-app' "$STATE/log" || fail "a second run touched the apps: $(cat "$STATE/log")"
-      ! grep -q 'would install old_app' "$STATE/log" || fail "reconcile-apps would install the replaced old_app again: $(cat "$STATE/log")"
+      ! grep -q -- '--site dev.localhost install-app old_app' "$STATE/log" || fail "reconcile-apps installed the replaced old_app again: $(cat "$STATE/log")"
       echo "ok   a second run installs and uninstalls nothing, and reconcile-apps leaves the replaced app alone"
 
       # Every process that waits on frappe:apps-reconcile runs it, at once: one
@@ -473,8 +469,17 @@ in
       rm -rf bench/sites/dev.localhost
       : > "$STATE/log"
       ${lib.getExe pkgs.bash} reconcile-apps
-      [ "$(cat "$STATE/log")" = "reconcile " ] || fail "with no site, it did more than reconcile: $(cat "$STATE/log")"
-      echo "ok   with no site yet, only reconcile-apps itself runs"
+      [ ! -s "$STATE/log" ] || fail "with no site, it touched the bench: $(cat "$STATE/log")"
+      echo "ok   with no site yet, reconcile-apps renames, installs and uninstalls nothing"
+
+      # Neither renamed nor replaced apps: no rename, and no uninstall.
+      mkdir -p bench/sites/dev.localhost
+      printf '%s\n' frappe esign old_app > "$STATE/installed"
+      : > "$STATE/log"
+      ${lib.getExe pkgs.bash} reconcile-apps-plain
+      ! grep -q 'frappe_rename_app.py\|uninstall-app' "$STATE/log" || fail "without renames or replacements: $(cat "$STATE/log")"
+      grep -q 'install-app new_app' "$STATE/log" || fail "without renames or replacements, new_app was not installed: $(cat "$STATE/log")"
+      echo "ok   without renamed or replaced apps, reconcile-apps only installs"
       touch "$out"
     '';
 }

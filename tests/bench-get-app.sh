@@ -19,8 +19,11 @@ export TMPDIR="$ROOT/tmp"
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-# Submodule operations on file:// URLs are refused by default.
-export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+# Submodule operations on file:// URLs are refused by default. GitHub is
+# $ROOT/github: an owner/repo or a bare name resolves to a github.com URL, which
+# is recorded as it is and fetched from there.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+export GIT_CONFIG_KEY_1="url.file://$ROOT/github/.insteadOf" GIT_CONFIG_VALUE_1=https://github.com/
 
 # ── a stub uv ──────────────────────────────────────────────────────────────
 BIN="$ROOT/bin"
@@ -153,7 +156,7 @@ check_eq "both apps are members, in order" "telephony hrms" "$(xargs < sites/app
 echo "── what bench-update --pull will see ───────────────────────────"
 # The classifier is what the pull loop reads; a recorded branch is what keeps
 # the app on its list.
-WORKSPACE_TOOL="$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)"
+WORKSPACE_TOOL="${WORKSPACE_TOOL:-$(grep -o '/nix/store/[^/]*/bin/frappe-nix-workspace' "$SCRIPT" | head -n1)}"
 check_eq "telephony: name, kind, branch, url" \
   "$(printf 'telephony\tsubmodule\tdevelop\tfile://%s/remotes/telephony.git' "$ROOT")" \
   "$("$WORKSPACE_TOOL" apps --apps-dir apps | grep '^telephony')"
@@ -210,6 +213,40 @@ check "--help exits 0" bash "$SCRIPT" --help
 check "…and shows --branch" bash -c "bash '$SCRIPT' --help | grep -q -- '--branch version-16'"
 check "nothing was added by any of those" \
   bash -c "[ \"\$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | wc -l)\" = 6 ]"
+
+echo "── -b and --branch=, like --branch ─────────────────────────────"
+seed_remote crm develop version-16
+seed_remote insights develop version-16
+bash "$SCRIPT" -b version-16 "file://$ROOT/remotes/crm.git" > "$ROOT/crm.log" 2>&1 \
+  && ok "-b: exits 0" || { no "-b: exits 0"; cat "$ROOT/crm.log"; }
+check_eq "-b: the branch is recorded" version-16 "$(gm crm branch)"
+check_eq "-b: and checked out" version-16 "$(git -C apps/crm symbolic-ref --short HEAD)"
+bash "$SCRIPT" --branch=version-16 "file://$ROOT/remotes/insights.git" > "$ROOT/insights.log" 2>&1 \
+  && ok "--branch=: exits 0" || { no "--branch=: exits 0"; cat "$ROOT/insights.log"; }
+check_eq "--branch=: the branch is recorded" version-16 "$(gm insights branch)"
+check_eq "--branch=: and checked out" version-16 "$(git -C apps/insights symbolic-ref --short HEAD)"
+
+echo "── a branch the remote does not have ───────────────────────────"
+seed_remote lending develop
+check_not "exits non-zero" bash "$SCRIPT" --branch no-such-branch "file://$ROOT/remotes/lending.git"
+check_not "…and adds nothing to .gitmodules" gm lending url
+check_not "…nor apps/lending" test -e apps/lending
+check_eq "…and leaves no throwaway clone" "" "$(ls -A "$ROOT/tmp")"
+
+echo "── GitHub shorthands ───────────────────────────────────────────"
+mkdir -p "$ROOT/github/frappe" "$ROOT/github/acme"
+seed_remote wiki develop
+git clone -q --bare "$ROOT/remotes/wiki.git" "$ROOT/github/frappe/wiki.git"
+seed_remote gadgets develop
+git clone -q --bare "$ROOT/remotes/gadgets.git" "$ROOT/github/acme/gadgets.git"
+bash "$SCRIPT" wiki > "$ROOT/wiki.log" 2>&1 \
+  && ok "a bare name: exits 0" || { no "a bare name: exits 0"; cat "$ROOT/wiki.log"; }
+check_eq "…is frappe/<name> on GitHub, recorded as such" https://github.com/frappe/wiki.git "$(gm wiki url)"
+check "…checked out" test -f apps/wiki/wiki/hooks.py
+bash "$SCRIPT" acme/gadgets > "$ROOT/gadgets.log" 2>&1 \
+  && ok "owner/repo: exits 0" || { no "owner/repo: exits 0"; cat "$ROOT/gadgets.log"; }
+check_eq "…is that repository on GitHub" https://github.com/acme/gadgets.git "$(gm gadgets url)"
+check_eq "sites/apps.txt lists every app" "telephony hrms widgets multi crm insights wiki gadgets" "$(xargs < sites/apps.txt)"
 
 echo
 if [ "$fails" -gt 0 ]; then
