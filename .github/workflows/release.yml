@@ -6,6 +6,11 @@ name: release
 #   release-please  opens or updates the release PR on main with GITHUB_TOKEN, and on its merge
 #                   tags vX.Y.Z (version.txt and both frappe-nix-tools version locations move
 #                   together, release-please-config.json);
+#   fixture         the release PR moves frappe-nix-tools' version, which the caller workflows
+#                   of tests/fixtures/standards-app record (`@<sha> # v<version>`), so it
+#                   re-renders the fixture offline with the PR's own tools and pushes the
+#                   result to the PR branch: every commit on main, the release's included,
+#                   keeps a fixture that `frappe-nix sync --check` passes;
 #   dispatch-ci     a GITHUB_TOKEN push raises no event, so it dispatches check.yml (without
 #                   inputs: `lint` and `flake`, no VM tests) and pr-policy.yml on the release
 #                   PR, each only while its check is absent on the PR's head;
@@ -60,8 +65,69 @@ jobs:
           echo "::error::release-please failed. If the log says GitHub Actions is not permitted to create pull requests, allow it under Settings > Actions > General > Workflow permissions (repo-policy/self/repo-settings.json sets can_approve_pull_request_reviews)."
           exit 1
 
-  dispatch-ci:
+  fixture:
     needs: release-please
+    if: needs.release-please.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the re-rendered fixture to the release PR branch
+      pull-requests: read # the open release PR
+    steps:
+      - name: Find the open release PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          head="$(gh pr list --repo "$REPO" --base main --state open --label 'autorelease: pending' \
+            --json headRefName --jq '.[0].headRefName // ""')"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+
+      - if: steps.pr.outputs.head != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.head }}
+          persist-credentials: false
+
+      - if: steps.pr.outputs.head != ''
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+
+      - if: steps.pr.outputs.head != ''
+        name: Re-render the fixture with the release PR's frappe-nix-tools
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 ./py/frappe_nix_tools
+          app="$RUNNER_TEMP/app"
+          cp -r tests/fixtures/standards-app "$app"
+          git -C "$app" init -q
+          git -C "$app" add -A
+          git -C "$app" -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+          (cd "$app" && frappe-nix sync --write --offline && git add -A && frappe-nix sync --check)
+          git -C "$app" diff --cached --binary > "$RUNNER_TEMP/fixture.patch"
+          if [ -s "$RUNNER_TEMP/fixture.patch" ]; then
+            git apply --index --directory=tests/fixtures/standards-app "$RUNNER_TEMP/fixture.patch"
+            git diff --cached --stat
+          fi
+
+      - if: steps.pr.outputs.head != ''
+        name: Commit and push to the release PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ steps.pr.outputs.head }}
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "the fixture is already rendered for $(cat version.txt)"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "test: render the standards fixture for v$(cat version.txt)"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$HEAD_REF"
+
+  dispatch-ci:
+    needs: [release-please, fixture]
     if: always() && needs.release-please.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
