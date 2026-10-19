@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/Avunu/frappe-nix/compare/v1.0.0...v1.0.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#136](https://github.com/Avunu/frappe-nix/issues/136)) ([83046cb](https://github.com/Avunu/frappe-nix/commit/83046cbf8c2a30da91b7da3e1135e744e06552f0))
+* **sync:** report a missing [project].description before relock ([#135](https://github.com/Avunu/frappe-nix/issues/135)) ([72711db](https://github.com/Avunu/frappe-nix/commit/72711db211e8f1aeb3787aa05f8c78a7ea8b094a))
+
 ## 1.0.0 (2026-10-18)
 
 
