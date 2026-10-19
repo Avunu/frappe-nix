@@ -43,7 +43,7 @@ env:
 jobs:
   release-please:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -69,7 +69,7 @@ jobs:
   fixture:
     needs: release-please
     if: needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # push the re-rendered fixture to the release PR branch
@@ -94,6 +94,9 @@ jobs:
 
       - if: steps.pr.outputs.head != ''
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - if: steps.pr.outputs.head != ''
         name: Re-render the fixture with the release PR's frappe-nix-tools
@@ -130,7 +133,7 @@ jobs:
   dispatch-ci:
     needs: [release-please, fixture]
     if: always() && needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: read # the checkout
@@ -143,6 +146,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from this checkout
         run: uv tool install --python 3.14 ./py/frappe_nix_tools
@@ -159,7 +165,7 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # move release-<major> (the ruleset's bypass actor is GitHub Actions)
@@ -169,6 +175,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from this checkout
         run: uv tool install --python 3.14 ./py/frappe_nix_tools
