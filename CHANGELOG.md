@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/Avunu/frappe-nix/compare/v1.0.1...v1.0.2) (2026-10-19)
+
+
+### Bug Fixes
+
+* **ratchet:** compare a renamed package's entries under its new name ([#138](https://github.com/Avunu/frappe-nix/issues/138)) ([c1ad546](https://github.com/Avunu/frappe-nix/commit/c1ad546b08709b17c4b2a167974b00dfa941a10a))
+
 ## [1.0.1](https://github.com/Avunu/frappe-nix/compare/v1.0.0...v1.0.1) (2026-10-19)
 
 
