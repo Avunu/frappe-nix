@@ -238,6 +238,10 @@ export async function launch({
 		"--disable-gpu",
 		"--disable-dev-shm-usage",
 		"--no-sandbox",
+		// The zygote drops capabilities with capset(2), which hardened services refuse
+		// (the NixOS github-runner unit's SystemCallFilter has ~capset): the renderer
+		// never starts and the first CDP call times out. Without the sandbox it buys nothing.
+		"--no-zygote",
 		"--window-size=1600,1000",
 		...extra,
 		"about:blank",
