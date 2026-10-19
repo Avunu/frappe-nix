@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: Avunu/frappe-nix/.github/workflows/app-pr-policy.yml@e97d588cf5805dfb382b210379fafa0223013285 # v1.0.0
+    uses: Avunu/frappe-nix/.github/workflows/app-pr-policy.yml@e97d588cf5805dfb382b210379fafa0223013285 # v1.0.1
     with:
       app: standards_fixture
       integration-branch: develop
