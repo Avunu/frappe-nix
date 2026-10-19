@@ -43,7 +43,7 @@ env:
 jobs:
   release-please:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -53,6 +53,15 @@ jobs:
       sha: ${{ steps.rp.outputs.sha }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - id: rp
         continue-on-error: true
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -69,12 +78,21 @@ jobs:
   fixture:
     needs: release-please
     if: needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # push the re-rendered fixture to the release PR branch
       pull-requests: read # the open release PR
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - name: Find the open release PR
         id: pr
         env:
@@ -94,6 +112,9 @@ jobs:
 
       - if: steps.pr.outputs.head != ''
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - if: steps.pr.outputs.head != ''
         name: Re-render the fixture with the release PR's frappe-nix-tools
@@ -130,7 +151,7 @@ jobs:
   dispatch-ci:
     needs: [release-please, fixture]
     if: always() && needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: read # the checkout
@@ -138,11 +159,23 @@ jobs:
       checks: read # which checks already ran on the release PR head
       pull-requests: read # the open release PR
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from this checkout
         run: uv tool install --python 3.14 ./py/frappe_nix_tools
@@ -159,16 +192,28 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
       contents: write # move release-<major> (the ruleset's bypass actor is GitHub Actions)
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from this checkout
         run: uv tool install --python 3.14 ./py/frappe_nix_tools
