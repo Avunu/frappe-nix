@@ -9,9 +9,15 @@ name: selftest-runtime
 #
 #   main      frappe-test --ci passes; its variants exit 2, 3 and 7; two
 #             worktrees run at once on different ports; FRAPPE_NIX_PORT_OFFSET;
+#             a held port leased past, or refused with FRAPPE_NIX_STRICT_PORTS=1;
 #             the fixture renamed to standards_fixture2 on its own site
 #   erpnext   the default test setup with erpnext as a sibling, and the A.0 #4
 #             composition failure (exit 4)
+#   parallel  two copies of the fixture under one name, tested at once: each
+#             leases its own ports and answers as itself; a port held outside
+#             frappe-nix is moved past. Beside the other legs, which run benches
+#             of the same name on the same host, it is also the test that
+#             leases hold across runner instances.
 
 # Whatever builds the bench, the dev shell or the tools frappe-test calls: any
 # change under lib/ or modules/, and the pins. Also on main and weekly, so a
@@ -52,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [main, erpnext]
+        suite: [main, erpnext, parallel]
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
       # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
@@ -90,6 +96,11 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: tests/standards/selftest-runtime/run.sh "$SUITE"
 
+      # Which ports each bench still up leased, and who holds them.
+      - name: Leased ports
+        if: failure()
+        run: tests/standards/selftest-runtime/run.sh collect-ports
+
       - name: Reports and bench logs
         if: always()
         run: |
@@ -107,5 +118,6 @@ jobs:
           path: |
             ${{ runner.temp }}/standards-n1/*.log
             ${{ runner.temp }}/standards-n1/*/.dev-dist/test/
+            ${{ runner.temp }}/standards-n1/ports/
           if-no-files-found: ignore
           include-hidden-files: true

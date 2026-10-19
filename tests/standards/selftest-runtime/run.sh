@@ -11,6 +11,14 @@
 #                                                    the default test setup, and an
 #                                                    extension of erpnext's extension
 #                                                    (the A.0 #4 shape) exits 4
+#   tests/standards/selftest-runtime/run.sh parallel  two copies of the fixture, one name,
+#                                                    tested at once: each leases its
+#                                                    own ports and answers as itself;
+#                                                    then a port held outside
+#                                                    frappe-nix is moved past
+#   tests/standards/selftest-runtime/run.sh collect-ports   after a failure: every
+#                                                    ports.json still there, and who
+#                                                    holds each port, into $WORK
 #
 # Each works on a copy of tests/fixtures/standards-app under $WORK (default
 # $RUNNER_TEMP/standards-n1), locked against this checkout with
@@ -99,8 +107,10 @@ expect() {
 
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
-# The primary checkout's web port: 8000 + sha256(name)[0:4] mod 900, the
-# offset every bench has had since ports were hashed (python-devops-nix's lib.ports).
+# The primary checkout's preferred web port: 8000 + sha256(name)[0:4] mod 900,
+# the offset every bench has had since ports were hashed (python-devops-nix's
+# lib.ports). It is the port unless another bench holds it: on a CI host the
+# other legs run benches of this same name at the same time.
 PRIMARY_PORT="$((8000 + $(python3 -c 'import hashlib; print(int(hashlib.sha256(b"standards-fixture").hexdigest()[:4], 16) % 900)')))"
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -273,13 +283,17 @@ EOF
 }
 
 # Two worktrees of one app, at once, on different ports; FRAPPE_NIX_PORT_OFFSET;
-# and `devenv up` refusing a port that is taken.
+# and `devenv up` on a port another bench holds: leasing the next one, or, with
+# FRAPPE_NIX_STRICT_PORTS=1, refusing and naming the holder.
 cmd_ports() {
-  local app="$WORK/app" wt="$WORK/app-worktree" p1
+  local app="$WORK/app" wt="$WORK/app-worktree" p1 moved
   p1="$(jq -r .webserver_port "$app/.frappe-nix/bench/sites/common_site_config.json")"
-  [ "$p1" = "$PRIMARY_PORT" ] || fail "the primary checkout serves on $p1, not $PRIMARY_PORT (8000 + the bench-name hash)"
+  moved="$(dev "$app" frappe-nix-ports --json | jq -r '.moved.web // empty')"
+  if [ "$p1" != "$PRIMARY_PORT" ]; then
+    [ "$moved" = "$PRIMARY_PORT" ] || fail "the primary checkout serves on $p1, not $PRIMARY_PORT (8000 + the bench-name hash), and recorded no move from it"
+  fi
   curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$p1/" || fail "the primary bench is not answering"
-  ok "the primary checkout keeps its bench-name port, $p1"
+  ok "the primary checkout serves on its bench-name port, $PRIMARY_PORT, or past it when another bench holds it ($p1)"
 
   rm -rf "$wt"
   git -C "$app" worktree add -q --detach "$wt"
@@ -294,16 +308,27 @@ cmd_ports() {
   grep -qx 'MAILPIT=20123' "$WORK/ports-123.log" || fail "FRAPPE_NIX_PORT_OFFSET=123 did not put Mailpit on 20123"
   ok "FRAPPE_NIX_PORT_OFFSET=123: web on 8123, Mailpit on 20123"
 
+  # The primary's own port, as the worktree's preferred one: held by the primary.
+  FRAPPE_NIX_PORT_OFFSET="$((p1 - 8000))" expect 0 "$WORK/ports-taken.log" dev "$wt" bash "$HERE/run.sh" up-and-report
+  local p3
+  p3="$(sed -n 's/^PORT=//p' "$WORK/ports-taken.log")"
+  [ -n "$p3" ] && [ "$p3" != "$p1" ] || fail "devenv up on a taken port serves on '$p3', the primary on $p1"
+  grep -qx "MOVED=$p1" "$WORK/ports-taken.log" || fail "devenv up on a taken port recorded no move from $p1"
+  grep -qx "WEB=$p3" "$WORK/ports-taken.log" || fail "ports.json and webserver_port disagree"
+  grep -qx 'IDENTITY=ok' "$WORK/ports-taken.log" || fail "the moved bench does not answer as itself"
+  ok "devenv up on a port another bench holds leases the next one, $p3, and answers there as itself"
+
   set +e
-  (cd "$wt" && FRAPPE_NIX_CI=1 FRAPPE_NIX_PORT_OFFSET="$((PRIMARY_PORT - 8000))" nix develop "${NIXFLAGS[@]}" -c devenv up -D) > "$WORK/ports-taken.log" 2>&1
+  (cd "$wt" && FRAPPE_NIX_CI=1 FRAPPE_NIX_STRICT_PORTS=1 FRAPPE_NIX_PORT_OFFSET="$((p1 - 8000))" nix develop "${NIXFLAGS[@]}" -c devenv up -D) > "$WORK/ports-strict.log" 2>&1
   local rc=$?
   set -e
-  if [ "$rc" = 0 ] || ! grep -q "already in use: nginx=127.0.0.1:$PRIMARY_PORT" "$WORK/ports-taken.log" \
-    || ! grep -q FRAPPE_NIX_PORT_OFFSET "$WORK/ports-taken.log"; then
-    tail -n 40 "$WORK/ports-taken.log"
-    fail "devenv up on a taken port: exit $rc"
+  if [ "$rc" = 0 ] || ! grep -q "already in use: nginx=127.0.0.1:$p1" "$WORK/ports-strict.log" \
+    || ! grep -q "held by bench standards-fixture/.*$app" "$WORK/ports-strict.log" \
+    || ! grep -q FRAPPE_NIX_PORT_OFFSET "$WORK/ports-strict.log"; then
+    tail -n 40 "$WORK/ports-strict.log"
+    fail "devenv up with FRAPPE_NIX_STRICT_PORTS=1 on a taken port: exit $rc"
   fi
-  ok "devenv up on a port another bench holds stops, naming it and FRAPPE_NIX_PORT_OFFSET"
+  ok "FRAPPE_NIX_STRICT_PORTS=1: devenv up on a held port stops, naming it, its holder and FRAPPE_NIX_PORT_OFFSET"
 }
 
 # Inside a dev shell: bring the bench up, report its ports, take it down.
@@ -318,6 +343,13 @@ cmd_up_and_report() {
   done
   mail="$(jq -r '.guards.mail.http_port // empty' "$DEVENV_RUNTIME/devguard-runtime.json" 2> /dev/null || true)"
   if [ -n "$mail" ] && curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$mail/"; then echo "MAILPIT=$mail"; fi
+  if [ -n "$port" ]; then
+    echo "WEB=$(frappe-nix-ports web)"
+    echo "MOVED=$(frappe-nix-ports --json | jq -r '.moved.web // empty')"
+    if [ "$(curl -s --max-time 3 "http://127.0.0.1:$port/__frappe_nix/bench")" = "$(frappe-nix-ports bench_id)" ]; then
+      echo "IDENTITY=ok"
+    fi
+  fi
   process-compose -U -u "$PC_SOCKET_PATH" down > /dev/null 2>&1 || true
   [ -n "$port" ] || fail "the bench did not answer"
   echo "PORT=$port"
@@ -393,6 +425,125 @@ cmd_rename_site() {
   ok "the renamed app's own tests, testmap and composition pass on the renamed site"
 }
 
+# ── parallel ──────────────────────────────────────────────────────────────────
+
+# Two copies of the fixture under one name, so one set of preferred ports,
+# tested at the same moment: what CI legs on one host do. Each must lease its
+# own ports, answer on them as itself, and catch its own mail. Then a port held
+# by something that is not frappe-nix: moved past, or with
+# FRAPPE_NIX_STRICT_PORTS=1 refused, named as such.
+cmd_parallel() {
+  local a="$WORK/par-a" b="$WORK/par-b" ra=0 rb=0 pa pb
+  group "prepare two copies of the fixture, one name"
+  prepare "$a"
+  lock "$a"
+  rm -rf "$b"
+  cp -a "$a" "$b"
+  rm -rf "$b/.devenv" "$b/.frappe-nix" "$b/.direnv" "$b/.dev-dist"
+  endgroup
+
+  group "frappe-test --ci --keep-up in both at once"
+  dev "$a" frappe-test --ci --keep-up > "$WORK/parallel-a.log" 2>&1 &
+  pa=$!
+  dev "$b" frappe-test --ci --keep-up > "$WORK/parallel-b.log" 2>&1 &
+  pb=$!
+  wait "$pa" || ra=$?
+  wait "$pb" || rb=$?
+  endgroup
+  if [ "$ra" != 0 ] || [ "$rb" != 0 ]; then
+    tail -n 80 "$WORK/parallel-a.log" "$WORK/parallel-b.log"
+    fail "two same-name benches at once: frappe-test --ci exited $ra and $rb"
+  fi
+  ok "two copies of one app, one name, frappe-test --ci at once: both exit 0"
+
+  expect 0 "$WORK/parallel-ports-a.log" dev "$a" bash "$HERE/run.sh" report-ports
+  expect 0 "$WORK/parallel-ports-b.log" dev "$b" bash "$HERE/run.sh" report-ports
+  local ja jb key
+  ja="$(sed -n 's/^PORTS=//p' "$WORK/parallel-ports-a.log")"
+  jb="$(sed -n 's/^PORTS=//p' "$WORK/parallel-ports-b.log")"
+  for key in web mailpit_smtp mailpit_ui bench_id; do
+    [ "$(jq -r ".$key" <<< "$ja")" != "$(jq -r ".$key" <<< "$jb")" ] || fail "both benches have $key $(jq -r ".$key" <<< "$ja")"
+  done
+  [ "$(jq -r .name <<< "$ja")" = "$(jq -r .name <<< "$jb")" ] || fail "the copies do not share a name"
+  ok "distinct web, Mailpit SMTP and UI ports and identities: $(jq -c '[.web, .mailpit_smtp, .mailpit_ui]' <<< "$ja") and $(jq -c '[.web, .mailpit_smtp, .mailpit_ui]' <<< "$jb")"
+  ok "each answers /__frappe_nix/bench with its own identity, and its devguard-runtime.json and webserver_port match its ports.json"
+
+  # Mail sent to A's catcher is in A's Mailpit, and not in B's.
+  python3 - "$(jq -r .mailpit_smtp <<< "$ja")" <<'PY'
+import smtplib, sys
+with smtplib.SMTP("127.0.0.1", int(sys.argv[1]), timeout=10) as s:
+	s.sendmail("a@example.com", ["x@example.com"], "Subject: parallel-a\r\n\r\nfrom A\r\n")
+PY
+  local na nb
+  na="$(curl -s "http://127.0.0.1:$(jq -r .mailpit_ui <<< "$ja")/api/v1/search?query=subject:parallel-a" | jq .messages_count)"
+  nb="$(curl -s "http://127.0.0.1:$(jq -r .mailpit_ui <<< "$jb")/api/v1/search?query=subject:parallel-a" | jq .messages_count)"
+  [ "$na" = 1 ] && [ "$nb" = 0 ] || fail "mail sent to A: $na in A's Mailpit, $nb in B's"
+  ok "mail sent to A's catcher is in A's Mailpit only"
+
+  expect 0 "$WORK/parallel-down-a.log" dev "$a" frappe-test --down
+  expect 0 "$WORK/parallel-down-b.log" dev "$b" frappe-test --down
+  [ "$(python3 "$FN/lib/port-lease.py" who "$(jq -r .web <<< "$ja")")" = "$(jq -r .web <<< "$ja"): free" ] \
+    || fail "A's web port is still held after frappe-test --down"
+  ok "down, each bench's lease is gone with it"
+
+  group "a port held outside frappe-nix"
+  # An offset no other leg prefers, its web port held by a plain listener.
+  local off=777 held=8777 holder
+  python3 -c 'import socket, sys, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(3600)' "$held" &
+  holder=$!
+  # shellcheck disable=SC2064 # the holder's pid, now
+  trap "kill $holder 2> /dev/null || true" EXIT
+  FRAPPE_NIX_PORT_OFFSET="$off" expect 0 "$WORK/parallel-outside.log" dev "$a" bash "$HERE/run.sh" up-and-report
+  local p
+  p="$(sed -n 's/^PORT=//p' "$WORK/parallel-outside.log")"
+  [ -n "$p" ] && [ "$p" != "$held" ] && grep -qx "MOVED=$held" "$WORK/parallel-outside.log" \
+    && grep -qx 'IDENTITY=ok' "$WORK/parallel-outside.log" || fail "with $held held outside frappe-nix the bench serves on '$p'"
+  ok "a web port held outside frappe-nix ($held) is moved past, to $p"
+  set +e
+  (cd "$a" && FRAPPE_NIX_CI=1 FRAPPE_NIX_STRICT_PORTS=1 FRAPPE_NIX_PORT_OFFSET="$off" nix develop "${NIXFLAGS[@]}" -c devenv up -D) > "$WORK/parallel-outside-strict.log" 2>&1
+  local rc=$?
+  set -e
+  if [ "$rc" = 0 ] || ! grep -q "nginx=127.0.0.1:$held is in use by a process outside frappe-nix" "$WORK/parallel-outside-strict.log"; then
+    tail -n 40 "$WORK/parallel-outside-strict.log"
+    fail "FRAPPE_NIX_STRICT_PORTS=1 with $held held outside frappe-nix: exit $rc"
+  fi
+  kill "$holder" 2> /dev/null || true
+  endgroup
+  ok "FRAPPE_NIX_STRICT_PORTS=1: refused, naming a process outside frappe-nix"
+}
+
+# Inside a dev shell whose bench is up: its ports.json, checked against what
+# answers on them and what devguard and the site config were handed.
+cmd_report_ports() {
+  local f="$FRAPPE_NIX_PORTS_FILE" web id
+  frappe-nix-ports > /dev/null || fail "frappe-nix-ports: the bench is not up"
+  web="$(jq -r .web "$f")"
+  id="$(jq -r .bench_id "$f")"
+  [ "$(curl -s --max-time 5 "http://127.0.0.1:$web/__frappe_nix/bench")" = "$id" ] || fail "port $web does not answer as $id"
+  curl -s -o /dev/null -D - --max-time 5 "http://127.0.0.1:$web/" | grep -qi "^x-frappe-nix-bench: $id" || fail "no X-Frappe-Nix-Bench: $id header on $web"
+  jq -e --slurpfile p "$f" '.guards.mail.port == $p[0].mailpit_smtp and .guards.mail.http_port == $p[0].mailpit_ui' \
+    "$DEVENV_RUNTIME/devguard-runtime.json" > /dev/null || fail "devguard-runtime.json is not this bench's lease"
+  [ "$(jq -r .webserver_port "$FRAPPE_BENCH_ROOT/sites/common_site_config.json")" = "$web" ] || fail "webserver_port is not the leased $web"
+  echo "PORTS=$(jq -c . "$f")"
+}
+
+# After a failure, outside any shell: every ports.json left on this host's
+# runtime directories, and who holds each of its ports, into $WORK/ports/.
+cmd_collect_ports() {
+  local out="$WORK/ports" f n=0 port
+  mkdir -p "$out"
+  while IFS= read -r f; do
+    n=$((n + 1))
+    cp "$f" "$out/ports-$n.json"
+    for port in $(jq -r '[.web, .mailpit_smtp, .mailpit_ui, .mailpit_pop3] | map(select(. != null)) | .[]' "$f"); do
+      echo "$port: $(python3 "$FN/lib/port-lease.py" who "$port")"
+    done >> "$out/who-$n.txt"
+  done < <(find /tmp "${XDG_RUNTIME_DIR:-/nonexistent}" -maxdepth 3 -path '*/frappe-nix/ports.json' 2> /dev/null)
+  echo "collect-ports: $n ports.json into $out"
+}
+
 # ── erpnext ───────────────────────────────────────────────────────────────────
 
 cmd_erpnext() {
@@ -463,8 +614,11 @@ case "${1:-}" in
   rename) cmd_rename ;; # resume after main's ports, by hand
   rename-site) cmd_rename_site ;;
   erpnext) cmd_erpnext ;;
+  parallel) cmd_parallel ;;
+  report-ports) cmd_report_ports ;;
+  collect-ports) cmd_collect_ports ;;
   *)
-    echo "usage: $0 main|erpnext" >&2
+    echo "usage: $0 main|erpnext|parallel|collect-ports" >&2
     exit 2
     ;;
 esac
