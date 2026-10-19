@@ -15,7 +15,9 @@ R6  [typescript.check-js]  ``[[tool.frappe-nix.unchecked-js]]`` paths(head) ⊆ 
 R7  [tests.coverage]       ``[[tool.frappe-nix.coverage-omit]]`` globs(head) ⊆ globs(base)
 
 A rule whose module is off in head is skipped; one whose module is off in base starts from
-head (nothing to compare). Exit 0, or 1 listing each violation.
+head (nothing to compare). When ``[project].name`` changed (``frappe-rename-app``), the base's
+targets, paths, globs and baseline paths are read under the new package name first, so a
+renamed entry is not a new one. Exit 0, or 1 listing each violation.
 """
 
 import argparse
@@ -24,6 +26,7 @@ import re
 import sys
 import tomllib
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 from frappe_nix_tools.common import config, pyproject, repo
@@ -65,6 +68,26 @@ def _table(doc: dict) -> dict:
 
 def _items(doc: dict, key: str, field: str) -> set[str]:
 	return {e.get(field) for e in _table(doc).get(key, []) if isinstance(e, dict) and e.get(field)}
+
+
+def _package(doc: dict) -> str | None:
+	name = doc.get("project", {}).get("name")
+	return name.replace("-", "_") if isinstance(name, str) and name else None
+
+
+def _renamer(old: str | None, new: str | None) -> Callable[[str], str]:
+	"""Map a base entry onto head's package name: ``old.x`` and ``old/x`` become ``new.x``/``new/x``."""
+	if not old or not new or old == new:
+		return lambda s: s
+
+	def rename(s: str) -> str:
+		if s == old:
+			return new
+		if s.startswith((old + ".", old + "/")):
+			return new + s[len(old) :]
+		return s
+
+	return rename
 
 
 def _ty_lines(root: Path, ref: str | None) -> list[str]:
@@ -172,6 +195,16 @@ def violations(root: Path, base: str) -> tuple[list[str], list[str]]:
 	if bm is None:
 		bm, bc = hm, hc
 		notices.append("the base's configuration could not be resolved; comparing against head's modules")
+	old_pkg, new_pkg = _package(base_doc), _package(head_doc)
+	ren = _renamer(old_pkg, new_pkg)
+	if old_pkg and new_pkg and old_pkg != new_pkg:
+		notices.append(
+			f"the package was renamed {old_pkg} → {new_pkg}: base entries are compared under the new name"
+		)
+
+	def base_items(key: str, field: str) -> set[str]:
+		return {ren(v) for v in _items(base_doc, key, field)}
+
 	out: list[str] = []
 
 	def both(on) -> bool:
@@ -181,7 +214,7 @@ def violations(root: Path, base: str) -> tuple[list[str], list[str]]:
 		h, b = _fail_under(head_doc), _fail_under(base_doc)
 		if b is not None and (h is None or h < b):
 			out.append(f"R1 pyproject.toml: [tool.coverage.report] fail_under went down: {b} → {h}")
-		new = _items(head_doc, "coverage-omit", "glob") - _items(base_doc, "coverage-omit", "glob")
+		new = _items(head_doc, "coverage-omit", "glob") - base_items("coverage-omit", "glob")
 		out += [f"R7 pyproject.toml: new [[tool.frappe-nix.coverage-omit]] glob {g!r}" for g in sorted(new)]
 	if hm.get("python-types"):
 		lines = _ty_lines(root, None)
@@ -199,17 +232,19 @@ def violations(root: Path, base: str) -> tuple[list[str], list[str]]:
 				out.append(f"R2: {h} `ty: ignore` comments, the base has {b} (it only goes down)")
 	if both(lambda m, _c: m.get("listing")):
 		hb = _baseline((root / BASELINE).read_text() if (root / BASELINE).is_file() else None)
-		bb = _baseline(_show(root, base, BASELINE))
+		bb: Counter = Counter()
+		for (rule, path, sha), count in _baseline(_show(root, base, BASELINE)).items():
+			bb[(rule, ren(path), sha)] += count
 		for key, count in sorted(hb.items(), key=lambda kv: tuple(str(k) for k in kv[0])):
 			if key not in bb:
 				out.append(f"R3 {BASELINE}: new entry {key[0]} in {key[1]} (the baseline only shrinks)")
 			elif count > bb[key]:
 				out.append(f"R3 {BASELINE}: {key[0]} in {key[1]}: count {bb[key]} → {count}")
 	if both(_testmap_on):
-		new = _items(head_doc, "untested", "target") - _items(base_doc, "untested", "target")
+		new = _items(head_doc, "untested", "target") - base_items("untested", "target")
 		out += [f"R4 pyproject.toml: new [[tool.frappe-nix.untested]] target {t!r}" for t in sorted(new)]
 	if both(_checkjs_on):
-		new = _items(head_doc, "unchecked-js", "path") - _items(base_doc, "unchecked-js", "path")
+		new = _items(head_doc, "unchecked-js", "path") - base_items("unchecked-js", "path")
 		out += [f"R6 pyproject.toml: new [[tool.frappe-nix.unchecked-js]] path {p!r}" for p in sorted(new)]
 	if hm.get("semgrep") or hm.get("listing"):
 		out += nosemgrep_problems(root)
