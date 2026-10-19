@@ -4,7 +4,7 @@ description: What devenv up runs, how several benches share one machine over uni
 nav_title: Development
 order: 4
 tags: [devenv, development, ports, sockets]
-updated: 2026-10-07
+updated: 2026-10-19
 ---
 
 `devenv up` runs the full stack through process-compose. **Several benches can run at once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which devenv gives each project uniquely, and the ports that remain are per bench.
@@ -31,14 +31,21 @@ With `runtime.enable = false` the dev shell runs the split `web`, `socketio`, `w
 
 ## Ports and sockets
 
-Because sockets and hashed ports are per bench, you can run several benches at the same time without collisions.
+Because sockets are per bench and TCP ports are leased per bench, you can run several benches at the same time without collisions, two copies of one bench included.
 
-The ports are hashed from `name` and not from the project path, so every clone of a bench derives the same number and the committed `common_site_config.json` never conflicts. The offset, [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets), is between 0 and 899, and nginx, MariaDB's unbound port and the three Mailpit ports all derive from it. Nothing moves a port at run time: devenv's port allocator does nothing under its flake integration, so a port that is already taken stays taken, and nginx or Mailpit fails to bind it. In app mode with `ports.worktreeSalt` on (by default, an app that opted in to the app standards), `devenv up` checks nginx's and Mailpit's ports before it starts anything, and stops with the port's name if one is in use.
+Each bench *prefers* ports hashed from `name`, not from the project path, so every clone of a bench derives the same number and the committed `common_site_config.json` never conflicts. The offset, [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets), is between 0 and 899, and nginx, MariaDB's unbound port and the three Mailpit ports all derive from it.
 
-- **Two checkouts of one app.** In app mode, with [`ports.worktreeSalt`](../reference/dev-shell-options.md#ports-and-sockets) on, a linked worktree (`git worktree add`, whose `.git` is a file) hashes `<name>@<its path>` instead, so a second worktree of the same app gets its own ports and both can run at once. The primary checkout keeps the `name` hash. App mode's bench is generated, so nothing committed changes. `ports.worktreeSalt` is on by default for an app that opted in to the [app standards](../app-standards/README.md) and off otherwise, so the worktrees of any other app keep the ports they had; set it to `true` to turn it on.
+`devenv up` then leases the TCP ports the bench binds, nginx's and Mailpit's, before anything starts. Its first process, `frappe-ports`, claims each preferred port for as long as the bench runs and checks that nothing else has it bound. When the port is free, which is the usual case, that is the port, so nothing changes. When another bench holds it, or a process outside frappe-nix does:
+
+- **App mode moves.** It leases the next free port, up to [`ports.span`](../reference/dev-shell-options.md#ports-and-sockets) (100) along, and says so in `frappe-ports`' log (`nginx moved to 127.0.0.1:8298 (8297 is held by bench …)`). The generated bench's `webserver_port` follows it.
+- **Bench mode refuses.** Its web port is written into the committed `common_site_config.json`, so `devenv up` stops before starting anything and names the port and its holder: another bench (its name, directory and pid) or a process outside frappe-nix. This is [`ports.strict`](../reference/dev-shell-options.md#ports-and-sockets), which either mode may set; `FRAPPE_NIX_STRICT_PORTS=1` makes one `devenv up` strict, and `=0` lets an app-mode one move.
+
+The ports in force are in `$DEVENV_RUNTIME/frappe-nix/ports.json` while the bench runs. `frappe-nix-ports` prints them, and `frappe-nix-ports who <port>` names whoever holds a port. nginx answers every request with an `X-Frappe-Nix-Bench` header and its bench's identity at `/__frappe_nix/bench`, which is how `frappe-test`, `frappe-demo` and `frappe-shots` know the server they found is their own bench. The claim is an abstract unix socket on Linux, which every process sharing the network namespace sees, CI runners in separate systemd sandboxes included, and an `flock` under `/tmp/frappe-nix-ports` elsewhere. Either way it ends with the bench however the bench ends, so a killed bench never leaves a port claimed.
+
+- **Two checkouts of one app.** In app mode, with [`ports.worktreeSalt`](../reference/dev-shell-options.md#ports-and-sockets) on, a linked worktree (`git worktree add`, whose `.git` is a file) hashes `<name>@<its path>` instead, so a second worktree of the same app prefers its own ports and neither has to move. The primary checkout keeps the `name` hash. App mode's bench is generated, so nothing committed changes. `ports.worktreeSalt` is on by default for an app that opted in to the [app standards](../app-standards/README.md) and off otherwise; any two checkouts still both run, the second on leased ports.
 - **Pick an offset by hand** in app mode with `FRAPPE_NIX_PORT_OFFSET=<0-899>`, read when the shell is evaluated (`FRAPPE_NIX_PORT_OFFSET=123 nix develop --no-pure-eval`, or exported before `direnv reload`). It wins over `ports.offset`: web 8123, Mailpit 19123, 20123 and 21123. It does not move a web port that `ports.base` sets. Bench mode ignores it, because its web port is written into the committed `common_site_config.json`: set `ports.offset` in `flake.nix` instead.
 - Override the web port alone with [`ports.base`](../reference/dev-shell-options.md#ports-and-sockets).
-- Set `sockets.enable = false` to put everything back on TCP. There is no nginx in that mode and more ports are used. They all derive from the same offset, so benches whose offsets differ still do not collide, but two whose offsets collide do: `devenv up`'s check, where it runs, covers only the web and Mailpit ports, so a clash on any other port (socketio's, for one) shows up as that process failing to bind. Socket mode needs Frappe 15.46 or newer.
+- Set `sockets.enable = false` to put everything back on TCP. There is no nginx in that mode and more ports are used, all fixed: they are on the processes' command lines, so nothing can move them, and `devenv up` refuses a taken web or Mailpit port whatever `ports.strict` says. Benches whose offsets differ still do not collide, but two whose offsets collide do, and a clash on a port the check does not cover (socketio's, for one) shows up as that process failing to bind. Socket mode needs Frappe 15.46 or newer.
 
 ### MariaDB and TCP clients
 
@@ -47,7 +54,7 @@ With `sockets.enable` (the default) MariaDB runs with `skip-networking`: it list
 That second case is real: Insights' "Site DB" data source is one such app, because ibis rewrites host `localhost` back to `127.0.0.1`, so libmysqlclient's socket shortcut does not save it. With `sockets.enable = false`, MariaDB binds `127.0.0.1` on its own per-bench port instead.
 
 > [!NOTE]
-> If you use the **wiki** app: its frontend does `import { socketio_port } from 'sites/common_site_config.json'`, so the port is baked into its bundle at build time. If your port changes (a new `ports.offset`, `FRAPPE_NIX_PORT_OFFSET`), run `bench build --app wiki` again. `frappe-ui`'s vendored `socketio.js` similarly defaults to a hardcoded 9000 unless the call site passes `port: window.frappe?.boot?.socketio_port`.
+> If you use the **wiki** app: its frontend does `import { socketio_port } from 'sites/common_site_config.json'`, so the port is baked into its bundle at build time. If your port changes (a new `ports.offset`, `FRAPPE_NIX_PORT_OFFSET`, a port leased past a taken one), run `bench build --app wiki` again. `frappe-ui`'s vendored `socketio.js` similarly defaults to a hardcoded 9000 unless the call site passes `port: window.frappe?.boot?.socketio_port`.
 
 ## Editable installs
 

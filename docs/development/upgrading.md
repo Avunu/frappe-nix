@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, and what to commit afterwards.
 order: 9
 tags: [upgrade, flake-update, reconcile]
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -94,6 +94,16 @@ In an [app repository](../scaffolding/app-mode.md) the pins are flake inputs, so
 The bench root's dev group gained `coverage` and `unittest-xml-reporting`, which [`frappe-test`](../app-standards/testing.md) runs the tests under. An app that has not opted in to the [app standards](../app-standards/README.md) keeps the root it had: each of the two stays out of it unless the root package in the committed `nix/uv.lock` already lists it in its `dev` group. On version-15 and version-16 alike, the generated root, the dev environment and the lock stay exactly as they were, and `nix run .#relock` leaves `nix/uv.lock` as it is. A version-16 lock does have both packages, through Frappe's `test` extra, but that does not put them in the dev environment.
 
 `frappe-test` then has no coverage to run under and says so (exit 10): pass `--no-coverage`, or opt in and run `nix run .#relock`, which adds them.
+
+## Ports are leased at `devenv up`
+
+The ports a bench's shell evaluates are now the ports it *prefers*. `devenv up` leases them before anything starts ([The development shell](README.md#ports-and-sockets)). Nothing changes for a bench whose preferred ports are free, which is the usual case. When one is taken:
+
+- An app-mode bench moves to the next free port instead of failing to bind it, or answering readiness checks from another bench's nginx. Find the ports in force with `frappe-nix-ports`, not with `ports.*` or `mailpit.*` values read from Nix, which are the preferred ones.
+- A bench-mode bench stops before starting anything, naming the port and the bench or process that holds it. Before, nginx alone failed to bind and the rest came up.
+- To keep an app-mode bench on its exact ports, refusing a taken one as `devenv up` did before for an app that opted in, set `ports.strict = true` in the flake or export `FRAPPE_NIX_STRICT_PORTS=1`.
+
+`FRAPPE_NIX_PORT_OFFSET`, `ports.offset`, `ports.base` and `ports.worktreeSalt` keep their meaning: they choose the preferred ports.
 
 ## The runtime moves with frappe-nix
 

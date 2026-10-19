@@ -168,7 +168,7 @@ What lands is three things: `frappe-runtime` in `[project].dependencies`; a `[to
 
 ## Development shell
 
-`devenv up` runs the full stack via process-compose. Several benches can run at once: everything that can be is on a unix socket, and the ports that remain are per-bench. See [The development shell](docs/development/README.md) for the processes, ports and `node_modules` handling, [Everyday commands](docs/development/commands.md) for the `bench` wrapper and the scripts, and [Memory and disk](docs/development/memory-and-disk.md) for how the stack stays light.
+`devenv up` runs the full stack via process-compose. Several benches can run at once, two copies of one included: everything that can be is on a unix socket, and the ports that remain are per-bench, leased when `devenv up` starts (`frappe-nix-ports` prints them). See [The development shell](docs/development/README.md) for the processes, ports and `node_modules` handling, [Everyday commands](docs/development/commands.md) for the `bench` wrapper and the scripts, and [Memory and disk](docs/development/memory-and-disk.md) for how the stack stays light.
 
 ### Development guard rails
 
