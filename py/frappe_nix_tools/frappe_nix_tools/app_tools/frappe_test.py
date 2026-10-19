@@ -36,6 +36,7 @@ shell), 64 (EX_USAGE) for a usage error, and 0 otherwise. Neither collides with
 a verdict.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -113,6 +114,7 @@ STALE = (
 	"frappe-test-report.json",
 	"summary.md",
 	"shell-checks.log",
+	"ports.json",
 )
 
 #: Seconds the bench has to come up in.
@@ -479,19 +481,29 @@ class Run:
 			time.sleep(2)
 		while db_up and time.monotonic() < deadline:
 			port = devshell.webserver_port(self.bench)
-			if port and devshell.web_answers(port):
+			if port and devshell.web_answers(port, devshell.bench_id()):
 				web_up = True
 				break
 			time.sleep(2)
 		self.endgroup()
+		self.keep_ports()
 		if not (db_up and web_up):
+			holder = devshell.who(port)
 			raise self.environment_failure(
 				f"::error::frappe-test: the bench did not come up within {UP_TIMEOUT} s "
-				f"(database: {int(db_up)}, web on port {port or '?'}: {int(web_up)})",
+				f"(database: {int(db_up)}, web on port {port or '?'}: {int(web_up)})"
+				+ (f"; port {port}: {holder}" if holder else ""),
 				"up",
 			)
 		self.stages["up"] = "ok"
 		say(f"frappe-test: the bench is up on http://127.0.0.1:{port}")
+
+	def keep_ports(self) -> None:
+		"""The leased ports beside the report, for a failed run's artifact."""
+		data = devshell.leased()
+		if data is not None:
+			with contextlib.suppress(OSError):
+				(self.out / "ports.json").write_text(json.dumps(data, indent=2) + "\n")
 
 	# ── 2. site ─────────────────────────────────────────────────────────────
 	def prepare_site(self, plan: dict[str, Any]) -> None:

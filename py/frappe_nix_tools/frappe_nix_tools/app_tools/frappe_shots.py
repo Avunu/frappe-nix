@@ -246,12 +246,18 @@ class Shots:
 		config_file = bench / "sites" / "common_site_config.json"
 		port = devshell.webserver_port(bench)
 		if not port:
-			raise Fail(ENVIRONMENT, f"no webserver_port in {config_file}")
+			where = devshell.ports_file() or config_file
+			raise Fail(ENVIRONMENT, f"no web port in {where}")
 		tries = devshell.TRIES
-		while not devshell.web_answers(port):
+		while not devshell.web_answers(port, devshell.bench_id()):
 			tries -= 1
 			if tries <= 0:
-				raise Fail(ENVIRONMENT, f"the web server did not answer on port {port} within 300 s")
+				holder = devshell.who(port)
+				raise Fail(
+					ENVIRONMENT,
+					f"the web server did not answer on port {port} within 300 s"
+					+ (f" ({holder})" if holder else ""),
+				)
 			time.sleep(2)
 
 		runner = runner_args(
