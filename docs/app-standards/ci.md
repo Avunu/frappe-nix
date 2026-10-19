@@ -164,7 +164,7 @@ The jobs expect a plain Linux machine with Nix, not GitHub's Ubuntu image. On su
 - **nix-ld** (`programs.nix-ld.enable = true` on NixOS): `setup-node`, `setup-uv` and the Python uv downloads are binaries built for a standard Linux, which run only through it.
 - **No `sudo` and no `apt`**: the `marketplace` job builds mysqlclient with gcc, pkg-config and the MariaDB client headers from nixpkgs, and `lint` and `typecheck` install yarn classic with npm when the runner has none.
 
-A runner takes one job at a time, so one runner per repository runs that repository's jobs in turn. Its home directory outlives the job and is shared by every runner of the same user, so the jobs keep uv's tools (`tool-dir`, `tool-bin-dir`) and a binary cache's credentials (`XDG_CONFIG_HOME`) in the job's `$RUNNER_TEMP`.
+A runner takes one job at a time, so one runner per repository runs that repository's jobs in turn. Its home directory outlives the job and is shared by every runner of the same user, so the jobs keep uv's tools (`tool-dir`, `tool-bin-dir`) and a binary cache's credentials (`XDG_CONFIG_HOME`) in the job's `$RUNNER_TEMP`. The runner's own cleanup of `$RUNNER_TEMP` skips read-only files (copies out of the Nix store), so each job's first step, on a self-hosted runner only, clears what an earlier job left there.
 
 ## The binary cache
 

@@ -72,6 +72,15 @@ jobs:
       matrix:
         profile: [recommended, example-org]
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -285,6 +294,15 @@ jobs:
       matrix:
         shape: [no-flake, main-locked, reenter]
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -359,6 +377,16 @@ jobs:
         run: |
           set -euo pipefail
           path="/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+          if [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            # A NixOS runner has nothing in /usr/bin: the job's PATH without any directory
+            # that holds yarn or uv.
+            path=""
+            while IFS= read -r -d : dir; do
+              if [ -n "$dir" ] && [ ! -e "$dir/yarn" ] && [ ! -e "$dir/uv" ]; then
+                path="${path:+$path:}$dir"
+              fi
+            done <<<"$PATH:"
+          fi
           if PATH="$path" command -v yarn || PATH="$path" command -v uv; then
             echo "::error::yarn or uv is on the bare PATH"
             exit 1
@@ -386,6 +414,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
