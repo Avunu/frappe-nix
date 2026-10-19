@@ -265,6 +265,18 @@ class TestAppOwnedKeys(AppCase):
 				self.write("pyproject.toml", base + extra)
 				self.assertEqual(self.check()[0], 2)
 
+	def test_flit_needs_a_description(self):
+		self.synced()
+		base = self.read("pyproject.toml")
+		self.write("pyproject.toml", base.replace('description = "A demo app"\n', ""))
+		code, out = self.check()
+		self.assertEqual(code, 1, out)
+		self.assertIn("[project].description is missing", out)
+		self.write("pyproject.toml", base.replace('description = "A demo app"\n', 'description = ""\n'))
+		self.assertEqual(self.check()[0], 1)
+		self.write("pyproject.toml", base)
+		self.assertEqual(self.check()[0], 0)
+
 	def test_package_wide_ignores_in_any_spelling_are_exit_2(self):
 		"""ruff's globs let ``*`` cross ``/`` and match a bare pattern against the basename,
 		and it reads the pre-0.2 [tool.ruff] spellings and extend-per-file-ignores too."""
