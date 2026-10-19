@@ -43,6 +43,9 @@ jobs:
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
+{% endif %}
       nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
 
       auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}

@@ -33,6 +33,9 @@ jobs:
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
+{% endif %}
     secrets:
       FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
 

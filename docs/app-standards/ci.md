@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-16
+updated: 2026-10-19
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -132,6 +132,39 @@ Every schedule is a profile parameter, `ci.schedules`, and `""` turns one off:
 | `nightly` | `0 7 * * *` | The nightly jobs |
 
 The defaults suit a public repository, where Actions minutes are free. A private one that pays for minutes turns off what it doesn't need; with `ci` or `release` off and auto-merge on, the branch status and the release PR catch up only on the next human push, and `frappe-nix repo doctor` says so.
+
+## Runners
+
+Every Linux job in frappe-nix's reusable workflows runs on `ubuntu-latest` unless the app's `ci.runs-on` names another runner: a runner label, or a list of labels a runner must all have. A profile sets it in `[ci]`, an app in `[tool.frappe-nix.ci]`:
+
+```toml
+[ci]
+runs-on = ["self-hosted", "nixos"]
+```
+
+`frappe-init --sync` then passes it, as JSON, to every job that calls a frappe-nix workflow (`ci.yml`, `pr-policy.yml`, `release.yml`, `deps.yml` and `nightly.yml`):
+
+```yaml
+    with:
+      app: my_app
+      integration-branch: develop
+      runs-on: '["self-hosted","nixos"]'
+```
+
+Unset, the callers carry no `runs-on` line and are byte for byte what they were before the key existed. `assets.yml` calls pilot's own workflow, which takes no runner, so it stays on GitHub's runners.
+
+A pull request from a fork always runs on `ubuntu-latest`, whatever `ci.runs-on` says: each job's `runs-on` is `${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}`, so code from outside the repository never runs on your machine.
+
+### A self-hosted NixOS runner
+
+The jobs expect a plain Linux machine with Nix, not GitHub's Ubuntu image. On such a runner (`runner.environment` is `self-hosted`) they skip the hosted image's disk cleanup, the Nix installer, magic-nix-cache and `apt-get`, and get what those provided from Nix instead. The runner needs:
+
+- **Nix** with `nix-command` and `flakes`, the daemon running, and the runner's user in `trusted-users`: the jobs pass `access-tokens` through `NIX_CONFIG` and a binary cache's substituters through the user's configuration, where a hosted runner would edit `/etc/nix/nix.conf` with `sudo`. The local `/nix/store` persists between jobs and is the cache.
+- **Tools on `PATH`**: bash, coreutils, git, gnutar, gzip and zstd (checkout and `actions/cache`), and gh, jq, curl, unzip, xz, findutils, gnugrep, gnused, gawk, diffutils, which and nodejs for the job scripts and the setup actions.
+- **nix-ld** (`programs.nix-ld.enable = true` on NixOS): `setup-node`, `setup-uv` and the Python uv downloads are binaries built for a standard Linux, which run only through it.
+- **No `sudo` and no `apt`**: the `marketplace` job builds mysqlclient with gcc, pkg-config and the MariaDB client headers from nixpkgs, and `lint` and `typecheck` install yarn classic with npm when the runner has none.
+
+A runner takes one job at a time, so one runner per repository runs that repository's jobs in turn. Its home directory outlives the job and is shared by every runner of the same user, so the jobs keep uv's tools (`tool-dir`, `tool-bin-dir`) and a binary cache's credentials (`XDG_CONFIG_HOME`) in the job's `$RUNNER_TEMP`.
 
 ## The binary cache
 

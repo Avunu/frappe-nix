@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -621,7 +621,7 @@ Files whose entry isn't live MUST NOT exist. Sync deletes them (and retracts mer
 | `scripts/vite-register.mjs` | whole (`ts` header) | `vite-register` (`discover.vite`) | none | N2 |
 | `.git-blame-ignore-revs` | seed (header only) and validated (§2.20) | `hygiene` | none | N3 |
 | `nix/node-locks/<key>/{yarn.lock,source.json}` | seed from `frappe_nix_tools/data/node-locks/version-<major>/` | `dev-shell` (sibling present and no lock) | none | N3 |
-| `.github/workflows/ci.yml` | whole (frappe-nix SHA sync-owned); one caller job per enabled gate (S39) | `ci` | `ci.test-timeout-minutes`, `ci.schedules.ci`; the gate list | N4 |
+| `.github/workflows/ci.yml` | whole (frappe-nix SHA sync-owned); one caller job per enabled gate (S39) | `ci` | `ci.test-timeout-minutes`, `ci.schedules.ci`, `ci.runs-on`; the gate list | N4 |
 | `.github/workflows/pr-policy.yml` | whole | `ci` and `commits` | `releases.version-scheme` | N4 |
 | `.github/workflows/release.yml` | whole | `ci` and `releases` | `releases.branching`, `releases.tag-prefix`, `ci.schedules.release`, `listing.publish`, `listing.registry-fork`, `pilot-assets.enable` | N4 |
 | `.github/workflows/deps.yml` | whole | `ci` and `dependabot` | `dependabot.auto-merge`, `ci.schedules.deps-sweep`, `ci.schedules.deps-relock`, `repo-policy.merge-methods` | N4 |
@@ -1845,7 +1845,7 @@ The `gates` context list (§2.3) is the first five rows' gates that are present.
 
 `<integration>` below is `branches.integration` (any branch name, S41), passed to each reusable workflow as the input `integration-branch` by the rendered caller; `<release>` is `branches.release`, empty under `main+tags`.
 
-**Private sources (S43).** Every reusable workflow accepts the optional secret `FETCH_TOKEN`, which callers pass from `secrets.FRAPPE_NIX_FETCH_TOKEN`. When it is non-empty, the install step exports it as `FRAPPE_NIX_FETCH_TOKEN`, which `pin-path` and `minibench` use for authenticated fetches of a private org profile, frappe fork or sibling (§5.2 "Pins"), and the Nix setup adds `access-tokens = github.com=<token>` to the job's `nix.conf`. It needs only Contents read on those repositories. For Dependabot runs it must also be a Dependabot secret.
+**Private sources (S43).** Every reusable workflow accepts the optional secret `FETCH_TOKEN`, which callers pass from `secrets.FRAPPE_NIX_FETCH_TOKEN`. When it is non-empty, the install step exports it as `FRAPPE_NIX_FETCH_TOKEN`, which `pin-path` and `minibench` use for authenticated fetches of a private org profile, frappe fork or sibling (§5.2 "Pins"), and the Nix setup adds `access-tokens = github.com=<token>` to the job's Nix configuration (`NIX_CONFIG` in `$GITHUB_ENV`, which needs no `sudo`). It needs only Contents read on those repositories. For Dependabot runs it must also be a Dependabot secret.
 
 ### 4.1 Conventions shared by every `app-*.yml`
 
@@ -1884,12 +1884,13 @@ The `gates` context list (§2.3) is the first five rows' gates that are present.
 `lint` passes `--expect-rev "$FRAPPE_NIX_EXPECT_REV"` only when the variable is non-empty. The package is self-contained (S10), so this install has every template and data file.
 
 - **Nix setup.** The `test`, `relock-plan` and nightly Nix jobs all use the same steps, in this order:
-  1. Free disk: `sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL`.
-  2. nix-installer.
+  1. Free disk: `sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL`, on a GitHub-hosted runner only (`if: runner.environment == 'github-hosted'`).
+  2. nix-installer, on a GitHub-hosted runner only; a self-hosted runner brings its own Nix (§4.2 "Runner").
   3. Cache selection (S15). Let `trusted` be `github.ref == format('refs/heads/{0}', inputs.integration-branch) && (github.event_name == 'push' || github.event_name == 'schedule')`. A step maps `TOKEN` in its `env:` to `${{ (trusted) && secrets.NIX_CACHE_TOKEN || secrets.NIX_CACHE_READ_TOKEN }}`; nothing else ever sees the write token.
      - `inputs.nix-cache == ''` → **no cache action**. (magic-nix-cache is throttled in every bench-sized job and evicts the node_modules caches; frappe-nix's own self-tests may still use it for their small closures.)
+     - On a self-hosted runner with a cache set, `XDG_CONFIG_HOME` is the job's `$RUNNER_TEMP/config`, so the cache credentials that cachix and attic write never outlive the job in the runner's shared home.
      - `cachix:<name>` → `cachix/cachix-action` with `name: <name>`, `authToken` from that step's mapped token, and `skipPush: ${{ !(trusted) }}`.
-     - `attic:<endpoint>/<cache>` → `nix profile install --inputs-from . nixpkgs#attic-client` (pinned by the app's `flake.lock`), then always `attic login ci <endpoint> ${TOKEN:+"$TOKEN"}` (a public cache needs no token but still needs the server configured), then `attic use ci:<cache>`. A final step `if: success() && <trusted>` runs `attic push ci:<cache> ./result .dev-dist/devshell-profile` with the write token.
+     - `attic:<endpoint>/<cache>` → `nix build --no-link --print-out-paths --inputs-from . nixpkgs#attic-client^out` (pinned by the app's `flake.lock`; its `bin` goes on `$GITHUB_PATH`, and never into a profile, which on a self-hosted runner would outlive the job), then always `attic login ci <endpoint> ${TOKEN:+"$TOKEN"}` (a public cache needs no token but still needs the server configured), then `attic use ci:<cache>`. A final step `if: success() && <trusted>` runs `attic push ci:<cache> ./result .dev-dist/devshell-profile` with the write token.
   4. Every `nix develop` uses `--profile .dev-dist/devshell-profile`, so the dev-shell closure can be pushed.
 
   Org setup: `FRAPPE_NIX_CACHE` is an org variable; `FRAPPE_NIX_CACHE_TOKEN` (write) is an org **Actions** secret only; `FRAPPE_NIX_CACHE_READ_TOKEN` (pull-only, or unset for a public cache) is an org Actions secret **and** an org Dependabot secret. That is the whole drop-in. Dependabot runs, which execute bumped third-party code, never hold a credential that can write the cache.
@@ -1909,6 +1910,7 @@ on:
       nix-cache:            { type: string, default: "" }      # app-test.yml: "", "cachix:<name>", "attic:<endpoint>/<cache>"
       test-timeout-minutes: { type: number, default: 75 }      # app-test.yml
       frappe-nix-override:  { type: string, default: "" }      # frappe-nix self-test only
+      runs-on:              { type: string, default: '["ubuntu-latest"]' }  # JSON: a label or a list of labels (ci.runs-on)
     secrets:
       NIX_CACHE_TOKEN:      { required: false }                # app-test.yml; write; used only on trusted runs (S15)
       NIX_CACHE_READ_TOKEN: { required: false }                # app-test.yml
@@ -1918,7 +1920,9 @@ on:
 permissions: {}
 ```
 
-Every gate job carries `if: ${{ !startsWith(github.ref, 'refs/heads/version-') }}` (a no-op under `main+tags`). The 1.1 input `run-test` is gone: frappe-nix's self-test simply doesn't call `app-test.yml` on PRs (§7 N4).
+Every gate job carries `if: ${{ !startsWith(github.ref, 'refs/heads/version-') }}` (a no-op under `main+tags`).
+
+**Runner.** Every Linux job of every reusable workflow (the gates, `app-pr-policy.yml`, `app-release.yml`, `app-deps.yml`, `app-nightly.yml`, `fleet-audit.yml`) has `runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}`. With the default input that is `ubuntu-latest`, as before; a caller passes `runs-on` only when the app's `ci.runs-on` is set (§4.7, §8.2). A pull request from a fork always runs on `ubuntu-latest`, so a fork's code never reaches a self-hosted runner. The steps that only a GitHub-hosted image needs (free disk, nix-installer, apt) carry `if: runner.environment == 'github-hosted'`, and the self-hosted path gets the same tools from Nix instead (the `marketplace` job's mysqlclient build inputs; yarn classic through npm when the runner has none). setup-uv puts uv's tool directories in `$RUNNER_TEMP`, because `uv tool install` of a path it already has is a no-op and a self-hosted runner's home outlives the job. What such a runner needs is in `docs/app-standards/ci.md` ("Runners"). The 1.1 input `run-test` is gone: frappe-nix's self-test simply doesn't call `app-test.yml` on PRs (§7 N4).
 
 **Context names (S3, S39).** In the rendered `ci.yml` the caller job ids are `lint`, `typecheck`, `test` and `marketplace`, and every one has `name: ci`, so the check runs are `ci / lint`, … as in 1.1. N4's `selftest-ci` asserts these exact check-run names on its first run. If GitHub were to report the caller job id instead of its name, the fallback is a single reusable `app-ci.yml` with one boolean input per gate and job-level `if: inputs.<gate>`, called from one caller job `ci`; a disabled gate then shows as a skipped job, which is acceptable only because §4.8 never lists a disabled gate. N4 records which form shipped in `docs/app-standards/ci.md`.
 
@@ -1935,7 +1939,7 @@ Steps marked [*module*] run only when that module is on. Steps that need `packag
 | `lint` | ubuntu-latest / 20 | `contents: read`, `pull-requests: read` | <ol><li>dispatch guard (above)</li><li>checkout, `fetch-depth: 0`</li><li>setup-node (`node-version-file: ${{ inputs.app-root }}/package.json`)</li><li>`actions/cache` of `node_modules`, keyed on `yarn.lock`</li><li>`yarn install --frozen-lockfile --non-interactive`</li><li>setup-uv, with `cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock`</li><li>`uv lock --check --project tools && uv sync --frozen --project tools`</li><li>install frappe-nix-tools; the `cfg` step</li><li>`frappe-nix sync --check --format github`, plus `--expect-rev "$FRAPPE_NIX_EXPECT_REV"` when that is non-empty</li><li>when `.pre-commit-config.yaml` is live: `uv run --frozen --project tools prek run --all-files --show-diff-on-failure`</li><li>[*test-utils*, with either hook in `test-utils.hooks`] `frappe-nix minibench --mode customizations --dest .dev-dist/minibench` and then, from the worktree it creates, `prek run --hook-stage manual validate_customizations --all-files --show-diff-on-failure` and the same for `clean_customized_doctypes`. minibench exits 1 if `sites/`, `env/` or `apps/` is missing (the guard).</li><li>[*semgrep*] semgrep (below)</li><li>`frappe-nix ratchet --base "$BASE"`, unless the ratchet is skipped for this event; it runs only the ratchets whose modules are on (§5.9)</li><li>`yarn -s ci:lint` if `package.json` has that script</li></ol> |
 | `typecheck` | ubuntu-latest / 20 | `contents: read`, `pull-requests: read` | <ol><li>dispatch guard</li><li>checkout</li><li>node</li><li>cache</li><li>`yarn install --frozen-lockfile`</li><li>setup-uv; install frappe-nix-tools</li><li>`export FRAPPE_PATH="$(frappe-nix pin-path frappe)"` into `$GITHUB_ENV`: the app's locked frappe tree, fetched and narHash-verified (carbon's `compile` and `audit:drift` read it)</li><li>[*typescript*] if `[tool.frappe-nix] frappe-node-modules = true`: `yarn --cwd "$FRAPPE_PATH" install --frozen-lockfile --ignore-scripts --non-interactive`, cached on frappe's `yarn.lock` hash</li><li>[*typescript*] if the `typecheck` script exists: `yarn -s typecheck` (the managed solution, then each SPA's `check`)</li><li>[*typescript* with `check-js`] if `[[tool.frappe-nix.unchecked-js]]` is non-empty: `frappe-nix unchecked-js --stale` (§2.9)</li><li>[*tests* with `js-unit`] if `test:unit` exists: assert at least one `test/unit/**/*.test.ts`, then `yarn -s test:unit`</li><li>for each nested frontend whose `package.json` has a `typecheck` script: `yarn --cwd <d> install --frozen-lockfile && yarn --cwd <d> typecheck`</li><li>[*typescript*] if `types/doctypes.d.ts` is tracked: `frappe-nix minibench --mode doctypes --dest .dev-dist/minibench`, then `yarn -s frappe-types gen-registry --bench .dev-dist/minibench --app <app> [--include-siblings <csv>] --out types/doctypes.d.ts --check`, where `<csv>` is the siblings `hooks.required_apps` names (a sibling there only for the tests is not typed in full; with none the flag is left out). gen-registry merges the app's Custom Field definitions (`custom/*.json` and `fixtures/*.json`, which minibench copies) into the core doctypes they extend.</li><li>[*typescript*] if `[tool.frappe-nix.typescript] audit-consumer = true`: `yarn -s frappe-types audit-consumer --app . --strict --types 'types/*.d.ts'`. Otherwise, when the subcommand exists, it runs without `--strict` and its summary is a `::notice::`. The default flips to on in a later frappe-nix MINOR, once frappe-types ships `--types` and the string-literal fix; today `--strict` fails 9 of 12 apps, partly on false positives.</li><li>`yarn -s ci:typecheck` if present (it sees `FRAPPE_PATH`)</li></ol> |
 | `test` | ubuntu-latest / `inputs.test-timeout-minutes` | `contents: read`, `pull-requests: read` | <ol><li>dispatch guard</li><li>checkout, `fetch-depth: 0`</li><li>Nix setup (§4.1)</li><li>**Clean bench build**, `nix build .#default -L --no-pure-eval` (also compiles every app's assets, so it exercises S30): always on push, schedule and dispatch; on `pull_request` only when `git diff --name-only "$(git merge-base "$BASE_SHA" HEAD)" HEAD` touches `package.json`, `yarn.lock`, `flake.nix`, `flake.lock`, `nix/**`, `vite*.config.*`, `scripts/vite-register.mjs`, `<app>/public/**`, a nested frontend, an SPA root or `<app>/hooks.py`. Every release PR is dispatched, so it always gets the build.</li><li>`FRAPPE_NIX_CI=1 nix develop --no-pure-eval --profile .dev-dist/devshell-profile -c frappe-test --ci` (the single shell entry; §5.1). `--ci` turns on exactly the stages whose modules are on: tests and coverage (`tests`), testmap and composition (`tests.testmap`, `tests.composition`), ty (`python-types`), nix-lint (`nix-lint`) and the `shell-checks` stage.</li><li>`if: failure()`: tail 200 lines of each `.frappe-nix/bench/logs/*.log` in a group</li><li>`if: always()`: upload `.dev-dist/test/` as the artifact `test-report`</li><li>cache push (§4.1, trusted runs only)</li><li>the output `coverage` is read from `.dev-dist/test/frappe-test-report.json` (empty when `tests` is off)</li></ol> |
-| `marketplace` | ubuntu-latest / 30 | `contents: read`, `pull-requests: read` | <ol><li>dispatch guard</li><li>checkout</li><li>`sudo apt-get install -y --no-install-recommends pkg-config libmysqlclient-dev` (mysqlclient has no Linux wheel, and L9 installs frappe from source; registry-dryrun track)</li><li>setup-uv, `cache-dependency-glob: ${{ inputs.app-root }}/flake.lock`</li><li>install frappe-nix-tools</li><li>`EIO_BACKEND=posix frappe-nix listing check --format github` (§5.2: listing, hooks metadata against the org values, pyproject ranges, version, override allow-list, logo structure when `icons` is on, registry semgrep at the pinned marketplace rev with the baseline, pilot get-app validator at the pinned pilot rev with the dependency apps on the bench when `listing.getapp-check` is on)</li><li>upload `.dev-dist/marketplace/` as the artifact `marketplace-report`</li></ol>The pip/uv caches for L9's validation bench are kept under `actions/cache` keyed on the pinned frappe and pilot revs; `selftest-product` (N5) measures L9 and fails if a cold run exceeds 25 minutes, leaving 5 minutes of margin. |
+| `marketplace` | ubuntu-latest / 30 | `contents: read`, `pull-requests: read` | <ol><li>dispatch guard</li><li>checkout</li><li>`sudo apt-get install -y --no-install-recommends pkg-config libmysqlclient-dev` (mysqlclient has no Linux wheel, and L9 installs frappe from source; registry-dryrun track); on a self-hosted runner instead `nix build nixpkgs#gcc nixpkgs#pkg-config nixpkgs#libmysqlclient.dev`, onto `$GITHUB_PATH` and `PKG_CONFIG_PATH`</li><li>setup-uv, `cache-dependency-glob: ${{ inputs.app-root }}/flake.lock`</li><li>install frappe-nix-tools</li><li>`EIO_BACKEND=posix frappe-nix listing check --format github` (§5.2: listing, hooks metadata against the org values, pyproject ranges, version, override allow-list, logo structure when `icons` is on, registry semgrep at the pinned marketplace rev with the baseline, pilot get-app validator at the pinned pilot rev with the dependency apps on the bench when `listing.getapp-check` is on)</li><li>upload `.dev-dist/marketplace/` as the artifact `marketplace-report`</li></ol>The pip/uv caches for L9's validation bench are kept under `actions/cache` keyed on the pinned frappe and pilot revs; `selftest-product` (N5) measures L9 and fails if a cold run exceeds 25 minutes, leaving 5 minutes of margin. |
 
 There is no `version-guard` job. `version-*` only ever moves through the release workflow's REST PATCH, which raises no `push` event, so a push-triggered guard would never run. The fast-forward job asserts the D8 invariant itself right after the PATCH (§4.4), and audit row A2 checks it nightly. Under `main+tags` there is no release branch and nothing to guard.
 
@@ -2150,6 +2154,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
     secrets:
       FETCH_TOKEN: ${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}
 {% endif %}
@@ -2163,6 +2170,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
     secrets:
       FETCH_TOKEN: ${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}
 {% endif %}
@@ -2176,6 +2186,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
       nix-cache: ${{ vars.FRAPPE_NIX_CACHE || '' }}
       test-timeout-minutes: <ci.test-timeout-minutes>
     secrets:
@@ -2193,6 +2206,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
     secrets:
       FETCH_TOKEN: ${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}
 {% endif %}
@@ -2219,6 +2235,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
     secrets:
       FETCH_TOKEN: ${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}
 ```
@@ -2250,6 +2269,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
       release-branch: <rel>                 # "" under main+tags
 {% if cfg.listing.publish %}
       publish: ${{ vars.MARKETPLACE_PUBLISH == 'true' }}
@@ -2290,6 +2312,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
       nix-cache: ${{ vars.FRAPPE_NIX_CACHE || '' }}
       auto-merge: <dependabot.auto-merge>
       merge-method: <repo-policy.merge-methods[0]>
@@ -2323,6 +2348,9 @@ jobs:
     with:
       app: <app>
       integration-branch: <int>
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: '<ci.runs-on as compact JSON>'   # e.g. '["self-hosted","nixos"]'
+{% endif %}
       nix-cache: ${{ vars.FRAPPE_NIX_CACHE || '' }}
       run-integration: <modules.tests>
       run-shots: <modules.screenshots>
@@ -3482,7 +3510,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `commits` | `committed.toml`, commit-msg hooks, `pr-policy` (§2.15, §4.3) | `tool` ("committed", "committed"); `allowed-types` (list, frappe's commitlint types); `subject-length` (int, 100); `allow-stacked` (bool, true); `pr-allowed-bases` (list of globs, []) (§5.9) | — | off | on | on (`allow-stacked = false`) |
 | `releases` | release-please config and manifest, the version block, `release.yml`, C1, C5 (§2.13, §2.16, §4.4) | `tool` ("release-please"\|"none", "release-please"); `branching` ("develop+version"\|"main+tags", "develop+version"); `version-scheme` ("semver"\|"frappe-major", "semver"); `tag-prefix` ("v"\|"", "v") | `commits` | off | on | on (`version-scheme = "frappe-major"`) |
 | `dependabot` | `.github/dependabot.yml`, `deps.yml` (§2.17, §4.5) | `cadence` ("daily"\|"weekly"\|"monthly", "weekly"); `cadence-overrides` (table ecosystem → cadence, `{}`); `cooldown-days` (int, 3); `auto-merge` (bool, true; acts only where required checks protect the integration branch, §4.5); `ecosystems` (table of bools: `github-actions`, `npm`, `uv`, `pre-commit`, `nix`, `gitsubmodule`; all true) | — | off | on | on (`cadence = "daily"`, overrides below) |
-| `ci` | the caller workflows (§4.7) and so every gate job | `provider` ("github", "github"; other values reserved); `nightly` (bool, true); `test-timeout-minutes` (int, 75); `schedules` (table of cron strings, `""` = none: `ci` "0 6 * * *", `release` "30 5 * * *", `deps-sweep` "0 9 * * *", `deps-relock` "0 8 * * 1", `nightly` "0 7 * * *") | — | off | on | on |
+| `ci` | the caller workflows (§4.7) and so every gate job | `provider` ("github", "github"; other values reserved); `nightly` (bool, true); `test-timeout-minutes` (int, 75); `runs-on` (a runner label or a list of labels, unset: the reusable workflows' `ubuntu-latest`; a fork's PR always runs there, §4.2 "Runner"); `schedules` (table of cron strings, `""` = none: `ci` "0 6 * * *", `release` "30 5 * * *", `deps-sweep` "0 9 * * *", `deps-relock` "0 8 * * 1", `nightly` "0 7 * * *") | — | off | on | on |
 | `repo-policy` | rulesets and repo settings applied by `frappe-nix repo apply`; audit A1, A3 (§4.8, §4.9) | `required-approvals` (int, 1); `require-code-owner-review` (bool, false); `required-checks` ("gates" or a list of gate names, "gates"); `release-bypass` ("github-actions" or "user:<id>", "github-actions"); `secret-scanning` (bool, true); `merge-methods` (list of "squash"\|"merge"\|"rebase", ["squash"]); `require-thread-resolution` (bool, true); `delete-branch-on-merge` (bool, true); `manage-default-branch` (bool, true); `manage-features` (bool, true) | — | off | off | on (`required-approvals = 0`) |
 | `vite-register` | `scripts/vite-register.mjs` and C8, when Vite exists (§5.11) | none | — | off | on | on |
 | `pilot-assets` | `assets.yml` and its dispatch | none | `ci`, `releases` | off | off | off (apps turn it on) |

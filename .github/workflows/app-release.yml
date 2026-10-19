@@ -33,6 +33,12 @@ on:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
+      runs-on:
+        description: >-
+          The runner of every Linux job, as JSON: a label or a list of labels
+          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       REGISTRY_TOKEN:
         required: false
@@ -52,7 +58,7 @@ env:
 jobs:
   release-please:
     if: github.ref == format('refs/heads/{0}', inputs.integration-branch)
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -78,7 +84,7 @@ jobs:
   dispatch-ci:
     needs: release-please
     if: always() && needs.release-please.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, for the frappe-nix-tools revision
@@ -91,6 +97,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
         env:
@@ -126,7 +135,7 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch != ''
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: write # move the release branch (the ruleset's bypass actor is GitHub Actions)
@@ -137,6 +146,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
         env:
@@ -178,7 +190,7 @@ jobs:
   assets-on-tag:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch == '' && inputs.pilot-assets
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
       actions: write # dispatch assets.yml
@@ -193,7 +205,7 @@ jobs:
   publish:
     needs: [release-please, fast-forward]
     if: always() && inputs.publish && needs.release-please.outputs.releases_created == 'true' && (needs.fast-forward.result == 'success' || (inputs.release-branch == '' && needs.fast-forward.result == 'skipped'))
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 30
     permissions:
       contents: write # append the registry PR to the release notes
@@ -203,6 +215,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
         env:

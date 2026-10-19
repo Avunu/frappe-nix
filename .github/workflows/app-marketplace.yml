@@ -20,6 +20,12 @@ on:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
+      runs-on:
+        description: >-
+          The runner of every Linux job, as JSON: a label or a list of labels
+          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       FETCH_TOKEN:
         required: false
@@ -35,7 +41,7 @@ jobs:
   marketplace:
     name: marketplace
     if: ${{ !startsWith(github.ref, 'refs/heads/version-') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 30
     permissions:
       contents: read # the checkout
@@ -66,12 +72,32 @@ jobs:
           persist-credentials: false
 
       # mysqlclient has no Linux wheel, and the get-app validation bench installs frappe from source.
-      - run: sudo apt-get install -y --no-install-recommends pkg-config libmysqlclient-dev
+      - if: runner.environment == 'github-hosted'
+        run: sudo apt-get install -y --no-install-recommends pkg-config libmysqlclient-dev
+
+      # The same build inputs on a self-hosted runner with Nix (no apt, no sudo): a C compiler,
+      # pkg-config and the MariaDB client headers, on PATH and PKG_CONFIG_PATH for the job.
+      - if: runner.environment != 'github-hosted'
+        name: mysqlclient's build inputs, from Nix
+        run: |
+          set -euo pipefail
+          pkgconfig=""
+          for p in $(nix build --no-link --print-out-paths nixpkgs#gcc nixpkgs#pkg-config nixpkgs#libmysqlclient.dev); do
+            if [ -d "$p/bin" ]; then
+              echo "$p/bin" >> "$GITHUB_PATH"
+            fi
+            if [ -d "$p/lib/pkgconfig" ]; then
+              pkgconfig="$p/lib/pkgconfig${pkgconfig:+:$pkgconfig}"
+            fi
+          done
+          echo "PKG_CONFIG_PATH=$pkgconfig" >> "$GITHUB_ENV"
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: true
           cache-dependency-glob: ${{ inputs.app-root }}/flake.lock
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
         env:

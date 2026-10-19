@@ -20,6 +20,12 @@ on:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
+      runs-on:
+        description: >-
+          The runner of every Linux job, as JSON: a label or a list of labels
+          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       FETCH_TOKEN:
         required: false
@@ -34,7 +40,7 @@ env:
 jobs:
   pr-policy:
     name: pr-policy
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
       contents: read # the checkout
@@ -53,6 +59,8 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: The commit tools
         run: |

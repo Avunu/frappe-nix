@@ -1367,6 +1367,24 @@
             "default": 75,
             "minimum": 1
           },
+          "runs-on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            ],
+            "description": "The runner of every Linux job in the reusable workflows: a runner label, or the labels a runner must all have ([\"self-hosted\", \"nixos\"]). Unset (the default), the callers pass nothing and the jobs run on ubuntu-latest. A pull request from a fork runs on ubuntu-latest whatever this says (docs: ci.md)."
+          },
           "schedules": {
             "type": "object",
             "additionalProperties": false,

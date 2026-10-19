@@ -23,7 +23,8 @@ name: check
 # runs them only with `vm-tests: true`: the release flow (release.yml) dispatches
 # this workflow on its release PR without inputs, and gets `lint` and `flake` alone.
 #
-# Every job that uses nix sets up magic-nix-cache, so a run reuses what earlier runs built.
+# Every job that uses nix sets up magic-nix-cache on a GitHub-hosted runner, so a run reuses what
+# earlier runs built; the self-hosted runner keeps its own /nix/store between jobs.
 
 on:
   push:
@@ -40,7 +41,7 @@ permissions: {}
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     permissions:
       contents: read # the checkout
     steps:
@@ -53,7 +54,7 @@ jobs:
       - uses: j178/prek-action@1382ad72dea72f9d53832f2bcb65b3e87a947204 # v3.0.1
 
   flake:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     permissions:
       contents: read # the checkout
     outputs:
@@ -64,10 +65,12 @@ jobs:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -133,10 +136,12 @@ jobs:
       # `kvm` stays at its default (on): the installer adds the udev rule so the
       # daemon advertises the `kvm` system feature the VM tests need.
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false

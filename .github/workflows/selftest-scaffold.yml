@@ -63,7 +63,7 @@ env:
 
 jobs:
   rendered:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -77,10 +77,12 @@ jobs:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -274,7 +276,7 @@ jobs:
           grep -q 'drifted' "$RUNNER_TEMP/carbon-in-report.txt"
 
   bootstrap:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -288,10 +290,12 @@ jobs:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -377,7 +381,7 @@ jobs:
           done
 
   real-lock:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -387,10 +391,12 @@ jobs:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -434,6 +440,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from a clone, then leave no frappe-nix on disk
         run: |

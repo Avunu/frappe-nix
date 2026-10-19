@@ -40,7 +40,7 @@ env:
 
 jobs:
   workflows:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 20
     permissions:
       contents: read # the checkout
@@ -50,6 +50,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: frappe-nix-tools from this checkout, and the fixture's pinned linters
         run: |
@@ -104,6 +107,8 @@ jobs:
       # frappe-nix's own integration branch: the ratchet base of a dispatched run.
       integration-branch: main
       frappe-nix-override: .
+      # The self-hosted NixOS runner (a fork's PR still runs on ubuntu-latest).
+      runs-on: '["self-hosted","nixos"]'
 
   typecheck:
     name: ci
@@ -117,6 +122,8 @@ jobs:
       # frappe-nix's own integration branch: the ratchet base of a dispatched run.
       integration-branch: main
       frappe-nix-override: .
+      # The self-hosted NixOS runner (a fork's PR still runs on ubuntu-latest).
+      runs-on: '["self-hosted","nixos"]'
 
   marketplace:
     name: ci
@@ -130,10 +137,12 @@ jobs:
       # frappe-nix's own integration branch: the ratchet base of a dispatched run.
       integration-branch: main
       frappe-nix-override: .
+      # The self-hosted NixOS runner (a fork's PR still runs on ubuntu-latest).
+      runs-on: '["self-hosted","nixos"]'
 
   contexts:
     needs: [lint, typecheck, marketplace]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 5
     permissions:
       checks: read # this run's check-run names
@@ -167,6 +176,8 @@ jobs:
       # frappe-nix's own integration branch: the ratchet base of a dispatched run.
       integration-branch: main
       frappe-nix-override: .
+      # The self-hosted NixOS runner (a fork's PR still runs on ubuntu-latest).
+      runs-on: '["self-hosted","nixos"]'
 
   pr-policy:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -181,9 +192,11 @@ jobs:
       # frappe-nix's own integration branch: the ratchet base of a dispatched run.
       integration-branch: main
       frappe-nix-override: .
+      # The self-hosted NixOS runner (a fork's PR still runs on ubuntu-latest).
+      runs-on: '["self-hosted","nixos"]'
 
   minibench:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 20
     permissions:
       contents: read # the checkout
@@ -193,6 +206,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: validate_customizations in the mini-bench
         run: |
