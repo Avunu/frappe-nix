@@ -73,6 +73,18 @@ prepare() {
   commit "$dir" fixture
 }
 
+# A port offset of this job's own, in CI, as selftest-runtime's: every suite's fixture is the
+# bench standards-fixture, an unsalted checkout, so all of them hash to one offset, and the
+# legs of both selftests, on every instance of a shared self-hosted runner, would race for its
+# ports. A caller's FRAPPE_NIX_PORT_OFFSET, or a run by hand, keeps the name's hash.
+job_port_offset() {
+  if [ -n "${GITHUB_RUN_ID:-}" ] && [ -z "${FRAPPE_NIX_PORT_OFFSET:-}" ]; then
+    FRAPPE_NIX_PORT_OFFSET="$(($(printf '%s' "$GITHUB_RUN_ID-${GITHUB_JOB:-}-$1-${RUNNER_NAME:-}" | cksum | cut -d' ' -f1) % 900))"
+    export FRAPPE_NIX_PORT_OFFSET
+    echo "selftest-product: FRAPPE_NIX_PORT_OFFSET=$FRAPPE_NIX_PORT_OFFSET for this job"
+  fi
+}
+
 # ── listing (no Nix) ─────────────────────────────────────────────────────────────────
 
 cmd_listing() {
@@ -336,8 +348,14 @@ PY
 mkdir -p "$WORK"
 case "${1:-}" in
   listing) cmd_listing ;;
-  shots) cmd_shots ;;
-  demo-erpnext) cmd_demo_erpnext ;;
+  shots)
+    job_port_offset shots
+    cmd_shots
+    ;;
+  demo-erpnext)
+    job_port_offset demo-erpnext
+    cmd_demo_erpnext
+    ;;
   *)
     echo "usage: $0 listing|shots|demo-erpnext" >&2
     exit 2
