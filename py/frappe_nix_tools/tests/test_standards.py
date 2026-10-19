@@ -17,6 +17,7 @@ from scaffold_helpers import EXAMPLE_ORG, AppCase, flake_lock, git, write_profil
 
 BARE = """[project]
 name = "demo_app"
+description = "A demo app"
 requires-python = ">=3.14"
 dynamic = ["version"]
 

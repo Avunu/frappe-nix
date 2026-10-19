@@ -302,6 +302,17 @@ def problems(doc: dict, ctx: Any) -> list[tuple[int, str]]:
 				)
 		if _on(ctx, "build-system") and _get(doc, ("tool", "poetry")) is not None:
 			out.append((INVALID, "[tool.poetry] is forbidden while metadata.build-backend is flit (D6)"))
+		if _on(ctx, "build-system"):
+			description = _get(doc, ("project", "description"))
+			dynamic = _get(doc, ("project", "dynamic")) or []
+			if not (isinstance(description, str) and description.strip()) and "description" not in dynamic:
+				out.append(
+					(
+						DRIFT,
+						"[project].description is missing: flit_core will not build the app without it"
+						" (bench new-app writes the app's one-line description there)",
+					)
+				)
 	if _on(ctx, "tests"):
 		fail = _get(doc, ("tool", "coverage", "report", "fail_under"))
 		if fail is not None and (
