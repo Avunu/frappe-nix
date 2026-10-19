@@ -70,11 +70,15 @@ let
   # clone and dirty the worktree forever. `name` is committed in the bench's
   # own flake.nix, so every clone on every machine derives the same number.
   #
-  # Nothing moves a port at run time: devenv's port allocator is the identity
-  # under its flake integration, so two clones of one bench running at once
-  # collide. App mode salts a linked worktree's offset with its path (its bench
-  # is generated, so nothing committed moves), and FRAPPE_NIX_PORT_OFFSET picks
-  # one by hand; see the `ports.offset` option.
+  # The port each service ends up with is decided at `devenv up`, not here:
+  # devenv's port allocator is the identity under its flake integration, so
+  # what this module evaluates is the *preferred* port, where the lease
+  # (lib/port-lease.py, the frappe-ports process) starts looking. On a free
+  # port that is the port. On a taken one an app-mode bench moves up to
+  # ports.span ports along, and a bench-mode one, whose web port is committed,
+  # refuses (ports.strict). App mode also salts a linked worktree's offset with
+  # its path, and FRAPPE_NIX_PORT_OFFSET picks one by hand, so two checkouts
+  # rarely want the same ports in the first place; see the `ports.offset` option.
   ports = inputs.python-devops-nix.lib.ports;
   portVariable = {
     label = "frappe-nix";
@@ -823,11 +827,14 @@ in
               and FRAPPE_DB_PORT still name its allocated-but-unbound port, so an
               app that opens its own connection to conf.db_host:db_port fails
               against this bench rather than landing in a neighbouring bench's
-              database. Mailpit's ports stay: it is Go and has no unix listener.
+              database. Mailpit's SMTP and UI ports stay on TCP for now: Mailpit
+              can listen on unix sockets, but the mail guard's SMTP client
+              (python-devops-nix's devguard) cannot connect to one yet.
 
-              Set false to keep every service on TCP; ports are still allocated
-              dynamically, so benches still do not collide — they just use more
-              ports and no nginx.
+              Set false to keep every service on TCP, with more ports and no
+              nginx. Those ports are fixed: `devenv up` refuses one that is
+              taken (ports.strict does not apply), because the processes that
+              bind them take them from their command lines.
 
               Needs frappe >= 15.46 (or any v16), which is where the realtime
               server learned `socketio_uds` and the node redis client learned
@@ -882,8 +889,9 @@ in
                 App mode: salt `ports.offset` with the checkout's path in a linked
                 worktree (`git worktree add`, whose `.git` is a file), so a second
                 worktree of the same app gets its own ports. The primary checkout
-                keeps the `name` hash either way. It also has `devenv up` stop
-                and name a TCP port that is already taken.
+                keeps the `name` hash either way. Two checkouts that want the same
+                port anyway (CI copies, a same-named clone) still both run:
+                `devenv up` leases another (see `ports.strict`).
 
                 On by default only for an app that opted in to the app standards
                 (docs/app-standards/spec.md §5.12, S35), so the linked worktrees of
@@ -908,12 +916,15 @@ in
                 second worktree of the same app gets its own ports; the primary
                 checkout keeps the `name` hash.
 
-                The ports are fixed when the shell is evaluated: devenv's port
-                allocator does not move them under flake integration. In app mode
-                with `ports.worktreeSalt` on, `devenv up` stops and names one that
-                is already taken. In app mode, `FRAPPE_NIX_PORT_OFFSET` (0 to 899)
-                picks another offset for the shell and wins over this option; bench
-                mode ignores it, because its web port is committed.
+                Each is the *preferred* port. `devenv up` leases the ports
+                before anything binds them (the frappe-ports process): a free
+                preferred port is the port, and a taken one is moved past, up to
+                `ports.span` ports along, in app mode, or refused in bench mode
+                (`ports.strict`). The ports in force are in
+                $DEVENV_RUNTIME/frappe-nix/ports.json while the bench runs, which
+                `frappe-nix-ports` prints. In app mode, `FRAPPE_NIX_PORT_OFFSET`
+                (0 to 899) picks another offset for the shell and wins over this
+                option; bench mode ignores it, because its web port is committed.
               '';
             };
             base = tree.base // {
@@ -921,8 +932,43 @@ in
                 The web port, overriding `8000 + ports.offset`. Only the web port:
                 Mailpit and MariaDB keep theirs from `ports.offset`.
 
-                It is the port nginx binds, not a starting point: nothing moves it
-                if it is taken.
+                It is the port nginx binds, not a starting point: while
+                `ports.strict` is unset, `devenv up` refuses it when it is taken
+                rather than moving it.
+              '';
+            };
+
+            strict = mkOption {
+              type = types.nullOr types.bool;
+              default = null;
+              defaultText = lib.literalMD "`null`: strict in bench mode, not in app mode";
+              description = ''
+                Whether `devenv up` refuses a preferred port that is taken
+                (true) or leases the next free one (false). Refused, it stops
+                before starting anything and names the port and the bench or
+                process that holds it, as `devenv up --strict-ports` does under
+                the devenv CLI.
+
+                Unset, it is strict in bench mode, whose web port is written into
+                the committed sites/common_site_config.json, and moves in app
+                mode, whose bench is generated (docs/app-standards/spec.md §5.12).
+                `ports.base` is never moved while this is unset. Set false in
+                bench mode, a moved web port is used for the run but the
+                committed `webserver_port` keeps the preferred one.
+
+                `FRAPPE_NIX_STRICT_PORTS=1` makes any `devenv up` strict, and
+                `FRAPPE_NIX_STRICT_PORTS=0` lets an app-mode bench move; both are
+                read when `devenv up` runs. With `sockets.enable = false` the
+                ports are always strict.
+              '';
+            };
+
+            span = mkOption {
+              type = types.ints.between 1 1000;
+              default = 100;
+              description = ''
+                How many ports, from the preferred one, `devenv up` tries for each
+                service before it gives up: as many as devenv's own allocator.
               '';
             };
           };
@@ -988,11 +1034,10 @@ in
               mail. Was `devguard.mail.port` (`devguard.mail.smtpPort` before).
 
               Per-bench by default so several benches can catch mail at once.
-              Nothing moves it at run time (devenv's allocator is the identity
-              under flake integration). In app mode with `ports.worktreeSalt`
-              on, `devenv up` stops before starting anything if it is taken.
-              $DEVENV_RUNTIME/devguard-runtime.json, which frappe_devguard
-              prefers over the baked-in value, records the same port.
+              The preferred port: `devenv up` leases another when it is taken
+              (see `ports.strict`), and $DEVENV_RUNTIME/devguard-runtime.json,
+              which frappe_devguard prefers over the baked-in value, records the
+              one Mailpit actually binds.
             '';
           };
 
@@ -2015,10 +2060,10 @@ in
 
         portOffset = portOffsetOf cfg;
 
-        # Every base below is the port itself, not where an allocator starts
-        # looking: devenv's allocator is the identity under flake integration,
-        # so a taken port stays taken. `devenv up` checks nginx's and Mailpit's
-        # before it starts anything (portsFreeCheck).
+        # Every base below is the preferred port, as the shell is evaluated.
+        # devenv's allocator is the identity under flake integration, so
+        # `devenv up` leases nginx's and Mailpit's itself (the frappe-ports
+        # process) and they read theirs back from ports.json; see portLease.
         webBase = cfg.ports.http;
 
         # Per-bench, for the same reason every other port here is: a shared base
@@ -2501,7 +2546,7 @@ in
             };
             mail = {
               enable = mailGuard;
-              url = lib.optionalString mailpitEnabled "http://${mp.host}:${toString mailpitHttpBase}";
+              url = lib.optionalString mailpitEnabled "http://${mp.host}:@mailUi@";
               incoming = if mailpitEnabled && mp.pop3.enable then "served from Mailpit POP3" else "blocked";
             };
           };
@@ -2523,8 +2568,9 @@ in
                 ]
             );
         };
-        # Mailpit's web UI, as the banner names it.
-        mailpitUi = "Mailpit (http://${mp.host}:${toString mailpitHttpBase})";
+        # Mailpit's web UI, as the banner names it: @mailUi@ is the leased port
+        # while the bench runs, else the preferred one.
+        mailpitUi = "Mailpit (http://${mp.host}:@mailUi@)";
 
         nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
 
@@ -2738,13 +2784,14 @@ in
             redisUrl = "unix://${redisSocket}";
 
             # The single public port: nginx when we are on sockets, otherwise
-            # the web server itself. Read from the process that actually owns
-            # the listener so the allocator's self-heal is followed.
+            # the web server itself. Read from the process that owns the
+            # listener, which is where ports.main.allocate seeds it.
             #
-            # NB this is the *base* during a plain shell eval and the allocated
-            # value only under `devenv up` — devenv enables the allocator for
-            # `up` alone. Hence: never surface it in `env`, and let the up-task
-            # (which does run with the allocator live) be the one writer.
+            # NB the *preferred* port: under flake integration devenv's
+            # allocator is the identity, so this is the base at every eval, and
+            # in sockets mode nginx may be serving on another one that
+            # frappe-ports leased (portLease). Never surface it in `env`; read
+            # ports.json at run time. With sockets off it is the port, strictly.
             webPort =
               if sockets then
                 config.processes.nginx.ports.main.value
@@ -2754,58 +2801,110 @@ in
               else
                 config.processes.web.ports.main.value;
 
-            # The top of `devenv up`, before process-compose starts anything:
-            # stop when a TCP port this bench is about to bind is already taken,
-            # by another bench whose offset collides or by this one already
-            # running elsewhere. Nothing would move it (the allocator is the
-            # identity under flake integration), so without this nginx or
-            # Mailpit dies on bind and the processes that wait on it hang.
-            # A connect, not a bind: it needs no privileges and no extra tool.
-            #
-            # App mode only, and there only where the worktree salt is in play
-            # (an app that opted in, or one that set ports.worktreeSalt): that
-            # is what makes two checkouts of one app run at once, and every
-            # other bench starts exactly as it did before (S35; §5.12 leaves
-            # bench mode unchanged).
-            portsFreeCheckActive = appMode && (standardsShell.optedIn || cfg.ports.worktreeSalt);
-            portsFreeCheck =
-              let
-                webName = if sockets then "nginx" else "web";
-                wanted = [
-                  "${webName} 127.0.0.1 ${toString webPort}"
+            # Runtime port leases (lib/port-lease.py). The frappe-ports process
+            # claims nginx's and Mailpit's ports host-wide before anything binds
+            # them and holds the claims for as long as the bench runs, moving
+            # past a taken one in app mode; nginx, Mailpit and frappe:config
+            # start after it and read ports.json. Every bench gets one: two
+            # copies of one app (CI legs on one host, two clones) hash to the
+            # same ports, and without the lease the second's nginx failed to
+            # bind while its readiness check answered from the first's.
+            portLease = rec {
+              tool = import ../lib/port-lease.nix { inherit pkgs; };
+              dir = "${runtime}/frappe-nix";
+              file = "${dir}/ports.json";
+              # Ours, beside the bench name: DEVENV_RUNTIME is a hash of this
+              # checkout's path, so two copies of one bench differ here. nginx
+              # answers it at /__frappe_nix/bench, which is how frappe-test
+              # knows the web port it found is this bench's.
+              benchId = "${cfg.name}/${baseNameOf runtime}";
+              # KEY/LABEL=HOST:PORT, preferred. KEY is the ports.json key, LABEL
+              # what the messages call it (the old check's names).
+              wants = [
+                "web/${if sockets then "nginx" else "web"}=127.0.0.1:${toString webPort}"
+              ]
+              ++ lib.optionals mailpitEnabled (
+                [
+                  "mailpit_smtp/mailpit-smtp=${mp.host}:${toString config.processes.mailpit.ports.smtp.value}"
+                  "mailpit_ui/mailpit-ui=${mp.host}:${toString config.processes.mailpit.ports.ui.value}"
                 ]
-                ++ lib.optionals mailpitEnabled (
-                  [
-                    "mailpit-smtp ${mp.host} ${toString config.processes.mailpit.ports.smtp.value}"
-                    "mailpit-ui ${mp.host} ${toString config.processes.mailpit.ports.ui.value}"
-                  ]
-                  ++ lib.optional mp.pop3.enable "mailpit-pop3 ${mp.host} ${toString config.processes.mailpit.ports.pop3.value}"
-                );
-              in
-              ''
-                _frappe_nix_taken=""
-                for _frappe_nix_port in ${lib.escapeShellArgs wanted}; do
-                  read -r _what _host _port <<< "$_frappe_nix_port"
-                  if ${pkgs.coreutils}/bin/timeout 2 ${pkgs.bash}/bin/bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ "$_host" "$_port" 2>/dev/null; then
-                    _frappe_nix_taken="$_frappe_nix_taken $_what=$_host:$_port"
-                  fi
-                done
-                if [ -n "$_frappe_nix_taken" ]; then
-                  echo "frappe-nix: cannot start ${cfg.name}: already in use:$_frappe_nix_taken" >&2
-                  echo "  Another bench on the same ports, or this bench already up in another shell." >&2
-                  ${lib.optionalString (cfg.ports.base != null) ''
-                    # ports.base pins the web port: the offset does not move it.
-                    case "$_frappe_nix_taken" in
-                      *" ${webName}="*)
-                        echo "  The web port is frappe-nix.ports.base (${toString cfg.ports.base}), which FRAPPE_NIX_PORT_OFFSET" >&2
-                        echo "  does not move: change ports.base in flake.nix for that one." >&2 ;;
-                    esac
-                  ''}
-                  echo "  Pick other ports for this shell (offset now ${toString portOffset}, 0 to 899):" >&2
-                  echo "    FRAPPE_NIX_PORT_OFFSET=<n> nix develop --no-pure-eval   (or direnv reload)" >&2
-                  exit 1
-                fi
-              '';
+                ++ lib.optional mp.pop3.enable "mailpit_pop3/mailpit-pop3=${mp.host}:${toString config.processes.mailpit.ports.pop3.value}"
+              );
+              # Strict unless this bench may move (ports.strict). With sockets
+              # off the ports are on the processes' command lines, fixed at
+              # evaluation, so they cannot move whatever the option says.
+              strictDefault =
+                if !sockets then
+                  true
+                else if cfg.ports.strict != null then
+                  cfg.ports.strict
+                else
+                  !appMode;
+              # `hold`, checking (`"" "--dry-run"`) or holding (`"exec " ""`):
+              # FRAPPE_NIX_STRICT_PORTS is read when `devenv up` runs. 1 makes
+              # any bench strict; 0 lets an app-mode bench move (bench mode
+              # moves only through the option, spec §5.12).
+              hold = prefix: mode: ''
+                _frappe_nix_strict=${lib.optionalString strictDefault "--strict"}
+                case "''${FRAPPE_NIX_STRICT_PORTS:-}" in
+                  1 | true | yes) _frappe_nix_strict=--strict ;;
+                  0 | false | no) ${if appMode && sockets then "_frappe_nix_strict=" else ":"} ;;
+                esac
+                ${prefix}${lib.getExe tool} hold ${mode} $_frappe_nix_strict ${
+                  lib.concatStringsSep " " (
+                    [
+                      "--runtime ${lib.escapeShellArg runtime}"
+                      "--bench-id ${lib.escapeShellArg benchId}"
+                      "--name ${lib.escapeShellArg cfg.name}"
+                      "--root ${lib.escapeShellArg config.devenv.root}"
+                      "--span ${toString cfg.ports.span}"
+                      "--offset ${toString portOffset}"
+                    ]
+                    # ports.base pins the web port, unless ports.strict says otherwise.
+                    ++ lib.optionals (cfg.ports.base != null && cfg.ports.strict == null) [
+                      "--base ${toString cfg.ports.base}"
+                      "--pin web"
+                    ]
+                    ++ lib.optional sockets "--render ${lib.escapeShellArg "${config.services.nginx.configFile}=${dir}/nginx.conf"}"
+                    ++ map lib.escapeShellArg wants
+                  )
+                }'';
+              # `frappe-nix-ports`: the leased ports while the bench runs, else
+              # the preferred ones (exit 3).
+              command = pkgs.writeShellApplication {
+                name = "frappe-nix-ports";
+                text = ''
+                  lease=${lib.getExe tool}
+                  case "''${1:-}" in
+                    who)
+                      shift
+                      exec "$lease" who "$@"
+                      ;;
+                    --path)
+                      echo ${lib.escapeShellArg file}
+                      ;;
+                    -h | --help)
+                      echo "usage: frappe-nix-ports [--json | KEY]          the ports this bench serves on (exit 3: not up)"
+                      echo "       frappe-nix-ports who PORT [--host HOST]  which bench, or what, holds PORT"
+                      echo "       frappe-nix-ports --path                  where ports.json is"
+                      ;;
+                    *)
+                      exec "$lease" show --runtime ${lib.escapeShellArg runtime} ${
+                        lib.concatMapStringsSep " " (
+                          w:
+                          let
+                            m = builtins.match "([a-z0-9_]+)/[^=]*=.*:([0-9]+)" w;
+                          in
+                          lib.escapeShellArg "--preferred=${builtins.elemAt m 0}=${builtins.elemAt m 1}"
+                        ) wants
+                      } "$@"
+                      ;;
+                  esac
+                '';
+              };
+              # KEY's leased port, as a command substitution in a wrapper or a probe.
+              read = key: "$(${pkgs.jq}/bin/jq -er '.${key}' ${lib.escapeShellArg file})";
+            };
 
             redisCli =
               "${config.services.redis.package}/bin/redis-cli "
@@ -2919,6 +3018,9 @@ in
                 # `frappe-nix-build-deps {update,check}`: the managed
                 # [tool.uv.extra-build-dependencies] block against uv.lock.
                 buildDepsTools.command
+                # The ports this bench serves on (`devenv up` leases them), and
+                # which bench holds a port.
+                portLease.command
 
                 # Dev tools
                 curl
@@ -3000,6 +3102,11 @@ in
                 # (CONVENTIONS.md, Tool-owned variables). frappe_devguard does
                 # not read it; FRAPPE_DEVGUARD_* is its own.
                 FRAPPE_NIX_DEVGUARD = if dg.enable then "1" else "0";
+                # Where `devenv up` records the ports it leased and the bench's
+                # identity (portLease): frappe-test, frappe-demo and frappe-shots
+                # read the web port from it and check that the server answering
+                # there is this bench. Present only while the bench runs.
+                FRAPPE_NIX_PORTS_FILE = portLease.file;
 
                 FRAPPE_BENCH_ROOT = benchPath;
                 SITES_PATH = benchPath + "/sites";
@@ -3203,10 +3310,11 @@ in
               ${ciMode.banner {
                 inherit (cfg) name;
                 interactive = ''
-                  # Read back rather than interpolate: the port allocator only runs
-                  # for `devenv up`, so a value baked in here would be the base while
-                  # the running nginx might have moved on.
-                  _port="$(${pkgs.jq}/bin/jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2>/dev/null || true)"
+                  # Read back rather than interpolate: the ports are leased at
+                  # `devenv up`, so a value baked in here is only the preferred one.
+                  # While the bench runs, the leased ports; before, the preferred.
+                  _port="$(${lib.getExe portLease.command} web 2>/dev/null || true)"
+                  _mail_ui="$(${lib.getExe portLease.command} mailpit_ui 2>/dev/null || true)"
 
                   ${inputs.python-devops-nix.lib.banner.script {
                     inherit pkgs;
@@ -3214,6 +3322,7 @@ in
                     spec = bannerSpec;
                     vars = {
                       port = "\${_port:-${toString webBase}}";
+                      mailUi = "\${_mail_ui:-${toString mailpitHttpBase}}";
                       benchRoot = "$FRAPPE_BENCH_ROOT";
                     }
                     // lib.optionalAttrs sockets { runtime = "$DEVENV_RUNTIME"; };
@@ -3303,21 +3412,18 @@ in
               port = if sockets then 0 else 13000;
             };
 
-            # Mailpit is Go and has no unix listener, so it keeps two TCP ports.
-            # devenv's own module runs both through the port allocator, which is
-            # the whole reason to use it instead of the hand-rolled process this
-            # replaces. POP3 is not one of its options, so that port is allocated
-            # here and passed through additionalArgs.
+            # Mailpit keeps its SMTP and UI ports on TCP. It can listen on unix
+            # sockets (`unix:<path>:<mode>`), but the mail guard's SMTP client,
+            # python-devops-nix's devguard, cannot connect to one yet; moving
+            # both there, with the UI behind nginx, is a later step.
+            #
+            # devenv's module declares the two ports (the CLI's allocator starts
+            # from them) and the package; the process itself is ours, below,
+            # because the ports it binds are the ones frappe-ports leased.
             services.mailpit = lib.mkIf mailpitEnabled {
               enable = true;
               uiListenAddress = "${mp.host}:${toString mailpitHttpBase}";
               smtpListenAddress = "${mp.host}:${toString mailpitSmtpBase}";
-              additionalArgs = lib.optionals mp.pop3.enable [
-                "--pop3"
-                "${mp.host}:${toString config.processes.mailpit.ports.pop3.value}"
-                "--pop3-auth-file"
-                "${mailpitPop3Auth}"
-              ];
             };
 
             # The single public listener. Everything behind it is on a socket, so
@@ -3339,7 +3445,19 @@ in
                 }
 
                 server {
-                  listen 127.0.0.1:${toString webPort};
+                  # The port frappe-ports leased, and this bench's identity: the
+                  # config devenv writes is a template, rendered into
+                  # $DEVENV_RUNTIME/frappe-nix/nginx.conf at `devenv up`.
+                  listen 127.0.0.1:@WEB_PORT@;
+
+                  # Which bench this is, on every answer, and on its own at
+                  # /__frappe_nix/bench: a readiness check that only asks for any
+                  # HTTP answer on the port passes against another bench's nginx.
+                  add_header X-Frappe-Nix-Bench "@BENCH_ID@" always;
+                  location = /__frappe_nix/bench {
+                    default_type text/plain;
+                    return 200 "@BENCH_ID@";
+                  }
 
                   # nginx defaults to 1m; Frappe's own limit is 25m
                   # (frappe/app.py: request.max_content_length). Without this,
@@ -3422,8 +3540,12 @@ in
             # FRAPPE_NIX_SCOPED stops the re-run from scoping itself again. The
             # show-environment probe makes a machine with no user manager (a bare
             # SSH login, a container) run unscoped instead of failing to start.
+            #
+            # Then, inside the scope, the lease's own check (portLease): a strict
+            # bench whose port is taken stops here, before anything starts, with
+            # the port and its holder named, as the old bound-port check did. It
+            # holds nothing; frappe-ports, the first process, takes the leases.
             process.manager.before = lib.mkMerge [
-              (lib.mkIf portsFreeCheckActive portsFreeCheck)
               (
                 let
                   ps = cfg.processScope;
@@ -3445,6 +3567,7 @@ in
                   fi
                 ''
               )
+              (portLease.hold "" "--dry-run" + " || exit 1")
             ];
 
             # Ordering uses devenv's own `after`, not the raw process-compose
@@ -3625,6 +3748,24 @@ in
                 };
               in
               {
+                # The bench's TCP ports, leased before anything binds them and
+                # held until it stops (portLease, lib/port-lease.py). Nothing to
+                # wait for: it is the first thing that runs.
+                frappe-ports = {
+                  exec = portLease.hold "exec " "";
+                  # Not the file alone: one a killed holder left behind would
+                  # pass before this holder has written its own.
+                  ready = {
+                    exec = "${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}";
+                    period = 1;
+                    probe_timeout = 5;
+                    failure_threshold = 30;
+                  };
+                  # A second run would lease afresh, perhaps other ports, under
+                  # an nginx and a Mailpit already bound to the first's.
+                  restart.on = "never";
+                };
+
                 # devenv's own probe is `mariadb-admin ping` with no timeout at
                 # either layer. Against a server that accepts the connection and
                 # then never answers — exactly what a wedged orphan does — every
@@ -3661,15 +3802,23 @@ in
               // (if runtimeActive then runtimeProcess else splitProcesses)
               // lib.optionalAttrs sockets {
                 nginx = {
+                  # The allocator's base, for the devenv CLI; under flake
+                  # integration it is only the preferred port, and nginx serves
+                  # on the one frappe-ports leased, from the config it rendered.
                   ports.main.allocate = webBase;
-                  after =
+                  exec = lib.mkForce "exec ${config.services.nginx.package}/bin/nginx -c ${lib.escapeShellArg "${portLease.dir}/nginx.conf"} -e /dev/stderr";
+                  after = [
+                    "devenv:processes:frappe-ports"
+                  ]
+                  ++ (
                     if runtimeActive then
                       [ "devenv:processes:runtime" ]
                     else
                       [
                         "devenv:processes:web"
                         "devenv:processes:socketio"
-                      ];
+                      ]
+                  );
                   # Load-bearing, and not for the health reporting.
                   #
                   # devenv picks a supervisor per process
@@ -3699,9 +3848,11 @@ in
                   # reason socketReady spells out — and here it also keeps the
                   # probe about *nginx*: a 502 from a still-warming upstream is
                   # an answer, so this reports on the listener we own rather
-                  # than re-testing the dependencies we already waited for.
+                  # than re-testing the dependencies we already waited for. And
+                  # the listener must be ours: the identity it answers is this
+                  # bench's, not a neighbour's that holds the same port.
                   ready = {
-                    exec = "${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 http://127.0.0.1:${toString webPort}/";
+                    exec = ''[ "$(${pkgs.curl}/bin/curl -s --max-time 4 "http://127.0.0.1:${portLease.read "web"}/__frappe_nix/bench")" = ${lib.escapeShellArg portLease.benchId} ]'';
                     initial_delay = 1;
                     period = 5;
                     probe_timeout = 5;
@@ -3744,15 +3895,28 @@ in
               }
               // lib.optionalAttrs mailpitEnabled {
                 mailpit = {
+                  # devenv's command, on the ports frappe-ports leased.
+                  exec = lib.mkForce (
+                    lib.concatStringsSep " " (
+                      [
+                        "exec ${config.services.mailpit.package}/bin/mailpit"
+                        ''--db-file "$DEVENV_STATE/mailpit/db.sqlite3"''
+                        ''--listen "${mp.host}:${portLease.read "mailpit_ui"}"''
+                        ''--smtp "${mp.host}:${portLease.read "mailpit_smtp"}"''
+                      ]
+                      ++ lib.optionals mp.pop3.enable [
+                        ''--pop3 "${mp.host}:${portLease.read "mailpit_pop3"}"''
+                        "--pop3-auth-file ${mailpitPop3Auth}"
+                      ]
+                      ++ map lib.escapeShellArg config.services.mailpit.additionalArgs
+                    )
+                  );
+                  after = [ "devenv:processes:frappe-ports" ];
                   # Everything that can send mail waits for the catcher, and
                   # "wait" means @ready — devenv's default — so it needs a probe
                   # of its own. The UI port is a real check: Mailpit only serves
                   # it once its listeners are up.
-                  ready.http.get = {
-                    inherit (mp) host;
-                    port = config.processes.mailpit.ports.ui.value;
-                    path = "/";
-                  };
+                  ready.exec = "${pkgs.curl}/bin/curl -sf -o /dev/null --max-time 4 \"http://${mp.host}:${portLease.read "mailpit_ui"}/\"";
                 }
                 // lib.optionalAttrs mp.pop3.enable {
                   ports.pop3.allocate = mailpitPop3Base;
@@ -3767,36 +3931,38 @@ in
             # boot.py copies socketio_port to the browser. Neither can come from
             # the environment.
             #
-            # It runs here rather than in enterShell because devenv only enables
-            # the port allocator for `devenv up`; a shell eval would write the
-            # base port while the running nginx used the allocated one.
+            # It runs here rather than in enterShell, and after frappe-ports,
+            # because the ports are leased at `devenv up`: a shell eval knows
+            # only the preferred ones (portLease).
             tasks = {
               "frappe:config" = {
                 exec = ''
                   set -euo pipefail
                   config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
-                  port=${toString webPort}
+                  ports=${lib.escapeShellArg portLease.file}
+                  port="$(${pkgs.jq}/bin/jq -er .web "$ports")"
+                  ${lib.optionalString (!appMode) ''
+                    # Bench mode commits webserver_port. A bench that set
+                    # ports.strict = false may be serving elsewhere this run;
+                    # the committed file keeps the preferred port regardless.
+                    if [ "$port" != ${toString webPort} ]; then
+                      echo "frappe-nix: nginx is on $port this run (${toString webPort} is taken); sites/common_site_config.json keeps ${toString webPort}"
+                      port=${toString webPort}
+                    fi
+                  ''}
 
                   ${lib.optionalString mailpitEnabled ''
-                    # Mailpit's ports come from the allocator too, and devguard
-                    # cannot see them: it is loaded by a .pth in every interpreter,
-                    # including ones started outside this shell. Hand it the
-                    # resolved values here — it prefers them over the baked-in
-                    # base, and falls back to the base (this bench's own range,
-                    # never a shared 1025) when this file is out of reach.
-                    printf '%s\n' ${
-                      lib.escapeShellArg (
-                        builtins.toJSON {
-                          guards.mail = {
-                            port = config.processes.mailpit.ports.smtp.value;
-                            http_port = config.processes.mailpit.ports.ui.value;
-                          }
-                          // lib.optionalAttrs mp.pop3.enable {
-                            pop3_port = config.processes.mailpit.ports.pop3.value;
-                          };
-                        }
-                      )
-                    } > "$DEVENV_RUNTIME/devguard-runtime.json"
+                    # Mailpit's ports are leased too, and devguard cannot see
+                    # them: it is loaded by a .pth in every interpreter, including
+                    # ones started outside this shell. Hand it the leased values
+                    # here — it prefers them over the baked-in preferred ones, and
+                    # falls back to those (this bench's own range, never a shared
+                    # 1025) when this file is out of reach. In one rename, so an
+                    # interpreter starting meanwhile never reads half of it.
+                    ${pkgs.jq}/bin/jq '{guards: {mail: ({port: .mailpit_smtp, http_port: .mailpit_ui}
+                      + (if .mailpit_pop3 then {pop3_port: .mailpit_pop3} else {} end))}}' \
+                      "$ports" > "$DEVENV_RUNTIME/devguard-runtime.json.tmp"
+                    mv -f -- "$DEVENV_RUNTIME/devguard-runtime.json.tmp" "$DEVENV_RUNTIME/devguard-runtime.json"
                   ''}
 
                   [ -f "$config" ] || echo '{}' > "$config"
@@ -3828,7 +3994,8 @@ in
 
                   # Compare before writing. The port is derived from `name`, so
                   # after the first run this is a no-op and the committed file stays
-                  # clean; a diff later means the allocator genuinely had to move.
+                  # clean; a diff later means the lease genuinely had to move
+                  # (app mode; bench mode always writes the preferred port).
                   if cmp -s "$tmp" "$config"; then
                     exit 0
                   fi
@@ -3853,10 +4020,13 @@ in
                   # *build* time, so its bundle still points at the old port.
                   echo "frappe-nix: if you use the wiki SPA, run 'bench build --app wiki'"
                 '';
-                # Needs redis up to clear the cache, and must land before anything
-                # reads the config — including `watch`, since the file is a vite
-                # input for wiki.
-                after = [ "devenv:processes:redis" ];
+                # Needs redis up to clear the cache and the leased ports, and must
+                # land before anything reads the config — including `watch`, since
+                # the file is a vite input for wiki.
+                after = [
+                  "devenv:processes:frappe-ports"
+                  "devenv:processes:redis"
+                ];
               };
             }
             // lib.optionalAttrs cfg.appsReconcile.enable {

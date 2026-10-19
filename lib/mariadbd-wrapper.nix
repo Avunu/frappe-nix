@@ -11,10 +11,12 @@ let
   # A mariadbd orphaned by a previous `devenv up` — one that outlived
   # its process-compose and wedged — owns $MYSQL_UNIX_PORT and, in TCP
   # mode, the allocated port, so the next run can bind neither.
-  # devenv's allocator does not rescue this: on an eval-cache replay it
+  # No port allocator rescues this. Under the flake integration devenv's
+  # is the identity, and under the devenv CLI, on an eval-cache replay, it
   # hands the cached port straight back without probing it
   # (PortAllocator::allocate_exact under allow_in_use, which
-  # reserve_running_ports sets whenever processes look live). So reap
+  # reserve_running_ports sets whenever processes look live); frappe-nix's own
+  # leases (lib/port-lease.py) cover nginx and Mailpit, not MariaDB. So reap
   # the corpse rather than hope to be allocated around it.
   mariadbdReaper = pkgs.writeShellScript "mariadbd-reap" ''
     set -uo pipefail
