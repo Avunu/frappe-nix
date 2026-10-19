@@ -197,7 +197,7 @@ def violations(root: Path, base: str) -> tuple[list[str], list[str]]:
 		notices.append("the base's configuration could not be resolved; comparing against head's modules")
 	old_pkg, new_pkg = _package(base_doc), _package(head_doc)
 	ren = _renamer(old_pkg, new_pkg)
-	if ren(old_pkg) != old_pkg:
+	if old_pkg and new_pkg and old_pkg != new_pkg:
 		notices.append(
 			f"the package was renamed {old_pkg} → {new_pkg}: base entries are compared under the new name"
 		)
