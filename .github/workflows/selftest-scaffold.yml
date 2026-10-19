@@ -63,7 +63,7 @@ env:
 
 jobs:
   rendered:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -72,15 +72,26 @@ jobs:
       matrix:
         profile: [recommended, example-org]
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -274,7 +285,7 @@ jobs:
           grep -q 'drifted' "$RUNNER_TEMP/carbon-in-report.txt"
 
   bootstrap:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -283,15 +294,26 @@ jobs:
       matrix:
         shape: [no-flake, main-locked, reenter]
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -355,6 +377,16 @@ jobs:
         run: |
           set -euo pipefail
           path="/nix/var/nix/profiles/default/bin:/usr/bin:/bin"
+          if [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            # A NixOS runner has nothing in /usr/bin: the job's PATH without any directory
+            # that holds yarn or uv.
+            path=""
+            while IFS= read -r -d : dir; do
+              if [ -n "$dir" ] && [ ! -e "$dir/yarn" ] && [ ! -e "$dir/uv" ]; then
+                path="${path:+$path:}$dir"
+              fi
+            done <<<"$PATH:"
+          fi
           if PATH="$path" command -v yarn || PATH="$path" command -v uv; then
             echo "::error::yarn or uv is on the bare PATH"
             exit 1
@@ -377,20 +409,31 @@ jobs:
           done
 
   real-lock:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
         with:
           diagnostic-endpoint: ""
           use-flakehub: false
@@ -434,6 +477,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: Install frappe-nix-tools from a clone, then leave no frappe-nix on disk
         run: |

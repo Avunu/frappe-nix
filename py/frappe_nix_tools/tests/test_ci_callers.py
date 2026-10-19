@@ -183,6 +183,67 @@ class TestSchedules(CallerCase):
 		self.assertEqual(files[f"{WORKFLOWS}/deps.yml"]["jobs"]["deps"]["with"]["relock-cron"], "0 8 * * 1")
 
 
+# The callers of frappe-nix's reusable workflows; assets.yml calls pilot's, which has no runner input.
+FRAPPE_NIX_CALLERS = {
+	"ci": None,
+	"pr-policy": ["ci"],
+	"release": ["release"],
+	"deps": ["deps"],
+	"nightly": ["nightly"],
+}
+SELF_HOSTED = '[tool.frappe-nix.ci]\nruns-on = ["self-hosted", "nixos"]\n'
+
+
+class TestRunsOn(CallerCase):
+	def jobs(self, files: dict[str, dict]) -> list[tuple[str, dict]]:
+		out = []
+		for name, ids in FRAPPE_NIX_CALLERS.items():
+			doc = files[f"{WORKFLOWS}/{name}.yml"]
+			out += [(f"{name}:{job}", doc["jobs"][job]) for job in (ids or list(doc["jobs"]))]
+		return out
+
+	def test_unset_passes_no_runner(self) -> None:
+		for where, job in self.jobs(self.render()):
+			self.assertNotIn("runs-on", job["with"], where)
+
+	def test_labels_reach_every_frappe_nix_caller_as_json(self) -> None:
+		unset = self.render()
+		files = self.render(SELF_HOSTED)
+		for where, job in self.jobs(files):
+			self.assertEqual(job["with"]["runs-on"], '["self-hosted","nixos"]', where)
+			self.assertEqual(json.loads(job["with"]["runs-on"]), ["self-hosted", "nixos"], where)
+		for name in FRAPPE_NIX_CALLERS:
+			path = self.root / WORKFLOWS / f"{name}.yml"
+			self.assertIn('      runs-on: \'["self-hosted","nixos"]\'\n', path.read_text(), name)
+		# Nothing else moves: without the input, each file is the unset render.
+		for path, doc in files.items():
+			for job in doc.get("jobs", {}).values():
+				job.get("with", {}).pop("runs-on", None)
+			self.assertEqual(doc, unset[path], path)
+
+	def test_a_single_label(self) -> None:
+		files = self.render('[tool.frappe-nix.ci]\nruns-on = "big-box"\n')
+		for where, job in self.jobs(files):
+			self.assertEqual(json.loads(job["with"]["runs-on"]), "big-box", where)
+
+	def test_a_profile_sets_it(self) -> None:
+		self.write(
+			".standards-profile/profile.toml", EVERYTHING + '\n[ci]\nruns-on = ["self-hosted", "nixos"]\n'
+		)
+		self.commit()
+		for where, job in self.jobs(self.render()):
+			self.assertEqual(job["with"]["runs-on"], '["self-hosted","nixos"]', where)
+
+	def test_invalid_values_are_exit_2(self) -> None:
+		for value in ("[]", '["self-hosted", "self-hosted"]', '["bad label"]', '""', "3"):
+			with self.subTest(value=value):
+				self.write("pyproject.toml", self.base + f"[tool.frappe-nix.ci]\nruns-on = {value}\n")
+				self.commit()
+				code, _, err = self.fn("sync", "--write")
+				self.assertEqual(code, 2, err)
+				self.assertIn("runs-on", err)
+
+
 class TestDependabot(CallerCase):
 	def test_every_entry_has_a_cooldown_and_targets_the_integration_branch(self) -> None:
 		files = self.render()

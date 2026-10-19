@@ -35,6 +35,12 @@ on:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
+      runs-on:
+        description: >-
+          The runner of every Linux job, as JSON: a label or a list of labels
+          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       NIX_CACHE_TOKEN:
         required: false
@@ -51,7 +57,7 @@ env:
 jobs:
   relock-plan:
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
     permissions:
       contents: read # the checkout; this job runs the PR's code and holds no write token
@@ -60,6 +66,15 @@ jobs:
       moved: ${{ steps.inputs.outputs.moved }}
       empty: ${{ steps.patch.outputs.empty }}
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -67,6 +82,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       # From the integration branch's flake.lock, never the PR's: this job holds a write token.
       - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
@@ -94,9 +112,11 @@ jobs:
         run: frappe-nix ci relock-inputs --base "$BASE_SHA"
 
       - name: Free disk
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
@@ -121,8 +141,13 @@ jobs:
               ;;
             *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
           esac
+          if [ -n "$CACHE" ] && [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            # A self-hosted runner's home outlives the job: the cache's credentials stay in the job's temp dir.
+            mkdir -p "$RUNNER_TEMP/config"
+            echo "XDG_CONFIG_HOME=$RUNNER_TEMP/config" >> "$GITHUB_ENV"
+          fi
           if [ -n "$FETCH_TOKEN" ]; then
-            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "NIX_CONFIG=access-tokens = github.com=$FETCH_TOKEN" >> "$GITHUB_ENV"
             echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
           fi
           if [ -n "$OVERRIDE" ]; then
@@ -147,7 +172,10 @@ jobs:
           NAME: ${{ steps.cache.outputs.name }}
         run: |
           set -euo pipefail
-          nix profile install --inputs-from . nixpkgs#attic-client
+          # Not `nix profile install`: a self-hosted runner's profile outlives the job.
+          attic="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#attic-client^out)/bin"
+          echo "$attic" >> "$GITHUB_PATH"
+          PATH="$attic:$PATH"
           attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
           attic use "ci:$NAME"
 
@@ -177,13 +205,22 @@ jobs:
   relock-push:
     needs: relock-plan
     if: needs.relock-plan.outputs.empty == 'false'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: write # push the relock commit to the Dependabot branch
       actions: write # dispatch ci.yml and pr-policy.yml on it
       pull-requests: write # enable auto-merge, or label needs-review
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.head_ref }}
@@ -226,6 +263,9 @@ jobs:
 
       - if: inputs.auto-merge
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - if: inputs.auto-merge
         name: Base checkout, for the gates the integration branch requires
@@ -269,12 +309,21 @@ jobs:
   auto-merge:
     needs: relock-plan
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && inputs.auto-merge && (needs.relock-plan.result == 'success' || needs.relock-plan.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # enable auto-merge, label or close the PR
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
@@ -287,6 +336,9 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       # From the integration branch's flake.lock, never the PR's: this job holds a write token.
       - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
@@ -343,7 +395,7 @@ jobs:
 
   sweep:
     if: (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, and which workflows exist on each PR head
@@ -351,12 +403,24 @@ jobs:
       checks: read # which ci / * checks ran on each head
       pull-requests: read # the open bot PRs
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       # From the integration branch's flake.lock, never the PR's: this job holds a write token.
       - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
@@ -384,19 +448,31 @@ jobs:
 
   relock-upgrade:
     if: (inputs.relock-cron != '' && github.event.schedule == inputs.relock-cron) || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
     permissions:
       contents: write # push standards/relock-python
       pull-requests: write # open or update its PR, enable auto-merge
       actions: write # dispatch ci.yml and pr-policy.yml on it
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       # From the integration branch's flake.lock, never the PR's: this job holds a write token.
       - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
@@ -419,9 +495,11 @@ jobs:
 
       # A schedule, but it resolves new third-party packages: the read token only.
       - name: Free disk
+        if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
         with:
           determinate: false
 
@@ -446,8 +524,13 @@ jobs:
               ;;
             *) echo "::error::nix-cache must be empty, cachix:<name> or attic:<endpoint>/<cache>, not $CACHE"; exit 1 ;;
           esac
+          if [ -n "$CACHE" ] && [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            # A self-hosted runner's home outlives the job: the cache's credentials stay in the job's temp dir.
+            mkdir -p "$RUNNER_TEMP/config"
+            echo "XDG_CONFIG_HOME=$RUNNER_TEMP/config" >> "$GITHUB_ENV"
+          fi
           if [ -n "$FETCH_TOKEN" ]; then
-            echo "access-tokens = github.com=$FETCH_TOKEN" | sudo tee -a /etc/nix/nix.conf > /dev/null
+            echo "NIX_CONFIG=access-tokens = github.com=$FETCH_TOKEN" >> "$GITHUB_ENV"
             echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
           fi
           if [ -n "$OVERRIDE" ]; then
@@ -472,7 +555,10 @@ jobs:
           NAME: ${{ steps.cache.outputs.name }}
         run: |
           set -euo pipefail
-          nix profile install --inputs-from . nixpkgs#attic-client
+          # Not `nix profile install`: a self-hosted runner's profile outlives the job.
+          attic="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#attic-client^out)/bin"
+          echo "$attic" >> "$GITHUB_PATH"
+          PATH="$attic:$PATH"
           attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
           attic use "ci:$NAME"
 

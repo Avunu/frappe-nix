@@ -27,18 +27,30 @@ env:
 jobs:
   pr-policy:
     name: pr-policy
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 5
     permissions:
       contents: read # the checkout
       pull-requests: read # the PR's title and base (a dispatch looks the PR up)
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       # committed's version is the one the app standards fixture's tools/uv.lock pins.
       - name: Install frappe-nix-tools from this checkout, and committed

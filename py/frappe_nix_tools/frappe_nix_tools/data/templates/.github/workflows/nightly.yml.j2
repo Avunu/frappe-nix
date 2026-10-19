@@ -37,6 +37,9 @@ jobs:
     with:
       app: {{ app }}
       integration-branch: {{ branches.integration }}
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
+{% endif %}
       nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
 
       run-integration: {{ "true" if modules.tests else "false" }}

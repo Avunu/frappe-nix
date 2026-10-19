@@ -59,8 +59,15 @@ def nix_attr(name: str) -> str:
 	return name if _NIX_IDENT.fullmatch(name) and name not in _NIX_KEYWORDS else nix_string(name)
 
 
+def yaml_json(value: Any) -> str:
+	"""``value`` as compact JSON in a single-quoted YAML scalar: a workflow input that the
+	reusable workflow reads with ``fromJSON`` (``ci.runs-on``)."""
+	return "'" + json.dumps(value, separators=(",", ":")).replace("'", "''") + "'"
+
+
 def _configure(env: jinja2.Environment) -> jinja2.Environment:
 	env.filters["json"] = lambda v: jsonfmt.dumps(v)
+	env.filters["yaml_json"] = yaml_json
 	env.filters["jsonc"] = lambda v: jsonfmt.dumps(v, jsonc=True)
 	env.filters["json_string"] = lambda v: json.dumps(v, ensure_ascii=False)
 	env.filters["nix_string"] = nix_string

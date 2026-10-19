@@ -11,6 +11,7 @@ own locks stay), and copies the rendered ``.github/`` to ``<out>/<case>/.github`
 - ``no-<module>``: example-org with one of typescript, tests, listing, commits, releases or
   dependabot off (releases needs commits, and pilot-assets needs releases, so they go too);
 - ``no-schedules``: example-org with every ``ci.schedules`` entry empty;
+- ``self-hosted``: example-org with ``ci.runs-on = ["self-hosted", "nixos"]``;
 
 selftest-ci.yml runs actionlint and zizmor (the fixture's pinned versions) on each.
 """
@@ -39,6 +40,7 @@ OFF = {
 	"no-schedules": (
 		'[tool.frappe-nix.ci.schedules]\nci = ""\nrelease = ""\ndeps-sweep = ""\ndeps-relock = ""\nnightly = ""\n'
 	),
+	"self-hosted": '[tool.frappe-nix.ci]\nruns-on = ["self-hosted", "nixos"]\n',
 }
 
 

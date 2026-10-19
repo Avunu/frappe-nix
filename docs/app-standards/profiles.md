@@ -3,7 +3,7 @@ title: Profiles
 description: "How an app opts in, the built-in minimal and recommended profiles, org profiles, and how [tool.frappe-nix] layers over them."
 order: 1
 tags: [app-standards, profiles, configuration]
-updated: 2026-10-16
+updated: 2026-10-19
 ---
 
 The app standards are opt-in and profile-driven. A profile decides which modules are on (lint, types, tests, commits, releases, Dependabot, CI, …) and sets their parameters and the organisation's values. An app picks one in `[tool.frappe-nix] profile`, and can change any value for itself in the same table. The [interface spec](spec.md) (§8) is the contract this page summarises.
@@ -50,7 +50,8 @@ The modules and their parameters are in the spec (§8.2), and in the schema `fra
 - `typescript`: `preset` (`"frappe-types"`, the npm package's presets, or `"inline"`, which needs no extra dependency but rules out `check-js`), `strict-extras`, `check-js`;
 - `commits`: `allowed-types`, `subject-length`;
 - `releases`: `branching` (`"develop+version"` or `"main+tags"`), `version-scheme` (`"semver"` or `"frappe-major"`), `tag-prefix`;
-- `tests`: `coverage.initial-floor`, `js-unit`, `js-coverage-min`.
+- `tests`: `coverage.initial-floor`, `js-unit`, `js-coverage-min`;
+- `ci`: `test-timeout-minutes`, `schedules` and `runs-on`, the runner of the reusable workflows' Linux jobs (unset: `ubuntu-latest`; see [CI](ci.md#runners)).
 
 ## Resolution
 

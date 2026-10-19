@@ -20,6 +20,12 @@ on:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
+      runs-on:
+        description: >-
+          The runner of every Linux job, as JSON: a label or a list of labels
+          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+        type: string
+        default: '["ubuntu-latest"]'
     secrets:
       FETCH_TOKEN:
         required: false
@@ -34,7 +40,7 @@ env:
 jobs:
   pr-policy:
     name: pr-policy
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
       contents: read # the checkout
@@ -44,6 +50,15 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.app-root }}
     steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -53,6 +68,8 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - name: The commit tools
         run: |
