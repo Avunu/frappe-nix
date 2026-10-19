@@ -177,7 +177,7 @@ in
         # A bare app: pyproject.toml, the package and its hooks.py, one commit.
         mkdir bare && cd bare
         git init -q
-        printf '[project]\nname = "bare_app"\ndynamic = ["version"]\n\n[tool.ruff]\nline-length = 110\n' > pyproject.toml
+        printf '[project]\nname = "bare_app"\ndescription = "A bare app"\ndynamic = ["version"]\n\n[tool.ruff]\nline-length = 110\n' > pyproject.toml
         mkdir bare_app
         printf '__version__ = "0.0.1"\n' > bare_app/__init__.py
         printf 'app_title = "Bare App"\n' > bare_app/hooks.py

@@ -130,7 +130,7 @@ def _throwaway(root: Path, profile: Path, extra: str, required: list[str], files
 	(app / name).mkdir(parents=True)
 	shutil.copytree(profile, app / ".standards-profile")
 	(app / "pyproject.toml").write_text(
-		f'[project]\nname = "{name}"\ndynamic = ["version"]\n\n'
+		f'[project]\nname = "{name}"\ndescription = "Ctx App"\ndynamic = ["version"]\n\n'
 		'[tool.frappe-nix]\nschema = 1\nprofile = "./.standards-profile"\nfrappe-major = 16\n' + extra
 	)
 	(app / name / "__init__.py").write_text('__version__ = "16.0.0"\n')
