@@ -311,9 +311,50 @@ check "a lock inside the generated bench is not touched" \
   grep -q 'rewritten by yarn' "$THETA/.frappe-nix/bench/apps/frappe/yarn.lock"
 unset YARN_REWRITE_LOCK
 
+echo "  · a package-lock.json is a lockfile too"
+IOTA="$BENCH/apps/iota"
+mkdir -p "$IOTA/desk"
+echo '{"name":"iota"}' > "$IOTA/package.json"
+echo '# yarn lockfile v1' > "$IOTA/yarn.lock"
+echo '{"name":"iota-desk"}' > "$IOTA/desk/package.json"
+echo '{"lockfileVersion":3}' > "$IOTA/desk/package-lock.json"
+export YARN_REWRITE_LOCK="$IOTA/desk/package-lock.json"
+"$TOOL" "$BENCH" iota > "$ROOT/lock7.log" 2>&1 || { no "the install succeeds"; cat "$ROOT/lock7.log"; }
+unset YARN_REWRITE_LOCK
+check_eq "a package-lock.json it rewrote is put back" '{"lockfileVersion":3}' "$(cat "$IOTA/desk/package-lock.json")"
+check "and reported" grep -q 'apps/iota/desk/package-lock.json: rewritten by the install, put back' "$ROOT/lock7.log"
+check "the success line names the app" grep -qxF '  ✓ iota' "$ROOT/lock7.log"
+check "and the install line" grep -qxF 'Installing node_modules for iota (incl. nested frontends)...' "$ROOT/lock7.log"
+
+echo "── exit statuses ────────────────────────────────────────────────"
+echo '# yarn lockfile v1 (bumped for the statuses)' > "$BENCH/apps/alpha/yarn.lock"
+rc=0
+YARN_FAIL=1 "$TOOL" "$BENCH" alpha > "$ROOT/status-fail.log" 2>&1 || rc=$?
+check_eq "a failed install exits 1" "1" "$rc"
+check "…naming it under the summary" grep -q '^node_modules is out of date for:' "$ROOT/status-fail.log"
+check "…with yarn's own words" grep -q 'Your lockfile needs to be updated' "$ROOT/status-fail.log"
+rc=0
+"$TOOL" "$BENCH" delta > /dev/null 2>&1 || rc=$?
+check_eq "an absent app exits 1" "1" "$rc"
+rc=0
+env PATH="$ROOT/no-such-dir" "$TOOL" "$BENCH" alpha > "$ROOT/noyarn.log" 2>&1 || rc=$?
+check_eq "no yarn on PATH exits 2" "2" "$rc"
+check "…and says so" grep -q 'yarn is not on PATH — cannot install alpha' "$ROOT/noyarn.log"
+before=$(calls)
+"$TOOL" "$BENCH" alpha > /dev/null 2>&1
+check_eq "with yarn back, the install that was refused runs" "$((before + 1))" "$(calls)"
+before=$(calls)
+env PATH="$ROOT/no-such-dir" "$TOOL" "$BENCH" alpha > /dev/null 2>&1 \
+  && ok "an app that needs nothing needs no yarn either" || no "an app that needs nothing needs no yarn either"
+
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
 check_not "a bench root with no apps is an error" "$TOOL" "$BENCH"
+rc=0
+"$TOOL" "$BENCH" > "$ROOT/usage.log" 2>&1 || rc=$?
+check_eq "…exit 2" "2" "$rc"
+check "…with the usage line" grep -q '^usage: frappe-nix-node-modules' "$ROOT/usage.log"
+check_not "a bench root that does not exist is an error" "$TOOL" "$ROOT/no-such-bench" alpha
 
 echo ""
 if [ "$fails" -eq 0 ]; then

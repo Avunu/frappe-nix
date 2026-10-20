@@ -105,8 +105,26 @@ mkdir -p "$ROOT/nobench"
 check "nothing is written when the shipped list is absent" \
   test ! -e "$ROOT/nobench/patches.txt"
 
+echo "── a shipped list with no trailing newline, an indented comment ──"
+mkdir -p "$ROOT/lastline"
+printf '  # indented, still a comment\nbench.patches.v4.update_node\nbench.patches.v5.last_one' \
+  > "$ROOT/lastline.txt"
+"$TOOL" "$ROOT/lastline.txt" "$ROOT/lastline" > /dev/null
+check_eq "the final line is recorded, the indented comment is not" \
+  'bench.patches.v4.update_node
+bench.patches.v5.last_one' "$(cat "$ROOT/lastline/patches.txt")"
+
+echo "── the bench root defaults to the current directory ─────────────"
+mkdir -p "$ROOT/cwd"
+(cd "$ROOT/cwd" && "$TOOL" "$SHIPPED" > /dev/null)
+check_eq "patches.txt is written where it runs" "$EXPECTED" "$(cat "$ROOT/cwd/patches.txt")"
+
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
+rc=0
+"$TOOL" > "$ROOT/usage.log" 2>&1 || rc=$?
+check_eq "…exit 2" "2" "$rc"
+check "…with the usage line" grep -q '^usage: frappe-nix-bench-patches' "$ROOT/usage.log"
 
 echo ""
 if [ "$fails" -eq 0 ]; then
