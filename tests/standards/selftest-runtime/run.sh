@@ -298,7 +298,8 @@ EOF
 cmd_ports() {
   local app="$WORK/app" wt="$WORK/app-worktree" p1 moved
   p1="$(jq -r .webserver_port "$app/.frappe-nix/bench/sites/common_site_config.json")"
-  moved="$(dev "$app" frappe-nix-ports --json | jq -r '.moved.web // empty')"
+  # Prefixed: the shell's own CI banner is on stdout too.
+  moved="$(dev "$app" bash -c 'echo "MOVED=$(jq -r ".moved.web // empty" "$FRAPPE_NIX_PORTS_FILE")"' | sed -n 's/^MOVED=//p')"
   if [ "$p1" != "$PRIMARY_PORT" ]; then
     [ "$moved" = "$PRIMARY_PORT" ] || fail "the primary checkout serves on $p1, not $PRIMARY_PORT (8000 + the bench-name hash), and recorded no move from it"
   fi
@@ -463,6 +464,8 @@ cmd_parallel() {
   wait "$pb" || rb=$?
   endgroup
   if [ "$ra" != 0 ] || [ "$rb" != 0 ]; then
+    dev "$a" bash "$HERE/run.sh" pc-state > "$WORK/parallel-pc-a.log" 2>&1 || true
+    dev "$b" bash "$HERE/run.sh" pc-state > "$WORK/parallel-pc-b.log" 2>&1 || true
     tail -n 80 "$WORK/parallel-a.log" "$WORK/parallel-b.log"
     fail "two same-name benches at once: frappe-test --ci exited $ra and $rb"
   fi

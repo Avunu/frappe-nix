@@ -247,7 +247,7 @@ class Shots:
 		port = devshell.webserver_port(bench)
 		if not port:
 			where = devshell.ports_file() or config_file
-			raise Fail(ENVIRONMENT, f"no web port in {where}")
+			raise Fail(ENVIRONMENT, f"no webserver_port in {where}")
 		tries = devshell.TRIES
 		while not devshell.web_answers(port, devshell.bench_id()):
 			tries -= 1

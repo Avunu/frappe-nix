@@ -452,10 +452,27 @@ def show(args: argparse.Namespace) -> int:
 	return 0
 
 
+def answering(host: str, port: int) -> str:
+	"""Which bench's nginx answers on HOST:PORT (its /__frappe_nix/bench), as a
+	diagnosis can say it: the claim names who leased the port, this who serves
+	on it, and the two differ when something else bound it meanwhile."""
+	try:
+		with socket.create_connection((host, port), timeout=2) as sock:
+			sock.sendall(f"GET /__frappe_nix/bench HTTP/1.0\r\nHost: {host}:{port}\r\n\r\n".encode())
+			data = b""
+			while chunk := sock.recv(4096):
+				data += chunk
+	except OSError as e:
+		return f"nothing ({e.strerror or e})"
+	head, _, body = data.partition(b"\r\n\r\n")
+	status = head.split(b"\r\n", 1)[0].decode(errors="replace")
+	return body.decode(errors="replace").strip() if " 200 " in status else f"not a bench ({status})"
+
+
 def who(args: argparse.Namespace) -> int:
 	found = holder(args.port)
 	if found is not None:
-		print(json.dumps(found))
+		print(json.dumps({**found, "answering": answering(args.host, args.port)}))
 	elif not tcp_free(args.host, args.port):
 		print(f"{args.port}: in use by a process outside frappe-nix")
 	else:
