@@ -1,8 +1,9 @@
 """The dependency commands (frappe_nix_tools.deps, PLAN.md Track D, D4): what the
 shell tests (tests/node-modules.sh, node-locks.sh, bench-patches.sh,
-setup-requirements.sh) reach only indirectly — the fingerprint's bytes against
-the bash pipeline it replaces, argument parsing, the unbuildable-entry rules,
-the stamp's format, the patch list's reading, and the configuration schema.
+setup-requirements.sh, bench-update.sh, update-deps.sh, relock.sh) reach only
+indirectly — the fingerprint's bytes against the bash pipeline it replaces,
+argument parsing, the unbuildable-entry rules, the stamp's format, the patch
+list's reading, remote matching, and the configuration schemas.
 """
 
 import contextlib
@@ -16,14 +17,26 @@ from pathlib import Path
 
 from frappe_nix_tools import bench_cli
 from frappe_nix_tools.bench_config import parse
-from frappe_nix_tools.cli_config import ConfigError
-from frappe_nix_tools.deps import bench_patches, node_locks, node_modules, setup_requirements
+from frappe_nix_tools.cli_config import ConfigError, load_dataclass
+from frappe_nix_tools.deps import (
+	bench_patches,
+	node_locks,
+	node_modules,
+	relock,
+	setup_requirements,
+	update,
+	update_deps,
+)
+from frappe_nix_tools.deps.config import RelockConfig
 
 DEPS = {
 	"appsWithNode": ["alpha"],
 	"appMode": False,
+	"lockDir": "nix",
 	"nodeVerify": "/bin/frappe-nix-node-verify",
 	"nodeModules": "/bin/frappe-nix-node-modules",
+	"nodeLocks": "/bin/frappe-nix-node-locks",
+	"nodeNestedFrontendExcludes": [],
 	"requirementsCheck": "/lib/requirements-check.py",
 }
 APPS = {
@@ -268,14 +281,108 @@ class TestConfig(unittest.TestCase):
 		self.assertEqual(cfg.requirements_check, "/lib/requirements-check.py")
 
 	def test_unknown_and_missing_keys_fail(self):
-		with self.assertRaisesRegex(ConfigError, r"config\.deps: unknown key\(s\): nodeLocks"):
-			parse({"restore": RESTORE, "apps": APPS, "deps": {**DEPS, "nodeLocks": "x"}})
+		with self.assertRaisesRegex(ConfigError, r"config\.deps: unknown key\(s\): nodeLockz"):
+			parse({"restore": RESTORE, "apps": APPS, "deps": {**DEPS, "nodeLockz": "x"}})
 		partial = dict(DEPS)
 		del partial["appMode"]
 		with self.assertRaisesRegex(ConfigError, r"config\.deps: missing key\(s\): appMode"):
 			parse({"restore": RESTORE, "apps": APPS, "deps": partial})
 		with self.assertRaisesRegex(ConfigError, r"appsWithNode\[0\]: expected a string"):
 			parse({"restore": RESTORE, "apps": APPS, "deps": {**DEPS, "appsWithNode": [1]}})
+
+
+class TestUpdateArgs(unittest.TestCase):
+	def steps(self, *argv, app_mode=False):
+		p = update.parse(list(argv), app_mode=app_mode)
+		return (p.pull, p.migrate, p.build, p.node_locks, p.targets)
+
+	def test_flags_switch_steps_off_in_turn(self):
+		self.assertEqual(self.steps(), (True, True, True, False, []))
+		self.assertEqual(self.steps("--pull"), (True, False, False, False, []))
+		self.assertEqual(self.steps("--migrate"), (False, True, False, False, []))
+		self.assertEqual(self.steps("--build"), (False, False, True, False, []))
+		self.assertEqual(self.steps("--node-locks", "a", "b/c"), (False, False, False, True, ["a", "b/c"]))
+		# As the bash read them: each flag turns others off, so two modes cancel.
+		self.assertEqual(self.steps("--migrate", "--build"), (False, False, False, False, []))
+		self.assertEqual(self.steps("--node-locks", "--pull"), (False, False, False, True, []))
+		self.assertEqual(self.steps(app_mode=True), (False, True, True, False, []))
+
+	def test_refusals(self):
+		for argv, status in (
+			(["--bogus"], 1),
+			(["-"], 1),
+			(["frappe"], 1),
+			(["--help"], 0),
+			(["-h", "--bogus"], 0),
+		):
+			with (
+				self.subTest(argv=argv),
+				contextlib.redirect_stdout(io.StringIO()),
+				contextlib.redirect_stderr(io.StringIO()),
+				self.assertRaises(update._Exit) as e,
+			):
+				update.parse(argv, app_mode=False)
+			self.assertEqual(e.exception.status, status)
+		err = io.StringIO()
+		with contextlib.redirect_stderr(err), self.assertRaises(update._Exit):
+			update.parse(["--node-locks"], app_mode=True, lock_dir="locks")
+		self.assertIn("locks/node-locks/ is generated", err.getvalue())
+
+	def test_remote_for_url(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			subprocess.run(["git", "init", "-q", tmp], check=True)
+			subprocess.run(["git", "-C", tmp, "remote", "add", "origin", "https://x/fork.git"], check=True)
+			subprocess.run(["git", "-C", tmp, "remote", "add", "upstream", "https://x/app/"], check=True)
+			self.assertEqual(update.remote_for_url("https://x/app.git", tmp), "upstream")
+			self.assertEqual(update.remote_for_url("https://x/fork/", tmp), "origin")
+			self.assertIsNone(update.remote_for_url("https://x/other", tmp))
+			self.assertIsNone(update.remote_for_url("", tmp))
+
+
+class TestRelock(unittest.TestCase):
+	def test_parse(self):
+		a = relock.parse(["--upgrade-package", "x", "--uv-only"])
+		self.assertEqual((a.uv, a.locks, a.uv_args, a.targets), (True, False, ["--upgrade-package", "x"], []))
+		a = relock.parse(["--node-locks", "beta", "alpha/desk", "--x"])
+		self.assertEqual(
+			(a.uv, a.locks, a.uv_args, a.targets), (False, True, ["--x"], ["beta", "alpha/desk"])
+		)
+		with contextlib.redirect_stderr(io.StringIO()) as err:
+			self.assertFalse(relock.parse(["--node-hashes"]).uv)
+		self.assertIn("now --node-locks", err.getvalue())
+		with self.assertRaises(relock._Help):
+			relock.parse(["--uv-only", "-h"])
+
+	def test_help_names_each_modes_files(self):
+		self.assertIn("locks/uv.lock", relock.help_text("locks"))
+		self.assertIn("Run it from the bench root", relock.help_text(None))
+
+	def test_config(self):
+		data = {
+			"appMode": True,
+			"nodeLocks": "/bin/frappe-nix-node-locks",
+			"nodeNestedFrontendExcludes": ["a/b"],
+			"buildDepsSync": None,
+			"workspace": "/nix/store/w",
+			"lockDir": "nix",
+		}
+		cfg = load_dataclass(RelockConfig, data, "relock")
+		self.assertEqual((cfg.workspace, cfg.node_nested_frontend_excludes), ("/nix/store/w", ["a/b"]))
+		with self.assertRaisesRegex(ConfigError, r"relock: missing key\(s\): lockDir"):
+			load_dataclass(RelockConfig, {k: v for k, v in data.items() if k != "lockDir"}, "relock")
+
+
+class TestUpdateDeps(unittest.TestCase):
+	def test_arguments(self):
+		with contextlib.redirect_stdout(io.StringIO()) as out:
+			self.assertEqual(update_deps.main(["--help"]), 0)
+		self.assertIn("Usage: update-deps", out.getvalue())
+		with contextlib.redirect_stderr(io.StringIO()) as err:
+			self.assertEqual(update_deps.main(["--bogus"]), 2)
+		self.assertIn("unexpected argument '--bogus'", err.getvalue())
+
+	def test_dashes_reach_the_command(self):
+		self.assertTrue({"update", "update-deps", "restore"} <= bench_cli.KEEP_DASHES)
 
 
 if __name__ == "__main__":

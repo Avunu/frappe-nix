@@ -10,6 +10,9 @@ module when that command runs, so a command pays only for what it uses.
 
 import sys
 
+#: The commands a `--` straight after the name must reach (see main).
+KEEP_DASHES = frozenset({"restore", "update", "update-deps", "setup-requirements"})
+
 
 def main(argv: list[str] | None = None) -> None:
 	import click
@@ -17,8 +20,9 @@ def main(argv: list[str] | None = None) -> None:
 	words = list(sys.argv[1:] if argv is None else argv)
 	# click drops a `--` that comes straight after the command name, and with it
 	# the meaning `bench restore -- <args for Frappe's restore>` has. A second
-	# one is what it drops instead.
-	if len(words) >= 2 and words[0] == "restore" and words[1] == "--":
+	# one is what it drops instead. The same for the commands whose own parser
+	# refuses a `--` rather than running every step without it.
+	if len(words) >= 2 and words[0] in KEEP_DASHES and words[1] == "--":
 		words.insert(1, "--")
 
 	@click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -76,6 +80,16 @@ def main(argv: list[str] | None = None) -> None:
 		"Install the apps sites/apps.txt names that a site lacks.",
 	)
 
+	passthrough(
+		"update",
+		"frappe_nix_tools.deps.update",
+		"Pull the apps, refresh the locks, migrate and build (bench update --help).",
+	)
+	passthrough(
+		"update-deps",
+		"frappe_nix_tools.deps.update_deps",
+		"Re-lock and reinstall the bench's Python and Node dependencies.",
+	)
 	passthrough(
 		"setup-requirements",
 		"frappe_nix_tools.deps.setup_requirements",

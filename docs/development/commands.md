@@ -3,7 +3,7 @@ title: Everyday commands
 description: The bench wrapper that redirects the commands needing frappe-nix handling, and the scripts behind it, from provision-site to bench-update.
 order: 1
 tags: [bench, scripts, cli]
-updated: 2026-10-06
+updated: 2026-10-20
 ---
 
 The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules.
@@ -56,7 +56,8 @@ These back the wrapper and are also callable directly.
 | `bench-new-app`                                                                 | Scaffold a new app as a local app (committed source, no nested git) and register it the same way.                                                                               |
 | `bench-remove-app [--force] [--no-backup]`                                      | The inverse of `bench-get-app`. See below.                                                                                                                                      |
 | `bench-rename-app [--url <U>] [--branch <B>] [--no-pull] <OLD> <NEW>`           | The bench's half of renaming an app. See below.                                                                                                                                 |
-| `update-deps`                                                                   | Re-lock and sync Python (uv) and Node (yarn) across all apps, then refresh the fallback locks in `node-locks/`.                                                                 |
+| `relock [--uv-only\|--node-locks [<TARGET>…]] [<UV_LOCK_FLAGS>…]`              | Re-lock what the bench commits: `uv.lock`, then the fallback locks in `node-locks/`. The same program as `nix run .#relock`. See [Dependencies and locks](locks.md#relock).    |
+| `update-deps`                                                                   | `relock`'s Python half, then `uv sync`, `yarn install` in every app, and the fallback locks in `node-locks/`. Exits 1 if any step failed.                                      |
 
 ### bench-update
 
@@ -108,5 +109,7 @@ bench-rename-app esign esign_webforms
 It does not touch a site. The dev site still records the old name, so it ends by printing the `frappe-nix.renamedApps` entry that has `devenv up` rename it before anything installs. A vendored (local) app is moved with `git add`, with no repository to retarget.
 
 ### update-deps
+
+`update-deps` re-locks and reinstalls: `uv lock` and the managed build-dependency block, `uv sync`, `yarn install` in every app with a `package.json`, then the fallback locks. A failed `uv lock` stops it. A failed `uv sync` or `yarn install` does not stop the other apps, but the command exits 1 and names what failed. To re-lock without reinstalling, run `relock`.
 
 In a bench the Node step is `yarn install --pure-lockfile`. It installs from `package.json` but never rewrites an app's own `yarn.lock`, which belongs to the app's repository. To update one on purpose, run `yarn install` in that app. An app's postinstall can still rewrite a nested frontend's lock here, which `bench-update --pull` discards when the pull would overwrite it. In app mode the lock is yours and is written as before.

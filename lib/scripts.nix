@@ -75,6 +75,10 @@
   # reconcile-apps applies around its installs.
   renamedApps ? { },
   replacedApps ? { },
+  # Absolute path to lib/relock.nix's frappe-nix-relock, the flake's `relock`
+  # app, which the `relock` script runs from inside the shell; null defines no
+  # `relock` script.
+  relockBin ? null,
   # Scripts kept in files of their own, merged over the ones below; see
   # lib/scripts.d/README.md. A parameter so tests can point it at a fixture;
   # null merges none.
@@ -137,12 +141,6 @@ let
   # comment-preserving (tomlkit).
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
   workspaceBin = "${workspaceTool}/bin/frappe-nix-workspace";
-
-  # Shell snippet: after a `uv lock`, the managed build-dependency block in step
-  # with the new lock (lib/build-deps.nix). Expects cwd at the bench root.
-  syncBuildDeps = lib.optionalString (buildDepsSyncBin != null) ''
-    ${buildDepsSyncBin}
-  '';
 
   # Shell snippet: register "$APP_NAME" as a uv workspace member — appends
   # apps/$APP_NAME to [tool.uv.workspace].members and adds a [tool.uv.sources]
@@ -362,11 +360,14 @@ let
           renamedApps = pairs renamedApps;
           replacedApps = pairs replacedApps;
         };
-      # bench setup requirements (frappe_nix_tools/deps/config.py).
+      # bench-update, update-deps and bench setup requirements
+      # (frappe_nix_tools/deps/config.py).
       deps = {
-        inherit appsWithNode appMode;
+        inherit appsWithNode appMode lockDir;
         nodeVerify = nodeVerifyBin;
         nodeModules = nodeModulesBin;
+        nodeLocks = nodeLocksBin;
+        inherit nodeNestedFrontendExcludes;
         requirementsCheck = "${./requirements-check.py}";
       };
     }
@@ -490,409 +491,10 @@ secretScripts
     bench build "$@"
   '';
 
+  # The submodule-aware replacement for `bench update`: pull, refresh the
+  # locks, migrate, build. py/frappe_nix_tools/frappe_nix_tools/deps/update.py.
   bench-update.exec = ''
-        set -euo pipefail
-        export _FRAPPE_BENCH_RAW=1
-
-        # In app mode there is nothing here to pull and nothing here to write: the
-        # apps are pinned by flake.lock and the locks belong to the repository, not
-        # to a bench directory the next refresh replaces.
-        PULL=${if appMode then "false" else "true"}
-        MIGRATE=true
-        BUILD=true
-        NODE_LOCKS=false
-        NODE_LOCK_TARGETS=()
-        _skipped_apps=()
-
-        for arg in "$@"; do
-          case "$arg" in
-    ${
-      if appMode then
-        ''
-          --pull | --node-locks | --node-hashes)
-            echo "bench-update: $arg has no meaning in app mode — the apps are pinned by" >&2
-            echo "flake.lock, not pulled, and ${lockDir}/node-locks/ is generated from" >&2
-            echo "those pins. Use:" >&2
-            echo "" >&2
-            echo "    nix flake update        # move the pins" >&2
-            echo "    nix run .#relock        # re-resolve and rewrite ${lockDir}/" >&2
-            exit 1
-            ;;''
-      else
-        ''
-          --pull)        MIGRATE=false; BUILD=false ;;
-          --node-locks)  PULL=false;   MIGRATE=false; BUILD=false; NODE_LOCKS=true ;;
-          --node-hashes)
-            echo "bench-update: --node-hashes is now --node-locks (node-offline-hashes.json was replaced by node-locks/)" >&2
-            PULL=false; MIGRATE=false; BUILD=false; NODE_LOCKS=true ;;''
-    }
-            --migrate)     PULL=false;   BUILD=false  ;;
-            --build)       PULL=false;   MIGRATE=false ;;
-            --help|-h)
-    ${
-      if appMode then
-        ''
-          echo "Usage: bench-update [--migrate | --build]"
-          echo ""
-          echo "  (no flags)     Migrate, then build"
-          echo "  --migrate      Run DB migrations only"
-          echo "  --build        Build JS/CSS assets only"
-          echo ""
-          echo "To move the pinned apps: nix flake update && nix run .#relock"''
-      else
-        ''
-          echo "Usage: bench-update [--pull | --migrate | --build | --node-locks [<app>[/<subdir>]…]]"
-          echo ""
-          echo "  (no flags)     Pull apps, refresh node-locks/, migrate, build"
-          echo "  --pull         Pull latest commits + refresh node-locks/ for what moved"
-          echo "  --migrate      Run DB migrations only"
-          echo "  --build        Build JS/CSS assets only"
-          echo "  --node-locks   (Re)generate node-locks/: a fallback yarn.lock for every app and nested"
-          echo "                 frontend without one of its own (needs the network). Name a target to"
-          echo "                 force a lock over the yarn.lock it ships — for one that cannot resolve offline."''
-    }
-              exit 0 ;;
-            -*) echo "Unknown flag: $arg" >&2; exit 1 ;;
-            *)
-              if $NODE_LOCKS; then
-                NODE_LOCK_TARGETS+=("$arg")
-              else
-                echo "Unexpected argument: $arg (targets only follow --node-locks)" >&2
-                exit 1
-              fi ;;
-          esac
-        done
-
-        cd "$FRAPPE_BENCH_ROOT"
-
-        if $PULL; then
-          echo "── Pulling latest commits for all app submodules ────────────"
-          declare -A _before_py
-          for pp in apps/*/pyproject.toml; do
-            [ -e "$pp" ] || continue
-            _before_py["$pp"]=$(git hash-object "$pp" 2>/dev/null || echo none)
-          done
-
-          # Not `git submodule foreach`: it dies on the first gitlink that has no
-          # .gitmodules entry (a nested repo someone `git add`ed as-is), taking
-          # every other app's pull with it. The classifier names what each
-          # apps/<x> is; only registered submodules are pulled, and the rest are
-          # said out loud — a local app has nothing to pull, a stray repo is
-          # invisible to `nix build` and needs the user.
-          # Which remote of a submodule to pull from: the one whose URL is what
-          # .gitmodules declares. That URL is the app's source of truth — it is
-          # what `nix build` fetches the pinned commit from — and `origin` is not
-          # a safe stand-in for it: a developer's checkout commonly has origin on
-          # a fork that does not carry the release branch at all, and upstream on
-          # the real thing. Compared with the trailing `.git` and `/` ignored,
-          # which is as far as two spellings of one GitHub URL usually differ.
-          _remote_for_url() { # <url> → remote name, or nothing
-            local want="$1" r u
-            want="''${want%/}"; want="''${want%.git}"
-            for r in $(git remote); do
-              u="$(git remote get-url "$r" 2>/dev/null || true)"
-              u="''${u%/}"; u="''${u%.git}"
-              if [ -n "$u" ] && [ "$u" = "$want" ]; then
-                printf '%s' "$r"
-                return 0
-              fi
-            done
-            return 1
-          }
-
-          # Regenerable lockfile basenames — the one place to add one.
-          _regen_locks=(yarn.lock package-lock.json)
-
-          # `checkout -B` refuses over a tracked file with local changes that the
-          # target commit also changes, and over an untracked file it would
-          # create. Lockfiles in an app checkout are tool output — a postinstall's
-          # non-frozen `yarn install`, a manual `yarn`, whatever else — and the
-          # install that follows regenerates them from the commit's own, so clear
-          # exactly those obstacles and nothing else. What git would carry across
-          # untouched (a path the pull does not change) is left alone, which keeps
-          # node_modules' sentinel valid. Run in the app dir, after FETCH_HEAD is
-          # fetched and the ancestry guard has passed: only uncommitted changes
-          # are discarded here, never commits.
-          _clear_lock_obstacles() {
-            local n p st manifest ign obstacle specs=()
-            for n in "''${_regen_locks[@]}"; do specs+=(":(glob)**/$n"); done
-            # fd 3, not stdin: see the `< /dev/null` below.
-            while IFS= read -r -d "" -u 3 st && IFS= read -r -d "" -u 3 p; do
-              obstacle=false
-              if [ "$st" = A ]; then
-                # Not in HEAD: a file (untracked, or staged new) where upstream adds
-                # one. git overwrites an ignored one by itself; check-ignore says 1
-                # for "not ignored" (0 ignored, 128 error — both leave it alone).
-                if [ -e "$p" ] || [ -L "$p" ]; then
-                  ign=0
-                  git check-ignore -q -- "$p" || ign=$?
-                  if [ "$ign" -eq 1 ]; then obstacle=true; fi
-                fi
-              elif ! git --literal-pathspecs diff --quiet HEAD -- "$p"; then
-                obstacle=true
-              fi
-              "$obstacle" || continue
-              # A lock beside a package.json that is edited too may be the other
-              # half of a hand edit (`yarn add`), not tool output: leave it, and
-              # let the checkout below say so.
-              manifest="''${p%"''${p##*/}"}package.json"
-              if ! git --literal-pathspecs diff --quiet HEAD -- "$manifest"; then
-                echo "     keeping $p: the package.json beside it has local edits too"
-                continue
-              fi
-              if [ "$st" = A ]; then
-                git --literal-pathspecs rm -q -f --cached --ignore-unmatch -- "$p" || true
-                rm -f -- "$p"
-                echo "     discarding local $p (regenerated by yarn install; upstream adds one)"
-              elif git --literal-pathspecs checkout -q HEAD -- "$p"; then
-                echo "     discarding local changes to $p (regenerated by yarn install; upstream changes it)"
-              fi
-            done 3< <(git diff-tree -r -z --no-renames --name-status HEAD FETCH_HEAD -- "''${specs[@]}")
-          }
-
-          # The subshells below cannot return anything but an exit status, and a
-          # non-zero one is fatal under `set -e`; apps left un-updated go to a file.
-          _skipped_file="$(mktemp)"
-          trap 'rm -f -- "$_skipped_file"' EXIT
-          _skip() { printf '%s\n' "$1" >> "$_skipped_file"; }
-
-          # Through tr, because tab is IFS *whitespace*: `read` collapses a run of
-          # tabs into one delimiter, so a submodule with no branch — an empty third
-          # field — had the URL land in $branch and git was handed it as a refspec
-          # ("fatal: invalid refspec 'https://…'"). Unit separator is not whitespace,
-          # so an empty field stays empty and the guard below sees it.
-          while IFS=$'\037' read -r app kind branch url; do
-            case "$kind" in
-              local)
-                echo "  · $app: local app (source committed with the bench) — nothing to pull"
-                continue
-                ;;
-              nested-repo)
-                echo "  ⚠  $app: a git repository that is not a registered submodule — not pulled,"
-                echo "     and NOT in the flake's source tree, so 'nix build' leaves it out. Either"
-                echo "     vendor it (frappe-init --migrate commits its source into the bench and"
-                echo "     keeps its history in .frappe-nix-backup/) or push it somewhere and"
-                echo "     re-add it: git rm --cached apps/$app && rm -rf apps/$app && bench-get-app <url>"
-                continue
-                ;;
-              submodule-uninitialized)
-                # Shell entry checks out only what a fresh clone has never had
-                # (python-devops-nix's lib.sources); a pull is where any other gets its
-                # checkout — a deinitialized one's, say, or a fresh clone's
-                # pulled before the shell was ever entered — and then moves with
-                # the rest. Not --recursive, as ever: Frappe apps ship nested
-                # submodules with broken refs. Without a gitlink there is no
-                # commit to check out: .gitmodules outlived a removal, which
-                # remove-app finishes.
-                if ! git ls-files -s -- "apps/$app" \
-                  | awk -v p="apps/$app" '$1 == "160000" && $4 == p { f = 1 } END { exit !f }'; then
-                  echo "  ⚠  $app: .gitmodules registers it, but the bench records no commit for it — skipping."
-                  echo "     A removal that stopped halfway; finish it with: bench remove-app $app"
-                  continue
-                fi
-                echo "  → $app: registered but not checked out — checking out its pinned commit"
-                git submodule update --init -- "apps/$app" < /dev/null || {
-                  echo "  ✗ $app: could not check it out — skipping" >&2
-                  continue
-                }
-                # The pinned commit is what uv.lock was resolved against, so it —
-                # not the empty directory before it — is what the re-lock below
-                # compares the pulled pyproject.toml with.
-                _before_py["apps/$app/pyproject.toml"]=$(git hash-object "apps/$app/pyproject.toml" 2>/dev/null || echo none)
-                ;;
-            esac
-            [ -n "$branch" ] || {
-              echo "  ⚠  $app: no branch configured in .gitmodules — skipping."
-              echo "     Fix it with: frappe-init --migrate (or: git config -f .gitmodules submodule.apps/$app.branch <branch>)"
-              continue
-            }
-            (
-              cd "apps/$app"
-              # The declared URL's remote when there is one (see _remote_for_url);
-              # else the URL itself, which git fetches just as well — only the
-              # remote-tracking ref goes unrefreshed. The name-based guesses are a
-              # last resort for a submodule registered without a URL.
-              remote="$(_remote_for_url "$url" || true)"
-              if [ -z "$remote" ] && [ -n "$url" ]; then
-                remote="$url"
-                echo "  · $app: no remote has the .gitmodules URL ($url); fetching it directly"
-              fi
-              if [ -z "$remote" ]; then
-                remote=origin
-                git remote | grep -qx origin || remote=$(git remote | head -n1)
-              fi
-              [ -n "$remote" ] || { echo "  ⚠  $app: no git remote — skipping"; _skip "$app"; exit 0; }
-              echo "  → $app ($branch from $remote)"
-              # No --depth here. A depth-1 fetch grafts the new tip with no parents,
-              # so the ancestry check below could never pass once the remote had
-              # moved — every pull was "skipped" for phantom local commits — and on
-              # a full clone it cut the history down to that tip as a side effect.
-              # A plain fetch on a shallow clone stops at what the clone already
-              # has, so it costs only the new commits and stays shallow.
-              #
-              # A partial clone (shell entry's lib.sources makes them) keeps its
-              # paired branch with the folders of every commit, and fetches
-              # anything else as commits only — its configured filter. The
-              # branch this pulls is the paired one, so ask for its folders.
-              _filter=()
-              if [ "$(git config --get "remote.$remote.promisor" 2>/dev/null)" = true ]; then
-                _filter=(--filter=blob:none)
-              fi
-              git fetch "''${_filter[@]}" "$remote" "$branch" || {
-                echo "  ✗ $app: could not fetch '$branch' from $remote" >&2
-                echo "     .gitmodules says apps/$app is $url @ $branch; fix either the entry" >&2
-                echo "     (git config -f .gitmodules submodule.apps/$app.branch <branch>) or the remote." >&2
-                exit 1
-              }
-              # A shallow clone can be unable to answer the ancestry question at all.
-              # Every depth-limited fetch grafts its tip with no parents — and this
-              # script fetched with --depth 1 until 2026-09-11 — so a clone that
-              # went through one has the pinned commit and the branch tip as two
-              # disconnected islands, even though upstream is linear. The plain fetch
-              # above never repairs that: negotiation starts from the tips the clone
-              # already has, so the gap between them is never asked for. Left alone,
-              # such a clone fails the check below on every pull and the app silently
-              # stops updating.
-              #
-              # "No merge-base whatsoever" is the exact signature, and it is only
-              # ever a shallow artefact: a real local commit shares its parent (the
-              # pin) with the tip. So in that case, and only that case, deepen the
-              # branch back to HEAD's own commit date — the gap and nothing older —
-              # and ask again. The margin covers a backport whose committer date
-              # runs a little behind the pin's.
-              if [ "$(git rev-parse --is-shallow-repository)" = true ] &&
-                [ -z "$(git merge-base HEAD FETCH_HEAD 2>/dev/null)" ]; then
-                echo "     shallow clone with no path between HEAD and $remote/$branch — deepening to check"
-                git fetch -q "$remote" "$branch" \
-                  --shallow-since="@$(( $(git log -1 --format=%ct HEAD) - 86400 ))" || true
-              fi
-              # `checkout -B` discards anything not on the remote branch. Refuse when
-              # this submodule carries commits that are not in what we just fetched.
-              if ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
-                if [ -z "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ] && [ -n "''${FRAPPE_BENCH_UPDATE_FORCE:-}" ]; then
-                  echo "     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead (the old name goes in frappe-nix 2.0.0)" >&2
-                  FRAPPE_NIX_BENCH_UPDATE_FORCE=$FRAPPE_BENCH_UPDATE_FORCE
-                fi
-                if [ -n "''${FRAPPE_NIX_BENCH_UPDATE_FORCE:-}" ]; then
-                  echo "     ⚠  local commits will be discarded (FRAPPE_NIX_BENCH_UPDATE_FORCE=1)"
-                else
-                  echo "  ⚠  $app: HEAD is not an ancestor of $remote/$branch — it has local or"
-                  echo "     unpushed commits that checkout -B would discard. Skipping."
-                  echo "     Push them, or re-run with FRAPPE_NIX_BENCH_UPDATE_FORCE=1 to overwrite."
-                  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-                    echo "     (This clone is shallow. If you made no commits here, 'git fetch --unshallow'"
-                    echo "     in apps/$app settles it.)"
-                  fi
-                  _skip "$app"
-                  exit 0
-                fi
-              fi
-              _clear_lock_obstacles
-              # Not a bare `git checkout ... || exit`: under `set -e` that would end
-              # the whole bench-update for one app's dirty tree, with every later
-              # app, the registry, the locks, migrate and build unrun. Whatever else
-              # is in the way — git names it — is the user's to decide; the app is
-              # skipped like one with local commits, and listed at the end.
-              if ! _out="$(git checkout -B "$branch" "FETCH_HEAD" 2>&1)"; then
-                echo "  ⚠  $app: git could not check out $remote/$branch — skipping. git says:"
-                while IFS= read -r _l; do echo "       $_l"; done <<< "$_out"
-                echo "     If that names local changes: commit them, stash them (git -C apps/$app stash),"
-                echo "     or discard them (git -C apps/$app checkout -- <path>), then re-run."
-                _skip "$app"
-                exit 0
-              fi
-              [ -z "$_out" ] || echo "$_out"
-              find . -name "*.pyc" -delete
-            ) < /dev/null  # git must not eat the classifier's remaining lines
-          done < <(${workspaceBin} apps --apps-dir apps | tr '\t' '\037')
-          mapfile -t _skipped_apps < "$_skipped_file"
-          if [ ''${#_skipped_apps[@]} -gt 0 ]; then
-            echo "  ⚠  not updated:$(printf ' %s' "''${_skipped_apps[@]}") — see above"
-          fi
-          echo ""
-
-          # The pins just moved; sites/apps.json records them. Before the node
-          # hashes, which can be slow or fail on a network hiccup — the registry
-          # must not be left describing the old commits because of that.
-          ${syncRegistry}
-          echo "  commit sites/apps.json along with the submodule bumps"
-          echo ""
-
-          # The fallback locks, for whatever the pull moved: an app without a
-          # yarn.lock of its own whose package.json changed, a forced lock whose
-          # upstream yarn.lock changed. The generator's own stamp decides what that
-          # was — anything else costs nothing — and an app that arrived with the
-          # pull lacking a lock gets its fallback in the same run. Apps that ship
-          # a yarn.lock are not its business: they build from that.
-          echo "── Refreshing node-locks/ ──────────────────────────────────"
-          ${regenNodeLocksSoft}
-          echo "  commit node-locks/ along with the submodule bumps, if it changed"
-          echo ""
-
-          # Re-lock when an app's pyproject.toml moved. The Python half of this used
-          # to be missing while the Node half above was not, and the asymmetry is
-          # what made a stale uv.lock the routine outcome of a pull: an app that
-          # declares a new dependency leaves uv2nix resolving a name that is in no
-          # lock, which fails at *evaluation* — so the next shell entry breaks rather
-          # than the update that caused it. Do it here, where the cause is on screen.
-          py_changed=()
-          for pp in apps/*/pyproject.toml; do
-            [ -e "$pp" ] || continue
-            if [ "''${_before_py["$pp"]:-none}" != "$(git hash-object "$pp" 2>/dev/null || echo none)" ]; then
-              py_changed+=("$(basename "$(dirname "$pp")")")
-            fi
-          done
-          if [ ''${#py_changed[@]} -gt 0 ]; then
-            echo "── Re-locking the Python workspace (pyproject.toml changed:$(printf ' %s' "''${py_changed[@]}")) ──"
-            if ! uv lock; then
-              echo "  ⚠  uv lock failed — the dev shell will not evaluate until this resolves." >&2
-              echo "     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;" >&2
-              echo "     for one against [dependency-groups], relax the pin there. Then re-run 'uv lock'." >&2
-              exit 1
-            fi
-            ${syncBuildDeps}
-            echo "  commit uv.lock (and pyproject.toml) along with the submodule bumps"
-            echo ""
-          fi
-
-          # `--pull` stops here, so this is its only chance to bring node_modules
-          # back in step with what was just pulled. A full update reaches the same
-          # refresh through bench-build below, where a failure is fatal because the
-          # build is what it would break; here it is only a warning.
-          if ! $BUILD; then
-            ${refreshNodeModulesSoft}
-            : # the snippet above is empty on a bench with no node apps, and bash
-              # refuses an empty then-clause
-          fi
-        fi
-
-        if $NODE_LOCKS; then
-          echo "── Regenerating node-locks/ ────────────────────────────────"
-          ${regenNodeLocks} "''${NODE_LOCK_TARGETS[@]}"
-        fi
-
-        if $MIGRATE; then
-          echo "── Running migrations ───────────────────────────────────────"
-          # bench-migrate, not `bench migrate`: _FRAPPE_BENCH_RAW is exported here,
-          # so the latter would skip the offline step in front of it.
-          bench-migrate
-          echo ""
-        fi
-
-        if $BUILD; then
-          echo "── Building assets ──────────────────────────────────────────"
-          # bench-build, not `bench build`: _FRAPPE_BENCH_RAW is exported here, so
-          # the latter would go straight to the real bench and skip the
-          # node_modules refresh that the pull above is the whole reason for.
-          bench-build
-          echo ""
-        fi
-
-        if [ ''${#_skipped_apps[@]} -gt 0 ]; then
-          echo "⚠  bench-update complete, but not updated:$(printf ' %s' "''${_skipped_apps[@]}") (see above)"
-        else
-          echo "✅ bench-update complete"
-        fi
+    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} update "$@"
   '';
 
   # Restore this bench from a Frappe backup — an explicit file, or the latest
@@ -905,53 +507,26 @@ secretScripts
     FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} restore "$@"
   '';
 
+  # The relock, then `uv sync` and every node app's `yarn install`.
+  # py/frappe_nix_tools/frappe_nix_tools/deps/update_deps.py.
   update-deps.exec = ''
-    ${atBench}
-    ${
-      if appMode then
-        ''
-          echo "Python dependencies are resolved from the flake's pins, not from"
-          echo "this bench — the workspace root it would lock lives in the Nix store."
-          echo "Use:  nix run .#relock"
-        ''
-      else
-        ''
-          echo "Updating Python dependencies..."
-          uv lock || exit
-          ${syncBuildDeps}
-          uv sync
-        ''
-    }
-    echo ""
-    # In a bench the apps are other people's repositories, and a yarn.lock
-    # rewritten here is a modified file their next `git checkout` refuses over
-    # (`bench update` then dies on the app). --pure-lockfile still installs from
-    # package.json — a lock that has drifted from it is no obstacle, unlike under
-    # --frozen-lockfile — but never writes the lock. In app mode apps/<app> is
-    # the developer's own repository, and the lock is theirs to commit.
-    echo "Updating Node dependencies..."
-    ${lib.concatStringsSep "\n" (
-      map (app: ''
-        echo "  yarn install: ${app}"
-        (cd "apps/${app}" && yarn install${lib.optionalString (!appMode) " --pure-lockfile"})
-      '') appsWithNode
-    )}
-    echo ""
-    ${
-      if appMode then
-        ''echo "Done! Commit any changed yarn.lock, then: nix run .#relock"''
-      else
-        ''
-          echo "Refreshing node-locks/ for the apps without a yarn.lock of their own…"
-          ${regenNodeLocksSoft}
-          echo "Done! Commit uv.lock and node-locks/."
-          echo "The apps' own yarn.lock files were not rewritten; to update one on purpose,"
-          echo "run \`yarn install\` in that app yourself. (An app's postinstall can still"
-          echo "rewrite a nested frontend's lock; \`bench-update --pull\` discards such a change"
-          echo "when the pull would overwrite it.)"
-        ''
-    }
+    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} update-deps "$@"
   '';
+
+  # frappe-nix's one consumer-facing relock: `nix run .#relock` outside the
+  # shell, `relock` inside a bench's, the same program (lib/relock.nix), run
+  # from the bench root wherever it is typed.
+}
+// lib.optionalAttrs (relockBin != null) {
+  relock = {
+    exec = ''
+      ${atBench}
+      exec ${relockBin} "$@"
+    '';
+    description = "Regenerate uv.lock and node-locks/ (the same as nix run .#relock).";
+  };
+}
+// {
 
   # One-shot: creates $FRAPPE_SITE and installs every sites/apps.txt entry.
   # Not safe to re-run to pick up a later-pinned sibling — `--force` below

@@ -4,7 +4,7 @@ description: The flake outputs, library functions and option references of frapp
 nav_title: Reference
 order: 6
 tags: [reference, flake, outputs, library]
-updated: 2026-10-06
+updated: 2026-10-20
 ---
 
 This section lists what frappe-nix exposes. For guides, start from the [overview](../README.md).
@@ -48,7 +48,7 @@ and one **app**, run with `nix run .#<name>`:
 
 | App      | What it does                                                                                                                                                                                                                                                                                                           |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `relock` | In a bench, `uv lock` in the bench root, from a `uv` that does not come from the workspace. In app mode it assembles the workspace itself and writes `nix/uv.lock`, and `nix/node-locks/` for pins without a `yarn.lock`. See [Dependencies and locks](../development/locks.md#a-stale-uvlock-is-an-evaluation-error). |
+| `relock` | frappe-nix's one re-lock command, also `relock` in a bench's shell. In a bench, `uv lock` in the bench root, from a `uv` that does not come from the workspace, then `node-locks/`. In app mode it assembles the workspace itself and writes `nix/uv.lock`, and `nix/node-locks/` for pins without a `yarn.lock`. `--uv-only` and `--node-locks [<TARGET>…]` do one half. See [Dependencies and locks](../development/locks.md#relock). |
 
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}`, so the NixOS module and the containers can discover interpreters from the package itself.
 

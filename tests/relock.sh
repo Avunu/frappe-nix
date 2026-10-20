@@ -55,13 +55,24 @@ cd "$BENCH"
 printf '[project]\nname = "b"\n' > pyproject.toml
 run bench "$BENCH_RELOCK" --upgrade-package frappe
 check_eq "it exits 0" 0 "$RC"
-check_eq "uv lock in the bench root, with the arguments, then the build-deps sync" \
-  "uv $BENCH lock --upgrade-package frappe|build-deps-sync $BENCH |" "$(calls)"
+check_eq "uv lock in the bench root, with the arguments, the build-deps sync, then node-locks/" \
+  "uv $BENCH lock --upgrade-package frappe|build-deps-sync $BENCH |frappe-nix-node-locks $BENCH --exclude=alpha/desk --command=nix run .#relock -- --node-locks . node-locks|" "$(calls)"
 check "it names the uv" grep -q 'Re-locking the Python workspace with uv 0.0.0-stub' "$ROOT/bench.log"
-check "and says what to commit" grep -q 'uv.lock updated — commit it' "$ROOT/bench.log"
+check "and says what to commit" grep -q 'uv.lock and node-locks/ updated — commit them' "$ROOT/bench.log"
+run bench-uv "$BENCH_RELOCK" --uv-only
+check_eq "--uv-only: uv lock and the sync, as before" "uv $BENCH lock|build-deps-sync $BENCH |" "$(calls | sed 's/seed [^|]*|//')"
+check "…saying so" grep -q 'uv.lock updated — commit it' "$ROOT/bench-uv.log"
+run bench-locks "$BENCH_RELOCK" --node-locks beta
+check_eq "--node-locks: the generator only, with its targets" \
+  "frappe-nix-node-locks $BENCH --exclude=alpha/desk --command=nix run .#relock -- --node-locks . node-locks beta|" "$(calls)"
+run bench-help "$BENCH_RELOCK" --help
+check_eq "--help exits 0" 0 "$RC"
+check "…and is a bench's" grep -q 'Run it from the bench root' "$ROOT/bench-help.log"
+check_eq "…running nothing" "" "$(calls)"
 UV_FAIL=1 run benchfail "$BENCH_RELOCK"
 check_eq "a failed uv lock fails it" 1 "$RC"
 check_not "…before the sync" grep -q build-deps-sync "$CALLS"
+check_not "…and the fallbacks" grep -q frappe-nix-node-locks "$CALLS"
 
 echo "── app mode ─────────────────────────────────────────────────────"
 APP="$ROOT/app"
@@ -76,6 +87,7 @@ check_eq "…and runs nothing" "" "$(calls)"
 
 run first "$APP_RELOCK"
 check_eq "the first relock exits 0" 0 "$RC"
+[ "$RC" -eq 0 ] || cat "$ROOT/first.log"
 check "uv locks a writable copy of the workspace, not the repository" \
   bash -c "grep '^uv ' '$CALLS' | grep -v -- --version | grep -qv ' $APP'"
 check_eq "the lock lands at the repository root's nix/uv.lock" "version = 1" "$(cat "$APP/nix/uv.lock")"

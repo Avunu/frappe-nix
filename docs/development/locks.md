@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-10-06
+updated: 2026-10-20
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -39,13 +39,21 @@ Three things keep that from being a puzzle:
 - **The error says so.** Before uv2nix resolves anything, frappe-nix audits every declared requirement against the set the resolver will index ([`lib/python.nix`](../../lib/python.nix), on python-devops-nix's `lib.python.lockAudit`) and names the app, the requirement and the fix. Marker-gated and direct-URL requirements are left alone, because they can sit outside a resolution legitimately and a false alarm would be worse than the raw error it replaces.
 - **`nix run .#relock` works when nothing else does.** This class of failure blocks evaluation, so the dev shell that carries `uv` is exactly what you cannot open. The `relock` app is deliberately outside every other output's dependency graph and takes its `uv` from nixpkgs, so it still runs.
 
+### relock
+
+`relock` is frappe-nix's one command for re-locking. It regenerates everything a repository commits on frappe-nix's behalf, `uv.lock` (with the managed build-dependency block) and the fallback locks in `node-locks/`. Outside the shell it is `nix run .#relock`. Inside a bench's shell it is also `relock`, the same program, run from the bench root wherever you type it.
+
 ```bash
-nix run .#relock                       # bench: `uv lock` in the bench root, from a uv that does not come from the workspace
-nix run .#relock -- --uv-only          # app mode: only the Python half, nix/uv.lock
-nix run .#relock -- --node-locks       # app mode: only the fallback locks in nix/node-locks/
+nix run .#relock                                 # uv.lock, then node-locks/
+nix run .#relock -- --uv-only                    # only the Python half
+nix run .#relock -- --node-locks                 # only the fallback locks
+nix run .#relock -- --node-locks hrms/frontend   # force a fallback over the yarn.lock a target ships
+nix run .#relock -- --upgrade-package frappe     # any other flag goes to `uv lock`
 ```
 
-In a bench, `relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`) and passes any further arguments to `uv lock`. In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
+In a bench, `nix run .#relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`). In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
+
+The other commands that re-lock do a part of this. `bench-update --pull` re-locks what a pull moved, `bench-update --node-locks` is `relock --node-locks`, and `update-deps` is `relock --uv-only` followed by `uv sync`, `yarn install` in every app, and the fallback locks.
 
 In app mode the cause is `nix flake update` and not a submodule bump, and the fix is `nix run .#relock` and not `uv lock`. The workspace root there is generated into the store, so there is no bench root of yours to run `uv` in. The audit says that instead. `relock` is also how the first lock is produced: a repository with no `nix/uv.lock` cannot evaluate the dev shell either, and the error names the command.
 

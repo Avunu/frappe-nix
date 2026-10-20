@@ -50,8 +50,11 @@ APPS = {
 DEPS = {
 	"appsWithNode": [],
 	"appMode": False,
+	"lockDir": "nix",
 	"nodeVerify": "/bin/frappe-nix-node-verify",
 	"nodeModules": "/bin/frappe-nix-node-modules",
+	"nodeLocks": "/bin/frappe-nix-node-locks",
+	"nodeNestedFrontendExcludes": [],
 	"requirementsCheck": "/lib/requirements-check.py",
 }
 

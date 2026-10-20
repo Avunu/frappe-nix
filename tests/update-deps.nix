@@ -9,6 +9,7 @@
 
 let
   inherit (pkgs) lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
 
   render =
     appMode:
@@ -19,6 +20,8 @@ let
         "beta"
       ];
       benchBin = "bench";
+      # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).
+      benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
     })."update-deps".exec;
 in
 {
@@ -38,9 +41,7 @@ in
       }
       ''
         export HOME="$PWD"
-        # SC2164: the body has no `set -e`, so its first line (`cd` to the bench
-        # root) is flagged. Not what this check is about; left as it is.
-        shellcheck -s bash -S warning -e SC2317 -e SC2164 "$benchScriptPath" "$appScriptPath"
+        shellcheck -s bash -S warning -e SC2317 "$benchScriptPath" "$appScriptPath"
         bash ${./update-deps.sh} "$benchScriptPath" "$appScriptPath" | tee "$out"
       '';
 }

@@ -2462,6 +2462,10 @@ in
           sources = lib.getExe shellTools.sources;
           # reconcile-apps renames before it installs, and replaces after.
           inherit (cfg) renamedApps replacedApps;
+          # `relock` in the shell is the flake's `relock` app. A bench's only:
+          # app mode's assembles the workspace, which the shell has no reason
+          # to build, and its docs and messages already say `nix run .#relock`.
+          relockBin = if appMode then null else "${relockTool}/bin/frappe-nix-relock";
         };
 
         # reconcile-apps, with the renames and replacements around it (the
@@ -2582,6 +2586,10 @@ in
                   command = "bench-update --pull";
                   description = "pull app submodules only";
                 }
+                {
+                  command = "relock";
+                  description = "re-lock uv.lock and node-locks/";
+                }
               ]
           )
           ++ [
@@ -2682,6 +2690,7 @@ in
         relockTool = import ../lib/relock.nix {
           inherit pkgs lib appMode;
           inherit (cfg) nodejs;
+          inherit (standardsOutputs) frappeNixTools;
           inherit nodeLocksTool buildDepsSyncBin;
           nodeNestedFrontendExcludes = nodeExcludes;
           workspace = if appMode then appWorkspaceSkeleton else null;

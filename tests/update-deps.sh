@@ -80,9 +80,18 @@ check_eq "a failed uv lock stops it, with uv's status" 3 "$rc"
 check_eq "…before anything else" "uv lock|" "$(calls)"
 
 : > "$CALLS"
-STUB_FAIL="yarn $ALPHA" bash "$BENCH_SCRIPT" > "$ROOT/yarnfail.log" 2>&1 || true
+rc=0
+STUB_FAIL="yarn $ALPHA" bash "$BENCH_SCRIPT" > "$ROOT/yarnfail.log" 2>&1 || rc=$?
 check "a failed yarn install does not stop the next app" grep -qxF "yarn $BETA install --pure-lockfile" "$CALLS"
 check "…nor the fallbacks" grep -q '^frappe-nix-node-locks ' "$CALLS"
+check_eq "…but fails the run at the end" 1 "$rc"
+check "…naming the app" grep -q 'update-deps: failed: yarn install in apps/alpha' "$ROOT/yarnfail.log"
+
+: > "$CALLS"
+rc=0
+bash "$BENCH_SCRIPT" --bogus > "$ROOT/bogus.log" 2>&1 || rc=$?
+check_eq "an argument is refused" 2 "$rc"
+check_eq "…before anything runs" "" "$(calls)"
 
 : > "$CALLS"
 rc=0
