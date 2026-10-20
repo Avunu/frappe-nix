@@ -16,7 +16,7 @@ frappe-nix generates both from one rule: **the registered apps are the `[tool.uv
 
 One tool writes them, `frappe-nix-workspace sync-registry`, and it runs wherever the members or the pins change:
 
-- `frappe-init`, `bench-get-app`, `bench-new-app`, `bench-remove-app` and `bench-update --pull`;
+- `frappe-init`, `bench-get-app`, `bench-new-app`, `bench-remove-app`, `bench-rename-app` and `bench-update --pull`;
 - every dev-shell entry, which is the one hook that also sees a pin moved by hand inside `apps/<APP>`;
 - `benchRoot`, when the package is built.
 

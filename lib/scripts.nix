@@ -201,7 +201,7 @@ let
 
   # App mode replaces the two scripts whose whole job is to edit the bench as if
   # it were a checkout. Replaced rather than dropped: the `bench` umbrella
-  # wrapper dispatches `get-app`/`new-app`/`remove-app` to them, and a missing
+  # wrapper dispatches `get-app`/`new-app`/`remove-app`/`rename-app` to them, and a missing
   # script would surface as `command not found` instead of the one sentence
   # that says what to do instead.
   appModeOverrides = {
@@ -250,6 +250,20 @@ let
         exit 1
       '';
       description = "Not available in app mode — remove the sibling declaration instead.";
+    };
+
+    bench-rename-app = {
+      exec = ''
+        cat >&2 <<'EOF'
+        bench-rename-app: this is an app repository, not a bench — there is no
+        apps/ submodule or uv workspace membership of yours to move here.
+
+        Rename the sibling in frappe-nix.app.siblings instead (and the flake input
+        it comes from), then: nix run .#relock
+        EOF
+        exit 1
+      '';
+      description = "Not available in app mode — rename the sibling declaration instead.";
     };
   };
   # lib/scripts.d/*.nix, in name order: each a function of this file's
@@ -332,7 +346,7 @@ let
         requireDevguard = restore.requireDevguard or true;
         devguard = restore.devguard or true;
       };
-      # get-app, remove-app, new-app and reconcile-apps
+      # get-app, remove-app, rename-app, new-app and reconcile-apps
       # (frappe_nix_tools/apps/config.py).
       apps =
         let
@@ -386,6 +400,7 @@ secretScripts
       get-app)     shift; exec bench-get-app "$@" ;;
       new-app)     shift; exec bench-new-app "$@" ;;
       remove-app)  shift; exec bench-remove-app "$@" ;;
+      rename-app)  shift; exec bench-rename-app "$@" ;;
       restore)     shift; exec bench-restore "$@" ;;
       setup)
         # Only `setup requirements` is ours; the rest of `bench setup` (nginx,
@@ -1088,6 +1103,20 @@ secretScripts
       FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} remove-app "$@"
     '';
     description = "Remove a Frappe app from the bench — submodule, .gitmodules, uv workspace, registry, locks — once no site has it installed.";
+  };
+
+  # The bench's half of renaming an app: apps/<old> to apps/<new> with its
+  # submodule, clone, .gitmodules entry, workspace member and registry, moved
+  # rather than removed and added again. `frappe-rename-app` does the other two
+  # halves, the package in the app's repository and the sites that have it
+  # installed; a `git pull` of the renamed repository does none of this one.
+  #
+  # py/frappe_nix_tools/frappe_nix_tools/apps/rename_app.py.
+  bench-rename-app = {
+    exec = ''
+      FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} rename-app "$@"
+    '';
+    description = "Rename a Frappe app in the bench — move its submodule, clone, .gitmodules entry, uv workspace member and registry — the bench's half of frappe-rename-app.";
   };
 
   # Scaffold a brand-new app and register it in the uv workspace. Wraps
