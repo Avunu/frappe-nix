@@ -1,7 +1,9 @@
 # What services.frappe-nix takes from python-devops-nix's production pieces
 # (PLAN.md, Phase 6), checked at evaluation:
 #
-#   * every unit the module defines runs under lib.nixos.hardening, writes only
+#   * by default (hardening.enable = false, through 1.x) no unit carries any
+#     of the sandbox;
+#   * with hardening.enable, every unit the module defines runs under lib.nixos.hardening, writes only
 #     its site directory, and names the profile for what it runs: the Python
 #     units and migrate `jit` (Frappe starts Node for a Website Theme), plus
 #     `chromium` / `wkhtmltopdf` when those are on; socket.io `jit`; the
@@ -52,6 +54,8 @@ let
           boot.isContainer = true;
           services.frappe-nix = lib.recursiveUpdate {
             enable = true;
+            # Opt-in through 1.x; `default` below leaves it off.
+            hardening.enable = true;
             package = stubBench;
             redis.createLocally = true;
             sites.${site} = {
@@ -90,6 +94,18 @@ let
     };
   };
 
+  # The default: hardening.enable is false, and no unit carries any of it.
+  default = eval { hardening.enable = false; } { };
+  hardeningKeys = lib.attrNames self.inputs.python-devops-nix.lib.nixos.hardening.baseline ++ [
+    "RestrictAddressFamilies"
+    "ReadWritePaths"
+  ];
+  withHardening =
+    config:
+    toString (
+      lib.filter (unit: lib.any (k: (sc config unit) ? ${k}) hardeningKeys) (frappeUnits config)
+    );
+
   sc = config: unit: config.systemd.services.${unit}.serviceConfig;
   show =
     value:
@@ -115,6 +131,11 @@ let
 
   checks = [
     # [ label expected actual ]
+    [
+      "by default (hardening.enable = false) no frappe-* unit has a sandbox key"
+      ""
+      (withHardening default)
+    ]
     [
       "every frappe-* unit is sandboxed (runtime topology)"
       ""

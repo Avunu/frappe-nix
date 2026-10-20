@@ -10,10 +10,11 @@
 # restores it and leaves the site in maintenance mode — see the `migrate`
 # options below.
 #
-# Every unit it defines runs under python-devops-nix's systemd sandboxing
-# baseline (lib.nixos.hardening; CONVENTIONS.md, Unit hardening): a read-only
-# system but for the site's directory, no capabilities, a syscall filter, no
-# W+X memory unless a unit names a profile for it. See `harden` below.
+# With services.frappe-nix.hardening.enable, every unit it defines runs under
+# python-devops-nix's systemd sandboxing baseline (lib.nixos.hardening;
+# CONVENTIONS.md, Unit hardening): a read-only system but for the site's
+# directory, no capabilities, a syscall filter, no W+X memory unless a unit
+# names a profile for it. See `harden` below. Off by default through 1.x.
 #
 # Example:
 #   services.frappe-nix = {
@@ -230,7 +231,10 @@ let
   # state a Frappe process writes outside its private /tmp: the runtime bench
   # tree (config/, logs/), sites/ and the snapshots all live under it. A host
   # whose siteDir holds a link to somewhere else adds that path itself.
-  harden = base.nixos.hardening;
+  #
+  # Opt-in through 1.x (services.frappe-nix.hardening.enable): off, a unit gets
+  # none of these keys at all.
+  harden = args: optionalAttrs cfg.hardening.enable (base.nixos.hardening args);
 
   # The profiles of a unit that runs Frappe code (the runtime, gunicorn, a
   # worker, migrate). `jit`: Frappe starts the bench's Node by bare name to
@@ -2107,6 +2111,23 @@ in
           footers need a build "with patched qt", as nixpkgs' is.
         '';
       };
+    };
+
+    hardening.enable = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Sandbox every frappe-* unit with python-devops-nix's
+        lib.nixos.hardening: the file system read-only except the site's
+        directory, no capabilities, a system call filter, private /tmp, and no
+        writable-and-executable memory except for the units that run Node or a
+        PDF renderer. Off, the units get none of it.
+
+        The default flips to true in frappe-nix 2.0.0. Enable it per
+        deployment after watching one start, especially inside NixOS
+        containers (systemd-nspawn), where a namespace the sandbox needs can
+        fail the unit with status 226/NAMESPACE.
+      '';
     };
 
     extraEnv = mkOption {

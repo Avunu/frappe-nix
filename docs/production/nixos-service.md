@@ -86,7 +86,7 @@ The service units start after, and require, their `frappe-init-<SITE>`. The modu
 
 ### The sandbox
 
-Every unit above runs under a systemd sandbox, the baseline frappe-nix shares with odoo-nix ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `lib.nixos.hardening`). The file system is read-only (`ProtectSystem=strict`) except for the site's directory, `siteDir`, which holds everything a Frappe process writes: the runtime bench tree with its `config/` and `logs/`, `sites/` and the migrate snapshots. `/run` stays writable, for the sockets. `/home` and `/root` are hidden, `/tmp` is private to each unit, and the units have no capabilities, cannot gain privileges, and run under a system call filter (`@system-service`, without `@privileged`).
+With `hardening.enable = true`, every unit above runs under a systemd sandbox, the baseline frappe-nix shares with odoo-nix ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `lib.nixos.hardening`). The file system is read-only (`ProtectSystem=strict`) except for the site's directory, `siteDir`, which holds everything a Frappe process writes: the runtime bench tree with its `config/` and `logs/`, `sites/` and the migrate snapshots. `/run` stays writable, for the sockets. `/home` and `/root` are hidden, `/tmp` is private to each unit, and the units have no capabilities, cannot gain privileges, and run under a system call filter (`@system-service`, without `@privileged`).
 
 The baseline also refuses memory that is both writable and executable, which a just-in-time compiler needs, so a unit names what it runs:
 
@@ -95,6 +95,20 @@ The baseline also refuses memory that is both writable and executable, which a j
 | `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` and `wkhtmltopdf` when you turn those on |
 | `frappe-socketio-<SITE>`                               | `jit` (Node)                                                                                              |
 | `frappe-scheduler-<SITE>`, `frappe-init-<SITE>`, `frappe-db-password-<SITE>` | none; `frappe-init` and `frappe-db-password` also reach nothing but unix sockets  |
+
+`hardening.enable` is off by default through frappe-nix 1.x, and the units then carry none of this. The default becomes `true` in 2.0.0. Turn it on one deployment at a time, and watch the first start:
+
+```nix
+services.frappe-nix.hardening.enable = true;
+```
+
+```bash
+systemctl status 'frappe-*'
+journalctl -b -u 'frappe-*' -p err
+```
+
+> [!WARNING]
+> Inside a NixOS container (systemd-nspawn), systemd needs to set up mount and other namespaces for the sandbox. Where the container does not allow one, the unit fails to start with `status=226/NAMESPACE`. Relax the key that fails on that unit, as below, or leave `hardening.enable` off for that host.
 
 There is no `UMask`: the units write files nginx serves through the service group. Each setting is a default, so you can relax one key on one unit, and `ReadWritePaths` adds to the site directory rather than replacing it:
 

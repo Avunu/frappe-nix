@@ -230,6 +230,8 @@ in
     ];
 
     services.frappe-nix = {
+      # The sandbox is opt-in through 1.x; the VM tests run under it.
+      hardening.enable = true;
       enable = true;
       package = stubBench;
       sites."${siteName}" = {
