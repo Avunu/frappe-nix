@@ -50,7 +50,17 @@ rec {
     base.devguard.mkPackage {
       inherit pkgs settings;
       name = "frappe_devguard";
-      src = ./devguard/frappe_devguard;
+      # A store path, not a path literal: mkPackage names `src` in the build
+      # script ("the product's tree (${toString src})"), and toString of a
+      # path literal is the path inside the flake's source with no string
+      # context, so the derivation referenced a store path it did not depend
+      # on (Nix's "without a proper context" warning). __pycache__ is left
+      # out, as mkPackage's own copy of a path literal does.
+      src = builtins.path {
+        path = ./devguard/frappe_devguard;
+        name = "frappe-devguard-src";
+        filter = path: _type: baseNameOf path != "__pycache__";
+      };
     };
 
   unixsock = graft "unixsock";
