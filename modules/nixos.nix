@@ -6,8 +6,14 @@
 #
 # On each new build the per-site frappe-migrate-<site> oneshot runs
 # `bench migrate`. By default (services.frappe-nix.migrate.*) it first snapshots the
-# database (mysqldump) and, if the migration fails, restores the snapshot and
-# leaves the site in maintenance mode — see the `migrate` options below.
+# database (mysqldump), verifies the snapshot and, if the migration fails,
+# restores it and leaves the site in maintenance mode — see the `migrate`
+# options below.
+#
+# Every unit it defines runs under python-devops-nix's systemd sandboxing
+# baseline (lib.nixos.hardening; CONVENTIONS.md, Unit hardening): a read-only
+# system but for the site's directory, no capabilities, a syscall filter, no
+# W+X memory unless a unit names a profile for it. See `harden` below.
 #
 # Example:
 #   services.frappe-nix = {
@@ -22,10 +28,9 @@
 #     };
 #   };
 #
-# flake.nix applies this file to python-devops-nix's lib.python.threadCaps
-# (lib.modules.importApply), so it is nixosModules.default, not this path, that a
-# host imports.
-{ threadCaps }:
+# flake.nix applies this file to python-devops-nix's lib (lib.modules.importApply),
+# so it is nixosModules.default, not this path, that a host imports.
+{ base }:
 {
   config,
   lib,
@@ -60,6 +65,8 @@ let
     // {
       description = "attribute set of app names (OLD = NEW), each matching [a-z][a-z0-9_]*";
     };
+
+  inherit (base.python) threadCaps;
 
   cfg = config.services.frappe-nix;
 
@@ -125,6 +132,13 @@ let
       GIT_PYTHON_REFRESH = "none";
     };
 
+  # services.frappe-nix.environmentFiles on a unit that runs Frappe code: read
+  # by systemd (root) when the unit starts, so the files may be root's 0400
+  # (agenix) and never enter the store.
+  environmentFileConfig = optionalAttrs (cfg.environmentFiles != [ ]) {
+    EnvironmentFile = cfg.environmentFiles;
+  };
+
   # Per-site environment. The package (and therefore interpreters) can differ
   # per site, so this is a function of (siteName, siteCfg).
   siteEnv =
@@ -189,26 +203,49 @@ let
     // cfg.extraEnv;
 
   # The journald fields every unit this module defines carries, shared with
-  # odoo-nix and wordpress-nix: a host shipping the journal to a log store labels
-  # by these, so they are a contract, not decoration. APP_SERVICE is the unit's
-  # role; APP_SITE the site FQDN, only for a unit tied to exactly one site.
+  # odoo-nix and wordpress-nix (python-devops-nix's lib.journald.fields;
+  # CONVENTIONS.md, Journald vocabulary): a host shipping the journal to a log
+  # store labels by these, so they are a contract, not decoration. APP_SERVICE
+  # is the unit's role, one of lib.journald.roles; APP_SITE the site FQDN, only
+  # for a unit tied to exactly one site; SyslogIdentifier frappe-<role> (or
+  # `identifier`), stable whatever the process is called (`python3`, `bench`, a
+  # store script named after the site), and not on the upstream units (mysql,
+  # redis, nginx), which keep their own.
   #
   # LogExtraFields applies to everything journald receives from the unit's
   # processes — stdout/stderr, syslog(3) and sd_journal — so nginx's access log
   # over /dev/log is labelled as well as its stderr.
-  logFields =
-    {
-      role,
-      site ? null,
-      # A stable identifier rather than the process name, which for these units
-      # is `python3`, `bench` or a store script named after the site. Only on
-      # per-site units: the shared ones (mysql, redis, nginx) keep their own.
-      identifier ? "frappe-${role}",
-    }:
-    {
-      LogExtraFields = [ "APP_SERVICE=${role}" ] ++ lib.optional (site != null) "APP_SITE=${site}";
-    }
-    // optionalAttrs (site != null) { SyslogIdentifier = identifier; };
+  logFields = args: base.journald.fields ({ prefix = "frappe"; } // args);
+
+  # The sandbox for a unit this module defines: python-devops-nix's
+  # lib.nixos.hardening, merged into its serviceConfig. Each key is a
+  # mkDefault, so a host can relax one on one unit
+  # (`systemd.services.<unit>.serviceConfig.<key> = …;`), and ReadWritePaths is
+  # a plain list, so a host's paths add to the site directory. No UMask: the
+  # units write files nginx serves through the group (frappe-nix#83), and the
+  # migrate snapshots get their 0600 where they are written.
+  #
+  # ProtectSystem=strict leaves /run writable, so the socket directories and the
+  # scheduler lock need no entry; the site directory does, and is the only
+  # state a Frappe process writes outside its private /tmp: the runtime bench
+  # tree (config/, logs/), sites/ and the snapshots all live under it. A host
+  # whose siteDir holds a link to somewhere else adds that path itself.
+  harden = base.nixos.hardening;
+
+  # The profiles of a unit that runs Frappe code (the runtime, gunicorn, a
+  # worker, migrate). `jit`: Frappe starts the bench's Node by bare name to
+  # build a Website Theme's CSS (generate_bootstrap_theme.js, on saving a
+  # theme and in after_migrate), and V8 aborts at start without W+X memory.
+  # The PDF renderers, when they are on: a print can render in a request or a
+  # job.
+  frappeProfiles = [
+    "jit"
+  ]
+  ++ lib.optional cfg.chromium.enable "chromium"
+  ++ lib.optional cfg.wkhtmltopdf.enable "wkhtmltopdf";
+
+  # Only unix sockets: a unit that reaches nothing over TCP.
+  unixOnly = [ "AF_UNIX" ];
 
   # Packages on PATH for every Frappe service (git needed by GitPython).
   # systemd's `path` option sets PATH to exactly these packages' bin/sbin —
@@ -555,12 +592,28 @@ let
         | ${cfg.database.package}/bin/mysql -N
     '';
 
-  # Safe deploy-time migration script (ExecStart of frappe-migrate-<site>).
+  # Safe deploy-time migration (ExecStart of frappe-migrate-<site>).
   #
-  # Snapshots the DB before migrating and, if `bench migrate` fails, restores
-  # the snapshot and leaves the site in maintenance mode. A physical snapshot is
-  # the only real rollback here: `bench migrate` performs DDL (CREATE/ALTER
-  # TABLE), which auto-commits in MariaDB and cannot be undone in a transaction.
+  # python-devops-nix's migrate flow (lib.nixos.migrate.script; CONVENTIONS.md,
+  # Migrate on deploy) with this module's steps:
+  #
+  #   check      the build marker, then the uninstalled-site guard; exit 100
+  #              (nothing to do) for either
+  #   dump       mysqldump | gzip, into a 0600 file in <siteDir>/snapshots (0700)
+  #   verify     gzip's check and mysqldump's closing "-- Dump completed" line:
+  #              a dump cut short is removed and stops the deploy before it
+  #              migrates
+  #   migrate    maintenance mode on, the app renames and replacements, the
+  #              offline migrate, `bench migrate`
+  #   onSuccess  maintenance mode off, the marker
+  #   restore    drop every table and view, then load the snapshot
+  #   onFailure  say the site is left in maintenance mode
+  #
+  # A physical snapshot is the only real rollback here: `bench migrate` performs
+  # DDL (CREATE/ALTER TABLE), which auto-commits in MariaDB and cannot be undone
+  # in a transaction. A failed migrate leaves the site serving Frappe's
+  # maintenance page rather than new code on the rolled-back (older) schema; the
+  # services only order after this unit (RemainAfterExit), they do not require it.
   #
   # Runs entirely as cfg.user with the site's own DB credentials (read from the
   # 0600 site_config.json) — no DB-root privilege needed, so it works for both
@@ -578,12 +631,12 @@ let
 
       dbName = siteCfg.database.name;
       renamedList = concatStringsSep ", " (mapAttrsToList (o: n: "${o} -> ${n}") siteCfg.renamedApps);
-      # Connection flags shared by mysqldump (snapshot) and mysql (rollback).
-      # Password comes from MYSQL_PWD (exported below) to keep it out of argv.
-      # Connect the same way Frappe does: over the unix socket when one is
-      # configured (locally-created DB users are `user@localhost`, which MariaDB
-      # matches only for socket connections, not TCP to 127.0.0.1), otherwise
-      # over TCP for an externally-managed database.
+      # Connection flags shared by the guard, mysqldump (snapshot) and mysql
+      # (rollback). Password comes from MYSQL_PWD (exported below) to keep it out
+      # of argv. Connect the same way Frappe does: over the unix socket when one
+      # is configured (locally-created DB users are `user@localhost`, which
+      # MariaDB matches only for socket connections, not TCP to 127.0.0.1),
+      # otherwise over TCP for an externally-managed database.
       connArgs =
         if siteCfg.database.socket != "" then
           "--socket=${siteCfg.database.socket} --user=${siteCfg.database.user}"
@@ -595,168 +648,183 @@ let
       jq = "${pkgs.jq}/bin/jq";
       grep = "${pkgs.gnugrep}/bin/grep";
       gzip = "${pkgs.gzip}/bin/gzip";
-      gunzip = "${pkgs.gzip}/bin/gunzip";
 
       siteConfig = "${siteCfg.siteDir}/sites/${name}/site_config.json";
-      snapDir = "${siteCfg.siteDir}/snapshots";
       # Build store path of the last successful migrate; guards against redundant
       # re-runs (e.g. on every reboot) when the app build hasn't changed.
       marker = "${siteCfg.siteDir}/.frappe-migrate-build";
+
+      # Messages are this unit's: "frappe-migrate(<site>): …". Each step's stderr
+      # is the journal, which reads a leading <N> as the line's syslog priority
+      # (sd-daemon(3)); stdout lines are progress and take the default of info.
+      say = msg: lib.escapeShellArg "frappe-migrate(${name}): ${msg}";
+
+      # One step of the flow: a script with the site's environment.
+      step =
+        what: body:
+        pkgs.writeShellScript "frappe-migrate-${what}-${name}" ''
+          set -uo pipefail
+          export PYTHONPATH="${pkgAppsPath pkg}"
+          ${body}
+        '';
+
+      # The site's DB credentials, for the guard, the snapshot and the rollback
+      # (the frappe user owns site_config.json).
+      dbCredentials = ''
+        MYSQL_PWD="$(${jq} -r '.db_password // empty' "${siteConfig}")"
+        export MYSQL_PWD
+      '';
 
       setMaintenance =
         state:
         optionalString mg.maintenanceMode ''
           ${benchBin} --site ${name} set-maintenance-mode ${state} \
-            || echo "<4>frappe-migrate(${name}): warning: could not set maintenance mode ${state}" >&2
+            || echo "<4>"${say "warning: could not set maintenance mode ${state}"} >&2
         '';
-    in
-    # Its stderr is the journal, which reads a leading <N> as the line's syslog
-    # priority (sd-daemon(3)); the stdout lines are progress and take the default
-    # of info. So a failed migrate is findable at `journalctl -p err`, not only by
-    # grepping for its wording.
-    pkgs.writeShellScript "frappe-migrate-${name}" ''
-      set -uo pipefail
-      export PYTHONPATH="${pkgAppsPath pkg}"
 
-      BUILD="${pkg}"
-      if [ "$(cat "${marker}" 2>/dev/null || true)" = "$BUILD" ]; then
-        echo "frappe-migrate(${name}): build unchanged since last successful migrate; skipping."
-        exit 0
-      fi
-
-      # Site DB credentials for snapshot/rollback (frappe user owns this file).
-      export MYSQL_PWD="$(${jq} -r '.db_password // empty' "${siteConfig}")"
-
-      # A database with no tables belongs to a site that has never been
-      # installed — a fresh deploy awaiting `bench new-site`, or a host whose
-      # local database state was lost while the site directory (on shared
-      # storage) survived. `bench migrate` dies there on its very first query,
-      #   Table '<db>.tabDefaultValue' doesn't exist
-      # and takes activation down with it, every single deploy. Installing or
-      # restoring a site is an operator action that activation cannot perform,
-      # so this is not an activation failure: say what is missing and stop.
-      # The marker stays unwritten, so the deploy after the restore migrates
-      # even if the build has not changed.
-      TABLES="$(${mysql} ${connArgs} -N -B -e \
-        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';" 2>/dev/null)"
-      if [ "$TABLES" = "0" ]; then
-        echo "<4>frappe-migrate(${name}): database ${dbName} has no tables — the site is not installed; skipping migrate. Install (bench new-site) or restore it, then redeploy." >&2
-        exit 0
-      fi
-
-      SNAP=""
-      ${optionalString mg.snapshot ''
-        # Snapshots are full DB dumps, so they are owner-only (systemd's default
-        # umask would make them world-readable). The umask is set for the dump
-        # alone: `bench migrate` writes files nginx serves, such as the Website
-        # Theme CSS that after_migrate regenerates under public/files. nginx
-        # reads those as a member of the service group, and under a 0077 umask
-        # it answers 403.
-        mkdir -p -m 0700 "${snapDir}"
-        SNAP="${snapDir}/premigrate-${name}-$(date +%Y%m%d-%H%M%S).sql.gz"
-        echo "frappe-migrate(${name}): taking pre-migrate snapshot -> $SNAP"
-        if ! (umask 0077 && ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
-             --routines --triggers ${dbName} | ${gzip} > "$SNAP"); then
-          echo "<3>frappe-migrate(${name}): ERROR pre-migrate snapshot failed; aborting before migrate (no safety net)." >&2
-          rm -f "$SNAP"
-          exit 1
+      check = step "check" ''
+        if [ "$(cat "${marker}" 2>/dev/null || true)" = "${pkg}" ]; then
+          echo ${say "build unchanged since last successful migrate; skipping."}
+          exit 100
         fi
-      ''}
 
-      ${setMaintenance "on"}
-
-      RC=0
-      ${optionalString (siteCfg.renamedApps != { }) ''
-        # Before anything imports the apps: the site still names OLD, which this
-        # package no longer has. A failure here is a failed migrate.
-        echo ${lib.escapeShellArg "frappe-migrate(${name}): renaming ${renamedList}"}
-        (cd ${runtimeBenchDir}/sites && ${pyEnv}/bin/python ${../lib/rename/frappe_rename_app.py} \
-          --site ${name} --yes ${
-            lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.renamedApps)
-          }) \
-          || RC=$?
-      ''}
-      ${optionalString (siteCfg.replacedApps != { }) ''
-        if [ "$RC" -eq 0 ]; then
-          INSTALLED="$(${benchBin} --site ${name} list-apps --format json 2>/dev/null \
-            | ${jq} -r --arg s ${name} '.[$s][]? // empty' 2>/dev/null)" || RC=$?
-          for pair in ${lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.replacedApps)}; do
-            [ "$RC" -eq 0 ] || break
-            old="''${pair%%=*}" new="''${pair#*=}"
-            ${grep} -qxF "$old" <<< "$INSTALLED" || continue
-            if ! ${grep} -qxF "$new" <<< "$INSTALLED"; then
-              echo "frappe-migrate(${name}): $new replaces $old: installing $new"
-              ${benchBin} --site ${name} install-app "$new" || RC=$?
-            fi
-            if [ "$RC" -eq 0 ]; then
-              echo "frappe-migrate(${name}): $new replaces $old: uninstalling $old"
-              ${benchBin} --site ${name} uninstall-app "$old" --yes --no-backup || RC=$?
-            fi
-          done
+        ${dbCredentials}
+        # A database with no tables belongs to a site that has never been
+        # installed — a fresh deploy awaiting `bench new-site`, or a host whose
+        # local database state was lost while the site directory (on shared
+        # storage) survived. `bench migrate` dies there on its very first query,
+        #   Table '<db>.tabDefaultValue' doesn't exist
+        # and takes activation down with it, every single deploy. Installing or
+        # restoring a site is an operator action that activation cannot perform,
+        # so this is not an activation failure: say what is missing and stop.
+        # The marker stays unwritten, so the deploy after the restore migrates
+        # even if the build has not changed.
+        TABLES="$(${mysql} ${connArgs} -N -B -e \
+          "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';" 2>/dev/null)"
+        if [ "$TABLES" = "0" ]; then
+          echo "<4>"${say "database ${dbName} has no tables — the site is not installed; skipping migrate. Install (bench new-site) or restore it, then redeploy."} >&2
+          exit 100
         fi
-      ''}
-      ${optionalString mg.offline.enable ''
-        # A failure here is a failed migrate: the snapshot is restored below, so
-        # a half-applied plan is not left behind.
-        if [ "$RC" -eq 0 ]; then
-          echo "frappe-migrate(${name}): altering large tables online"
-          FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
-          FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
-            ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
+        exit 0
+      '';
+
+      dump = step "dump" ''
+        set -e
+        ${dbCredentials}
+        ${mysqldump} ${connArgs} --single-transaction --quick --no-tablespaces \
+          --routines --triggers ${dbName} | ${gzip}
+      '';
+
+      # Drop every current table and view — including any a partial migration
+      # created — then re-import the snapshot (whose own DROP/CREATE/INSERT
+      # restores the pre-migrate tables and data). FK checks off so drop order
+      # does not matter. Both halves run whatever the first did, as before: a
+      # load over a partial drop still puts back every table the dump has.
+      restore = step "restore" ''
+        ${dbCredentials}
+        rc=0
+        { echo "SET FOREIGN_KEY_CHECKS=0;"
+          ${mysql} ${connArgs} -N -e \
+            "SELECT CONCAT('DROP ', IF(TABLE_TYPE='VIEW','VIEW','TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';"
+        } | ${mysql} ${connArgs} ${dbName} || rc=1
+        ${gzip} -cd -- "$1" | ${mysql} ${connArgs} ${dbName} || rc=1
+        exit "$rc"
+      '';
+
+      migrate = step "run" ''
+        ${setMaintenance "on"}
+
+        RC=0
+        ${optionalString (siteCfg.renamedApps != { }) ''
+          # Before anything imports the apps: the site still names OLD, which this
+          # package no longer has. A failure here is a failed migrate.
+          echo ${say "renaming ${renamedList}"}
+          (cd ${runtimeBenchDir}/sites && ${pyEnv}/bin/python ${../lib/rename/frappe_rename_app.py} \
+            --site ${name} --yes ${
+              lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.renamedApps)
+            }) \
             || RC=$?
-        fi
-      ''}
-
-      if [ "$RC" -eq 0 ]; then
-        echo "frappe-migrate(${name}): running bench migrate"
-        ${benchBin} --site ${name} migrate
-        RC=$?
-      fi
-
-      if [ "$RC" -eq 0 ]; then
-        ${setMaintenance "off"}
-        printf '%s' "$BUILD" > "${marker}"
-        ${optionalString mg.snapshot ''
-          # Prune to the newest ${toString mg.snapshotRetention} snapshots.
-          ls -1t "${snapDir}"/premigrate-${name}-*.sql.gz 2>/dev/null \
-            | tail -n +${toString (mg.snapshotRetention + 1)} \
-            | while IFS= read -r old; do rm -f "$old"; done
         ''}
-        echo "frappe-migrate(${name}): migrate OK"
-        exit 0
-      fi
-
-      echo "<3>>>> frappe-migrate(${name}): MIGRATION FAILED (exit $RC) <<<" >&2
-
-      ${optionalString (mg.snapshot && mg.rollbackOnFailure) ''
-        if [ -n "$SNAP" ] && [ -f "$SNAP" ]; then
-          echo "<4>frappe-migrate(${name}): rolling back database from $SNAP" >&2
-          rollback_ok=1
-          # Drop every current table/view — including any a partial migration
-          # created — then re-import the snapshot (whose own DROP/CREATE/INSERT
-          # restores the pre-migrate tables and data). FK checks off so drop
-          # order does not matter.
-          { echo "SET FOREIGN_KEY_CHECKS=0;"
-            ${mysql} ${connArgs} -N -e \
-              "SELECT CONCAT('DROP ', IF(TABLE_TYPE='VIEW','VIEW','TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';"
-          } | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
-          ${gunzip} -c "$SNAP" | ${mysql} ${connArgs} ${dbName} || rollback_ok=0
-          if [ "$rollback_ok" -eq 1 ]; then
-            echo "<4>frappe-migrate(${name}): rollback complete — restored pre-migrate snapshot." >&2
-          else
-            echo "<3>frappe-migrate(${name}): ERROR rollback FAILED; database may be inconsistent. Snapshot preserved at $SNAP." >&2
+        ${optionalString (siteCfg.replacedApps != { }) ''
+          if [ "$RC" -eq 0 ]; then
+            INSTALLED="$(${benchBin} --site ${name} list-apps --format json 2>/dev/null \
+              | ${jq} -r --arg s ${name} '.[$s][]? // empty' 2>/dev/null)" || RC=$?
+            for pair in ${lib.escapeShellArgs (mapAttrsToList (o: n: "${o}=${n}") siteCfg.replacedApps)}; do
+              [ "$RC" -eq 0 ] || break
+              old="''${pair%%=*}" new="''${pair#*=}"
+              ${grep} -qxF "$old" <<< "$INSTALLED" || continue
+              if ! ${grep} -qxF "$new" <<< "$INSTALLED"; then
+                echo "frappe-migrate(${name}): $new replaces $old: installing $new"
+                ${benchBin} --site ${name} install-app "$new" || RC=$?
+              fi
+              if [ "$RC" -eq 0 ]; then
+                echo "frappe-migrate(${name}): $new replaces $old: uninstalling $old"
+                ${benchBin} --site ${name} uninstall-app "$old" --yes --no-backup || RC=$?
+              fi
+            done
           fi
-        else
-          echo "<3>frappe-migrate(${name}): no snapshot available to roll back to." >&2
-        fi
-      ''}
+        ''}
+        ${optionalString mg.offline.enable ''
+          # A failure here is a failed migrate: the snapshot is restored, so a
+          # half-applied plan is not left behind.
+          if [ "$RC" -eq 0 ]; then
+            echo ${say "altering large tables online"}
+            FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=${offlineMigrateTool}/bin/frappe-nix-pt-osc \
+            FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=${toString mg.offline.rowThreshold} \
+              ${pyEnv}/bin/python ${../lib/offline-migrate.py} --site ${name} --bench-root ${runtimeBenchDir} \
+              || RC=$?
+          fi
+        ''}
 
-      # Failure posture: leave maintenance mode ON so the site serves the
-      # maintenance page instead of new code on the rolled-back (older) schema.
-      # Recover with a fixed forward deploy or `nixos-rebuild switch --rollback`.
-      echo "<3>frappe-migrate(${name}): site left in maintenance mode; investigate and redeploy." >&2
-      exit "$RC"
-    '';
+        if [ "$RC" -eq 0 ]; then
+          echo ${say "running bench migrate"}
+          ${benchBin} --site ${name} migrate
+          RC=$?
+        fi
+        exit "$RC"
+      '';
+
+      onSuccess = step "success" ''
+        ${setMaintenance "off"}
+        printf '%s' "${pkg}" > "${marker}"
+      '';
+
+      # Failure posture: maintenance mode stays ON (the migrate step turned it
+      # on and nothing turned it off), so the site serves the maintenance page
+      # instead of new code on the rolled-back (older) schema. Recover with a
+      # fixed forward deploy or `nixos-rebuild switch --rollback`.
+      onFailure = step "failure" (
+        if mg.maintenanceMode then
+          ''
+            echo "<3>"${say "site left in maintenance mode; investigate and redeploy."} >&2
+          ''
+        else
+          ''
+            echo "<3>"${say "the site is serving on the schema the rollback left (migrate.maintenanceMode is off); investigate and redeploy."} >&2
+          ''
+      );
+    in
+    base.nixos.migrate.script {
+      inherit
+        pkgs
+        check
+        migrate
+        onSuccess
+        onFailure
+        dump
+        restore
+        ;
+      label = "frappe-migrate";
+      target = name;
+      cfg = mg;
+      snapshotDir = "${siteCfg.siteDir}/snapshots";
+      extension = ".sql.gz";
+      verify = base.nixos.migrate.verifiers.mysqldump { inherit pkgs; };
+      # The bench's own interpreter, already in the closure, when the package
+      # names it (python-devops-nix PLAN.md, Python versions); a package built
+      # by an older frappe-nix does not.
+      python = pkg.passthru.python or pkgs.python3;
+    };
 
   # Generate all systemd services for a single site.
   mkSiteServices =
@@ -802,6 +870,10 @@ let
           extra ? { },
           workingDirectory ? runtimeBenchDir,
           stopTimeout ? null,
+          # The unit's sandbox (see harden): what it writes, and the profiles
+          # for what it runs.
+          readWritePaths ? [ siteCfg.siteDir ],
+          profiles ? frappeProfiles,
         }:
         {
           inherit description;
@@ -818,10 +890,12 @@ let
             Restart = "always";
             RestartSec = "5";
           }
+          // environmentFileConfig
           // logFields {
             inherit role identifier;
             site = name;
           }
+          // harden { inherit readWritePaths profiles; }
           // optionalAttrs (stopTimeout != null) {
             TimeoutStopSec = toString stopTimeout;
           };
@@ -943,6 +1017,9 @@ let
           role = "scheduler";
           execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
           extra = dependsOn;
+          # It enqueues the scheduled jobs; the workers run them. Nothing here
+          # starts Node or a PDF renderer.
+          profiles = [ ];
         };
 
         "frappe-socketio-${name}" = mkService {
@@ -950,6 +1027,10 @@ let
           role = "socketio";
           execStart = mkExec pkg "socketio-${name}" "${node}/bin/node ${benchDir}/apps/frappe/socketio.js";
           extra = dependsOn;
+          # Node: V8 is a JIT. It reads the site's config and Redis and writes
+          # nothing but its socket, in a /run directory (writable already).
+          profiles = [ "jit" ];
+          readWritePaths = [ ];
         };
       }
       // workerUnits;
@@ -974,6 +1055,12 @@ let
         // logFields {
           role = "init";
           site = name;
+        }
+        # It assembles the site's runtime tree and writes its site_config.json
+        # with cp, ln and jq, and talks to nothing.
+        // harden {
+          readWritePaths = [ siteCfg.siteDir ];
+          addressFamilies = unixOnly;
         };
       };
 
@@ -995,8 +1082,8 @@ let
         ++ lib.optional cfg.redis.createLocally "redis-frappe.service";
         requires = [ "${initName}.service" ];
         environment = env;
-        # coreutils for date/ls/tail/rm/cat used by the snapshot/rollback script;
-        # mysql/mysqldump/jq/gzip are referenced by absolute store path.
+        # coreutils for cat/printf used by the steps; mysql/mysqldump/jq/gzip
+        # are referenced by absolute store path.
         path = servicePath ++ [ pkgs.coreutils ];
         serviceConfig = {
           Type = "oneshot";
@@ -1006,11 +1093,33 @@ let
           User = cfg.user;
           Group = cfg.group;
           WorkingDirectory = runtimeBenchDir;
-          ExecStart = mkSiteMigrate name siteCfg;
+          ExecStart = lib.getExe (mkSiteMigrate name siteCfg);
         }
+        // environmentFileConfig
         // logFields {
           role = "migrate";
           site = name;
+        }
+        # Runs Frappe code, so the profiles of the units that do (see
+        # frappeProfiles: after_migrate regenerates the Website Theme with
+        # Node). The snapshots are under the site directory.
+        // harden {
+          readWritePaths = [ siteCfg.siteDir ];
+          profiles = frappeProfiles;
+          # Only unix sockets when everything it talks to is on one: the
+          # database (its socket) and Redis (`bench migrate` clears the cache).
+          addressFamilies =
+            if
+              siteCfg.database.socket != ""
+              && lib.all (lib.hasPrefix "unix://") [
+                siteCfg.redis.cacheUrl
+                siteCfg.redis.queueUrl
+                siteCfg.redis.socketioUrl
+              ]
+            then
+              unixOnly
+            else
+              base.nixos.hardening.defaultAddressFamilies;
         };
       };
     }
@@ -1034,7 +1143,9 @@ let
           role = "init";
           site = name;
           identifier = "frappe-db-password";
-        };
+        }
+        # One statement to the local MariaDB over its socket; writes nothing.
+        // harden { addressFamilies = unixOnly; };
       };
     };
 
@@ -1209,7 +1320,10 @@ let
   # run as root, and everything it writes -- the runtime bench tree it
   # (re)creates, a site's public/private files, backups, logs -- would be
   # root's, which the units (running as cfg.user) then cannot write. So, as
-  # root, it runs as a transient unit with the units' user, group and PATH.
+  # root, it runs as a transient unit with the units' user, group, PATH and
+  # environmentFiles (which systemd reads as root, as for the units). It is
+  # not sandboxed like them: it is an operator's shell, and may need to reach
+  # anything the operator points it at.
   # The site's secrets need nothing more: frappe-init-<site> has already
   # merged them into site_config.json, which is cfg.user's.
   #
@@ -1234,6 +1348,11 @@ let
           exec ${config.systemd.package}/bin/systemd-run --quiet --wait --collect "$io" \
             --uid=${lib.escapeShellArg cfg.user} --gid=${lib.escapeShellArg cfg.group} \
             --setenv=PATH=${lib.escapeShellArg (lib.makeBinPath (servicePath ++ unitDefaultPath))} \
+            ${
+              concatStringsSep " " (
+                map (f: "--property=${lib.escapeShellArg "EnvironmentFile=${f}"}") cfg.environmentFiles
+              )
+            } \
             "''${site[@]}" \
             -- ${benchInner} "$@"
         fi
@@ -1295,15 +1414,8 @@ let
       # recommendedProxySettings hardcodes `X-Forwarded-Proto $scheme` and NixOS
       # emits its include AFTER a location's extraConfig, so the wrong scheme
       # cannot be overridden from there. Opt the location out and set the whole
-      # header block explicitly instead.
-      socketProxyHeaders = optionalString viaSocket ''
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Server $hostname;
-      '';
+      # header block explicitly instead (python-devops-nix's lib.nixos.nginx).
+      socketProxyHeaders = optionalString viaSocket base.nixos.nginx.socketProxyHeaders;
     in
     {
       root = "${siteCfg.siteDir}/sites";
@@ -1327,10 +1439,7 @@ let
       # recommendedProxySettings would forward it as the client IP. Trust the
       # socket peer and take the real address from Cloudflare's header instead —
       # the socket is only reachable from the connector beside it.
-      extraConfig = lib.optionalString viaSocket ''
-        set_real_ip_from unix:;
-        real_ip_header CF-Connecting-IP;
-      '';
+      extraConfig = lib.optionalString viaSocket base.nixos.nginx.cloudflareRealIp;
 
       locations = {
         "/assets/" = {
@@ -1409,6 +1518,51 @@ let
           } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
     };
 
+  # A site's socket paths, for lib.nixos.unixSocket. nginx *creates* its listen
+  # socket and is only a member of cfg.group, so its directory is 0770 (group
+  # write); a directory holding only the site's own sockets, which nginx only
+  # connects to, is 0750. Both of a site's sockets normally share one directory,
+  # which is then 0770.
+  siteSockets =
+    name: siteCfg:
+    let
+      option = opt: "services.frappe-nix.sites.\"${name}\".${opt}";
+      example = "/run/frappe-${name}/web.sock";
+    in
+    [
+      {
+        option = option "web.socketPath";
+        path = siteCfg.web.socketPath;
+        inherit example;
+      }
+      {
+        option = option "socketio.socketPath";
+        path = siteCfg.socketio.socketPath;
+        inherit example;
+      }
+      {
+        option = option "nginx.socketPath";
+        path = siteCfg.nginx.socketPath;
+        peerCreates = true;
+        inherit example;
+      }
+    ];
+
+  # The directories, deduplicated across sites. The realtime socket only under
+  # the split units: the unified runtime binds none (a set socketio.socketPath
+  # is a warning there).
+  socketDirs = base.nixos.unixSocket {
+    inherit (cfg) user group;
+    sockets = lib.concatLists (
+      mapAttrsToList (
+        name: siteCfg:
+        lib.filter (socket: !(cfg.runtime.enable && lib.hasSuffix ".socketio.socketPath" socket.option)) (
+          siteSockets name siteCfg
+        )
+      ) enabledSites
+    );
+  };
+
   # Site submodule option definition.
   siteModule = types.submodule (
     { name, ... }: {
@@ -1449,8 +1603,9 @@ let
             generated upstream block.
 
             Access is governed by the socket's *directory*, which this module
-            creates 0750 owned by the service user — nginx is already a member of
-            that group. Put the socket in its own directory, not directly in /run.
+            creates owned by the service user and group — nginx is already a member
+            of that group: 0750, or 0770 when nginx.socketPath shares it. Put the
+            socket in its own directory, not directly in /run.
           '';
         };
 
@@ -1616,7 +1771,8 @@ let
 
               nginx chmods its unix listen sockets to 0666, so the socket file does
               not restrict access. Give it its own directory; this module creates
-              that 0750 and owned by the service user, which is the real gate.
+              that owned by the service user and group, 0770 since nginx creates
+              its socket there as a group member, which is the real gate.
             '';
           };
         };
@@ -1784,6 +1940,20 @@ in
         default = pkgs.mariadb;
         description = "MariaDB package (client library on LD_LIBRARY_PATH).";
       };
+      slowQueryMs = mkOption {
+        type = types.nullOr types.ints.unsigned;
+        default = null;
+        example = 500;
+        description = ''
+          Log every statement that runs at least this many milliseconds to
+          MariaDB's slow query log (`slow_query_log`, `long_query_time`); `0`
+          logs all of them. MariaDB writes it to a file, by default
+          `<hostname>-slow.log` in its data directory (`slow_query_log_file`
+          moves it), not to the journal, and nothing rotates it. Only with a
+          local database (`database.createLocally`). The same option as
+          odoo-nix's, whose PostgreSQL logs to the journal.
+        '';
+      };
     };
 
     redis = {
@@ -1794,79 +1964,56 @@ in
       };
     };
 
-    migrate = {
-      enable = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Run `bench migrate` automatically for each site when a new build is
-          deployed (the per-site frappe-migrate-<site> oneshot). Set to false to
-          skip it and run migrations manually.
-        '';
-      };
-      snapshot = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Take a physical DB snapshot (mysqldump) immediately before migrating,
-          so a failed migration can be rolled back. Frappe schema changes are
-          DDL, which auto-commits in MariaDB and cannot be undone in a
-          transaction — a snapshot is the only real safety net.
-        '';
-      };
-      rollbackOnFailure = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Restore the pre-migrate snapshot if `bench migrate` fails, returning
-          the database to its pre-migrate state. No effect when snapshot = false.
-        '';
-      };
-      maintenanceMode = mkOption {
-        type = types.bool;
-        default = true;
-        description = ''
-          Put the site into Frappe maintenance mode around the migration. On
-          failure the site is left in maintenance mode so it serves the
-          maintenance page rather than running new code against a rolled-back
-          (older) schema.
-        '';
-      };
-      snapshotRetention = mkOption {
-        type = types.ints.positive;
-        default = 3;
-        description = "Number of most-recent pre-migrate snapshots to keep per site under <siteDir>/snapshots.";
-      };
-      offline = {
-        enable = mkOption {
+    # The four options odoo-nix has under the same names and defaults
+    # (python-devops-nix's lib.nixos.migrate.options), and this module's own
+    # beside them.
+    migrate =
+      base.nixos.migrate.options {
+        what = "`bench migrate` for each site (the per-site frappe-migrate-<site> oneshot)";
+        dumpTool = "mysqldump";
+        where = "per site, under <siteDir>/snapshots";
+      }
+      // {
+        maintenanceMode = mkOption {
           type = types.bool;
-          default = false;
+          default = true;
           description = ''
-            Alter large tables without locking them. Before `bench migrate`, the
-            unit works out which tables of at least `rowThreshold` rows the
-            migrate is about to alter and applies those changes with
-            `pt-online-schema-change` — a shadow copy altered and filled in
-            chunks while triggers keep it current, swapped in with one rename —
-            so the ALTER does not hold a metadata lock for the length of the
-            copy. The migrate that follows finds the columns already there.
-
-            Runs inside the same snapshot, maintenance mode and rollback as the
-            migrate, and a failure is a failed migrate. Off by default: it adds
-            percona-toolkit to the closure and needs the TRIGGER privilege on
-            the site's database, which a locally created site user has.
+            Put the site into Frappe maintenance mode around the migration. On
+            failure the site is left in maintenance mode so it serves the
+            maintenance page rather than running new code against a rolled-back
+            (older) schema.
           '';
         };
-        rowThreshold = mkOption {
-          type = types.ints.unsigned;
-          default = 100000;
-          description = ''
-            Row count at which a table is altered online rather than by
-            `bench migrate` itself. `0` sends every table with a pending change
-            through pt-online-schema-change.
-          '';
+        offline = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Alter large tables without locking them. Before `bench migrate`, the
+              unit works out which tables of at least `rowThreshold` rows the
+              migrate is about to alter and applies those changes with
+              `pt-online-schema-change` — a shadow copy altered and filled in
+              chunks while triggers keep it current, swapped in with one rename —
+              so the ALTER does not hold a metadata lock for the length of the
+              copy. The migrate that follows finds the columns already there.
+
+              Runs inside the same snapshot, maintenance mode and rollback as the
+              migrate, and a failure is a failed migrate. Off by default: it adds
+              percona-toolkit to the closure and needs the TRIGGER privilege on
+              the site's database, which a locally created site user has.
+            '';
+          };
+          rowThreshold = mkOption {
+            type = types.ints.unsigned;
+            default = 100000;
+            description = ''
+              Row count at which a table is altered online rather than by
+              `bench migrate` itself. `0` sends every table with a pending change
+              through pt-online-schema-change.
+            '';
+          };
         };
       };
-    };
 
     # Everything goes to the journal; nothing here writes a log file. Every unit
     # is labelled with APP_SERVICE (and APP_SITE where it serves one site) — see
@@ -1968,6 +2115,24 @@ in
       description = "Additional environment variables for all Frappe services.";
     };
 
+    environmentFiles = mkOption {
+      type = types.listOf types.path;
+      default = [ ];
+      example = lib.literalExpression "[ config.age.secrets.frappe-env.path ]";
+      description = ''
+        Files of `KEY=value` lines handed to every unit that runs Frappe code
+        (the runtime, or gunicorn, the workers, the scheduler and socket.io,
+        and migrate) as systemd `EnvironmentFile=`s, and to `bench` run from a
+        root shell, so secrets an app reads from its environment never enter
+        the Nix store. systemd reads them as root when the unit starts, so an
+        agenix secret's root-only mode is fine. The same shape as odoo-nix's
+        `services.odoo-nix.environmentFiles`.
+
+        For secrets that belong in site_config.json, use
+        `sites.<name>.settingsFiles` instead.
+      '';
+    };
+
     extraPath = mkOption {
       type = types.listOf types.package;
       default = [ ];
@@ -1998,30 +2163,21 @@ in
     {
       # Socket paths must sit in their own directory: nginx chmods its unix listen
       # sockets to 0666 and gunicorn's mode follows its umask, so neither socket
-      # file gates access. The 0750 directory this module creates around it does.
-      assertions = lib.concatLists (
-        mapAttrsToList (
-          name: siteCfg:
-          let
-            paths = filterAttrs (_: p: p != "") {
-              "web.socketPath" = siteCfg.web.socketPath;
-              "socketio.socketPath" = siteCfg.socketio.socketPath;
-              "nginx.socketPath" = siteCfg.nginx.socketPath;
-            };
-          in
-          mapAttrsToList (opt: p: {
-            assertion = lib.hasPrefix "/" p && builtins.dirOf p != "/run" && builtins.dirOf p != "/";
-            message =
-              "services.frappe-nix.sites.\"${name}\".${opt} must be an absolute path inside its own"
-              + " directory (e.g. /run/frappe-${name}/web.sock), not directly in /run —"
-              + " the directory's 0750 mode is what keeps the socket private.";
-          }) paths
-          ++ lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
-            assertion = false;
-            message = "services.frappe-nix.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
-          }
-        ) enabledSites
-      );
+      # file gates access. The directory this module creates around it does
+      # (python-devops-nix's lib.nixos.unixSocket; see socketDirs).
+      assertions =
+        map (socket: base.nixos.unixSocket.assertion (removeAttrs socket [ "peerCreates" ])) (
+          lib.concatLists (mapAttrsToList siteSockets enabledSites)
+        )
+        ++ lib.concatLists (
+          mapAttrsToList (
+            name: siteCfg:
+            lib.optional (siteCfg.nginx.socketPath != "" && !siteCfg.nginx.enable) {
+              assertion = false;
+              message = "services.frappe-nix.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
+            }
+          ) enabledSites
+        );
 
       # The unified runtime has no separate realtime process and no gunicorn, so
       # these configure nothing. Say so rather than letting a set value quietly
@@ -2080,23 +2236,7 @@ in
         ]) (builtins.attrNames enabledSites)
         # Socket directories gate access to the sockets inside them, since nginx
         # chmods its listen socket to 0666 and gunicorn's follows its umask.
-        # 0770, not 0750: nginx *creates* its socket in here and is only a member
-        # of cfg.group, so it needs group write, not just traversal.
-        # Deduplicated — both sockets of a site normally share one directory.
-        ++ lib.unique (
-          lib.concatMap (
-            siteCfg:
-            map (p: "d ${builtins.dirOf p} 0770 ${cfg.user} ${cfg.group} -") (
-              lib.filter (p: p != "") (
-                [
-                  siteCfg.web.socketPath
-                  siteCfg.nginx.socketPath
-                ]
-                ++ lib.optional (!cfg.runtime.enable) siteCfg.socketio.socketPath
-              )
-            )
-          ) (builtins.attrValues enabledSites)
-        );
+        ++ socketDirs.tmpfiles;
     }
 
     # Aggregate database.createLocally: enable MariaDB if any site requests it
@@ -2127,6 +2267,17 @@ in
             collation-server = "utf8mb4_unicode_ci";
             skip-character-set-client-handshake = true;
             innodb-read-only-compressed = "OFF";
+          }
+          // optionalAttrs (cfg.database.slowQueryMs != null) {
+            slow_query_log = 1;
+            # Seconds, to the microsecond; written out as a string so the
+            # ini format never sees a float.
+            long_query_time =
+              let
+                ms = cfg.database.slowQueryMs;
+                frac = toString (lib.mod ms 1000);
+              in
+              "${toString (ms / 1000)}.${lib.fixedWidthString 3 "0" frac}";
           };
         };
 
@@ -2184,30 +2335,14 @@ in
         # nginx's stderr carries no severity, so its error log would reach the
         # journal as info, [emerg] and all. Over syslog, nginx maps its own levels
         # onto syslog's. mkDefault: the operator may want it elsewhere.
-        logError = lib.mkDefault "syslog:server=unix:/dev/log,tag=nginx,nohostname error";
+        logError = lib.mkDefault base.nixos.nginx.errorLog;
 
-        # Before the vhosts, so the format exists by the time anything uses it;
-        # at the http level, so every server{} inherits it. Without an access_log
-        # here nginx falls back to its compiled-in /var/log/nginx/access.log.
-        #
-        # escape=json makes the variables safe inside the string literals. The
-        # numeric ones are left bare; $upstream_response_time is quoted because
-        # it can be "-" (no upstream: /assets/) or a list ("0.012, 0.004") when a
-        # request was retried. /dev/log is journald's syslog socket, which the
-        # nginx unit's sandbox allows (AF_UNIX is in RestrictAddressFamilies,
-        # and PrivateDevices keeps a /dev/log link). A syslog datagram is capped
-        # near 2 KiB by nginx, so an entry with an enormous URI arrives truncated
-        # and will not parse — acceptable for an access log.
-        commonHttpConfig =
-          if cfg.logging.accessLog then
-            ''
-              log_format journal_json escape=json '{"time":"$time_iso8601","site":"$host","method":"$request_method","uri":"$request_uri","status":$status,"bytes":$body_bytes_sent,"request_time":$request_time,"upstream_time":"$upstream_response_time","remote_addr":"$remote_addr","user_agent":"$http_user_agent","referer":"$http_referer"}';
-              access_log syslog:server=unix:/dev/log,tag=nginx_access,nohostname journal_json;
-            ''
-          else
-            ''
-              access_log off;
-            '';
+        # The access log to the journal as one JSON object per request, under
+        # SYSLOG_IDENTIFIER=nginx_access (python-devops-nix's lib.nixos.nginx,
+        # the format odoo-nix sends too), or off. At the http level, before the
+        # vhosts, so every server{} inherits it; either way nginx no longer
+        # writes its compiled-in /var/log/nginx/access.log.
+        commonHttpConfig = base.nixos.nginx.accessLog cfg.logging.accessLog;
 
         # One upstream per site process that listens on a unix socket.
         upstreams =

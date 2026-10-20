@@ -7,9 +7,9 @@
 #              nested frontend's) node_modules, built from its yarn.lock, are
 #              linked in.
 # builtBench — benchRoot + compiled assets (`bench build`), the deployable
-#              artifact. Exposes passthru.{pythonEnv,nodejs,appsPath,appNames,
-#              registeredApps} so the NixOS module can discover interpreters
-#              and the registered apps from the package.
+#              artifact. Exposes passthru.{pythonEnv,python,nodejs,appsPath,
+#              appNames,registeredApps} so the NixOS module can discover
+#              interpreters and the registered apps from the package.
 
 {
   pkgs,
@@ -17,6 +17,10 @@
   prodPythonEnv,
   workspaceRoot,
   nodejs,
+  # The interpreter prodPythonEnv is built on, as passthru.python: the NixOS
+  # module runs its migrate flow (python-devops-nix's, stdlib only) on it, so
+  # the flow adds no second interpreter to the closure.
+  python ? null,
   # "app/subdir" keys of nested frontends to leave out entirely: no lock, no
   # node_modules, and the parent app's build/postinstall scripts that drive the
   # subdir are dropped from its package.json (see dropNestedFrontendScripts).
@@ -531,6 +535,9 @@ let
     passthru = {
       pythonEnv = prodPythonEnv;
       inherit nodejs extraPackages;
+    }
+    // lib.optionalAttrs (python != null) { inherit python; }
+    // {
       appNames = names;
       # The contents of sites/apps.txt, in order: the workspace members that
       # are Frappe apps. A subset of appNames, which is every apps/ directory.

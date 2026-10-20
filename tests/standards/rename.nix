@@ -118,7 +118,8 @@ let
       ''
         mkdir -p "$out/bin"
         printf '#!%s\necho "mysql $*" >> "$STATE/log"\ncase "$*" in *COUNT*) echo 7 ;; *) cat > /dev/null ;; esac\n' ${lib.getExe pkgs.bash} > "$out/bin/mysql"
-        printf '#!%s\necho "mysqldump $*" >> "$STATE/log"\necho "-- dump"\n' ${lib.getExe pkgs.bash} > "$out/bin/mysqldump"
+        # Ends as mysqldump's own output does, so the snapshot verifies.
+        printf '#!%s\necho "mysqldump $*" >> "$STATE/log"\necho "-- dump"\necho "-- Dump completed"\n' ${lib.getExe pkgs.bash} > "$out/bin/mysqldump"
         chmod +x "$out/bin/"*
       '';
 
@@ -364,7 +365,18 @@ in
     export STATE="$PWD/state"
     mkdir -p "$STATE" site/bench/sites "site/sites/${site}"
     echo '{"db_password": "x"}' > "site/sites/${site}/site_config.json"
-    sed "s|@SITEDIR@|$PWD/site|g" ${migrateScript} > migrate
+    # The unit's command is python-devops-nix's migrate flow, whose JSON
+    # configuration names this module's steps. Each of those, and the
+    # configuration, with the site directory filled in.
+    flow="$(grep -o '/nix/store/[^"]*\.json' ${migrateScript} | head -1)"
+    sed "s|@SITEDIR@|$PWD/site|g" "$flow" > flow.json
+    mkdir steps
+    for step in $(${lib.getExe pkgs.jq} -r '.check, .migrate, .onSuccess, .onFailure, .snapshot.dump, .snapshot.restore' "$flow"); do
+      sed "s|@SITEDIR@|$PWD/site|g" "$step" > "steps/''${step##*/}"
+      chmod +x "steps/''${step##*/}"
+      sed -i "s|$step|$PWD/steps/''${step##*/}|" flow.json
+    done
+    sed "s|$flow|$PWD/flow.json|" ${migrateScript} > migrate
     chmod +x migrate
     printf '%s\n' frappe esign old_app > "$STATE/installed"
 

@@ -75,7 +75,7 @@ For each enabled site, the module generates these systemd units. With the defaul
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `frappe-init-<SITE>`                        | One-shot. Assembles the runtime bench tree, links the app registry (`sites/apps.txt`, `sites/apps.json`) and assets from the package, and synthesizes `site_config.json` with `jq`, merging base config and secrets. |
 | `frappe-db-password-<SITE>`                 | One-shot, with a local database. Sets the database user's password from `database.passwordFile`.                                                                                                                     |
-| `frappe-migrate-<SITE>`                     | One-shot. Runs `bench migrate` when the build changes. Snapshots the database first and rolls back on failure. Skips an uninstalled site. See [Operate a deployed site](operations.md#safe-migrations-on-deploy).    |
+| `frappe-migrate-<SITE>`                     | One-shot. Runs `bench migrate` when the build changes. Snapshots the database and verifies the snapshot first, and rolls back on failure. Skips an uninstalled site. See [Operate a deployed site](operations.md#safe-migrations-on-deploy). |
 | `frappe-<SITE>`                             | The unified runtime: web, realtime, jobs and scheduler in one process.                                                                                                                                               |
 | `frappe-web-<SITE>`                         | With `runtime.enable = false`: gunicorn, bound to `sites.<SITE>.web.port`.                                                                                                                                           |
 | `frappe-scheduler-<SITE>`                   | With `runtime.enable = false`: the background scheduler.                                                                                                                                                             |
@@ -83,6 +83,25 @@ For each enabled site, the module generates these systemd units. With the defaul
 | `frappe-worker-{default,short,long}-<SITE>` | With `runtime.enable = false`: background workers, one per queue.                                                                                                                                                    |
 
 The service units start after, and require, their `frappe-init-<SITE>`. The module also enables MariaDB, a Redis instance named `frappe` (unit `redis-frappe`) and nginx when you ask for them. See [The unified runtime](runtime.md) for the process itself.
+
+### The sandbox
+
+Every unit above runs under a systemd sandbox, the baseline frappe-nix shares with odoo-nix ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `lib.nixos.hardening`). The file system is read-only (`ProtectSystem=strict`) except for the site's directory, `siteDir`, which holds everything a Frappe process writes: the runtime bench tree with its `config/` and `logs/`, `sites/` and the migrate snapshots. `/run` stays writable, for the sockets. `/home` and `/root` are hidden, `/tmp` is private to each unit, and the units have no capabilities, cannot gain privileges, and run under a system call filter (`@system-service`, without `@privileged`).
+
+The baseline also refuses memory that is both writable and executable, which a just-in-time compiler needs, so a unit names what it runs:
+
+| Unit                                                   | Profile                                                                                                   |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` and `wkhtmltopdf` when you turn those on |
+| `frappe-socketio-<SITE>`                               | `jit` (Node)                                                                                              |
+| `frappe-scheduler-<SITE>`, `frappe-init-<SITE>`, `frappe-db-password-<SITE>` | none; `frappe-init` and `frappe-db-password` also reach nothing but unix sockets  |
+
+There is no `UMask`: the units write files nginx serves through the service group. Each setting is a default, so you can relax one key on one unit, and `ReadWritePaths` adds to the site directory rather than replacing it:
+
+```nix
+# An app that writes outside the site directory.
+systemd.services."frappe-site1.example.com".serviceConfig.ReadWritePaths = [ "/srv/exports" ];
+```
 
 ## Run more than one site
 
@@ -123,6 +142,12 @@ Use `settingsFiles` for anything else sensitive, such as object-storage credenti
 > [!WARNING]
 > `site_config.json` is regenerated on every start of the init unit. A hand edit does not survive the next restart. Put non-secret settings in `settings` and secrets in `settingsFiles`. `sites/common_site_config.json` is different: the module copies it from the package once, if the bench ships one, and never touches it again.
 
+An app that reads a secret from its environment gets it from `environmentFiles`: files of `KEY=value` lines, handed to every unit that runs Frappe code, and to `bench` run from a root shell, as systemd `EnvironmentFile=`s. systemd reads them as root, so an agenix secret's root-only mode is fine:
+
+```nix
+services.frappe-nix.environmentFiles = [ config.age.secrets.frappe-env.path ];
+```
+
 If your bench declares its secrets with [frappe-nix.secrets](../development/secrets.md), a deployment can read the same ciphertext through `lib.secrets` instead of keeping a second copy.
 
 ## Database and Redis
@@ -134,6 +159,8 @@ With `database.createLocally = true` on a site, the module enables MariaDB, crea
 NixOS creates database users without passwords, so the module runs a small `frappe-db-password-<SITE>` unit that sets the password from `database.passwordFile`. Always set `passwordFile` when you use a local database.
 
 By default Frappe connects over the socket at `/run/mysqld/mysqld.sock`.
+
+`database.slowQueryMs` turns on MariaDB's slow query log for statements that take at least that many milliseconds (`0` logs all of them). MariaDB writes it to `<hostname>-slow.log` in its data directory, not to the journal, and nothing rotates it.
 
 ### External MariaDB
 
@@ -184,7 +211,7 @@ networking.firewall.allowedTCPPorts = [ 80 443 ];
 
 If a reverse proxy or tunnel connector runs on the same host and terminates TLS, set `web.socketPath` and `nginx.socketPath` to paths inside their own directories, for example `/run/frappe-site1/web.sock`.
 
-The module refuses paths directly in `/run` or `/`, and it creates the directory owned by the service user. That directory is the access control, because nginx makes its own socket world-writable. In this mode nginx takes the client address from the `CF-Connecting-IP` header, so use it only behind a connector that sets that header. `nginx.socketPath` requires `nginx.enable`.
+The module refuses paths directly in `/run` or `/`, and it creates the directory owned by the service user and group. That directory is the access control, because nginx makes its own socket world-writable. It is `0770` when nginx's socket is in it, since nginx creates that socket as a member of the group, and `0750` when it holds only the site's own sockets, which nginx only connects to. In this mode nginx takes the client address from the `CF-Connecting-IP` header, so use it only behind a connector that sets that header. `nginx.socketPath` requires `nginx.enable`.
 
 With the default unified runtime, `socketio.port` and `socketio.socketPath` do nothing, and the module warns if you set `socketio.socketPath`. `web.workers` is ignored too, with a warning when it is not at its default of 4, because the runtime sizes web concurrency with `runtime.webThreads`. These options apply only when `runtime.enable = false`. The `socketio.socketPath` option sets a unix socket for the realtime server, needs Frappe 15.46 or newer, and removes the site's last non-loopback TCP listener in that mode.
 

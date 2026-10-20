@@ -5,6 +5,10 @@
 # nginx. A host shipping the journal to a log store selects by these fields, so
 # a unit added without them is a unit whose logs nobody finds.
 #
+# The roles are python-devops-nix's one written list (lib.journald.roles;
+# CONVENTIONS.md, Journald vocabulary), which odoo-nix's tests/module-eval.nix
+# asserts against too: every APP_SERVICE here must be on it.
+#
 # Pure evaluation of two NixOS configurations — the unified runtime and the
 # split units — against a stub bench that is never built. tests/socket-runtime.nix
 # covers the same fields end to end, in a VM, for the runtime topology.
@@ -83,6 +87,23 @@ let
     );
 
   perSite = "APP_SITE=${site}";
+
+  inherit (self.inputs.python-devops-nix.lib.journald) roles;
+
+  # Every APP_SERVICE the module's units carry, labelled or not by the module.
+  servicesOf =
+    config:
+    lib.unique (
+      lib.concatMap (
+        unit:
+        map (lib.removePrefix "APP_SERVICE=") (
+          lib.filter (lib.hasPrefix "APP_SERVICE=") (
+            config.systemd.services.${unit}.serviceConfig.LogExtraFields or [ ]
+          )
+        )
+      ) (builtins.attrNames config.systemd.services)
+    );
+  offList = config: toString (lib.filter (role: !lib.elem role roles) (servicesOf config));
 in
 {
   logging-fields = pkgs.runCommand "frappe-nix-logging-fields-check" { } ''
@@ -105,6 +126,8 @@ in
     eq "redis: shared, so no site"   "APP_SERVICE=redis"              ${lib.escapeShellArg (fieldsOf runtime "redis-frappe")}
     eq "nginx: shared, so no site"   "APP_SERVICE=nginx"              ${lib.escapeShellArg (fieldsOf runtime "nginx")}
     eq "no frappe-* unit without the site's fields" "" ${lib.escapeShellArg (unlabelled runtime)}
+    eq "every APP_SERVICE is one of lib.journald.roles" "" ${lib.escapeShellArg (offList runtime)}
+    eq "...and the runtime topology uses these" "db init migrate nginx redis runtime" ${lib.escapeShellArg (toString (lib.sort lib.lessThan (servicesOf runtime)))}
     eq "FRAPPE_NIX_LOG_LEVEL defaults to warning" "WARNING" ${
       lib.escapeShellArg (envOf runtime "frappe-${site}" "FRAPPE_NIX_LOG_LEVEL")
     }
@@ -128,6 +151,7 @@ in
     eq "a worker"                    "APP_SERVICE=worker ${perSite}"    ${lib.escapeShellArg (fieldsOf split "frappe-worker-short-${site}")}
     eq "...identified by its queue"  "frappe-worker-short"              ${lib.escapeShellArg (idOf split "frappe-worker-short-${site}")}
     eq "no frappe-* unit without the site's fields" "" ${lib.escapeShellArg (unlabelled split)}
+    eq "every APP_SERVICE is one of lib.journald.roles" "" ${lib.escapeShellArg (offList split)}
     eq "FRAPPE_NIX_LOG_LEVEL follows the option" "DEBUG" ${
       lib.escapeShellArg (envOf split "frappe-web-${site}" "FRAPPE_NIX_LOG_LEVEL")
     }

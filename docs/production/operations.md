@@ -64,12 +64,15 @@ A site whose database holds **no tables** has never been installed. It is a fres
 
 Frappe migrations perform DDL (`CREATE` and `ALTER TABLE`), which auto-commits in MariaDB and cannot be rolled back in a transaction. The unit therefore wraps the migration in a physical snapshot instead:
 
-1. **Snapshot.** `mysqldump --single-transaction` of the site database to `<siteDir>/snapshots/premigrate-<SITE>-<TIMESTAMP>.sql.gz`, readable only by its owner (mode 0600, in a 0700 directory). Only the dump runs under that umask: files the migrate writes for nginx to serve, such as the Website Theme CSS that `bench migrate` regenerates under `public/files`, stay readable by the service group. If the snapshot cannot be taken, the migration is aborted. It never migrates without a safety net.
-2. **Migrate.** `bench --site <SITE> migrate`, with the site in maintenance mode.
-3. **On success.** Clear maintenance mode, record the build and prune old snapshots.
-4. **On failure.** Restore the snapshot by dropping all current tables and re-importing the dump, **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero, so the unit shows `failed`. The database is returned to its pre-migrate state.
+1. **Snapshot.** `mysqldump --single-transaction` of the site database, gzipped, to `<siteDir>/snapshots/premigrate-<SITE>-<TIMESTAMP>.sql.gz`, readable only by its owner: the file is created with mode 0600, in a 0700 directory. Nothing else the migrate writes is made private. Files it writes for nginx to serve, such as the Website Theme CSS that `bench migrate` regenerates under `public/files`, stay readable by the service group. If the snapshot cannot be taken, the migration is aborted. It never migrates without a safety net.
+2. **Verify.** The snapshot is read back before anything relies on it: gzip's own check, and mysqldump's closing `-- Dump completed` line, which a dump cut short by a lost connection or a full disk does not have. A snapshot that fails is removed and the migration is aborted, as in step 1.
+3. **Migrate.** `bench --site <SITE> migrate`, with the site in maintenance mode.
+4. **On success.** Clear maintenance mode, record the build and prune old snapshots.
+5. **On failure.** Restore the snapshot by dropping all current tables and re-importing the dump, **leave the site in maintenance mode**, log `MIGRATION FAILED` to the journal, and exit non-zero, so the unit shows `failed`. The database is returned to its pre-migrate state. A failed migration keeps its snapshot; only a success prunes.
 
-With `migrate.offline.enable`, step 2 is preceded by an online alteration of the large tables the migrate is about to alter, under the same snapshot and maintenance mode. A failure there takes the failure path in step 4. See [Migrate large tables online](../development/online-migrations.md).
+With `migrate.offline.enable`, step 3 is preceded by an online alteration of the large tables the migrate is about to alter, under the same snapshot and maintenance mode. A failure there takes the failure path in step 5. See [Migrate large tables online](../development/online-migrations.md).
+
+The flow is [python-devops-nix](https://github.com/Avunu/python-devops-nix)'s, the one odoo-nix runs too (its `lib.nixos.migrate`); the steps in it are this module's. Its messages read `frappe-migrate(<SITE>): …`, and the errors are at priority `err`.
 
 The unit runs as the `frappe` user with the site's own database credentials, so it needs no database root and works for both locally created and externally managed databases.
 
