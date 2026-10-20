@@ -566,7 +566,11 @@ cmd_report_ports() {
   web="$(jq -r .web "$f")"
   id="$(jq -r .bench_id "$f")"
   [ "$(curl -s --max-time 5 "http://127.0.0.1:$web/__frappe_nix/bench")" = "$id" ] || fail "port $web does not answer as $id"
-  curl -s -o /dev/null -D - --max-time 5 "http://127.0.0.1:$web/" | grep -qi "^x-frappe-nix-bench: $id" || fail "no X-Frappe-Nix-Bench: $id header on $web"
+  # Proxied to the web server, whose first request after the tests can take
+  # well past 5 s on a loaded runner; nginx's own route above answers at once.
+  local head
+  head="$(curl -s -o /dev/null -D - --max-time 120 "http://127.0.0.1:$web/" || true)"
+  grep -qi "^x-frappe-nix-bench: $id" <<< "$head" || fail "no X-Frappe-Nix-Bench: $id header on $web: $(head -n1 <<< "$head")"
   jq -e --slurpfile p "$f" '.guards.mail.port == $p[0].mailpit_smtp and .guards.mail.http_port == $p[0].mailpit_ui' \
     "$DEVENV_RUNTIME/devguard-runtime.json" > /dev/null || fail "devguard-runtime.json is not this bench's lease"
   [ "$(jq -r .webserver_port "$FRAPPE_BENCH_ROOT/sites/common_site_config.json")" = "$web" ] || fail "webserver_port is not the leased $web"
