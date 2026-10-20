@@ -114,6 +114,18 @@ stop_leftover() {
   dev "$1" bash -c 'if [ -S "$PC_SOCKET_PATH" ]; then timeout 60 process-compose -U -u "$PC_SOCKET_PATH" down > /dev/null 2>&1 || true; rm -f "$PC_SOCKET_PATH"; fi'
 }
 
+# An offset for a step that needs exact ports of its own, SHIFT along: by hand
+# from a fixed base, in CI from this job's own hash (as job_port_offset's), so
+# the same step of two runs at once on one host (a PR's and main's) does not
+# want the same ports.
+spare_offset() {
+  local base=123
+  if [ -n "${GITHUB_RUN_ID:-}" ]; then
+    base="$(printf '%s' "$GITHUB_RUN_ID-${GITHUB_JOB:-}-${RUNNER_NAME:-}-spare" | cksum | cut -d' ' -f1)"
+  fi
+  echo "$(((base + $1) % 900))"
+}
+
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
 # A port offset of this job's own, in CI: every leg's fixture is the bench
@@ -330,10 +342,12 @@ cmd_ports() {
   [ -n "$p2" ] && [ "$p2" != "$p1" ] || fail "the worktree serves on '$p2', the primary on $p1"
   ok "a linked worktree runs beside it on its own port, $p2"
 
-  FRAPPE_NIX_PORT_OFFSET=123 expect 0 "$WORK/ports-123.log" dev "$wt" bash "$HERE/run.sh" up-and-report
-  grep -qx 'PORT=8123' "$WORK/ports-123.log" || fail "FRAPPE_NIX_PORT_OFFSET=123 did not serve on 8123"
-  grep -qx 'MAILPIT=20123' "$WORK/ports-123.log" || fail "FRAPPE_NIX_PORT_OFFSET=123 did not put Mailpit on 20123"
-  ok "FRAPPE_NIX_PORT_OFFSET=123: web on 8123, Mailpit on 20123"
+  local off
+  off="$(spare_offset 450)"
+  FRAPPE_NIX_PORT_OFFSET="$off" expect 0 "$WORK/ports-offset.log" dev "$wt" bash "$HERE/run.sh" up-and-report
+  grep -qx "PORT=$((8000 + off))" "$WORK/ports-offset.log" || fail "FRAPPE_NIX_PORT_OFFSET=$off did not serve on $((8000 + off))"
+  grep -qx "MAILPIT=$((20000 + off))" "$WORK/ports-offset.log" || fail "FRAPPE_NIX_PORT_OFFSET=$off did not put Mailpit on $((20000 + off))"
+  ok "FRAPPE_NIX_PORT_OFFSET=$off: web on $((8000 + off)), Mailpit on $((20000 + off))"
 
   # The primary's own port, as the worktree's preferred one: held by the primary.
   FRAPPE_NIX_PORT_OFFSET="$((p1 - 8000))" expect 0 "$WORK/ports-taken.log" dev "$wt" bash "$HERE/run.sh" up-and-report
@@ -520,8 +534,10 @@ PY
   ok "down, each bench's lease is gone with it"
 
   group "a port held outside frappe-nix"
-  # An offset no other leg prefers, its web port held by a plain listener.
-  local off=777 held=8777 holder
+  # An offset of this job's own (spare_offset), its web port held by a plain listener.
+  local off held holder
+  off="$(spare_offset 300)"
+  held="$((8000 + off))"
   python3 -c 'import socket, sys, time
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(3600)' "$held" &

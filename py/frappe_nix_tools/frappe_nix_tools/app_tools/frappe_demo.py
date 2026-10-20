@@ -167,6 +167,7 @@ def bring_up(repo: str, bench: Path, compose: Compose) -> None:
 	while not devshell.db_answers():
 		tries -= 1
 		if tries <= 0:
+			devshell.report_not_up(compose, "frappe-demo")
 			raise Fail("the database did not come up within 300 s")
 		time.sleep(2)
 	while True:
@@ -176,6 +177,7 @@ def bring_up(repo: str, bench: Path, compose: Compose) -> None:
 		tries -= 1
 		if tries <= 0:
 			holder = devshell.who(port)
+			devshell.report_not_up(compose, "frappe-demo")
 			raise Fail(
 				"the web server did not answer within 300 s" + (f" (port {port}: {holder})" if holder else "")
 			)

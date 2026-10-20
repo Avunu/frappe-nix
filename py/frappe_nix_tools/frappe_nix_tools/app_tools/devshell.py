@@ -29,6 +29,10 @@ APP_PROCESSES = ("runtime", "web", "worker", "scheduler", "socketio")
 #: Counted, not timed: 150 tries two seconds apart.
 TRIES = 150
 
+#: The processes whose logs a bench that did not come up is reported with: the
+#: lease, the public listener, and what serves behind it (split or not).
+DIAGNOSED_PROCESSES = ("frappe-ports", "nginx", "runtime", "web", "mailpit")
+
 
 class Stop(Exception):
 	"""Stop the tool with CODE; whatever had to be said has been said."""
@@ -132,6 +136,17 @@ def capture(
 	return proc.returncode, out.rstrip("\n")
 
 
+def capture_quiet(cmd: Sequence[str], timeout: float = 15) -> tuple[int, str]:
+	"""CMD's exit status and its stdout and stderr together, for a diagnosis:
+	nothing streams through, and a command that hangs or cannot start is a
+	failure (127), not the caller's."""
+	try:
+		proc = subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout, check=False)
+	except (OSError, subprocess.TimeoutExpired):
+		return 127, ""
+	return proc.returncode, (proc.stdout + proc.stderr).rstrip("\n")
+
+
 def jq_raw(value: Any) -> str:
 	"""VALUE as ``jq -r`` prints a scalar."""
 	if isinstance(value, str):
@@ -178,6 +193,13 @@ def repo_root() -> str | None:
 	return out if rc == 0 and out else None
 
 
+def ports_file() -> Path | None:
+	"""Where `devenv up` records the ports it leased and the bench's identity
+	($FRAPPE_NIX_PORTS_FILE); None in a shell that does not lease them."""
+	path = os.environ.get("FRAPPE_NIX_PORTS_FILE", "")
+	return Path(path) if path else None
+
+
 class Compose:
 	"""The dev shell's process-compose, over its socket (which may be unset)."""
 
@@ -214,6 +236,47 @@ class Compose:
 		for proc in procs:
 			call(self.cmd("process", "start", proc), quiet=True)
 
+	def diagnose(self, procs: Sequence[str] = DIAGNOSED_PROCESSES, lines: int = 40) -> str:
+		"""What a bench that did not come up was doing, for the failure's
+		message: process-compose's process list (status, health, exit code;
+		"Skipped" names a process that will never start), the last LINES of
+		each of PROCS' logs, and the lease ($FRAPPE_NIX_PORTS_FILE). "" when
+		there is nothing to ask."""
+		parts: list[str] = []
+		if self.socket:
+			rc, out = capture_quiet([*self.cmd("process", "list", "-o", "wide")])
+			if rc == 0 and out:
+				parts.append(f"── process-compose process list\n{out}")
+				for proc in procs:
+					rc, out = capture_quiet([*self.cmd("process", "logs", proc, "--tail", str(lines))])
+					if rc == 0 and out:
+						parts.append(f"── {proc} (last {lines} lines)\n{out}")
+		path = ports_file()
+		if path is not None:
+			try:
+				parts.append(f"── {path}\n{path.read_text().rstrip()}")
+			except OSError as e:
+				parts.append(f"── {path}: {e.strerror}")
+		return "\n".join(parts)
+
+
+def report_not_up(compose: Compose, tool: str) -> None:
+	"""Before a bench-did-not-come-up failure: what its processes were doing, on
+	stderr, folded in a group on GitHub Actions."""
+	text = compose.diagnose()
+	if not text:
+		return
+	sys.stdout.flush()
+	gha = bool(os.environ.get("GITHUB_ACTIONS"))
+	print(
+		f"::group::{tool}: the bench's processes" if gha else f"{tool}: the bench's processes",
+		file=sys.stderr,
+	)
+	print(text, file=sys.stderr)
+	if gha:
+		print("::endgroup::", file=sys.stderr)
+	sys.stderr.flush()
+
 
 def devenv_up(*, cwd: str | None = None) -> int:
 	"""``devenv up -D``, detached, without the TUI."""
@@ -230,13 +293,6 @@ def db_answers() -> bool:
 			"ping",
 		]
 	)
-
-
-def ports_file() -> Path | None:
-	"""Where `devenv up` records the ports it leased and the bench's identity
-	($FRAPPE_NIX_PORTS_FILE); None in a shell that does not lease them."""
-	path = os.environ.get("FRAPPE_NIX_PORTS_FILE", "")
-	return Path(path) if path else None
 
 
 def leased(path: str | os.PathLike[str] | None = None) -> dict[str, Any] | None:

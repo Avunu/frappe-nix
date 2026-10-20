@@ -2962,7 +2962,46 @@ in
             # own empty.cnf does for the probes it owns.
             emptyCnf = pkgs.writeText "empty.cnf" "";
 
-            # Readiness for a process listening on a unix socket.
+            # Readiness that stays passed: once a process's probe has succeeded,
+            # it keeps succeeding until that process starts again.
+            #
+            # process-compose (`depends_on: process_healthy`, which devenv's
+            # `after` means by default) reads a dependency's health once, when
+            # the dependent has finished waiting on everything else. If the
+            # dependency was ready earlier but its latest probe failed, it counts
+            # as "terminated", and the dependent is Skipped for good: no
+            # restart, no retry (src/app/process.go, waitUntilReady). A
+            # dependency that was ready early (frappe-ports, mysql, redis,
+            # Mailpit) is read late (nginx waits on the runtime, the runtime on
+            # the tasks), so a single probe that timed out on a busy host was
+            # enough. On a CI host running eight benches at once, it was: nginx
+            # "Skipped", frappe-ports "Running, Not Ready, exit 1", nothing on
+            # the web port, and frappe-test and frappe-demo waiting 300 s for it.
+            #
+            # The latch is keyed on KEY's inode and mtime: a start stamp that
+            # the process's own exec touches (`startStamp`), or the socket a
+            # server makes afresh at each start (mysql, redis). A restart means
+            # a new key, so it is probed again for real. No key (nothing there
+            # yet) means a plain probe. `devenv up` clears the latches.
+            latchDir = "${runtime}/frappe-nix/ready";
+            startStamp = name: ''
+              ${pkgs.coreutils}/bin/mkdir -p "${latchDir}" && ${pkgs.coreutils}/bin/touch "${latchDir}/${name}.start"
+            '';
+            # A subshell, so `exit` ends the probe whatever devenv wraps it in.
+            latchedOn = key: name: probe: ''
+              (
+                _k="$(${pkgs.coreutils}/bin/stat -c %i.%.9Y "${key}" 2>/dev/null)" || _k=""
+                if [ -n "$_k" ] && [ -e "${latchDir}/${name}.$_k" ]; then exit 0; fi
+                { ${probe}
+                } || exit 1
+                if [ -n "$_k" ]; then ${pkgs.coreutils}/bin/mkdir -p "${latchDir}" && : > "${latchDir}/${name}.$_k"; fi
+                exit 0
+              )
+            '';
+            latched = name: latchedOn "${latchDir}/${name}.start" name;
+
+            # Readiness for a process listening on a unix socket, latched
+            # (`latched`; its exec has to begin with `startStamp NAME`).
             #
             # devenv infers a TCP connectivity probe from a process's allocated
             # ports; a socket-only process has none, so `after = [ "…web" ]` —
@@ -2973,8 +3012,8 @@ in
             # accepting connections, which is all a dependent needs to know. On a
             # bench whose site has not been created yet Frappe answers 500, and
             # requiring 2xx would keep nginx down until after `provision-site`.
-            socketReady = socket: path: {
-              exec = ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 --unix-socket "${socket}" http://localhost${path}'';
+            socketReady = name: socket: path: {
+              exec = latched name ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 --unix-socket "${socket}" http://localhost${path}'';
               initial_delay = 2;
               period = 5;
               probe_timeout = 5;
@@ -3591,6 +3630,8 @@ in
               (lib.mkIf (config.process.manager.implementation != "native") ''
                 if ! ${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}; then
                   ${portLease.hold "" "--dry-run"} || exit 1
+                  # A fresh start: the last run's readiness latches go (`latched`).
+                  ${pkgs.coreutils}/bin/rm -rf ${lib.escapeShellArg latchDir}
                 fi
               '')
             ];
@@ -3632,7 +3673,8 @@ in
                     # leave EADDRINUSE behind. This belongs in exec, not a task: the
                     # manager re-runs exec on restart, not the task graph.
                     exec =
-                      lib.optionalString sockets ''
+                      startStamp "runtime"
+                      + lib.optionalString sockets ''
                         rm -f "${webSocket}"
                       ''
                       + ''
@@ -3657,7 +3699,7 @@ in
                   # protocols" on every probe. ping is cheap, side-effect free, and
                   # proves the WSGI half is wired through a2wsgi; the realtime half
                   # announces itself with the redis bridge line at startup.
-                  // lib.optionalAttrs sockets { ready = socketReady "${webSocket}" "/api/method/ping"; }
+                  // lib.optionalAttrs sockets { ready = socketReady "runtime" "${webSocket}" "/api/method/ping"; }
                   // lib.optionalAttrs (!sockets) {
                     ports.main.allocate = webBase;
                     # A process that allocates a port and has no probe falls back
@@ -3666,7 +3708,7 @@ in
                     # long comment on nginx below for what that mode does. So the
                     # TCP path needs a probe just as much as the socket one.
                     ready = {
-                      exec = "${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 http://127.0.0.1:${toString webPort}/api/method/ping";
+                      exec = latched "runtime" "${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 http://127.0.0.1:${toString webPort}/api/method/ping";
                       initial_delay = 2;
                       period = 5;
                       probe_timeout = 5;
@@ -3691,7 +3733,7 @@ in
                     # (frappe_unixsock rewrites the bind address), but still passed:
                     # it is the port the site is actually reachable on, and it is
                     # what `bench serve` logs.
-                    exec = ''
+                    exec = startStamp "web" + ''
                       exec ${pythonEnvs.devPythonEnv}/bin/bench serve --port ${toString webPort}${
                         lib.optionalString (!cfg.watch.python) " --noreload"
                       }
@@ -3706,7 +3748,7 @@ in
                   }
                   # Without nginx out front, the web server owns the public port.
                   // lib.optionalAttrs (!sockets) { ports.main.allocate = webBase; }
-                  // lib.optionalAttrs sockets { ready = socketReady "$FRAPPE_NIX_WEB_SOCKET" "/"; };
+                  // lib.optionalAttrs sockets { ready = socketReady "web" "$FRAPPE_NIX_WEB_SOCKET" "/"; };
 
                   scheduler = {
                     # bench resolves its bench by walking *up* from cwd
@@ -3755,7 +3797,8 @@ in
                     # equivalent — it unlinks its own, and the reloader child
                     # inherits the fd instead of rebinding.)
                     exec =
-                      lib.optionalString sockets ''
+                      startStamp "socketio"
+                      + lib.optionalString sockets ''
                         rm -f "$FRAPPE_SOCKETIO_UDS"
                       ''
                       + ''
@@ -3768,7 +3811,7 @@ in
                     env.FRAPPE_SOCKETIO_PORT = toString config.processes.socketio.ports.main.value;
                   }
                   // lib.optionalAttrs sockets {
-                    ready = socketReady "$FRAPPE_SOCKETIO_UDS" "/socket.io/";
+                    ready = socketReady "socketio" "$FRAPPE_SOCKETIO_UDS" "/socket.io/";
                   };
                 };
               in
@@ -3777,11 +3820,12 @@ in
                 # held until it stops (portLease, lib/port-lease.py). Nothing to
                 # wait for: it is the first thing that runs.
                 frappe-ports = {
-                  exec = portLease.hold "exec " "";
+                  exec = startStamp "frappe-ports" + portLease.hold "exec " "";
                   # Not the file alone: one a killed holder left behind would
-                  # pass before this holder has written its own.
+                  # pass before this holder has written its own. Latched
+                  # (`latched`): nginx and Mailpit read it long after it passed.
                   ready = {
-                    exec = "${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}";
+                    exec = latched "frappe-ports" "${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}";
                     period = 1;
                     probe_timeout = 5;
                     failure_threshold = 30;
@@ -3806,12 +3850,25 @@ in
                 # guarantee (--connect-timeout only covers the connect, not the
                 # read that actually hangs); probe_timeout lets process-compose
                 # reap it too.
+                #
+                # Latched on the server's socket (`latchedOn`): the runtime
+                # reads it after the tasks, and again at each restart.
                 mysql.ready = {
-                  exec = lib.mkForce ''MYSQL_PWD="" ${pkgs.coreutils}/bin/timeout 5 ${cfg.mariadb.package}/bin/mariadb-admin --defaults-file=${emptyCnf} --connect-timeout=3 ping -u root --silent'';
+                  exec = lib.mkForce (
+                    latchedOn mysqlSocket "mysql" ''MYSQL_PWD="" ${pkgs.coreutils}/bin/timeout 5 ${cfg.mariadb.package}/bin/mariadb-admin --defaults-file=${emptyCnf} --connect-timeout=3 ping -u root --silent''
+                  );
                   probe_timeout = 10;
                   period = 5;
                   failure_threshold = 60;
                 };
+
+                # devenv's own `redis-cli -s … ping`, latched on its socket as
+                # mysql's is. Over TCP (sockets off) devenv's probe stands.
+                redis.ready.exec = lib.mkIf sockets (
+                  lib.mkForce (
+                    latchedOn redisSocket "redis" "${config.services.redis.package}/bin/redis-cli -s ${lib.escapeShellArg redisSocket} ping"
+                  )
+                );
 
                 watch = {
                   # sites/ of *this* bench, where bench itself would run
@@ -3931,7 +3988,7 @@ in
                   exec = lib.mkForce (
                     lib.concatStringsSep " " (
                       [
-                        "exec ${config.services.mailpit.package}/bin/mailpit"
+                        (startStamp "mailpit" + "exec ${config.services.mailpit.package}/bin/mailpit")
                         ''--db-file "$DEVENV_STATE/mailpit/db.sqlite3"''
                         ''--listen "${mp.host}:${portLease.read "mailpit_ui"}"''
                         ''--smtp "${mp.host}:${portLease.read "mailpit_smtp"}"''
@@ -3948,7 +4005,8 @@ in
                   # "wait" means @ready — devenv's default — so it needs a probe
                   # of its own. The UI port is a real check: Mailpit only serves
                   # it once its listeners are up.
-                  ready.exec = "${pkgs.curl}/bin/curl -sf -o /dev/null --max-time 4 \"http://${mp.host}:${portLease.read "mailpit_ui"}/\"";
+                  # Latched (`latched`): the runtime reads it after the tasks.
+                  ready.exec = latched "mailpit" "${pkgs.curl}/bin/curl -sf -o /dev/null --max-time 4 \"http://${mp.host}:${portLease.read "mailpit_ui"}/\"";
                 }
                 // lib.optionalAttrs mp.pop3.enable {
                   ports.pop3.allocate = mailpitPop3Base;
