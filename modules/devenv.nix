@@ -952,9 +952,9 @@ in
                 Unset, it is strict in bench mode, whose web port is written into
                 the committed sites/common_site_config.json, and moves in app
                 mode, whose bench is generated (docs/app-standards/spec.md §5.12).
-                `ports.base` is never moved while this is unset. Set false in
-                bench mode, a moved web port is used for the run but the
-                committed `webserver_port` keeps the preferred one.
+                `ports.base` is never moved while this is unset. Bench mode
+                cannot be set false: its committed `webserver_port` and
+                `socketio_port` have to be the port nginx is on.
 
                 `FRAPPE_NIX_STRICT_PORTS=1` makes any `devenv up` strict, and
                 `FRAPPE_NIX_STRICT_PORTS=0` lets an app-mode bench move; both are
@@ -2858,8 +2858,10 @@ in
                       "--name ${lib.escapeShellArg cfg.name}"
                       "--root ${lib.escapeShellArg config.devenv.root}"
                       "--span ${toString cfg.ports.span}"
-                      "--offset ${toString portOffset}"
                     ]
+                    # The FRAPPE_NIX_PORT_OFFSET hint, in app mode only: bench
+                    # mode ignores the variable (portOffsetOf).
+                    ++ lib.optional appMode "--offset ${toString portOffset}"
                     # ports.base pins the web port, unless ports.strict says otherwise.
                     ++ lib.optionals (cfg.ports.base != null && cfg.ports.strict == null) [
                       "--base ${toString cfg.ports.base}"
@@ -3530,6 +3532,22 @@ in
               '';
             };
 
+            # Bench mode commits webserver_port and socketio_port, and both have
+            # to be the port nginx is on: the realtime server authenticates
+            # against webserver_port, and the browser (DEV_SERVER) dials
+            # socketio_port. A moved port kept out of the committed file would
+            # send both to the bench that holds the preferred one.
+            assertions = [
+              {
+                assertion = appMode || !sockets || cfg.ports.strict != false;
+                message = ''
+                  frappe-nix (${cfg.name}): ports.strict = false is app mode's only. A
+                  bench-mode web port is committed in sites/common_site_config.json, so it
+                  cannot move; change ports.offset (or ports.base) in flake.nix instead.
+                '';
+              }
+            ];
+
             # The top of the `devenv up` script: re-run it inside a systemd scope
             # of its own. See the processScope option for why.
             #
@@ -3567,7 +3585,14 @@ in
                   fi
                 ''
               )
-              (portLease.hold "" "--dry-run" + " || exit 1")
+              # Not when this bench's own frappe-ports is running: that holds
+              # these very ports, and devenv attaches to the running manager
+              # after this. Not under the native manager, which has no `before`.
+              (lib.mkIf (config.process.manager.implementation != "native") ''
+                if ! ${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}; then
+                  ${portLease.hold "" "--dry-run"} || exit 1
+                fi
+              '')
             ];
 
             # Ordering uses devenv's own `after`, not the raw process-compose
@@ -3764,6 +3789,13 @@ in
                   # A second run would lease afresh, perhaps other ports, under
                   # an nginx and a Mailpit already bound to the first's.
                   restart.on = "never";
+                  # And a refusal ends `devenv up` with the holder named: by
+                  # default process-compose only skips the processes after it
+                  # and keeps the rest running. A bench that passed the check
+                  # above can still lose a port to one starting with it.
+                  # devenv's restart.on has no such value; its process-compose
+                  # attributes win over the ones derived from it.
+                  process-compose.availability.restart = "exit_on_failure";
                 };
 
                 # devenv's own probe is `mariadb-admin ping` with no timeout at
@@ -3941,15 +3973,6 @@ in
                   config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
                   ports=${lib.escapeShellArg portLease.file}
                   port="$(${pkgs.jq}/bin/jq -er .web "$ports")"
-                  ${lib.optionalString (!appMode) ''
-                    # Bench mode commits webserver_port. A bench that set
-                    # ports.strict = false may be serving elsewhere this run;
-                    # the committed file keeps the preferred port regardless.
-                    if [ "$port" != ${toString webPort} ]; then
-                      echo "frappe-nix: nginx is on $port this run (${toString webPort} is taken); sites/common_site_config.json keeps ${toString webPort}"
-                      port=${toString webPort}
-                    fi
-                  ''}
 
                   ${lib.optionalString mailpitEnabled ''
                     # Mailpit's ports are leased too, and devguard cannot see

@@ -72,6 +72,7 @@ run() {
     || fail "$mode: nginx.conf not rendered: $(cat "$WORK/rt7/frappe-nix/nginx.conf")"
   [ "$(jq -r .bench_id "$WORK/rt7/frappe-nix/ports.json")" = bench/7 ] || fail "$mode: ports.json has no bench_id"
   [ "$(jq -r .preferred.web "$WORK/rt7/frappe-nix/ports.json")" = "$BASE" ] || fail "$mode: no preferred port in ports.json"
+  [ "$(jq -r .identity "$WORK/rt7/frappe-nix/ports.json")" = true ] || fail "$mode: a rendered nginx.conf is not recorded as answering the identity"
   ok "$mode: nginx.conf rendered with the leased port and the bench id; ports.json records both"
 
   # Who holds the preferred port.
@@ -91,6 +92,13 @@ run() {
     && grep -q FRAPPE_NIX_PORT_OFFSET "$WORK/strict.log" || fail "$mode: strict message: $(cat "$WORK/strict.log")"
   [ ! -e "$WORK/rtx/frappe-nix/ports.json" ] || fail "$mode: a refused hold wrote ports.json"
   ok "$mode: strict refuses a held port, naming the holder and FRAPPE_NIX_PORT_OFFSET"
+  # Without --offset (bench mode, which ignores the variable): ports.offset.
+  rc=0
+  lease hold --runtime "$WORK/rtx" --bench-id bench/x --name strict --root /x --strict \
+    "web/nginx=127.0.0.1:$BASE" > "$WORK/strict-bench.log" 2>&1 || rc=$?
+  [ "$rc" = 1 ] && grep -q "change ports.offset (or ports.base) in flake.nix" "$WORK/strict-bench.log" \
+    && ! grep -q FRAPPE_NIX_PORT_OFFSET "$WORK/strict-bench.log" || fail "$mode: strict without --offset: $(cat "$WORK/strict-bench.log")"
+  ok "$mode: without --offset, strict points at ports.offset, not FRAPPE_NIX_PORT_OFFSET"
 
   # SIGKILL frees the port: no stale claim, and ready no longer passes.
   local victim="${pids[$((first - 1))]}"
@@ -100,6 +108,7 @@ run() {
   hold k --strict "web/nginx=127.0.0.1:$BASE"
   up k
   [ "$(port_of k)" = "$BASE" ] || fail "$mode: the port a killed holder had is not free"
+  [ "$(jq -r .identity "$WORK/rtk/frappe-nix/ports.json")" = false ] || fail "$mode: no rendered config, yet ports.json claims the identity"
   ok "$mode: kill -9 frees the port at once, and a killed holder's ports.json is not ready"
 
   # SIGHUP is outlived; SIGTERM: ports.json goes with the holder, and show then

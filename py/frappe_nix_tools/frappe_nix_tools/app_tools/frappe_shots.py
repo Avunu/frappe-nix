@@ -246,8 +246,13 @@ class Shots:
 		config_file = bench / "sites" / "common_site_config.json"
 		port = devshell.webserver_port(bench)
 		if not port:
-			where = devshell.ports_file() or config_file
-			raise Fail(ENVIRONMENT, f"no webserver_port in {where}")
+			leases = devshell.ports_file()
+			if leases is None:
+				raise Fail(ENVIRONMENT, f"no webserver_port in {config_file}")
+			raise Fail(
+				ENVIRONMENT,
+				f"no webserver_port in {config_file} (the bench's port lease is not up: {leases})",
+			)
 		tries = devshell.TRIES
 		while not devshell.web_answers(port, devshell.bench_id()):
 			tries -= 1

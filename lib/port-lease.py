@@ -373,6 +373,12 @@ def hold(args: argparse.Namespace) -> int:
 					"    FRAPPE_NIX_PORT_OFFSET=<n> nix develop --no-pure-eval   (or direnv reload)",
 					file=sys.stderr,
 				)
+			elif not (args.base is not None and any(w.key in pinned for w, _ in refused)):
+				# Bench mode: its offset is committed, and the variable ignored.
+				print(
+					"  Pick other ports for this bench: change ports.offset (or ports.base) in flake.nix.",
+					file=sys.stderr,
+				)
 		for w, reason in taken:
 			if (w, reason) not in refused:
 				say(
@@ -401,6 +407,9 @@ def hold(args: argparse.Namespace) -> int:
 		**got,
 		"preferred": {w.key: w.port for w in args.want},
 		"moved": moved,
+		# Whether the web port answers /__frappe_nix/bench: only the nginx
+		# config rendered here does, so a bench without sockets says false.
+		"identity": bool(args.render),
 	}
 	write_atomic(ports_file(args.runtime), json.dumps(record, indent=2) + "\n")
 	return serve(args.runtime, claims, identity)

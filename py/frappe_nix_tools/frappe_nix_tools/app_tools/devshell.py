@@ -265,9 +265,11 @@ def leased(path: str | os.PathLike[str] | None = None) -> dict[str, Any] | None:
 
 def bench_id() -> str | None:
 	"""This bench's identity, as its nginx answers it at /__frappe_nix/bench;
-	None in a shell that does not lease ports, or before the lease is up."""
+	None in a shell that does not lease ports, before the lease is up, or when
+	nothing on the web port serves it (sockets off: no nginx, ports.json's
+	identity false)."""
 	data = leased()
-	value = data.get("bench_id") if data else None
+	value = data.get("bench_id") if data and data.get("identity", True) else None
 	return value if isinstance(value, str) and value else None
 
 

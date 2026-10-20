@@ -115,6 +115,23 @@ let
     ports.strict = false;
   };
   set123 = portsOf { ports.offset = 123; };
+  # Under devenv's native manager, which refuses a process.manager.before.
+  nativeShell =
+    (benchFlake (_: {
+      frappe-nix = {
+        enable = true;
+        name = "example-bench";
+        workspaceRoot = ../fixtures/lock-audit;
+      };
+      devenv.shells.default.process.manager.implementation = "native";
+    })).devenv.shells.default;
+  # A shell's failed assertions that name MATCH: pure evaluation fails devenv's
+  # own "current directory" one in every shell.
+  failed =
+    match: shell:
+    lib.filter (lib.hasInfix match) (
+      map (a: a.message) (lib.filter (a: !a.assertion) shell.assertions)
+    );
 
   # ports.worktreeSalt's default, read off the module for an app-mode config
   # whose source opted in or not. Nothing else of app mode is evaluated.
@@ -187,7 +204,8 @@ let
       && lib.hasInfix "frappe-nix-port-lease ready" benchShell.processes.frappe-ports.ready.exec
       && benchShell.processes.frappe-ports.after == [ ]
       && benchShell.processes.frappe-ports.restart.on == "never"
-    ) "no frappe-ports process holding the leases";
+      && benchShell.processes.frappe-ports.process-compose.availability.restart == "exit_on_failure"
+    ) "no frappe-ports process holding the leases, or one whose refusal does not end devenv up";
     assert lib.assertMsg (
       lib.all (p: lib.elem "devenv:processes:frappe-ports" benchShell.processes.${p}.after) [
         "nginx"
@@ -218,6 +236,22 @@ let
 " benchShell.processes.frappe-ports.exec
       && !(contains "portsFreeCheck" devenvSource)
     ) "bench mode's devenv up is not strict, or the old bound-port check is still there";
+    # A second `devenv up` on a running bench attaches: the check is skipped
+    # while this bench's own lease is up. None under the native manager.
+    assert lib.assertMsg (
+      lib.hasInfix "if ! " benchUpPreamble
+      && lib.hasInfix "frappe-nix-port-lease ready --runtime" benchUpPreamble
+      && !(lib.hasInfix "frappe-nix-port-lease" nativeShell.process.manager.before)
+      && failed "process.manager.before" nativeShell == [ ]
+    ) "the lease check runs on a bench already up, or under the native manager";
+    # Bench mode cannot move (its webserver_port is committed); TCP mode is
+    # strict whatever the option says. Bench mode's hint is not the variable.
+    assert lib.assertMsg (
+      failed "ports.strict = false is app mode's only" looseShell != [ ]
+      && failed "ports.strict" benchShell == [ ]
+      && failed "ports.strict" tcpShell == [ ]
+      && !(lib.hasInfix "--offset" benchUpPreamble)
+    ) "bench mode accepts ports.strict = false, or its refusal names FRAPPE_NIX_PORT_OFFSET";
     # FRAPPE_NIX_STRICT_PORTS=0 never loosens bench mode; it does app mode's.
     assert lib.assertMsg (
       lib.hasInfix "0 | false | no) : ;;" benchUpPreamble

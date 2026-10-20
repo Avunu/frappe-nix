@@ -466,6 +466,12 @@ class TestDevshell(unittest.TestCase):
 				ports.write_text(json.dumps({"bench_id": "b/devenv-1", "pid": os.getpid(), "web": 8235}))
 				self.assertEqual(devshell.webserver_port(tmp), "8235")
 				self.assertEqual(devshell.bench_id(), "b/devenv-1")
+				# Sockets off: no nginx answers the identity, so none is expected.
+				ports.write_text(
+					json.dumps({"bench_id": "b/devenv-1", "pid": os.getpid(), "web": 8235, "identity": False})
+				)
+				self.assertEqual(devshell.webserver_port(tmp), "8235")
+				self.assertIsNone(devshell.bench_id())
 				# A holder that is gone: its file does not count.
 				ports.write_text(json.dumps({"bench_id": "b/devenv-1", "pid": 2**22 + 1, "web": 8235}))
 				self.assertEqual(devshell.webserver_port(tmp), "")
