@@ -26,6 +26,9 @@ check() { # <description> <command...>
   shift
   if "$@" > /dev/null 2>&1; then ok "$desc"; else no "$desc"; fi
 }
+check_eq() { # <description> <expected> <actual>
+  if [ "$2" = "$3" ]; then ok "$1"; else no "$1 (expected '$2', got '$3')"; fi
+}
 check_not() { # <description> <command...> — passes when the command fails
   local desc=$1
   shift
@@ -41,14 +44,18 @@ for tool in yarn uv frappe-nix-node-locks; do
   # has no /usr/bin/env.
   printf '#!%s\n' "$(command -v bash)" > "$BIN/$tool"
   printf 'printf "%%s %%s %%s\\n" "%s" "$PWD" "$*" >> "$CALLS"\n' "$tool" >> "$BIN/$tool"
+  # STUB_FAIL="<tool> <cwd>": that call fails.
+  printf '[ "${STUB_FAIL:-}" = "%s $PWD" ] && exit 3\nexit 0\n' "$tool" >> "$BIN/$tool"
   chmod +x "$BIN/$tool"
 done
 export PATH="$BIN:$PATH"
 export CALLS="$ROOT/calls"
 
 export FRAPPE_BENCH_ROOT="$ROOT/bench"
-mkdir -p "$FRAPPE_BENCH_ROOT/apps/alpha"
+mkdir -p "$FRAPPE_BENCH_ROOT/apps/alpha" "$FRAPPE_BENCH_ROOT/apps/beta"
 ALPHA="$FRAPPE_BENCH_ROOT/apps/alpha"
+BETA="$FRAPPE_BENCH_ROOT/apps/beta"
+calls() { cut -d' ' -f1,3- "$CALLS" | tr '\n' '|'; }
 
 echo "── in a bench ───────────────────────────────────────────────────"
 : > "$CALLS"
@@ -62,6 +69,27 @@ check "the fallback locks are still refreshed" grep -q '^frappe-nix-node-locks '
 check "it says the apps' own locks were left alone" grep -q "own yarn.lock files were not rewritten" "$ROOT/bench.log"
 check_not "and no longer tells you to commit them" grep -q 'Commit uv.lock, the yarn.lock files' "$ROOT/bench.log"
 
+check_eq "in order: lock, sync, each app, then the fallbacks" \
+  "uv lock|uv sync|yarn install --pure-lockfile|yarn install --pure-lockfile|frappe-nix-node-locks . node-locks|" "$(calls)"
+check "it says what to commit" grep -q 'Done! Commit uv.lock and node-locks/.' "$ROOT/bench.log"
+
+: > "$CALLS"
+rc=0
+STUB_FAIL="uv $FRAPPE_BENCH_ROOT" bash "$BENCH_SCRIPT" > "$ROOT/uvfail.log" 2>&1 || rc=$?
+check_eq "a failed uv lock stops it, with uv's status" 3 "$rc"
+check_eq "…before anything else" "uv lock|" "$(calls)"
+
+: > "$CALLS"
+STUB_FAIL="yarn $ALPHA" bash "$BENCH_SCRIPT" > "$ROOT/yarnfail.log" 2>&1 || true
+check "a failed yarn install does not stop the next app" grep -qxF "yarn $BETA install --pure-lockfile" "$CALLS"
+check "…nor the fallbacks" grep -q '^frappe-nix-node-locks ' "$CALLS"
+
+: > "$CALLS"
+rc=0
+STUB_FAIL="frappe-nix-node-locks $FRAPPE_BENCH_ROOT" bash "$BENCH_SCRIPT" > "$ROOT/locksfail.log" 2>&1 || rc=$?
+check_eq "a failed fallback refresh is only a warning" 0 "$rc"
+check "…that says so" grep -q 'node-locks/ not fully regenerated' "$ROOT/locksfail.log"
+
 echo "── in app mode ──────────────────────────────────────────────────"
 : > "$CALLS"
 bash "$APP_SCRIPT" > "$ROOT/app.log" 2>&1 \
@@ -71,6 +99,8 @@ check "yarn runs a plain install (the lock is the developer's to commit)" \
 check_not "without --pure-lockfile" grep -q -- '--pure-lockfile' "$CALLS"
 check_not "and Python is left to nix run .#relock" grep -q '^uv ' "$CALLS"
 check "the closing line still says to commit the lock" grep -q 'Commit any changed yarn.lock' "$ROOT/app.log"
+check "Python is pointed at relock" grep -q 'Use:  nix run .#relock' "$ROOT/app.log"
+check_not "and the fallbacks are left to it too" grep -q '^frappe-nix-node-locks ' "$CALLS"
 
 echo ""
 if [ "$fails" -eq 0 ]; then

@@ -11,10 +11,12 @@
 let
   inherit (pkgs) lib;
 
-  rendered =
+  render =
+    appMode:
     (import ../lib/scripts.nix {
-      inherit lib pkgs;
-      appsWithNode = [ ];
+      inherit lib pkgs appMode;
+      # node-verify and node-modules are stubs on PATH in the test.
+      appsWithNode = [ "frappe" ];
       benchBin = "bench";
       # The lock generator is a stub on PATH in the test; the exclusion must
       # reach it as a flag.
@@ -31,12 +33,16 @@ in
           coreutils
           shellcheck
         ];
-        script = rendered;
-        passAsFile = [ "script" ];
+        script = render false;
+        appScript = render true;
+        passAsFile = [
+          "script"
+          "appScript"
+        ];
       }
       ''
         export HOME="$PWD"
-        shellcheck -s bash -S warning -e SC2317 "$scriptPath"
-        bash ${./bench-update.sh} "$scriptPath" | tee "$out"
+        shellcheck -s bash -S warning -e SC2317 "$scriptPath" "$appScriptPath"
+        bash ${./bench-update.sh} "$scriptPath" "$appScriptPath" | tee "$out"
       '';
 }

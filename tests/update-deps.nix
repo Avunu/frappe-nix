@@ -14,7 +14,10 @@ let
     appMode:
     (import ../lib/scripts.nix {
       inherit lib pkgs appMode;
-      appsWithNode = [ "alpha" ];
+      appsWithNode = [
+        "alpha"
+        "beta"
+      ];
       benchBin = "bench";
     })."update-deps".exec;
 in
