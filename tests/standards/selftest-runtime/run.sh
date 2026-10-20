@@ -105,6 +105,15 @@ expect() {
   fi
 }
 
+# Inside a dev shell: its process-compose answers, not merely left a socket file.
+pc_up() { [ -S "$PC_SOCKET_PATH" ] && timeout 10 process-compose -U -u "$PC_SOCKET_PATH" process list > /dev/null 2>&1; }
+
+# A self-hosted runner reuses its work directory, so a bench a previous job on
+# it left running (or a socket it left behind) sits at the same paths: stop it.
+stop_leftover() {
+  dev "$1" bash -c 'if [ -S "$PC_SOCKET_PATH" ]; then timeout 60 process-compose -U -u "$PC_SOCKET_PATH" down > /dev/null 2>&1 || true; rm -f "$PC_SOCKET_PATH"; fi'
+}
+
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
 # The primary checkout's preferred web port: 8000 + sha256(name)[0:4] mod 900,
@@ -122,6 +131,7 @@ cmd_main() {
   group "prepare the fixture app"
   prepare "$app"
   lock "$app"
+  stop_leftover "$app"
   endgroup
 
   group "frappe-test --ci with the tests module off"
@@ -174,9 +184,9 @@ cmd_main() {
 # Inside the fixture's dev shell, with nothing started and the tests module off.
 cmd_tests_off() {
   local out="$DEVENV_ROOT/.dev-dist/test" name
-  [ ! -S "$PC_SOCKET_PATH" ] || fail "the bench is already up before the tests-off run"
+  ! pc_up || fail "the bench is already up before the tests-off run"
   frappe-test --ci || fail "frappe-test --ci with tests off exited $?"
-  [ ! -S "$PC_SOCKET_PATH" ] || fail "frappe-test --ci with tests off started process-compose ($PC_SOCKET_PATH)"
+  ! pc_up || fail "frappe-test --ci with tests off started process-compose ($PC_SOCKET_PATH)"
   for name in up site tests coverage testmap composition; do
     [ "$(json "$out/frappe-test-report.json" "d['stages']['$name']")" = skipped ] || fail "tests off: stage $name was not skipped"
   done
@@ -440,6 +450,8 @@ cmd_parallel() {
   rm -rf "$b"
   cp -a "$a" "$b"
   rm -rf "$b/.devenv" "$b/.frappe-nix" "$b/.direnv" "$b/.dev-dist"
+  stop_leftover "$a"
+  stop_leftover "$b"
   endgroup
 
   group "frappe-test --ci --keep-up in both at once"
@@ -455,6 +467,8 @@ cmd_parallel() {
     fail "two same-name benches at once: frappe-test --ci exited $ra and $rb"
   fi
   ok "two copies of one app, one name, frappe-test --ci at once: both exit 0"
+  dev "$a" bash "$HERE/run.sh" pc-state > "$WORK/parallel-pc-a.log" 2>&1 || true
+  dev "$b" bash "$HERE/run.sh" pc-state > "$WORK/parallel-pc-b.log" 2>&1 || true
 
   expect 0 "$WORK/parallel-ports-a.log" dev "$a" bash "$HERE/run.sh" report-ports
   expect 0 "$WORK/parallel-ports-b.log" dev "$b" bash "$HERE/run.sh" report-ports
@@ -514,11 +528,22 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(3600)' "$held" &
   ok "FRAPPE_NIX_STRICT_PORTS=1: refused, naming a process outside frappe-nix"
 }
 
+# Inside a dev shell: what its process-compose runs, and the tail of the logs of
+# the processes that hold or bind the leased ports.
+cmd_pc_state() {
+  local p
+  timeout 10 process-compose -U -u "$PC_SOCKET_PATH" process list -o wide || true
+  for p in frappe-ports nginx mailpit redis; do
+    echo "── $p"
+    timeout 10 process-compose -U -u "$PC_SOCKET_PATH" process logs "$p" --tail 40 || true
+  done
+}
+
 # Inside a dev shell whose bench is up: its ports.json, checked against what
 # answers on them and what devguard and the site config were handed.
 cmd_report_ports() {
   local f="$FRAPPE_NIX_PORTS_FILE" web id
-  frappe-nix-ports > /dev/null || fail "frappe-nix-ports: the bench is not up"
+  frappe-nix-ports > /dev/null || { cmd_pc_state; fail "frappe-nix-ports: the bench is not up"; }
   web="$(jq -r .web "$f")"
   id="$(jq -r .bench_id "$f")"
   [ "$(curl -s --max-time 5 "http://127.0.0.1:$web/__frappe_nix/bench")" = "$id" ] || fail "port $web does not answer as $id"
@@ -616,6 +641,7 @@ case "${1:-}" in
   erpnext) cmd_erpnext ;;
   parallel) cmd_parallel ;;
   report-ports) cmd_report_ports ;;
+  pc-state) cmd_pc_state ;;
   collect-ports) cmd_collect_ports ;;
   *)
     echo "usage: $0 main|erpnext|parallel|collect-ports" >&2

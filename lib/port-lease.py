@@ -266,10 +266,16 @@ def serve(runtime: str, claims: list[Claim], identity: dict[str, Any]) -> int:
 	line = (json.dumps(identity) + "\n").encode()
 
 	def stop(signum: int, _frame: Any) -> None:
+		# Said, so a lease that ends early can be traced in the process's log.
+		say(f"frappe-ports: {signal.Signals(signum).name}, releasing the leases")
 		raise SystemExit(0)
 
-	for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+	for signum in (signal.SIGTERM, signal.SIGINT):
 		signal.signal(signum, stop)
+	# Like nginx and MariaDB, outlive a hangup: the manager stops the bench with
+	# SIGTERM, and a lease that ended under a running nginx would let another
+	# bench take its port.
+	signal.signal(signal.SIGHUP, signal.SIG_IGN)
 	sel = selectors.DefaultSelector()
 	try:
 		for c in claims:

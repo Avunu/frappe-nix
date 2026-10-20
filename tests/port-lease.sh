@@ -102,15 +102,19 @@ run() {
   [ "$(port_of k)" = "$BASE" ] || fail "$mode: the port a killed holder had is not free"
   ok "$mode: kill -9 frees the port at once, and a killed holder's ports.json is not ready"
 
-  # SIGTERM: ports.json goes with the holder; show then exits 3 with the preferred ports.
+  # SIGHUP is outlived; SIGTERM: ports.json goes with the holder, and show then
+  # exits 3 with the preferred ports.
   local last="${pids[-1]}"
+  kill -HUP "$last"
+  sleep 0.3
+  lease ready --runtime "$WORK/rtk" || fail "$mode: a holder does not outlive SIGHUP"
   kill -TERM "$last"
   wait "$last" 2> /dev/null || true
   [ ! -e "$WORK/rtk/frappe-nix/ports.json" ] || fail "$mode: SIGTERM left ports.json"
   rc=0
   lease show --runtime "$WORK/rtk" --preferred "web=$BASE" web > "$WORK/show.out" 2> /dev/null || rc=$?
   [ "$rc" = 3 ] && [ "$(cat "$WORK/show.out")" = "$BASE" ] || fail "$mode: show on a bench that is down: $rc $(cat "$WORK/show.out")"
-  ok "$mode: SIGTERM removes ports.json; show then exits 3 with the preferred port"
+  ok "$mode: SIGHUP is outlived; SIGTERM removes ports.json, and show then exits 3 with the preferred port"
 
   for p in "${pids[@]}"; do kill -TERM "$p" 2> /dev/null || true; done
   for p in "${pids[@]}"; do wait "$p" 2> /dev/null || true; done
