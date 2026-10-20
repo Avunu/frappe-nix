@@ -4,11 +4,15 @@
 # calls. What is asserted is which of them run, in what order, with which flags,
 # and what the exit status says.
 #
-# Usage: setup-requirements.sh <rendered bench-setup-requirements> <rendered bench>
+# Usage: setup-requirements.sh <rendered bench-setup-requirements> <rendered bench> \
+#          <rendered bench-setup-requirements, app mode> \
+#          <rendered bench-setup-requirements, no node apps>
 set -euo pipefail
 
 SETUP="$1"
 UMBRELLA="$2"
+APP_SETUP="$3"
+NO_NODE_SETUP="$4"
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 
@@ -64,6 +68,32 @@ check "…and runs nothing" test ! -s "$LOG"
 run --help
 check_eq "--help exits 0" 0 "$RC"
 check "…and describes node and python" has_help_text
+run -h
+check_eq "-h exits 0" 0 "$RC"
+check "…and is the same help" has_help_text
+check "…and runs nothing" test ! -s "$LOG"
+run
+check "a clean run says how many apps it verified" grep -q '✓ node: 2 app(s) verified' <<< "$OUT"
+check "and heads each half" bash -c "grep -q '^── node ──' <<< '$OUT' && grep -q '^── python ──' <<< '$OUT'"
+VERIFY_RC=1 run
+check "a failing run does not claim the apps verified" bash -c "! grep -q 'app(s) verified' <<< '$OUT'"
+run --node --python
+check_eq "--node --python leaves nothing to run" "" "$(calls)"
+check_eq "…and exits 0" 0 "$RC"
+INSTALL_RC=1 run --node
+check_eq "a failing install fails the run" 1 "$RC"
+
+echo "── app mode: no Python half ─────────────────────────────────────"
+: > "$LOG"; OUT="$(bash "$APP_SETUP" 2>&1)" && RC=0 || RC=$?
+check_eq "only node runs" "node-verify --full --lockfiles . alpha beta|node-modules . alpha beta|" "$(calls)"
+check_eq "exits 0" 0 "$RC"
+: > "$LOG"; OUT="$(bash "$APP_SETUP" --python 2>&1)" && RC=0 || RC=$?
+check_eq "--python runs nothing" "" "$(calls)"
+
+echo "── no app with a package.json: no node half ─────────────────────"
+: > "$LOG"; OUT="$(bash "$NO_NODE_SETUP" 2>&1)" && RC=0 || RC=$?
+check_eq "only the python check runs" "python $ROOT/requirements-check.py .|" "$(calls | sed "s|/nix/store/[^ ]*requirements-check.py|$ROOT/requirements-check.py|")"
+check "and there is no node heading" bash -c "! grep -q '── node' <<< '$OUT'"
 
 
 echo "── the bench wrapper ────────────────────────────────────────────"

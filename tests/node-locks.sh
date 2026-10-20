@@ -41,6 +41,7 @@ check_eq() { # <description> <expected> <actual>
 # YARN_SEEN  — directory receiving a copy of each package.json (and seed
 #              yarn.lock) yarn was handed, numbered by invocation
 # YARN_FAIL  — fail every invocation, as an unresolvable range would
+# YARN_NOLOCK — succeed, but leave no yarn.lock behind
 # YARN_LOCK  — the lock to write (default: one registry entry with integrity
 #              and one git dependency, appended to the seed if there was one)
 BIN="$ROOT/bin"
@@ -56,6 +57,10 @@ cp package.json "$YARN_SEEN/$n.package.json"
 if [ "${YARN_FAIL:-}" = "1" ]; then
   echo 'error Couldn'"'"'t find any versions for "nosuch" that matches "^9.9.9"' >&2
   exit 1
+fi
+if [ "${YARN_NOLOCK:-}" = "1" ]; then
+  rm -f yarn.lock
+  exit 0
 fi
 if [ -n "${YARN_LOCK:-}" ]; then
   cp "$YARN_LOCK" yarn.lock
@@ -235,12 +240,69 @@ check "with yarn's own words" grep -q "Couldn't find any versions" "$ROOT/fail.l
 check_not "a target that is not there is an error" "$TOOL" "$BENCH" node-locks nosuchapp
 check_not "no arguments is an error" "$TOOL"
 
+echo "── flags and usage ────────────────────────────────────────────"
+rc=0
+"$TOOL" --help > "$ROOT/help.log" 2>&1 || rc=$?
+check_eq "--help prints the usage and exits 2" "2" "$rc"
+check "…the usage" grep -q '^usage: frappe-nix-node-locks' "$ROOT/help.log"
+rc=0
+"$TOOL" --bogus "$BENCH" node-locks > "$ROOT/bogus.log" 2>&1 || rc=$?
+check_eq "an unknown flag exits 2" "2" "$rc"
+check "…naming it" grep -q 'unknown flag --bogus' "$ROOT/bogus.log"
+rc=0
+"$TOOL" "$BENCH" > /dev/null 2>&1 || rc=$?
+check_eq "one positional is a usage error, exit 2" "2" "$rc"
+rc=0
+"$TOOL" "$BENCH" node-locks nosuchapp > "$ROOT/nosuch.log" 2>&1 || rc=$?
+check_eq "a target that is not there exits 1" "1" "$rc"
+check "…naming the manifest it looked for" grep -q 'nosuchapp: no apps/nosuchapp/package.json' "$ROOT/nosuch.log"
+"$TOOL" "$BENCH" node-locks alpha/desk > /dev/null 2>&1 || no "forcing a nested frontend exits 0"
+"$TOOL" --exclude alpha/desk "$BENCH" node-locks > /dev/null 2>&1 || no "--exclude <x> (two words) exits 0"
+check_not "--exclude <x> works as --exclude=<x> does" test -e "$LOCKS/alpha/desk"
+"$TOOL" -- "$BENCH" node-locks > /dev/null 2>&1 && ok "-- ends the flags" || no "-- ends the flags"
+
+echo "── the stamp's bytes ──────────────────────────────────────────"
+# Committed next to every fallback, so its format is part of the contract: a
+# rewrite that changed only the spelling would be a diff in every bench.
+"$TOOL" "$BENCH" node-locks > /dev/null 2>&1 || no "a settling run exits 0"
+printf '%s\n' '{' \
+  "  \"package.json\": \"$(sha256sum "$BENCH/apps/beta/package.json" | cut -d' ' -f1)\"" \
+  '}' > "$ROOT/beta-stamp"
+check "an unforced stamp is jq -S's pretty print" cmp -s "$ROOT/beta-stamp" "$LOCKS/beta/source.json"
+printf '%s\n' '{' \
+  '  "forced": true,' \
+  "  \"package.json\": \"$(sha256sum "$BENCH/apps/alpha/package.json" | cut -d' ' -f1)\"," \
+  "  \"yarn.lock\": \"$(sha256sum "$BENCH/apps/alpha/yarn.lock" | cut -d' ' -f1)\"" \
+  '}' > "$ROOT/alpha-stamp"
+check "and a forced one" cmp -s "$ROOT/alpha-stamp" "$LOCKS/alpha/source.json"
+
+echo "── yarn that writes no lock ───────────────────────────────────"
+printf '\n' >> "$BENCH/apps/beta/package.json"
+rc=0
+YARN_NOLOCK=1 "$TOOL" "$BENCH" node-locks beta > "$ROOT/nolock.log" 2>&1 || rc=$?
+check_eq "fails the run" "1" "$rc"
+check "…saying so" grep -q 'beta: yarn install wrote no yarn.lock' "$ROOT/nolock.log"
+"$TOOL" "$BENCH" node-locks > /dev/null 2>&1 || true   # settle beta again
+
 echo "── the app-mode shape: a symlink mirror of the apps ──────────"
 MIRROR="$ROOT/mirror"
 mkdir -p "$MIRROR/apps"
 cp -rs "$BENCH/apps/beta" "$MIRROR/apps/beta"
 "$TOOL" "$MIRROR" "$ROOT/mirror-locks" > /dev/null 2>&1 && ok "a cp -rs mirror resolves" || no "a cp -rs mirror resolves"
 check "and yields a real lock" grep -q '^left-pad@' "$ROOT/mirror-locks/beta/yarn.lock"
+# Forced in the store: the seed is read-only there, and yarn rewrites it.
+cp -rs "$BENCH/apps/alpha" "$MIRROR/apps/alpha"
+STORE="$ROOT/store-alpha"
+cp -r "$BENCH/apps/alpha" "$STORE"
+chmod 0444 "$STORE/yarn.lock" "$STORE/package.json"
+rm "$MIRROR/apps/alpha/yarn.lock"
+ln -s "$STORE/yarn.lock" "$MIRROR/apps/alpha/yarn.lock"
+"$TOOL" "$MIRROR" "$ROOT/mirror-locks" alpha > "$ROOT/mirror-force.log" 2>&1 \
+  && ok "a forced lock seeded from a read-only yarn.lock resolves" \
+  || { no "a forced lock seeded from a read-only yarn.lock resolves"; cat "$ROOT/mirror-force.log"; }
+check_eq "…and is stamped forced" "true" "$(jq -r .forced "$ROOT/mirror-locks/alpha/source.json")"
+check "…and the label is the locks directory's own name" grep -q '+ mirror-locks/alpha (forced over apps/alpha/yarn.lock)' "$ROOT/mirror-force.log"
+chmod -R u+w "$STORE"
 
 echo
 if [ "$fails" -gt 0 ]; then
