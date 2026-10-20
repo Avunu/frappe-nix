@@ -2,10 +2,12 @@
 # Checks for `bench-update --pull` over a bench that has one of each: a
 # registered submodule, a local app, and a stray nested repository.
 #
-# Usage: bench-update.sh <path-to-rendered-bench-update-script>
+# Usage: bench-update.sh <path-to-rendered-bench-update-script> \
+#          <the same, rendered for app mode>
 set -euo pipefail
 
 SCRIPT="$1"
+APP_SCRIPT="$2"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -31,6 +33,19 @@ mkdir -p node-locks/frappe
 printf '# yarn lockfile v1\n' > node-locks/frappe/yarn.lock
 STUB
 chmod +x "$BIN/frappe-nix-node-locks"
+# The steps after the pull, each a stub that records itself, in order:
+# STEPS — one line per invocation: "<name> <args>"
+# <NAME>_FAIL=1 (dashes as underscores, upper case) — fail
+for tool in bench-migrate bench-build uv frappe-nix-node-verify frappe-nix-node-modules; do
+  var="$(printf '%s' "$tool" | tr 'a-z-' 'A-Z_')_FAIL"
+  printf '#!%s\n' "$(command -v bash)" > "$BIN/$tool"
+  printf 'printf "%%s %%s\\n" "%s" "$*" >> "$STEPS"\n' "$tool" >> "$BIN/$tool"
+  printf '[ "${%s:-}" = 1 ] && exit 1\nexit 0\n' "$var" >> "$BIN/$tool"
+  chmod +x "$BIN/$tool"
+done
+export STEPS="$ROOT/steps"
+: > "$STEPS"
+steps() { tr '\n' '|' < "$STEPS"; }
 export PATH="$BIN:$PATH"
 export NODE_LOCKS_CALLS="$ROOT/node-locks-calls"
 : > "$NODE_LOCKS_CALLS"
@@ -470,6 +485,124 @@ check "the divergence is reported" grep -q 'HEAD is not an ancestor' "$ROOT/pull
 check_eq "the commit survives" "$MINE2" "$(git -C apps/frappe rev-parse HEAD)"
 check_eq "and the guard fires before anything is discarded" "# regenerated on top" "$(cat apps/frappe/yarn.lock)"
 check "the skip is in the summary" grep -q 'not updated: frappe' "$ROOT/pull-l7.log"
+
+echo "── the other modes ─────────────────────────────────────────────"
+git -C apps/frappe reset -q --hard FETCH_HEAD
+run_update() { # <log> [args…]: from the bench; status in RC
+  local log=$1
+  shift
+  : > "$STEPS"
+  : > "$NODE_LOCKS_CALLS"
+  RC=0
+  FRAPPE_BENCH_ROOT="$BENCH" bash "$SCRIPT" "$@" > "$ROOT/$log.log" 2>&1 || RC=$?
+}
+run_update help --help
+check_eq "--help exits 0" 0 "$RC"
+check "…with the usage" grep -q '^Usage: bench-update \[--pull | --migrate | --build | --node-locks' "$ROOT/help.log"
+check_eq "…and runs nothing" "" "$(steps)"
+run_update help-short -h
+check "-h is --help" cmp -s "$ROOT/help.log" "$ROOT/help-short.log"
+run_update bogus --bogus
+check_eq "an unknown flag exits 1" 1 "$RC"
+check "…naming it" grep -q 'Unknown flag: --bogus' "$ROOT/bogus.log"
+check_eq "…before doing anything" "" "$(steps)"
+run_update migrate --migrate
+check_eq "--migrate exits 0" 0 "$RC"
+check_eq "--migrate runs bench-migrate and nothing else" "bench-migrate |" "$(steps)"
+check "…without a pull" bash -c "! grep -q 'Pulling' '$ROOT/migrate.log'"
+check "…and says it is done" grep -q '✅ bench-update complete' "$ROOT/migrate.log"
+run_update build --build
+check_eq "--build runs bench-build and nothing else" "bench-build |" "$(steps)"
+BENCH_MIGRATE_FAIL=1 run_update migrate-fail --migrate
+check_eq "a failed migrate fails it" 1 "$RC"
+check_not "…without the success line" grep -q 'bench-update complete' "$ROOT/migrate-fail.log"
+run_update full
+check_eq "no flags: exits 0" 0 "$RC"
+check "pulls" grep -q 'Pulling latest commits' "$ROOT/full.log"
+check_eq "refreshes node-locks/" "1" "$(lock_calls)"
+check_eq "then migrates, then builds — the build refreshes node_modules itself" \
+  "bench-migrate |bench-build |" "$(steps)"
+BENCH_MIGRATE_FAIL=1 run_update full-fail
+check_eq "a failed migrate stops a full update" 1 "$RC"
+check_not "…before the build" grep -q bench-build "$STEPS"
+
+echo "── --pull brings node_modules along, softly ─────────────────────"
+run_update pull-node --pull
+check_eq "verify, then install, for the node apps" \
+  "frappe-nix-node-verify . frappe|frappe-nix-node-modules . frappe|" "$(steps)"
+FRAPPE_NIX_NODE_MODULES_FAIL=1 run_update pull-node-fail --pull
+check_eq "a failed install is only a warning there" 0 "$RC"
+
+echo "── a pulled pyproject.toml re-locks ─────────────────────────────"
+printf '[project]\nname = "frappe"\ndynamic = ["version"]\ndependencies = ["left-pad"]\n' > "$SEED/pyproject.toml"
+TIP_PY="$(up "frappe gains a dependency")"
+run_update pull-py --pull
+check_eq "--pull exits 0" 0 "$RC"
+check_eq "the app moved" "$TIP_PY" "$(git -C apps/frappe rev-parse HEAD)"
+check "uv lock ran in the bench root" grep -qx 'uv lock' "$STEPS"
+check "…naming the app whose pyproject.toml moved" \
+  grep -q 'Re-locking the Python workspace (pyproject.toml changed: frappe)' "$ROOT/pull-py.log"
+check "…and says to commit uv.lock" grep -q 'commit uv.lock (and pyproject.toml)' "$ROOT/pull-py.log"
+run_update pull-py2 --pull
+check_not "a pull that moves no pyproject.toml does not re-lock" grep -q '^uv ' "$STEPS"
+printf '[project]\nname = "frappe"\ndynamic = ["version"]\ndependencies = ["left-pad", "nosuch"]\n' > "$SEED/pyproject.toml"
+up "frappe gains another" > /dev/null
+UV_FAIL=1 run_update pull-py-fail --pull
+check_eq "a failed re-lock fails the pull" 1 "$RC"
+check "…saying what that means" grep -q 'uv lock failed — the dev shell will not evaluate' "$ROOT/pull-py-fail.log"
+check "…and how to resolve it" grep -q 'override-dependencies' "$ROOT/pull-py-fail.log"
+
+echo "── FRAPPE_NIX_BENCH_UPDATE_FORCE ────────────────────────────────"
+printf 'mine\n' > apps/frappe/FORCED
+git -C apps/frappe add FORCED
+git -C apps/frappe commit -q -m "local work, to be discarded"
+printf 'w\n' > "$SEED/FORCE_UP"
+TIP_F="$(up "upstream moves on")"
+FRAPPE_NIX_BENCH_UPDATE_FORCE=1 run_update force --pull
+check_eq "--pull exits 0" 0 "$RC"
+check "it warns what it does" grep -q 'local commits will be discarded (FRAPPE_NIX_BENCH_UPDATE_FORCE=1)' "$ROOT/force.log"
+check_eq "the local commit is gone, the app at the tip" "$TIP_F" "$(git -C apps/frappe rev-parse HEAD)"
+printf 'mine\n' > apps/frappe/FORCED
+git -C apps/frappe add FORCED
+git -C apps/frappe commit -q -m "local work, again"
+printf 'x\n' > "$SEED/FORCE_UP"
+TIP_F2="$(up "upstream moves again")"
+FRAPPE_BENCH_UPDATE_FORCE=1 run_update force-old --pull
+check "the old name still works, with a deprecation warning" \
+  grep -q 'FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead' "$ROOT/force-old.log"
+check_eq "…and discards" "$TIP_F2" "$(git -C apps/frappe rev-parse HEAD)"
+
+echo "── a submodule with no remote at all ────────────────────────────"
+for r in $(git -C apps/zeta remote); do git -C apps/zeta remote remove "$r"; done
+git config -f .gitmodules submodule.apps/zeta.url ""
+run_update noremote --pull
+check_eq "--pull exits 0" 0 "$RC"
+check "the app is skipped, said so" grep -q 'zeta: no git remote — skipping' "$ROOT/noremote.log"
+check "and listed at the end" grep -q 'bench-update complete, but not updated: zeta' "$ROOT/noremote.log"
+
+echo "── app mode ─────────────────────────────────────────────────────"
+run_app() { # <log> [args…]
+  local log=$1
+  shift
+  : > "$STEPS"
+  RC=0
+  FRAPPE_BENCH_ROOT="$BENCH" bash "$APP_SCRIPT" "$@" > "$ROOT/$log.log" 2>&1 || RC=$?
+}
+for flag in --pull --node-locks --node-hashes; do
+  run_app "app$flag" "$flag"
+  check_eq "$flag is refused" 1 "$RC"
+  check "…pointing at nix flake update and relock" \
+    bash -c "grep -q 'has no meaning in app mode' '$ROOT/app$flag.log' && grep -q 'nix run .#relock' '$ROOT/app$flag.log'"
+done
+run_app app-help --help
+check "--help is app mode's" grep -q '^Usage: bench-update \[--migrate | --build\]$' "$ROOT/app-help.log"
+check "…and says how to move the pins" grep -q 'nix flake update && nix run .#relock' "$ROOT/app-help.log"
+run_app app-full
+check_eq "no flags: exits 0" 0 "$RC"
+check_eq "migrates and builds, and pulls nothing" "bench-migrate |bench-build |" "$(steps)"
+check_not "…not even a word of it" grep -q 'Pulling' "$ROOT/app-full.log"
+run_app app-target frappe
+check_eq "a target without --node-locks is an error there too" 1 "$RC"
 
 echo
 if [ "$fails" -gt 0 ]; then

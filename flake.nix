@@ -553,6 +553,8 @@
         # `update-deps`: how it calls yarn in a bench (never writing a lock the
         # app's repository owns) and in app mode.
         // import ./tests/update-deps.nix { inherit pkgs; }
+        # `nix run .#relock`, in a bench and in app mode, over stubs.
+        // import ./tests/relock.nix { inherit pkgs; }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix {
           inherit pkgs;
