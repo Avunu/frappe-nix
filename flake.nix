@@ -374,29 +374,27 @@
           bootstrap-lock =
             let
               pinned = import ./lib/bootstrap-lock.nix;
-              lock = builtins.toFile "flake.lock" (
-                builtins.toJSON {
-                  version = 7;
-                  root = "root";
-                  nodes = {
-                    root.inputs = {
-                      frappe-nix = "frappe-nix_2";
-                      nixpkgs = [
-                        "frappe-nix_2"
-                        "nixpkgs"
-                      ];
-                    };
-                    frappe-nix_2.locked = {
-                      type = "github";
-                      owner = "Avunu";
-                      repo = "frappe-nix";
-                      rev = "e1f14fa1c49b37d05bcc02b5e37b252c0b4bfcb1";
-                      narHash = "sha256-OlOiOcu7OpTvDBKYSHgEIQ9HbJQLCVoGKvLLMlhjKPA=";
-                      lastModified = 1792505124;
-                    };
+              lock = {
+                version = 7;
+                root = "root";
+                nodes = {
+                  root.inputs = {
+                    frappe-nix = "frappe-nix_2";
+                    nixpkgs = [
+                      "frappe-nix_2"
+                      "nixpkgs"
+                    ];
                   };
-                }
-              );
+                  frappe-nix_2.locked = {
+                    type = "github";
+                    owner = "Avunu";
+                    repo = "frappe-nix";
+                    rev = "e1f14fa1c49b37d05bcc02b5e37b252c0b4bfcb1";
+                    narHash = "sha256-OlOiOcu7OpTvDBKYSHgEIQ9HbJQLCVoGKvLLMlhjKPA=";
+                    lastModified = 1792505124;
+                  };
+                };
+              };
               results = {
                 renamed-node =
                   pinned {
