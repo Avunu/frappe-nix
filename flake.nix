@@ -421,6 +421,9 @@
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }
+        # The dev shell's runtime port leases: twenty benches at once on one
+        # preferred port, kill -9, strict, and a port held outside frappe-nix.
+        // import ./tests/port-lease.nix { inherit pkgs; }
         // import ./tests/setup-requirements.nix { inherit pkgs; }
         # The real mariadbd, started through the dev shell's wrapper the way
         # devenv starts it: argument order, and where its temp files go.

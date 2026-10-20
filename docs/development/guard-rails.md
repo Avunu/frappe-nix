@@ -3,7 +3,7 @@ title: Development guard rails
 description: The devguard options that stop a bench restored from production from mailing customers, calling payment gateways and other APIs, deleting production files or pushing backups, and the limits of that protection.
 order: 2
 tags: [devguard, safety, egress, mail, backups]
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 A bench restored from a production backup carries working production credentials in its database and `site_config.json`. Left alone, `devenv up` will mail real customers within minutes, delete production files out of an object store within the hour, and, depending on what is configured, capture real payments, create real direct-debit mandates and subscriptions, push its dev-mutated database over the production backup rotation and delete real calendar events.
@@ -75,7 +75,7 @@ For an app's tests only, `[tool.frappe-nix.tests] devguard-disable = ["mail"]` i
 
 Values the Nix configuration bakes in are likewise overridable at runtime, without a rebuild. Each setting has an environment variable named `FRAPPE_DEVGUARD_<GUARD>_<SETTING>`, such as `FRAPPE_DEVGUARD_MAIL_HOST`, `FRAPPE_DEVGUARD_MAIL_PORT` and `FRAPPE_DEVGUARD_EGRESS_ALLOW_HOSTS`.
 
-Settings resolve in this order, highest first: the `FRAPPE_DEVGUARD_*` environment variables, then a runtime file that `devenv up` writes to `$DEVENV_RUNTIME/devguard-runtime.json` (it records the ports Mailpit was started on; these are fixed at evaluation from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets) and nothing moves them at run time, so they match the baked values), then the values Nix baked in at build time, then the built-in defaults. Because the baked values are there, the guards still hold when the devenv environment is absent, such as an editor terminal or a stray `sudo -u`. Settings are read when a guard runs, which is why a guard can be turned off for a single command.
+Settings resolve in this order, highest first: the `FRAPPE_DEVGUARD_*` environment variables, then a runtime file that `devenv up` writes to `$DEVENV_RUNTIME/devguard-runtime.json` (it records the ports Mailpit was started on, which `devenv up` leased: the preferred ones from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets), or the next free ones when another bench holds those), then the values Nix baked in at build time, which are the preferred ports, then the built-in defaults. Because the baked values are there, the guards still hold when the devenv environment is absent, such as an editor terminal or a stray `sudo -u`. Mail from such an interpreter goes to the preferred Mailpit port, so on a bench whose Mailpit was moved it reaches whichever bench holds that port: still a catcher, never a real server. Settings are read when a guard runs, which is why a guard can be turned off for a single command.
 
 ## Pushing attachments to production
 

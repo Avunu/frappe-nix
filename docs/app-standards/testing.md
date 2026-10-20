@@ -3,7 +3,7 @@ title: Testing
 description: "frappe-test: the app's tests with coverage, the whitelist and hook test map, the composition check and CI mode."
 order: 3
 tags: [app-standards, testing, coverage, frappe-test]
-updated: 2026-10-17
+updated: 2026-10-19
 ---
 
 `frappe-test` runs an app's tests the way CI's `ci / test` job does, from the app's dev shell. It brings the bench up, prepares a site, runs the tests with coverage measured on the app alone, and then checks what the coverage cannot: that every whitelisted function and hook target ran, and that the app's controller extensions compose with other apps'. The same command, with `--ci`, is the whole test job.
@@ -28,7 +28,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 
 | Stage | What | Fails with |
 |---|---|---|
-| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and the web port; a failed `devenv up` (a taken port, say) fails at once. | 10 |
+| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and for the web port to answer as this bench (its `/__frappe_nix/bench` identity, so another bench's nginx on the same port does not count); a failed `devenv up` (a taken port under `ports.strict`, say) fails at once. The leased ports are copied to `ports.json` in the output directory, and a web port that never answers is reported with `frappe-nix-ports who`. | 10 |
 | site | `provision-site` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps (without the guards `devguard-disable` names, see [Development guards in a test run](#development-guards-in-a-test-run)). | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |
@@ -130,7 +130,9 @@ FRAPPE_NIX_CI=1 nix develop --no-pure-eval -c frappe-test --ci
 
 ## Several checkouts at once
 
-Each checkout of an app gets its own database, Redis and sockets. Its TCP ports, nginx's and Mailpit's, come from [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets): a hash of the bench name in the primary checkout, and, in an app that opted in to the app standards, of the name and the path in a linked worktree (`git worktree add`), so two worktrees of one app run side by side. An app that has not opted in keeps one offset for every checkout unless it sets `ports.worktreeSalt = true`. `FRAPPE_NIX_PORT_OFFSET=<0-899>` picks an offset by hand. With the salt on, `devenv up` also stops with the port's name when one is already taken. See [The development shell](../development/README.md#ports-and-sockets).
+Each checkout of an app gets its own database, Redis and sockets. Its TCP ports, nginx's and Mailpit's, are leased when `devenv up` starts, so any number of checkouts run side by side, CI jobs of one app on one runner host included: each prefers the ports [`ports.offset`](../reference/dev-shell-options.md#ports-and-sockets) gives it and moves past one another bench holds. The offset is a hash of the bench name in the primary checkout, and, in an app that opted in to the app standards, of the name and the path in a linked worktree (`git worktree add`), so two worktrees rarely want the same port in the first place. `FRAPPE_NIX_PORT_OFFSET=<0-899>` picks an offset by hand, and `FRAPPE_NIX_STRICT_PORTS=1` (or `ports.strict = true`) makes `devenv up` refuse a taken port, naming its holder, rather than move. `frappe-nix-ports` prints the ports in force. See [The development shell](../development/README.md#ports-and-sockets).
+
+frappe-nix's own `selftest-runtime` workflow tests this with a `parallel` leg: two copies of its fixture app, under one name, run `frappe-test --ci` at the same moment, on the same host as the other legs' benches of that name. Each must lease distinct ports, answer on them as itself, hand devguard its own Mailpit and catch its own mail; a port held by a process outside frappe-nix must be moved past.
 
 ## frappe-test-report.json
 

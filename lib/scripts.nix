@@ -1024,10 +1024,14 @@ secretScripts
     echo ""
     echo "✅ Site $FRAPPE_SITE provisioned!"
     echo "   Admin password: $ADMIN_PASS"
-    # Read the port back rather than trusting an env var: devenv only runs its
-    # port allocator for `devenv up`, so anything resolved in a plain shell is
-    # the bench's base port, which may not be the one nginx actually took.
-    echo "   URL: http://127.0.0.1:$(${pkgs.jq}/bin/jq -r '.webserver_port // 8000' sites/common_site_config.json)"
+    # Read the port back rather than trusting an env var: `devenv up` leases
+    # the ports (frappe-ports), so anything resolved in a plain shell is the
+    # bench's preferred port, which may not be the one nginx actually took.
+    # `frappe-nix-ports web` names it while the bench runs; the config's
+    # webserver_port, which frappe:config writes, is the fallback.
+    _url_port="$(frappe-nix-ports web 2>/dev/null)" \
+      || _url_port="$(${pkgs.jq}/bin/jq -r '.webserver_port // 8000' sites/common_site_config.json)"
+    echo "   URL: http://127.0.0.1:$_url_port"
   '';
 
   # Diffs sites/apps.txt — the candidate list frappe-nix regenerates from the

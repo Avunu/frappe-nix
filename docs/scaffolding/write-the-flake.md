@@ -76,7 +76,7 @@ The `.envrc` is a single line, `use flake . --no-pure-eval`. [Avunu/frappe-deven
 | `mariadb.initialDatabases`     | `[]`                               | Databases created on the first `devenv up`.                                                        |
 | `watch.apps`                   | `null`                             | Apps the watcher rebuilds. `null` skips apps published by Frappe Technologies. `[ ]` turns it off. |
 | `mariadb.durable`              | `false`                            | Trades crash durability for much faster commits.                                                   |
-| `ports.base`                   | `null`                             | First port to try. Defaults to 8000 plus a hash of `name`.                                    |
+| `ports.base`                   | `null`                             | The web port. Defaults to 8000 plus a hash of `name`. `devenv up` refuses it when taken; other ports are preferred ones it moves past in app mode (`ports.strict`). |
 | `sockets.enable`               | `true`                             | Unix sockets behind one nginx port. Needs Frappe 15.46 or newer.                                   |
 | `runtime.enable`               | `true`                             | One `frappe-runtime` process instead of split web, socket.io, worker and scheduler processes.      |
 | `containers.enable`            | `false`                            | Build the OCI images. See [Build production images](../production/images.md).                      |

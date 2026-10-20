@@ -10,6 +10,7 @@ with exit 130 (running the caller's cleanup on the way, as a bash EXIT trap did)
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -231,9 +232,55 @@ def db_answers() -> bool:
 	)
 
 
+def ports_file() -> Path | None:
+	"""Where `devenv up` records the ports it leased and the bench's identity
+	($FRAPPE_NIX_PORTS_FILE); None in a shell that does not lease them."""
+	path = os.environ.get("FRAPPE_NIX_PORTS_FILE", "")
+	return Path(path) if path else None
+
+
+def leased(path: str | os.PathLike[str] | None = None) -> dict[str, Any] | None:
+	"""ports.json while the holder that wrote it runs; None before `devenv up`,
+	after the bench stops, or when a killed holder left it behind."""
+	path = path if path is not None else ports_file()
+	if path is None:
+		return None
+	try:
+		data = json.loads(Path(path).read_text())
+	except (OSError, ValueError):
+		return None
+	if not isinstance(data, dict):
+		return None
+	pid = data.get("pid")
+	if not isinstance(pid, int) or pid <= 0:
+		return None
+	try:
+		os.kill(pid, 0)
+	except ProcessLookupError:
+		return None
+	except PermissionError:
+		pass
+	return data
+
+
+def bench_id() -> str | None:
+	"""This bench's identity, as its nginx answers it at /__frappe_nix/bench;
+	None in a shell that does not lease ports, before the lease is up, or when
+	nothing on the web port serves it (sockets off: no nginx, ports.json's
+	identity false)."""
+	data = leased()
+	value = data.get("bench_id") if data and data.get("identity", True) else None
+	return value if isinstance(value, str) and value else None
+
+
 def webserver_port(bench: str | os.PathLike[str]) -> str:
-	"""``.webserver_port // empty`` of the bench's common_site_config.json, or ""
-	when the file is missing or unreadable."""
+	"""The port the bench serves on: the leased one in a shell that leases
+	ports ("" until `devenv up` has), else ``.webserver_port // empty`` of the
+	bench's common_site_config.json, "" when that is missing or unreadable."""
+	if ports_file() is not None:
+		data = leased()
+		value = data.get("web") if data else None
+		return str(value) if isinstance(value, int) else ""
 	try:
 		data = json.loads((Path(bench) / "sites" / "common_site_config.json").read_text())
 	except (OSError, ValueError):
@@ -242,10 +289,18 @@ def webserver_port(bench: str | os.PathLike[str]) -> str:
 	return "" if value is None or value is False else jq_raw(value)
 
 
-def web_answers(port: str) -> bool:
+def web_answers(port: str, expect: str | None = None) -> bool:
 	"""Any HTTP answer on the port is "up": nginx says 404 until the site exists.
-	Straight to loopback, past any proxy the environment names."""
+	With EXPECT, the answer has to come from that bench: its nginx serves its
+	identity at /__frappe_nix/bench, so a neighbour's on the same port does not
+	count. Straight to loopback, past any proxy the environment names."""
 	opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+	if expect is not None:
+		try:
+			with opener.open(f"http://127.0.0.1:{port}/__frappe_nix/bench", timeout=3) as resp:
+				return resp.read().decode(errors="replace").strip() == expect
+		except (OSError, ValueError):
+			return False
 	try:
 		with opener.open(f"http://127.0.0.1:{port}/", timeout=3):
 			return True
@@ -253,6 +308,15 @@ def web_answers(port: str) -> bool:
 		return True
 	except (OSError, ValueError):
 		return False
+
+
+def who(port: str) -> str:
+	"""`frappe-nix-ports who PORT`: the bench, or the kind of process, holding
+	PORT, for an environment failure's message; "" without the command."""
+	if not port or shutil.which("frappe-nix-ports") is None:
+		return ""
+	rc, out = capture(["frappe-nix-ports", "who", port])
+	return out if rc == 0 else ""
 
 
 def provision(site: str, compose: Compose) -> bool:

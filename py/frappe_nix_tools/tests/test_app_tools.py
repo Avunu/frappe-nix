@@ -437,6 +437,7 @@ class TestDevshell(unittest.TestCase):
 		self.assertFalse(devshell.truthy(None) or devshell.truthy(False))
 		self.assertTrue(devshell.truthy(0) and devshell.truthy(""))
 
+	@mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": ""})
 	def test_webserver_port(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
 			self.assertEqual(devshell.webserver_port(tmp), "")
@@ -452,6 +453,56 @@ class TestDevshell(unittest.TestCase):
 				self.assertEqual(devshell.webserver_port(tmp), port)
 			cfg.write_text("{")
 			self.assertEqual(devshell.webserver_port(tmp), "")
+
+	def test_leased_ports(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			ports = Path(tmp) / "ports.json"
+			(Path(tmp) / "sites").mkdir()
+			(Path(tmp) / "sites" / "common_site_config.json").write_text('{"webserver_port": 8000}')
+			with mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": str(ports)}):
+				# Before `devenv up`: no port at all, not the config's stale one.
+				self.assertEqual(devshell.webserver_port(tmp), "")
+				self.assertIsNone(devshell.bench_id())
+				ports.write_text(json.dumps({"bench_id": "b/devenv-1", "pid": os.getpid(), "web": 8235}))
+				self.assertEqual(devshell.webserver_port(tmp), "8235")
+				self.assertEqual(devshell.bench_id(), "b/devenv-1")
+				# Sockets off: no nginx answers the identity, so none is expected.
+				ports.write_text(
+					json.dumps({"bench_id": "b/devenv-1", "pid": os.getpid(), "web": 8235, "identity": False})
+				)
+				self.assertEqual(devshell.webserver_port(tmp), "8235")
+				self.assertIsNone(devshell.bench_id())
+				# A holder that is gone: its file does not count.
+				ports.write_text(json.dumps({"bench_id": "b/devenv-1", "pid": 2**22 + 1, "web": 8235}))
+				self.assertEqual(devshell.webserver_port(tmp), "")
+				self.assertIsNone(devshell.leased())
+
+	def test_web_answers_identity(self) -> None:
+		import http.server
+		import threading
+
+		class Bench(http.server.BaseHTTPRequestHandler):
+			def do_GET(self) -> None:
+				body = b"b/devenv-1" if self.path == "/__frappe_nix/bench" else b"hi"
+				self.send_response(200)
+				self.end_headers()
+				self.wfile.write(body)
+
+			def log_message(self, format: str, *args: object) -> None:
+				pass
+
+		server = http.server.HTTPServer(("127.0.0.1", 0), Bench)
+		threading.Thread(target=server.serve_forever, daemon=True).start()
+		port = str(server.server_address[1])
+		try:
+			self.assertTrue(devshell.web_answers(port))
+			self.assertTrue(devshell.web_answers(port, "b/devenv-1"))
+			# Another bench on the port: an answer, but not this bench's.
+			self.assertFalse(devshell.web_answers(port, "b/devenv-2"))
+		finally:
+			server.shutdown()
+			server.server_close()
+		self.assertFalse(devshell.web_answers(port, "b/devenv-1"))
 
 	def test_faked_env(self) -> None:
 		self.assertEqual(devshell.faked_env({"A": "1"}), {"A": "1"})

@@ -171,11 +171,14 @@ def bring_up(repo: str, bench: Path, compose: Compose) -> None:
 		time.sleep(2)
 	while True:
 		port = devshell.webserver_port(bench)
-		if port and devshell.web_answers(port):
+		if port and devshell.web_answers(port, devshell.bench_id()):
 			break
 		tries -= 1
 		if tries <= 0:
-			raise Fail("the web server did not answer within 300 s")
+			holder = devshell.who(port)
+			raise Fail(
+				"the web server did not answer within 300 s" + (f" (port {port}: {holder})" if holder else "")
+			)
 		time.sleep(2)
 
 

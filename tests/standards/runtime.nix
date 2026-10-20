@@ -7,7 +7,11 @@
 #                            opt-in test (on for an app with [tool.frappe-nix],
 #                            off without); FRAPPE_NIX_PORT_OFFSET parses and
 #                            wins; one offset sets web, db and the three
-#                            Mailpit ports, through the real module.
+#                            Mailpit ports, through the real module. Those
+#                            are preferred ports: frappe-ports leases them at
+#                            `devenv up` (lib/port-lease.py, tests/port-lease.nix),
+#                            first, with nginx, Mailpit and frappe:config
+#                            after it, strict in bench mode.
 #   standards-ci-mode         FRAPPE_NIX_CI's enterShell snippets, rendered and
 #                            run: in CI mode no node verify, no node_modules, a
 #                            one-line banner and the two exports; outside it the
@@ -89,16 +93,45 @@ let
     };
 
   today = portsOf { };
+  # A bench-mode shell, as `devenv up` runs it.
+  shellOf =
+    extra:
+    (benchFlake (_: {
+      frappe-nix = {
+        enable = true;
+        name = "example-bench";
+        workspaceRoot = ../fixtures/lock-audit;
+      }
+      // extra;
+    })).devenv.shells.default;
+  benchShell = shellOf { };
   # What `devenv up` runs before process-compose, in bench mode.
-  benchUpPreamble =
+  benchUpPreamble = benchShell.process.manager.before;
+  # The same with ports.strict = false, ports.base set, and sockets off.
+  looseShell = shellOf { ports.strict = false; };
+  baseShell = shellOf { ports.base = 8111; };
+  tcpShell = shellOf {
+    sockets.enable = false;
+    ports.strict = false;
+  };
+  set123 = portsOf { ports.offset = 123; };
+  # Under devenv's native manager, which refuses a process.manager.before.
+  nativeShell =
     (benchFlake (_: {
       frappe-nix = {
         enable = true;
         name = "example-bench";
         workspaceRoot = ../fixtures/lock-audit;
       };
-    })).devenv.shells.default.process.manager.before;
-  set123 = portsOf { ports.offset = 123; };
+      devenv.shells.default.process.manager.implementation = "native";
+    })).devenv.shells.default;
+  # A shell's failed assertions that name MATCH: pure evaluation fails devenv's
+  # own "current directory" one in every shell.
+  failed =
+    match: shell:
+    lib.filter (lib.hasInfix match) (
+      map (a: a.message) (lib.filter (a: !a.assertion) shell.assertions)
+    );
 
   # ports.worktreeSalt's default, read off the module for an app-mode config
   # whose source opted in or not. Nothing else of app mode is evaluated.
@@ -163,11 +196,77 @@ let
         && contains "envApplies = config.frappe-nix.app.enable;" devenvSource
       )
       "devenv.nix: ports.offset's seed is not salted by app mode and ports.worktreeSalt, or FRAPPE_NIX_PORT_OFFSET applies outside app mode";
-    # Bench mode and an app that has not opted in start as they did (S35, §5.12).
+    # The ports are leased at `devenv up` (spec §5.12): frappe-ports first,
+    # everything that binds or reads a leased port after it.
     assert lib.assertMsg (
-      contains "portsFreeCheckActive = appMode && (standardsShell.optedIn || cfg.ports.worktreeSalt);" devenvSource
-      && contains "(lib.mkIf portsFreeCheckActive portsFreeCheck)" devenvSource
-    ) "devenv.nix: the bound-port check is not limited to app mode with the worktree salt in play";
+      benchShell.processes ? frappe-ports
+      && lib.hasInfix "frappe-nix-port-lease hold" benchShell.processes.frappe-ports.exec
+      && lib.hasInfix "frappe-nix-port-lease ready" benchShell.processes.frappe-ports.ready.exec
+      && benchShell.processes.frappe-ports.after == [ ]
+      && benchShell.processes.frappe-ports.restart.on == "never"
+      && benchShell.processes.frappe-ports.process-compose.availability.restart == "exit_on_failure"
+    ) "no frappe-ports process holding the leases, or one whose refusal does not end devenv up";
+    assert lib.assertMsg (
+      lib.all (p: lib.elem "devenv:processes:frappe-ports" benchShell.processes.${p}.after) [
+        "nginx"
+        "mailpit"
+      ]
+      && lib.elem "devenv:processes:frappe-ports" benchShell.tasks."frappe:config".after
+    ) "nginx, Mailpit or frappe:config does not start after frappe-ports";
+    assert lib.assertMsg (
+      lib.hasInfix "frappe-nix/nginx.conf" benchShell.processes.nginx.exec
+      && lib.hasInfix "/__frappe_nix/bench" benchShell.processes.nginx.ready.exec
+      && lib.hasInfix "ports.json" benchShell.processes.mailpit.exec
+      && lib.hasInfix "ports.json" benchShell.processes.mailpit.ready.exec
+      && lib.hasInfix "jq -er .web" benchShell.tasks."frappe:config".exec
+      && benchShell.env.FRAPPE_NIX_PORTS_FILE == "${benchShell.env.DEVENV_RUNTIME}/frappe-nix/ports.json"
+    ) "nginx, Mailpit, frappe:config or FRAPPE_NIX_PORTS_FILE do not read the leased ports";
+    assert lib.assertMsg (
+      lib.hasInfix "listen 127.0.0.1:@WEB_PORT@;" benchShell.services.nginx.httpConfig
+      && lib.hasInfix ''return 200 "@BENCH_ID@";'' benchShell.services.nginx.httpConfig
+      && lib.hasInfix ''add_header X-Frappe-Nix-Bench "@BENCH_ID@" always;'' benchShell.services.nginx.httpConfig
+    ) "nginx's config is not a template answering the bench's identity";
+    # Bench mode is strict (its web port is committed), before anything starts
+    # and in the holder; the old bound-port check is gone.
+    assert lib.assertMsg (
+      lib.hasInfix "_frappe_nix_strict=--strict
+" benchUpPreamble
+      && lib.hasInfix "hold --dry-run $_frappe_nix_strict" benchUpPreamble
+      && lib.hasInfix "_frappe_nix_strict=--strict
+" benchShell.processes.frappe-ports.exec
+      && !(contains "portsFreeCheck" devenvSource)
+    ) "bench mode's devenv up is not strict, or the old bound-port check is still there";
+    # A second `devenv up` on a running bench attaches: the check is skipped
+    # while this bench's own lease is up. None under the native manager.
+    assert lib.assertMsg (
+      lib.hasInfix "if ! " benchUpPreamble
+      && lib.hasInfix "frappe-nix-port-lease ready --runtime" benchUpPreamble
+      && !(lib.hasInfix "frappe-nix-port-lease" nativeShell.process.manager.before)
+      && failed "process.manager.before" nativeShell == [ ]
+    ) "the lease check runs on a bench already up, or under the native manager";
+    # Bench mode cannot move (its webserver_port is committed); TCP mode is
+    # strict whatever the option says. Bench mode's hint is not the variable.
+    assert lib.assertMsg (
+      failed "ports.strict = false is app mode's only" looseShell != [ ]
+      && failed "ports.strict" benchShell == [ ]
+      && failed "ports.strict" tcpShell == [ ]
+      && !(lib.hasInfix "--offset" benchUpPreamble)
+    ) "bench mode accepts ports.strict = false, or its refusal names FRAPPE_NIX_PORT_OFFSET";
+    # FRAPPE_NIX_STRICT_PORTS=0 never loosens bench mode; it does app mode's.
+    assert lib.assertMsg (
+      lib.hasInfix "0 | false | no) : ;;" benchUpPreamble
+      && contains ''0 | false | no) ''${if appMode && sockets then "_frappe_nix_strict=" else ":"} ;;'' devenvSource
+      && contains "!appMode;" devenvSource
+    ) "FRAPPE_NIX_STRICT_PORTS=0 loosens bench mode, or app mode is not loose by default";
+    assert lib.assertMsg (
+      lib.hasInfix "_frappe_nix_strict=
+" looseShell.process.manager.before
+      && lib.hasInfix "--pin web" baseShell.process.manager.before
+      && lib.hasInfix "--base 8111" baseShell.process.manager.before
+      && lib.hasInfix "_frappe_nix_strict=--strict
+" tcpShell.process.manager.before
+      && lib.hasInfix "'web/web=127.0.0.1:" tcpShell.processes.frappe-ports.exec
+    ) "ports.strict = false, ports.base's pin or TCP mode's strictness is not what the lease runs";
     # The values every bench had before this change.
     assert lib.assertMsg (
       ports.offsetFor "example-bench" == 740
@@ -194,9 +293,6 @@ let
         pop3 = 21123;
       }
     ) "ports.offset = 123 does not set every port: ${builtins.toJSON set123}";
-    assert lib.assertMsg (
-      !(contains "already in use" benchUpPreamble)
-    ) "bench mode's devenv up checks for taken ports (§5.12 leaves bench mode unchanged)";
     # [1.2] The salt follows the opt-in (S35, §5.12).
     assert lib.assertMsg (saltDefault optedInApp)
       "ports.worktreeSalt is off for an app with [tool.frappe-nix]";
@@ -647,7 +743,8 @@ in
         # devenv fails as a taken port does, unless STUB_DEVENV_OK, when it brings the bench
         # up ($STATE/pc-up, which `process list` then answers for and `down` removes).
         stub stubs/devenv '[ -n "''${STUB_DEVENV_OK:-}" ] && touch "$STATE/pc-up" && exit 0
-        echo "frappe-nix: port already in use: nginx=8000; set FRAPPE_NIX_PORT_OFFSET" >&2; exit 1'
+        echo "frappe-nix: cannot start fixture: already in use: nginx=127.0.0.1:8000" >&2
+        echo "    FRAPPE_NIX_PORT_OFFSET=<n> nix develop --no-pure-eval   (or direnv reload)" >&2; exit 1'
         stub stubs/process-compose 'case "$*" in
           *" process list") [ -z "$STUB_PC_DOWN" ] || [ -e "$STATE/pc-up" ] ;;
           *" process get "*) grep -qx "''${@: -1}" "$STATE/procs" 2> /dev/null ;;

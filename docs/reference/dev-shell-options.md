@@ -3,13 +3,13 @@ title: Dev shell options
 description: Every perSystem.frappe-nix option that configures the development shell, the production package and the container images, with types and defaults.
 order: 1
 tags: [options, reference, devenv]
-updated: 2026-10-15
+updated: 2026-10-19
 ---
 
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
 
 > [!NOTE]
-> Every TCP port (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3` and the rest) is a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. Nothing moves a port that is taken. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell, and with `ports.worktreeSalt` on `devenv up` stops and names a taken port.
+> Every TCP port (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3` and the rest) is a base plus `ports.offset`, an offset between 0 and 899 hashed from `name`. That is the *preferred* port. `devenv up` leases nginx's and Mailpit's before it starts anything: a free preferred port is the port, and a taken one is moved past in app mode or refused in bench mode ([`ports.strict`](#ports-and-sockets)). `frappe-nix-ports` prints the ports in force. In app mode `FRAPPE_NIX_PORT_OFFSET` picks another offset for the shell.
 
 ## Core
 
@@ -111,15 +111,27 @@ See [The development shell](../development/README.md#ports-and-sockets).
 | Option           | Type         | Default | Notes                                                                                                                                                              |
 | ---------------- | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `sockets.enable` | bool         | `true`  | Put MariaDB, Redis, the realtime server and the web server on unix sockets behind one nginx port, so several benches can run at once. Needs Frappe 15.46 or newer. |
-| `ports.offset`   | int, 0–899   | a hash of `name` | The offset every TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `<name>@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
-| `ports.worktreeSalt` | bool     | whether the app opted in to the app standards | App mode: salt a linked worktree's `ports.offset` with its path, so two worktrees of one app run at once, and have `devenv up` stop and name a taken port. On by default only with a `[tool.frappe-nix]` table; any app may set it. Bench mode ignores it. |
-| `ports.base`     | port or null | `null`  | The web port, overriding `8000 + ports.offset`. Mailpit and MariaDB keep theirs.                                                                                 |
+| `ports.offset`   | int, 0–899   | a hash of `name` | The offset every preferred TCP port derives from: web `8000 +`, MariaDB `3306 +`, Mailpit `19000`, `20000` and `21000 +`. In app mode with `ports.worktreeSalt`, a linked worktree hashes `<name>@<path>`. In app mode `FRAPPE_NIX_PORT_OFFSET` wins over it. |
+| `ports.worktreeSalt` | bool     | whether the app opted in to the app standards | App mode: salt a linked worktree's `ports.offset` with its path, so two worktrees of one app prefer different ports. On by default only with a `[tool.frappe-nix]` table; any app may set it. Bench mode ignores it. |
+| `ports.base`     | port or null | `null`  | The web port, overriding `8000 + ports.offset`. Mailpit and MariaDB keep theirs. While `ports.strict` is unset, `devenv up` refuses it when it is taken rather than moving it. |
+| `ports.strict`   | bool or null | `null`: strict in bench mode, not in app mode | Whether `devenv up` refuses a taken preferred port, naming the bench or process that holds it, instead of leasing the next free one. Bench mode is always strict, because its web port is committed: `false` there is an evaluation error. `FRAPPE_NIX_STRICT_PORTS=1` makes any `devenv up` strict and `=0` lets an app-mode bench move, read when `devenv up` runs. With `sockets.enable = false` the ports are always strict. |
+| `ports.span`     | int, 1–1000  | `100`   | How many ports from the preferred one `devenv up` tries for each service before it gives up. |
 | `ports.http` | port | `ports.base`, else `8000 + ports.offset` | The web port: nginx, or the server itself without sockets. Each `ports.*` below is derived for the module to read; set one (`lib.mkForce`) only to fix that service's port. |
 | `ports.db` | port | `3306 + ports.offset` | MariaDB's port. Unbound in socket mode. |
 | `ports.socketio` | port | `9000 + ports.offset` | The Node realtime server's, with `runtime.enable = false` and no sockets. |
 | `ports.smtp` | port | `19000 + ports.offset` | Mailpit's SMTP port: `mailpit.port`'s default. |
 | `ports.mailUi` | port | `20000 + ports.offset` | Mailpit's web UI: `mailpit.httpPort`'s default. |
 | `ports.pop3` | port | `21000 + ports.offset` | Mailpit's POP3 port: `mailpit.pop3.port`'s default. |
+
+The `ports.*` and `mailpit.*` port values are what the shell evaluates: the preferred ports. The ports a running bench serves on are in `$DEVENV_RUNTIME/frappe-nix/ports.json` (also `$FRAPPE_NIX_PORTS_FILE`), written by the `frappe-ports` process when `devenv up` starts and removed when the bench stops:
+
+```json
+{ "bench_id": "my-app/devenv-1a2b3c4", "name": "my-app", "root": "/src/my-app", "pid": 41234,
+  "web": 8298, "mailpit_smtp": 19297, "mailpit_ui": 20297,
+  "preferred": { "web": 8297, "mailpit_smtp": 19297, "mailpit_ui": 20297 }, "moved": { "web": 8297 } }
+```
+
+`frappe-nix-ports` reads it: with no argument it lists the ports, `frappe-nix-ports web` prints one, `--json` the file, and `who <port>` names the bench (or "a process outside frappe-nix") holding a port. When the bench is not up it prints the preferred ports and exits 3.
 
 ## Apps and assets
 
