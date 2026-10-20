@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.1.0](https://github.com/Avunu/frappe-nix/compare/v1.0.2...v1.1.0) (2026-10-20)
+
+
+### Features
+
+* **apps:** add bench-rename-app, the bench's half of renaming an app ([0f5cbc8](https://github.com/Avunu/frappe-nix/commit/0f5cbc8b8673f18a61f111429639a78ceb5a04b6))
+* **ci:** let apps run the reusable workflows on a self-hosted NixOS runner ([#140](https://github.com/Avunu/frappe-nix/issues/140)) ([11d0cf9](https://github.com/Avunu/frappe-nix/commit/11d0cf9705ed0f53cb6f2692445b58fe065ade4c))
+* **devenv:** lease dev-shell ports at devenv up so concurrent benches never collide ([#144](https://github.com/Avunu/frappe-nix/issues/144)) ([85f2c67](https://github.com/Avunu/frappe-nix/commit/85f2c670c714541642f129aa0244e65d83fd1359))
+
+
+### Bug Fixes
+
+* **ci:** give each selftest job its own port offset ([#143](https://github.com/Avunu/frappe-nix/issues/143)) ([8152cbf](https://github.com/Avunu/frappe-nix/commit/8152cbfc5ee61b833f3c1335a74bea3a6be3989d))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#145](https://github.com/Avunu/frappe-nix/issues/145)) ([e1f14fa](https://github.com/Avunu/frappe-nix/commit/e1f14fa1c49b37d05bcc02b5e37b252c0b4bfcb1))
+* **devguard:** give the devguard source tree a store path, not a context-less string ([7051e43](https://github.com/Avunu/frappe-nix/commit/7051e4320c27323fd60c47bca4539bc096716877))
+* **submodules:** check out a fresh clone's apps before Nix evaluates the bench ([9fc882a](https://github.com/Avunu/frappe-nix/commit/9fc882a2f5c36fc6481f496deb5ee72bcef8ac42))
+* **submodules:** give checks.bootstrap-lock its lock as a value, not a toFile path ([de7b17a](https://github.com/Avunu/frappe-nix/commit/de7b17aa435d3d3819969424685ab47f43d86300))
+
 ## [1.0.2](https://github.com/Avunu/frappe-nix/compare/v1.0.1...v1.0.2) (2026-10-19)
 
 
