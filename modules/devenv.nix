@@ -3855,7 +3855,8 @@ in
                 # reads it after the tasks, and again at each restart.
                 mysql.ready = {
                   exec = lib.mkForce (
-                    latchedOn mysqlSocket "mysql" ''MYSQL_PWD="" ${pkgs.coreutils}/bin/timeout 5 ${cfg.mariadb.package}/bin/mariadb-admin --defaults-file=${emptyCnf} --connect-timeout=3 ping -u root --silent''
+                    latchedOn mysqlSocket "mysql"
+                      ''MYSQL_PWD="" ${pkgs.coreutils}/bin/timeout 5 ${cfg.mariadb.package}/bin/mariadb-admin --defaults-file=${emptyCnf} --connect-timeout=3 ping -u root --silent''
                   );
                   probe_timeout = 10;
                   period = 5;
@@ -3866,7 +3867,8 @@ in
                 # mysql's is. Over TCP (sockets off) devenv's probe stands.
                 redis.ready.exec = lib.mkIf sockets (
                   lib.mkForce (
-                    latchedOn redisSocket "redis" "${config.services.redis.package}/bin/redis-cli -s ${lib.escapeShellArg redisSocket} ping"
+                    latchedOn redisSocket "redis"
+                      "${config.services.redis.package}/bin/redis-cli -s ${lib.escapeShellArg redisSocket} ping"
                   )
                 );
 
