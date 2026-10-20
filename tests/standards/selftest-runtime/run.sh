@@ -126,6 +126,12 @@ spare_offset() {
   echo "$(((base + $1) % 900))"
 }
 
+# The bench on PORT answers: nginx, and the runtime behind it. /api/method/ping,
+# not /: a CI bench has no built assets, so Frappe renders / as a 500 through
+# nested template errors (bundled_assets is None), which on a loaded host takes
+# longer than any short timeout. Generous for the same reason.
+web_up() { curl -s -o /dev/null --max-time "${2:-30}" "http://127.0.0.1:$1/api/method/ping"; }
+
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
 # A port offset of this job's own, in CI: every leg's fixture is the bench
@@ -327,7 +333,7 @@ cmd_ports() {
   if [ "$p1" != "$primary" ]; then
     [ "$moved" = "$primary" ] || fail "the primary checkout serves on $p1, not $primary (8000 + ${FRAPPE_NIX_PORT_OFFSET:+FRAPPE_NIX_PORT_OFFSET, else }the bench-name hash), and recorded no move from it"
   fi
-  curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$p1/" || fail "the primary bench is not answering"
+  web_up "$p1" 120 || fail "the primary bench is not answering"
   ok "the primary checkout serves on its preferred port, $primary, or past it when another bench holds it ($p1)"
 
   rm -rf "$wt"
@@ -378,7 +384,7 @@ cmd_up_and_report() {
   local port="" mail
   for _ in $(seq 150); do
     port="$(jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2> /dev/null || true)"
-    if [ -n "$port" ] && curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$port/"; then break; fi
+    if [ -n "$port" ] && web_up "$port"; then break; fi
     port=""
     sleep 2
   done
@@ -440,7 +446,7 @@ cmd_rename_site() {
   local port=""
   for _ in $(seq 150); do
     port="$(jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2> /dev/null || true)"
-    if [ -n "$port" ] && curl -s -o /dev/null --max-time 3 "http://127.0.0.1:$port/"; then break; fi
+    if [ -n "$port" ] && web_up "$port"; then break; fi
     port=""
     sleep 2
   done
