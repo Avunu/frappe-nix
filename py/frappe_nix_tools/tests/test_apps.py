@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 from frappe_nix_tools import bench_cli
-from frappe_nix_tools.apps import get_app, proc, reconcile, remove_app, root_sync
+from frappe_nix_tools.apps import get_app, proc, reconcile, remove_app, rename_app, root_sync
 from frappe_nix_tools.apps.config import AppPair, AppsConfig, ConfigError
 from frappe_nix_tools.bench_config import parse
 
@@ -192,6 +192,84 @@ class TestRemoveAppArgs(unittest.TestCase):
 				self.assertIsNone(remove_app.installed_on(cfg, "s", "crm"))
 
 
+class TestRenameAppArgs(unittest.TestCase):
+	def test_flags(self):
+		self.assertEqual(rename_app.parse_args(["a", "b"]), ("a", "b", "", "", True))
+		self.assertEqual(
+			rename_app.parse_args(["--no-pull", "--url", "u", "--branch", "x", "a", "b"]),
+			("a", "b", "u", "x", False),
+		)
+		self.assertEqual(rename_app.parse_args(["a", "--url=u", "-b", "x", "b"]), ("a", "b", "u", "x", True))
+		self.assertEqual(rename_app.parse_args(["--branch=x", "a", "b"]), ("a", "b", "", "x", True))
+		self.assertIsNone(rename_app.parse_args(["--help"]))
+		for argv, message in (
+			(["--depth", "a", "b"], "unknown flag: --depth"),
+			(["a"], "give the old name and the new one"),
+			([], "give the old name and the new one"),
+			(["a", "b", "c"], "give the old name and the new one"),
+			(["--url"], "--url needs a value"),
+			(["a", "b", "--branch", ""], "--branch needs a value"),
+		):
+			with self.subTest(argv=argv), self.assertRaisesRegex(rename_app.UsageError, message):
+				rename_app.parse_args(argv)
+
+	def test_the_url_follows_the_repository_name(self):
+		for url, expected in (
+			("https://github.com/Avunu/esign.git", "https://github.com/Avunu/esign_webforms.git"),
+			("https://github.com/Avunu/frappe_editor", "https://github.com/Avunu/ui_text_editor"),
+			("git@github.com:Avunu/esign.git", "git@github.com:Avunu/esign_webforms.git"),
+			("https://github.com/Avunu/esign/", "https://github.com/Avunu/esign_webforms/"),
+			("file:///srv/repos/esign.git", "file:///srv/repos/esign_webforms.git"),
+		):
+			old = "frappe_editor" if "frappe_editor" in url else "esign"
+			new = "ui_text_editor" if old == "frappe_editor" else "esign_webforms"
+			with self.subTest(url=url):
+				self.assertEqual(rename_app.renamed_url(url, old, new), expected)
+
+	def test_a_url_not_named_for_the_app_is_kept(self):
+		for url in ("https://github.com/Avunu/avunu_erp.git", "https://github.com/Avunu/esign_old.git", ""):
+			with self.subTest(url=url):
+				self.assertEqual(rename_app.renamed_url(url, "esign", "esign_webforms"), url)
+
+	def test_names_refused_before_anything_runs(self):
+		for argv, message in (
+			(["frappe", "x"], "cannot be renamed"),
+			(["x", "frappe"], "cannot be renamed"),
+			(["a", "a"], "is already called that"),
+			(["a", ".."], "is not an app name"),
+			(["a/b", "c"], "is not an app name"),
+			(["a", "1b"], "is not a valid app name"),
+			(["a", "b-c"], "is not a valid app name"),
+		):
+			err = io.StringIO()
+			with self.subTest(argv=argv), contextlib.redirect_stderr(err):
+				self.assertEqual(
+					proc.main_guard(lambda argv=argv: rename_app.rename_app(argv, apps_config())), 1
+				)
+				self.assertIn(message, err.getvalue())
+
+	def test_a_rename_the_flake_names_differently_is_refused(self):
+		cfg = apps_config(renamedApps=[{"old": "crm", "new": "crm_other"}])
+		err = io.StringIO()
+		cwd = os.getcwd()
+		with tempfile.TemporaryDirectory() as tmp:
+			Path(tmp, "pyproject.toml").write_text('members = ["apps/crm"]\n')
+			try:
+				os.chdir(tmp)
+				with (
+					mock.patch.dict(os.environ, {"FRAPPE_BENCH_ROOT": tmp}),
+					mock.patch.object(
+						rename_app, "kind_of", lambda _cfg, app: "submodule" if app == "crm" else ""
+					),
+					contextlib.redirect_stderr(err),
+				):
+					status = proc.main_guard(lambda: rename_app.rename_app(["crm", "crm_pro"], cfg))
+			finally:
+				os.chdir(cwd)
+		self.assertEqual(status, 1)
+		self.assertIn("renamedApps says crm is renamed to crm_other, not crm_pro", err.getvalue())
+
+
 class TestReconcile(unittest.TestCase):
 	def setUp(self):
 		self.tmp = tempfile.TemporaryDirectory()
@@ -328,7 +406,11 @@ class TestRootSync(unittest.TestCase):
 
 class TestBenchCli(unittest.TestCase):
 	def test_help_reaches_the_command(self):
-		for command, text in (("get-app", "Usage: bench-get-app"), ("remove-app", "Usage: bench-remove-app")):
+		for command, text in (
+			("get-app", "Usage: bench-get-app"),
+			("remove-app", "Usage: bench-remove-app"),
+			("rename-app", "Usage: bench-rename-app"),
+		):
 			out = io.StringIO()
 			with (
 				self.subTest(command=command),

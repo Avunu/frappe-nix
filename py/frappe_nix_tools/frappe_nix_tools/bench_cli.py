@@ -64,6 +64,11 @@ def main(argv: list[str] | None = None) -> None:
 		"frappe_nix_tools.apps.remove_app",
 		"Remove an app from the bench (bench remove-app --help).",
 	)
+	passthrough(
+		"rename-app",
+		"frappe_nix_tools.apps.rename_app",
+		"Rename an app in the bench (bench rename-app --help).",
+	)
 	passthrough("new-app", "frappe_nix_tools.apps.new_app", "Scaffold a new app into the workspace.")
 	passthrough(
 		"reconcile-apps",

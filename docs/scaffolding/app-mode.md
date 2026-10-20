@@ -119,13 +119,14 @@ Re-entering the shell after a pin moves re-copies `apps/*` out of the store and 
 
 ## Commands that behave differently
 
-Four bench commands edit the bench as if it were a checkout, and in app mode there is no checkout to edit. They refuse and name the flake-input equivalent instead:
+Five bench commands edit the bench as if it were a checkout, and in app mode there is no checkout to edit. They refuse and name the flake-input equivalent instead:
 
 | Command                                  | Use instead                                                       |
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | `bench-update --pull` and `--node-locks` | `nix flake update`, then `nix run .#relock`                       |
 | `bench-get-app` and `bench-new-app`      | Declare the app as a flake input and list it under `app.siblings` |
 | `bench-remove-app`                       | Drop it from `frappe-nix.app.siblings`                            |
+| `bench-rename-app`                       | Rename it in `frappe-nix.app.siblings`                            |
 
 `bench-update --migrate` and `--build` are unaffected, and everything else works exactly as it does in a bench. See [Everyday commands](../development/commands.md).
 

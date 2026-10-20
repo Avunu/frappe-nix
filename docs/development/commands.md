@@ -18,6 +18,7 @@ The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `be
 | `bench get-app [--branch <B>] <URL_OR_ALIAS>`                          | `bench-get-app`            | A git submodule and a uv workspace member instead of pip.                                                                                                                            |
 | `bench new-app`                                                        | `bench-new-app`            | Scaffold plus uv workspace, skipping the failing pip step.                                                                                                                           |
 | `bench remove-app [--force] [--no-backup]`                             | `bench-remove-app`         | Submodule, `.gitmodules` and uv workspace instead of `apps.txt` and pip.                                                                                                             |
+| `bench rename-app [--no-pull] <OLD> <NEW>`                             | `bench-rename-app`         | Moves the submodule, its clone and the workspace member instead of removing and re-adding them.                                                                                      |
 | `bench restore [<FILE>]`                                               | `bench-restore`            | Injects the MariaDB root credentials. With no file, fetches the latest production backup.                                                                                            |
 | `bench new-site`                                                       | the real bench             | Injects `--db-socket` and `--db-root-username root`, so site creation is non-interactive.                                                                                            |
 | `bench migrate`, `console`, `clear-cache`                              | `bench-*`                  | Inject `--site $FRAPPE_SITE`.                                                                                                                                                        |
@@ -54,6 +55,7 @@ These back the wrapper and are also callable directly.
 | `bench-get-app [--branch <B>] <URL_OR_ALIAS>`                                   | Add an app as a git submodule and register it. See below.                                                                                                                       |
 | `bench-new-app`                                                                 | Scaffold a new app as a local app (committed source, no nested git) and register it the same way.                                                                               |
 | `bench-remove-app [--force] [--no-backup]`                                      | The inverse of `bench-get-app`. See below.                                                                                                                                      |
+| `bench-rename-app [--url <U>] [--branch <B>] [--no-pull] <OLD> <NEW>`           | The bench's half of renaming an app. See below.                                                                                                                                 |
 | `update-deps`                                                                   | Re-lock and sync Python (uv) and Node (yarn) across all apps, then refresh the fallback locks in `node-locks/`.                                                                 |
 
 ### bench-update
@@ -88,6 +90,22 @@ In [app mode](../scaffolding/app-mode.md) only `--migrate` and `--build` are ava
 - It refuses while any site still has the app installed, or cannot say whether it does, and while the submodule has uncommitted changes. `--force` skips both checks.
 
 Taking an app out of one site is still the real `bench --site <SITE> uninstall-app <APP>`. With `appsReconcile.enable` on, though, the next `devenv up` reinstalls anything `sites/apps.txt` still lists.
+
+### bench-rename-app
+
+`bench-rename-app` is the bench's half of renaming an app. [Renaming an app](../app-standards/rename.md) has three: the package in the app's repository and the sites that have it installed are `frappe-rename-app`'s, and a `git pull` of the renamed repository does none of this one. The pull leaves the old directory behind as an untracked repository and the new path empty, and the registry skips an app whose package is not named for its directory.
+
+```bash
+bench-rename-app esign esign_webforms
+```
+
+- It **moves** the checkout, its clone under `.git/modules` and its `.git/config` section, so nothing is downloaded again and `node_modules` and local history come along. Removing the app and adding it again does neither.
+- It points `.gitmodules` at the renamed repository (the URL with `esign` replaced by `esign_webforms`, or `--url`) and the branch (kept, or `--branch`), staging only that change next to the gitlink, so other uncommitted `.gitmodules` edits stay as they were. `git mv` refuses outright while `.gitmodules` has an unstaged edit.
+- It fetches the branch's tip from the new URL and checks it out, which is what carries the renamed package. `--no-pull` renames the checkout where it is, and keeps the pin the bench recorded.
+- It renames the uv workspace member and its source, regenerates `sites/apps.{txt,json}`, drops `node-locks/<OLD>` and `sites/assets/<OLD>`, and runs `uv lock`.
+- It changes nothing until the tip has been fetched and shown to hold `<NEW>/hooks.py`, so a failed fetch, a repository whose package is not renamed yet, a checkout with uncommitted changes, or history that does not contain the checkout leaves the bench as it was.
+
+It does not touch a site. The dev site still records the old name, so it ends by printing the `frappe-nix.renamedApps` entry that has `devenv up` rename it before anything installs. A vendored (local) app is moved with `git add`, with no repository to retarget.
 
 ### update-deps
 

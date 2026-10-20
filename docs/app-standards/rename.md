@@ -2,11 +2,11 @@
 title: Renaming an app
 description: "frappe-rename-app: renaming an app's package in the code and on existing sites."
 order: 11
-tags: [app-standards, rename, migration, frappe-rename-app]
-updated: 2026-10-07
+tags: [app-standards, rename, migration, frappe-rename-app, bench-rename-app]
+updated: 2026-10-20
 ---
 
-Renaming a Frappe app's package (`esign` to `esign_webforms`) touches two places that cannot change at the same moment: the app's code, and every site that has the app installed. `frappe-rename-app` does each half. The module names are kept, so every DocType, custom field, property setter, report, print format and workspace keeps pointing at a module the renamed package still declares, and no record moves.
+Renaming a Frappe app's package (`esign` to `esign_webforms`) touches three places that cannot change at the same moment: the app's code, every site that has the app installed, and every bench that carries it. `frappe-rename-app` does the first two halves and `bench-rename-app` the third. The module names are kept, so every DocType, custom field, property setter, report, print format and workspace keeps pointing at a module the renamed package still declares, and no record moves.
 
 ## The code half
 
@@ -65,6 +65,23 @@ In one transaction, it rewrites:
 - `esign.<x>` dotted paths, where `<x>` is a module or name of the new package (the same rule as the code half, so a JavaScript namespace like `esign.accept(…)` is kept), and `/assets/esign/` URLs in what a site's users write: report and server and client scripts, print formats, web forms and pages, web templates, custom HTML blocks, letter heads, website route redirects, number cards, DocType actions and navbar items.
 
 After the commit it updates the `installed_apps` copy in `site_config.json` and drops the cached app and module maps. It refuses (exit 1) when both apps are installed, when the new app is not on the bench (`sites/apps.txt`), or when its `modules.txt` lacks a module the old app owns. A database error rolls everything back (exit 2); an argument that is not `OLD=NEW` exits 1. On a site without the old app it prints `esign not installed on <site>: nothing to do`, so it is safe to run on every deploy. `--scan` reports, read-only, every text column in every table that still names the old app, logs excepted.
+
+## The bench half
+
+A bench carries the app as a git submodule at `apps/esign`, and nothing about the code half or the site half moves it. A `git pull` of the renamed repository does not either: it leaves `apps/esign` behind as an untracked repository, `apps/esign_webforms` empty, and a registry that skips an app whose package is not named for its directory. Removing the app and adding it again works, but downloads it a second time, loses its `node_modules` and local history, and leaves the old clone under `.git/modules` and the old section in `.git/config`, which make a later app at the old name look as if the bench had set it up before.
+
+```bash
+bench-rename-app esign esign_webforms
+```
+
+It moves what is there: the checkout, its clone, its `.git/config` section and its `.gitmodules` entry, which now names the renamed repository. Then it checks out the branch's tip, renames the uv workspace member and source, and regenerates `sites/apps.{txt,json}`. It changes nothing until it has fetched that tip and found `esign_webforms/hooks.py` in it, so push the code half first. [bench-rename-app](../development/commands.md#bench-rename-app) lists what it refuses and the flags.
+
+The whole rename, in order:
+
+1. In the app's repository: `frappe-rename-app code --from esign --to esign_webforms`, then review, commit and push. Rename the repository on the host too if it should follow; the host redirects the old address, so a bench that has not been renamed yet keeps pulling.
+2. In the bench: `bench-rename-app esign esign_webforms`.
+3. In the bench's `flake.nix`, the entry it prints, `frappe-nix.renamedApps = { esign = "esign_webforms"; };`, so the site half runs on the dev site (below). Production takes the same pair in `services.frappe-nix.sites.<site>.renamedApps`.
+4. Commit the staged move with `pyproject.toml`, `uv.lock` and `sites/apps.json`.
 
 ## Where it runs
 
