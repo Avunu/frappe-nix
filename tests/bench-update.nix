@@ -10,6 +10,7 @@
 
 let
   inherit (pkgs) lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
 
   render =
     appMode:
@@ -18,6 +19,8 @@ let
       # node-verify and node-modules are stubs on PATH in the test.
       appsWithNode = [ "frappe" ];
       benchBin = "bench";
+      # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).
+      benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
       # The lock generator is a stub on PATH in the test; the exclusion must
       # reach it as a flag.
       nodeNestedFrontendExcludes = [ "alpha/desk" ];

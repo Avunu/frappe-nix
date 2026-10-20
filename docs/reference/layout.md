@@ -3,7 +3,7 @@ title: Repository layout
 description: Where things live in the frappe-nix repository, the flake checks that CI runs, and how to build these documentation pages locally.
 order: 5
 tags: [reference, contributing, layout, tests]
-updated: 2026-10-06
+updated: 2026-10-20
 ---
 
 This page is for people who read or change frappe-nix itself.

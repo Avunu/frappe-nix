@@ -72,8 +72,10 @@ def attempt(
 	cwd: str | os.PathLike[str] | None = None,
 	env: Mapping[str, str] | None = None,
 	quiet: bool = False,
+	stdin: int | None = None,
 ) -> int:
-	"""Run CMD with its output streaming through (none with QUIET); its status."""
+	"""Run CMD with its output streaming through (none with QUIET); its status.
+	STDIN is the child's (subprocess.DEVNULL: none), the terminal by default."""
 	sys.stdout.flush()
 	sys.stderr.flush()
 	sink = subprocess.DEVNULL if quiet else None
@@ -82,7 +84,7 @@ def attempt(
 			list(cmd),
 			cwd=cwd,
 			env=dict(env) if env is not None else None,
-			stdin=None,
+			stdin=stdin,
 			stdout=sink,
 			stderr=sink,
 		)
