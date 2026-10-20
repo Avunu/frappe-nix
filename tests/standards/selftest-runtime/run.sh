@@ -116,11 +116,18 @@ stop_leftover() {
 
 json() { python3 -c "import json, sys; d = json.load(open(sys.argv[1])); print($2)" "$1"; }
 
-# The primary checkout's preferred web port: 8000 + sha256(name)[0:4] mod 900,
-# the offset every bench has had since ports were hashed (python-devops-nix's
-# lib.ports). It is the port unless another bench holds it: on a CI host the
-# other legs run benches of this same name at the same time.
-PRIMARY_PORT="$((8000 + $(python3 -c 'import hashlib; print(int(hashlib.sha256(b"standards-fixture").hexdigest()[:4], 16) % 900)')))"
+# A port offset of this job's own, in CI: every leg's fixture is the bench
+# standards-fixture, an unsalted checkout, so all of them hash to one offset, and
+# the legs of both selftests, on every instance of a shared self-hosted runner,
+# would race for its ports. A caller's FRAPPE_NIX_PORT_OFFSET, or a run by hand,
+# keeps the name's hash.
+job_port_offset() {
+  if [ -n "${GITHUB_RUN_ID:-}" ] && [ -z "${FRAPPE_NIX_PORT_OFFSET:-}" ]; then
+    FRAPPE_NIX_PORT_OFFSET="$(($(printf '%s' "$GITHUB_RUN_ID-${GITHUB_JOB:-}-$1-${RUNNER_NAME:-}" | cksum | cut -d' ' -f1) % 900))"
+    export FRAPPE_NIX_PORT_OFFSET
+    echo "selftest-runtime: FRAPPE_NIX_PORT_OFFSET=$FRAPPE_NIX_PORT_OFFSET for this job"
+  fi
+}
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
@@ -296,19 +303,28 @@ EOF
 # and `devenv up` on a port another bench holds: leasing the next one, or, with
 # FRAPPE_NIX_STRICT_PORTS=1, refusing and naming the holder.
 cmd_ports() {
-  local app="$WORK/app" wt="$WORK/app-worktree" p1 moved
+  local app="$WORK/app" wt="$WORK/app-worktree" p1 primary moved
+  # The primary checkout's preferred web port: 8000 + the offset in force, this
+  # job's (job_port_offset) or else sha256(name)[0:4] mod 900, the offset every
+  # bench has had since ports were hashed (python-devops-nix's lib.ports). It is
+  # the port unless another bench holds it.
+  primary="$((8000 + ${FRAPPE_NIX_PORT_OFFSET:-$(python3 -c 'import hashlib; print(int(hashlib.sha256(b"standards-fixture").hexdigest()[:4], 16) % 900)')}))"
   p1="$(jq -r .webserver_port "$app/.frappe-nix/bench/sites/common_site_config.json")"
   # Prefixed: the shell's own CI banner is on stdout too.
   moved="$(dev "$app" bash -c 'echo "MOVED=$(jq -r ".moved.web // empty" "$FRAPPE_NIX_PORTS_FILE")"' | sed -n 's/^MOVED=//p')"
-  if [ "$p1" != "$PRIMARY_PORT" ]; then
-    [ "$moved" = "$PRIMARY_PORT" ] || fail "the primary checkout serves on $p1, not $PRIMARY_PORT (8000 + the bench-name hash), and recorded no move from it"
+  if [ "$p1" != "$primary" ]; then
+    [ "$moved" = "$primary" ] || fail "the primary checkout serves on $p1, not $primary (8000 + ${FRAPPE_NIX_PORT_OFFSET:+FRAPPE_NIX_PORT_OFFSET, else }the bench-name hash), and recorded no move from it"
   fi
   curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$p1/" || fail "the primary bench is not answering"
-  ok "the primary checkout serves on its bench-name port, $PRIMARY_PORT, or past it when another bench holds it ($p1)"
+  ok "the primary checkout serves on its preferred port, $primary, or past it when another bench holds it ($p1)"
 
   rm -rf "$wt"
   git -C "$app" worktree add -q --detach "$wt"
-  expect 0 "$WORK/ports-worktree.log" dev "$wt" bash "$HERE/run.sh" up-and-report
+  # Without the job's offset, which would win over the worktree's salt.
+  (
+    unset FRAPPE_NIX_PORT_OFFSET
+    expect 0 "$WORK/ports-worktree.log" dev "$wt" bash "$HERE/run.sh" up-and-report
+  )
   local p2
   p2="$(sed -n 's/^PORT=//p' "$WORK/ports-worktree.log")"
   [ -n "$p2" ] && [ "$p2" != "$p1" ] || fail "the worktree serves on '$p2', the primary on $p1"
@@ -635,13 +651,19 @@ PY
 
 mkdir -p "$WORK"
 case "${1:-}" in
-  main) cmd_main ;;
+  main)
+    job_port_offset main
+    cmd_main
+    ;;
   variants) cmd_variants ;;
   tests-off) cmd_tests_off ;;
   up-and-report) cmd_up_and_report ;;
   rename) cmd_rename ;; # resume after main's ports, by hand
   rename-site) cmd_rename_site ;;
-  erpnext) cmd_erpnext ;;
+  erpnext)
+    job_port_offset erpnext
+    cmd_erpnext
+    ;;
   parallel) cmd_parallel ;;
   report-ports) cmd_report_ports ;;
   pc-state) cmd_pc_state ;;
