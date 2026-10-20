@@ -29,6 +29,16 @@ APPS = {
 	"renamedApps": [],
 	"replacedApps": [],
 }
+
+# The dependency commands' section (frappe_nix_tools.deps.config);
+# tests/test_deps.py checks its schema.
+DEPS = {
+	"appsWithNode": [],
+	"appMode": False,
+	"nodeVerify": "/bin/frappe-nix-node-verify",
+	"nodeModules": "/bin/frappe-nix-node-modules",
+	"requirementsCheck": "/lib/requirements-check.py",
+}
 RESTORE = {
 	"enable": False,
 	"fetch": "frappe-nix-backup-fetch",
@@ -44,7 +54,7 @@ RESTORE = {
 
 
 def apps_config(**overrides) -> AppsConfig:
-	return parse({"restore": RESTORE, "apps": {**APPS, **overrides}}).apps
+	return parse({"restore": RESTORE, "apps": {**APPS, **overrides}, "deps": DEPS}).apps
 
 
 class TestConfig(unittest.TestCase):
@@ -61,7 +71,7 @@ class TestConfig(unittest.TestCase):
 		partial = dict(APPS)
 		del partial["sources"]
 		with self.assertRaisesRegex(ConfigError, r"config\.apps: missing key\(s\): sources"):
-			parse({"restore": RESTORE, "apps": partial})
+			parse({"restore": RESTORE, "apps": partial, "deps": DEPS})
 		with self.assertRaisesRegex(ConfigError, r"renamedApps\[0\]: missing key\(s\): new"):
 			apps_config(renamedApps=[{"old": "a"}])
 		with self.assertRaisesRegex(ConfigError, "missing key"):

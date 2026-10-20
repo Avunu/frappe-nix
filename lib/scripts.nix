@@ -362,6 +362,13 @@ let
           renamedApps = pairs renamedApps;
           replacedApps = pairs replacedApps;
         };
+      # bench setup requirements (frappe_nix_tools/deps/config.py).
+      deps = {
+        inherit appsWithNode appMode;
+        nodeVerify = nodeVerifyBin;
+        nodeModules = nodeModulesBin;
+        requirementsCheck = "${./requirements-check.py}";
+      };
     }
   );
   ownScripts = lib.genAttrs (builtins.attrNames (
@@ -425,65 +432,10 @@ secretScripts
   # conventional bench's `pip install -e` and `yarn install` of every app, which
   # here would either fight the read-only environment or skip the checks that
   # matter. See lib/node-verify.py and lib/requirements-check.py.
+  #
+  # py/frappe_nix_tools/frappe_nix_tools/deps/setup_requirements.py.
   bench-setup-requirements.exec = ''
-        set -uo pipefail
-        export _FRAPPE_BENCH_RAW=1
-        cd "$FRAPPE_BENCH_ROOT" || exit 1
-
-        DO_NODE=true
-        DO_PYTHON=true
-        CHECK=false
-        for arg in "$@"; do
-          case "$arg" in
-            --node)   DO_PYTHON=false ;;
-            --python) DO_NODE=false ;;
-            --check)  CHECK=true ;;
-            # Upstream's flag for the dev-only requirements; the workspace's are
-            # already part of the environment.
-            --dev)    ;;
-            -h | --help)
-              cat <<'HELP'
-    Usage: bench setup requirements [--node | --python] [--check]
-
-    Verifies and repairs what the apps need installed, for a frappe-nix bench:
-
-      node     the yarn cache and every app's node_modules (nested frontends
-               included) for truncated native binaries, empty or partial packages
-               and cache records that contradict their package; deletes what is
-               damaged, then installs what is missing or out of date. Also lists
-               lockfiles that differ from their commit.
-      python   every requirement the apps declare is in uv.lock, and every app in
-               sites/apps.txt imports. The environment is built by Nix from
-               uv.lock, so this reports — `uv lock`, then re-enter the shell.
-
-      --check  report only: change nothing, exit 1 if anything is wrong.
-    HELP
-              exit 0
-              ;;
-            *) echo "bench setup requirements: unknown option '$arg' (see --help)" >&2; exit 2 ;;
-          esac
-        done
-
-        RC=0
-        ${lib.optionalString (appsWithNode != [ ]) ''
-          if $DO_NODE; then
-            echo "── node ──"
-            VERIFY=(--full --lockfiles)
-            $CHECK && VERIFY+=(--check)
-            ${nodeVerifyBin} "''${VERIFY[@]}" . ${lib.escapeShellArgs appsWithNode} || RC=1
-            if ! $CHECK; then
-              ${nodeModulesBin} . ${lib.escapeShellArgs appsWithNode} || RC=1
-            fi
-            [ "$RC" -eq 0 ] && echo "  ✓ node: ${toString (builtins.length appsWithNode)} app(s) verified"
-          fi
-        ''}
-        ${lib.optionalString (!appMode) ''
-          if $DO_PYTHON; then
-            echo "── python ──"
-            ${pythonBin} ${./requirements-check.py} . || RC=1
-          fi
-        ''}
-        exit "$RC"
+    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} setup-requirements "$@"
   '';
 
   bench-console.exec = ''

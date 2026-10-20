@@ -13,7 +13,8 @@
 # builds); anything the consumer excludes by "app/subdir" key — including,
 # in app mode, each of `frappe-nix.app.excludeNodeTargets` (appExcludes).
 #
-# Mirrored by lib/node-locks.nix's shell discovery — the dev-shell tool must
+# Mirrored by frappe-nix-node-locks' discovery (lib/node-locks.nix,
+# py/frappe_nix_tools/frappe_nix_tools/deps/node_locks.py) — the dev-shell tool must
 # find a new app before the shell has re-evaluated — and both are checked
 # against the same fixture tree (tests/node-targets.nix, tests/node-locks.sh).
 { lib }:

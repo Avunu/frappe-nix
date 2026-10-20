@@ -45,9 +45,19 @@ APPS = {
 	"replacedApps": [],
 }
 
+# The dependency commands' section (frappe_nix_tools.deps.config);
+# tests/test_deps.py checks its schema.
+DEPS = {
+	"appsWithNode": [],
+	"appMode": False,
+	"nodeVerify": "/bin/frappe-nix-node-verify",
+	"nodeModules": "/bin/frappe-nix-node-modules",
+	"requirementsCheck": "/lib/requirements-check.py",
+}
+
 
 def restore_config(**overrides):
-	return parse({"restore": {**RESTORE, **overrides}, "apps": APPS}).restore
+	return parse({"restore": {**RESTORE, **overrides}, "apps": APPS, "deps": DEPS}).restore
 
 
 class TestArgs(unittest.TestCase):
@@ -119,13 +129,13 @@ class TestConfig(unittest.TestCase):
 
 	def test_unknown_and_missing_keys_fail(self):
 		with self.assertRaisesRegex(ConfigError, r"config\.restore: unknown key\(s\): withFiles"):
-			parse({"restore": {**RESTORE, "withFiles": "none"}, "apps": APPS})
+			parse({"restore": {**RESTORE, "withFiles": "none"}, "apps": APPS, "deps": DEPS})
 		partial = dict(RESTORE)
 		del partial["neutralize"]
 		with self.assertRaisesRegex(ConfigError, r"missing key\(s\): neutralize"):
-			parse({"restore": partial, "apps": APPS})
+			parse({"restore": partial, "apps": APPS, "deps": DEPS})
 		with self.assertRaisesRegex(ConfigError, "unknown key"):
-			parse({"restore": RESTORE, "apps": APPS, "update": {}})
+			parse({"restore": RESTORE, "apps": APPS, "deps": DEPS, "update": {}})
 
 	def test_types_are_checked(self):
 		for key, value, message in (
@@ -136,14 +146,14 @@ class TestConfig(unittest.TestCase):
 			("fetch", None, "expected a string"),
 		):
 			with self.subTest(key=key), self.assertRaisesRegex(ConfigError, message):
-				parse({"restore": {**RESTORE, key: value}, "apps": APPS})
+				parse({"restore": {**RESTORE, key: value}, "apps": APPS, "deps": DEPS})
 
 	def test_load_names_the_variable(self):
 		with mock.patch.dict(os.environ, {}, clear=True), self.assertRaisesRegex(ConfigError, ENV):
 			load()
 		with tempfile.TemporaryDirectory() as tmp:
 			path = Path(tmp, "c.json")
-			path.write_text(json.dumps({"restore": RESTORE, "apps": APPS}))
+			path.write_text(json.dumps({"restore": RESTORE, "apps": APPS, "deps": DEPS}))
 			with mock.patch.dict(os.environ, {ENV: str(path)}):
 				self.assertTrue(load().restore.enable)
 			path.write_text("{")
