@@ -18,8 +18,10 @@
 # Fixtures stand in for third-party apps and benches, byte for byte; patches
 # carry trailing whitespace that is part of the hunk; locks are generated.
 # Scaffolding templates hold @PLACEHOLDERS@ and are not valid Nix, TOML or
-# Python until frappe-init fills them in.
-exclude: (^tests/fixtures/|^templates/|\.(patch|diff)$|(^|/)(uv|flake|yarn)\.lock$)
+# Python until frappe-init fills them in. The runtime's _journald.py is
+# python-devops-nix's journald core, vendored byte for byte (the journald check
+# compares the two), so no hook rewrites it.
+exclude: (^tests/fixtures/|^templates/|^runtime/src/frappe_runtime/_journald\.py$|\.(patch|diff)$|(^|/)(uv|flake|yarn)\.lock$)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

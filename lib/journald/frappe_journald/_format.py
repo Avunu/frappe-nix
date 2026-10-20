@@ -1,68 +1,42 @@
-"""The journald line format, and how to tell that stderr is the journal.
+"""Frappe's half of the journald line: the site, the level variable, the formatter.
 
-Pure stdlib; nothing here imports Frappe. The site is read from
-``sys.modules`` at format time, never imported, so this module is safe to load
-from the ``.pth`` bootstrap before anything else exists.
+The line itself is python-devops-nix's (``_journald.py`` beside this file, its
+python/journald.py, merged in by ``lib.journald.mkGraft``; CONVENTIONS.md,
+Journald line format)::
 
-``runtime/src/frappe_runtime/journald.py`` carries a copy of
-:class:`JournaldFormatter` for the runtime's own root logger — the runtime is a
+	<N>{module} [{site}] {message}
+
+with ``<N>`` the record's syslog priority on every line of it, ANSI escapes
+stripped, and no timestamp or level name, which journald records itself. What
+is Frappe's is who the tenant is (the site: :func:`current_site`), that the
+logger name printed is Frappe's module rather than its ``<module>-<site>``
+logger name, and ``FRAPPE_NIX_LOG_LEVEL``.
+
+Pure stdlib; nothing here imports Frappe. The site is read from ``sys.modules``
+at format time, never imported, so this module is safe to load from the
+``.pth`` bootstrap before anything else exists.
+
+``runtime/src/frappe_runtime/journald.py`` builds the runtime's own root
+formatter the same way, on its own vendored copy of the core: the runtime is a
 separate distribution and must not import from a graft that a venv may lack.
 The graft's test suite renders the same records through both and compares, so
 the two cannot drift.
 """
 
-import logging
 import os
 import sys
 
-#: ``FRAPPE_NIX_LOG_LEVEL`` values, as ``services.frappe-nix.logging.level`` writes them.
-LEVELS = {
-	"debug": logging.DEBUG,
-	"info": logging.INFO,
-	"warning": logging.WARNING,
-	"warn": logging.WARNING,
-	"error": logging.ERROR,
-	"critical": logging.CRITICAL,
-}
+from ._journald import LEVELS, JournaldFormatter, journal_stream, parse_level, priority
 
-
-def priority(levelno):
-	"""Python level -> syslog severity, as sd-daemon(3) prefixes spell it.
-
-	Thresholds rather than a lookup, so the levels in between land on the
-	nearest one below: bench's own ``LOG`` level (15) is debug, not info.
-	NOTICE (5) has no Python counterpart and is never produced.
-	"""
-	if levelno >= logging.CRITICAL:
-		return 2
-	if levelno >= logging.ERROR:
-		return 3
-	if levelno >= logging.WARNING:
-		return 4
-	if levelno >= logging.INFO:
-		return 6
-	return 7
-
-
-def journal_stream():
-	"""Whether fd 2 *is* the journal stream systemd connected.
-
-	``JOURNAL_STREAM`` is inherited by every child, including ones whose stderr
-	was redirected to a pipe or a file, so its presence alone proves nothing.
-	systemd.exec(5) documents the check: compare its ``<dev>:<inode>`` with the
-	fstat of stderr. Without it a subprocess whose output a parent captures would
-	print ``<4>`` prefixes into that capture.
-	"""
-	value = os.environ.get("JOURNAL_STREAM")
-	if not value:
-		return False
-	try:
-		dev, ino = (int(part) for part in value.split(":", 1))
-		st = os.fstat(2)
-	except (ValueError, OSError):
-		return False
-	return st.st_dev == dev and st.st_ino == ino
-
+__all__ = [
+	"LEVELS",
+	"JournaldFormatter",
+	"current_site",
+	"env_level",
+	"formatter",
+	"journal_stream",
+	"priority",
+]
 
 #: The level's variable, and its name before CONVENTIONS.md's FRAPPE_NIX_* rule
 #: (python-devops-nix, Tool-owned variables), still read with a warning through
@@ -82,7 +56,7 @@ def env_level():
 				f"WARNING frappe_journald {OLD_ENV_LEVEL} is deprecated; set {ENV_LEVEL} instead (the old name goes in frappe-nix 2.0.0)\n"
 			)
 		value = os.environ[OLD_ENV_LEVEL]
-	return LEVELS.get((value or "").strip().lower())
+	return parse_level(value)
 
 
 def current_site():
@@ -106,34 +80,11 @@ def current_site():
 	return os.environ.get("FRAPPE_SITE") or None
 
 
-class JournaldFormatter(logging.Formatter):
-	"""``<N>{module} [{site}] {message}``, with ``<N>`` on every line.
+def formatter(module=None):
+	"""The journald formatter for one of Frappe's loggers.
 
-	No timestamp and no level name: journald stamps each entry itself and the
-	``<N>`` prefix becomes its PRIORITY field, so both would only be repeated
-	text. The site is there because Frappe's own format has no field for it, and
-	a line from a process serving several sites is ambiguous without one; it is
-	left out, brackets and all, when no site is known.
-
-	journald's stream protocol splits on newline, and the prefix is parsed per
-	line — so a traceback formatted as one record would arrive as one error line
-	followed by a dozen at the unit's default priority, which a PRIORITY filter
-	silently drops. Prefixing every line keeps the whole record at its level.
+	module  what the line names: Frappe's logger name is ``<module>-<site>``, and
+	        its own format prints the module alone. None prints the record's
+	        logger name.
 	"""
-
-	def __init__(self, module=None):
-		super().__init__("%(message)s")
-		#: Frappe's logger name is ``<module>-<site>``; the module alone is what
-		#: its own format prints. None falls back to the record's logger name.
-		self.module = module
-
-	def format(self, record):
-		text = super().format(record).rstrip("\n")
-		head = self.module or record.name
-		site = current_site()
-		if site:
-			head = f"{head} [{site}]"
-		prefix = f"<{priority(record.levelno)}>"
-		lines = text.split("\n")
-		lines[0] = f"{head} {lines[0]}"
-		return "\n".join(prefix + line for line in lines)
+	return JournaldFormatter(logger=module, tenant=lambda _record: current_site())

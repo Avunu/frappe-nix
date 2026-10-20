@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 
-from ._format import JournaldFormatter, env_level
+from ._format import JournaldFormatter, env_level, formatter
 
 
 def warn(message):
@@ -72,7 +72,7 @@ def patch_frappe_logger(module):
 			if isinstance(handler, logging.StreamHandler) and not isinstance(
 				handler.formatter, JournaldFormatter
 			):
-				handler.setFormatter(JournaldFormatter(name))
+				handler.setFormatter(formatter(name))
 		return logger
 
 	get_logger.__wrapped__ = original  # ty: ignore[unresolved-attribute]
@@ -115,7 +115,7 @@ def patch_bench_utils(module):
 		# stream would print every line twice.
 		if not any(isinstance(h.formatter, JournaldFormatter) for h in logger.handlers):
 			handler = logging.StreamHandler()
-			handler.setFormatter(JournaldFormatter("bench"))
+			handler.setFormatter(formatter("bench"))
 			level = env_level()
 			if level is not None:
 				handler.setLevel(level)

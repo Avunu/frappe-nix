@@ -228,12 +228,14 @@
           # Frappe- and systemd-independent: stub frappe.utils.logger and
           # bench.utils modules stand in, JOURNAL_STREAM is pointed at the test's
           # own stderr, and the assertions are about the <N> prefix on every line
-          # and the bench.log that is never created. The runtime's copy of the
-          # formatter is rendered against the graft's, so the two cannot drift.
+          # and the bench.log that is never created. The runtime's formatter is
+          # rendered against the graft's, and its vendored _journald.py compared
+          # with the core the graft merges in (python-devops-nix's
+          # lib.journald.module), so the two cannot drift.
           journald = pkgs.runCommand "frappe-journald-check" { } ''
             ${graftTree "journald"}
             ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
-              ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
+              ${./runtime/src/frappe_runtime} | tee "$out"
           '';
 
           # Frappe-, MariaDB- and percona-independent: a stub frappe.local.db

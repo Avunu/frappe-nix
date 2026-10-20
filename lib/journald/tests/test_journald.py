@@ -7,8 +7,14 @@ process's own stderr, which is exactly the check systemd documents. The
 assertions are about the bytes a line leaves with — its ``<N>`` prefix on every
 line — and about which files are *not* created.
 
-The runtime's copy of the formatter (``runtime/src/frappe_runtime/journald.py``)
-is loaded by path and must render every record identically. Pass its path as the
+The formatter core is python-devops-nix's (``_journald.py``, merged into the
+package at build time; its own suite is python-devops-nix's ``lib-journald``).
+What is tested here is Frappe's half on top of it: the site, the module name,
+the level variable, the patches.
+
+The runtime's formatter (``runtime/src/frappe_runtime/journald.py``) is loaded
+from its directory and must render every record identically, and its vendored
+``_journald.py`` must be the graft's byte for byte. Pass the directory as the
 first argument, or run from the repository and it is found relative to here.
 
 Run directly (``python test_journald.py``) or via ``nix flake check``.
@@ -16,7 +22,6 @@ Run directly (``python test_journald.py``) or via ``nix flake check``.
 
 import contextlib
 import importlib
-import importlib.util
 import io
 import logging
 import os
@@ -41,7 +46,7 @@ def check(label, condition, detail=""):
 
 import frappe_journald
 from frappe_journald import _format, _patches
-from frappe_journald._format import JournaldFormatter, priority
+from frappe_journald._format import JournaldFormatter, formatter, priority
 
 SITE = "erp.example.com"
 
@@ -91,7 +96,7 @@ for level, expected in (
 print()
 print("== format ==")
 clear_env()
-fmt = JournaldFormatter("frappe.web")
+fmt = formatter("frappe.web")
 
 line = render(fmt, logging.WARNING, "slow query")
 check("no site known: no brackets", line == "<4>frappe.web slow query", repr(line))
@@ -101,7 +106,7 @@ line = render(fmt, logging.INFO, "hello")
 check("site from FRAPPE_SITE", line == f"<6>frappe.web [{SITE}] hello", repr(line))
 check("no asctime, no level name", "INFO" not in line and "20" not in line.split()[0], repr(line))
 
-line = render(JournaldFormatter(), logging.ERROR, "x", name="frappe.runner")
+line = render(formatter(), logging.ERROR, "x", name="frappe.runner")
 check("module defaults to the logger name", line == f"<3>frappe.runner [{SITE}] x", repr(line))
 
 # frappe.local.site outranks the environment: one process may serve many sites.
@@ -125,6 +130,10 @@ check("no trailing empty entry", not text.endswith("\n") and lines[-1] != "<3>",
 
 line = render(fmt, logging.WARNING, "trailing\n")
 check("a trailing newline is not a second entry", line == f"<4>frappe.web [{SITE}] trailing", repr(line))
+
+line = render(fmt, logging.WARNING, "\x1b[1;31mred\x1b[0m alert")
+check("ANSI escapes are stripped", line == f"<4>frappe.web [{SITE}] red alert", repr(line))
+check("the formatter is the core's", isinstance(fmt, JournaldFormatter))
 clear_env()
 
 
@@ -352,14 +361,27 @@ for name in [m for m in sys.modules if m == "frappe" or m.startswith(("frappe.",
 # --------------------------------------------------------------------------
 print()
 print("== runtime copy ==")
-runtime_path = (
+runtime_dir = (
 	sys.argv[1]
 	if len(sys.argv) > 1
-	else os.path.join(HERE, "..", "..", "..", "runtime", "src", "frappe_runtime", "journald.py")
+	else os.path.join(HERE, "..", "..", "..", "runtime", "src", "frappe_runtime")
 )
-spec = importlib.util.spec_from_file_location("runtime_journald", runtime_path)
-runtime = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(runtime)
+# As a package of its own, so journald.py's relative import of its _journald
+# resolves without frappe_runtime/__init__.py, which imports Frappe.
+runtime_pkg = types.ModuleType("runtime_pkg")
+runtime_pkg.__path__ = [runtime_dir]
+sys.modules["runtime_pkg"] = runtime_pkg
+runtime = importlib.import_module("runtime_pkg.journald")
+
+with open(os.path.join(runtime_dir, "_journald.py"), "rb") as f:
+	runtime_core = f.read()
+with open(_format.__file__.replace("_format.py", "_journald.py"), "rb") as f:
+	graft_core = f.read()
+check(
+	"the runtime's _journald.py is python-devops-nix's journald core, byte for byte",
+	runtime_core == graft_core,
+	"copy lib.journald.module (python-devops-nix's python/journald.py) to runtime/src/frappe_runtime/_journald.py",
+)
 
 check(
 	"priority mapping agrees at every level",
@@ -372,8 +394,8 @@ for site in (None, SITE):
 	for module in (None, "frappe.web"):
 		for level in (logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL):
 			for exc in (False, True):
-				ours = render(JournaldFormatter(module), level, "a\nb", exc=exc)
-				theirs = render(runtime.JournaldFormatter(module), level, "a\nb", exc=exc)
+				ours = render(formatter(module), level, "a\nb", exc=exc)
+				theirs = render(runtime.formatter(module), level, "a\nb", exc=exc)
 				if ours != theirs:
 					check(
 						f"render agrees ({site}, {module}, {level}, {exc})", False, f"{ours!r} != {theirs!r}"

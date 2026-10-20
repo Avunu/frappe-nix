@@ -6,8 +6,11 @@
 #             lib/devguard/frappe_devguard (_product.py, _frappe.py and the
 #             Frappe guards) by lib.devguard.mkPackage, with `settings` baked
 #             in as _baked.json. DEVELOPMENT ONLY.
-#   unixsock, journald, nodebuild, benchcli
+#   unixsock, nodebuild, benchcli
 #             lib/<x>/frappe_<x> with the shared _hook.py, by lib.python.mkGraft.
+#   journald  lib/journald/frappe_journald with the shared _hook.py and the
+#             journald formatter core (python/journald.py) as _journald.py, by
+#             lib.journald.mkGraft (PLAN.md, Phase 6). Ships to production.
 #
 # Neither tree may carry a file the other supplies: the build fails naming it.
 { pkgs, python-devops-nix }:
@@ -64,7 +67,11 @@ rec {
     };
 
   unixsock = graft "unixsock";
-  journald = graft "journald";
+  journald = base.journald.mkGraft {
+    inherit pkgs;
+    name = "frappe_journald";
+    src = ./journald/frappe_journald;
+  };
   nodebuild = graft "nodebuild";
   benchcli = graft "benchcli";
 
@@ -81,7 +88,10 @@ rec {
     )
     // lib.listToAttrs (
       map (dir: lib.nameValuePair "lib/${dir}/frappe_${dir}/_hook.py" base.python.hook) graftDirs
-    );
+    )
+    // {
+      "lib/journald/frappe_journald/_journald.py" = base.journald.module;
+    };
 
   # Shell lines that copy `vendored` into the tree at `root` (a shell word).
   copyVendored =

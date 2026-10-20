@@ -17,3 +17,4 @@ result-*
 /lib/devguard/frappe_devguard/guards/egress.py
 /lib/devguard/frappe_devguard/guards/mail_stdlib.py
 /lib/*/frappe_*/_hook.py
+/lib/journald/frappe_journald/_journald.py
