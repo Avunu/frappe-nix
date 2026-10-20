@@ -104,7 +104,9 @@ jobs:
       - name: Reports and bench logs
         if: always()
         run: |
-          for f in "$RUNNER_TEMP"/standards-n1/*.log "$RUNNER_TEMP"/standards-n1/*/.frappe-nix/bench/logs/*.log; do
+          # process-compose.log: every process's output, and why one was Skipped.
+          for f in "$RUNNER_TEMP"/standards-n1/*.log "$RUNNER_TEMP"/standards-n1/*/.frappe-nix/bench/logs/*.log \
+            "$RUNNER_TEMP"/standards-n1/*/.devenv/state/process-compose/process-compose.log; do
             [ -f "$f" ] || continue
             echo "::group::$f"
             tail -n 200 "$f"
@@ -119,5 +121,6 @@ jobs:
             ${{ runner.temp }}/standards-n1/*.log
             ${{ runner.temp }}/standards-n1/*/.dev-dist/test/
             ${{ runner.temp }}/standards-n1/ports/
+            ${{ runner.temp }}/standards-n1/*/.devenv/state/process-compose/process-compose.log
           if-no-files-found: ignore
           include-hidden-files: true

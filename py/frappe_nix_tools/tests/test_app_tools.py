@@ -540,6 +540,44 @@ class TestDevshell(unittest.TestCase):
 		self.assertEqual(devshell.call(["/nonexistent/command"], quiet=True), 127)
 		self.assertEqual(devshell.capture(["sh", "-c", "printf 'a\\n\\n'"]), (0, "a"))
 		self.assertEqual(devshell.call(["sh", "-c", 'read l; [ -z "$l" ]'], stdin_text="\n", quiet=True), 0)
+		self.assertEqual(
+			devshell.capture_quiet(["sh", "-c", "echo out; echo err >&2; exit 2"]), (2, "out\nerr")
+		)
+		self.assertEqual(devshell.capture_quiet(["/nonexistent/command"]), (127, ""))
+		self.assertEqual(devshell.capture_quiet(["sleep", "5"], timeout=0.1), (127, ""))
+
+	def test_diagnose(self) -> None:
+		"""A bench that did not come up is reported with its process list, the
+		logs of the processes that exist, and its lease."""
+		calls: list[list[str]] = []
+
+		def fake(cmd: list[str], timeout: float = 15) -> tuple[int, str]:
+			calls.append(cmd)
+			if cmd[4:] == ["process", "list", "-o", "wide"]:
+				return 0, "nginx  Skipped  1"
+			if cmd[4:6] == ["process", "logs"] and cmd[6] == "frappe-ports":
+				return 0, "frappe-nix: nginx moved to 127.0.0.1:8235"
+			return 1, "no such process"
+
+		with tempfile.TemporaryDirectory() as tmp:
+			ports = Path(tmp) / "ports.json"
+			ports.write_text('{"web": 8235}\n')
+			with (
+				mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": str(ports)}),
+				mock.patch.object(devshell, "capture_quiet", fake),
+			):
+				text = devshell.Compose("/run/pc.sock").diagnose()
+				self.assertIn("nginx  Skipped  1", text)
+				self.assertIn("── frappe-ports (last 40 lines)\nfrappe-nix: nginx moved", text)
+				self.assertNotIn("── nginx (last", text)
+				self.assertIn('{"web": 8235}', text)
+				self.assertEqual(calls[0][:4], ["process-compose", "-U", "-u", "/run/pc.sock"])
+				# No manager to ask: the lease alone.
+				calls.clear()
+				self.assertEqual(devshell.Compose("").diagnose(), f'── {ports}\n{{"web": 8235}}')
+				self.assertEqual(calls, [])
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": ""}):
+			self.assertEqual(devshell.Compose("").diagnose(), "")
 
 
 class TestAdminPassword(unittest.TestCase):

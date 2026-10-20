@@ -258,6 +258,7 @@ class Shots:
 			tries -= 1
 			if tries <= 0:
 				holder = devshell.who(port)
+				devshell.report_not_up(self.compose, "frappe-shots")
 				raise Fail(
 					ENVIRONMENT,
 					f"the web server did not answer on port {port} within 300 s"
