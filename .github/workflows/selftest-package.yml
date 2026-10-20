@@ -23,6 +23,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to a PR replaces its run; main's pushes, the scheduled and
+# dispatched runs always finish, each in a group of its own. The self-hosted
+# runners share one host: a superseded run left going only slows the others.
+concurrency:
+  group: selftest-package-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   install:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
