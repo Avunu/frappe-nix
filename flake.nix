@@ -102,6 +102,14 @@
       # The app standards tools: packages.frappe-nix-tools, and one package and
       # app per lib/standards/tools/*.nix (`frappe-nix`, …).
       standards = pkgs: import ./lib/standards/outputs.nix { inherit pkgs; };
+      # python-devops-nix's development shell pieces, as the dev shell has
+      # them (lib/shell-tools.nix).
+      shellTools =
+        pkgs:
+        import ./lib/shell-tools.nix {
+          inherit pkgs;
+          base = inputs.python-devops-nix.lib;
+        };
     in
     {
       flakeModules.default = ./modules/flake-module.nix;
@@ -133,6 +141,12 @@
           frappe-init = frappeInit pkgs;
           default = frappe-init;
 
+          # The apps/ checkout, outside the dev shell: a bench's .envrc runs
+          # bootstrap on a fresh clone, before Nix evaluates the bench's flake
+          # (lib/bootstrap.sh), and bootstrap runs sources from the revision
+          # the bench's flake.lock pins.
+          inherit (shellTools pkgs) sources bootstrap;
+
           # The object-store half of `bench restore`, standalone. Exposed because
           # a production host restores too, and its NixOS module otherwise keeps
           # its own copy of the same folder-selection and download logic — which
@@ -160,6 +174,20 @@
         // {
           default = app;
           frappe-init = app;
+          # `nix run github:Avunu/frappe-nix/release-1#bootstrap -- ROOT`: a
+          # fresh clone's apps, before its flake is evaluated (a bench's .envrc).
+          bootstrap = {
+            type = "app";
+            program = pkgs.lib.getExe (shellTools pkgs).bootstrap;
+            meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
+          };
+          # `nix run github:Avunu/frappe-nix/<rev>#sources -- enter ROOT`: the
+          # dev shell's apps/ checkout, outside it.
+          sources = {
+            type = "app";
+            program = pkgs.lib.getExe (shellTools pkgs).sources;
+            meta.description = "Check out a bench's apps as shell entry does (frappe-nix-sources)";
+          };
         }
       );
 
@@ -169,10 +197,7 @@
           inherit (pkgs) lib;
           # python-devops-nix's development shell pieces, as the dev shell has
           # them (lib/shell-tools.nix).
-          shellTools = import ./lib/shell-tools.nix {
-            inherit pkgs;
-            base = inputs.python-devops-nix.lib;
-          };
+          tools = shellTools pkgs;
           grafts = import ./lib/grafts.nix {
             inherit pkgs;
             inherit (inputs) python-devops-nix;
@@ -267,7 +292,7 @@
               }
               ''
                 bash ${inputs.python-devops-nix}/tests/db-nocow.sh \
-                  ${lib.getExe shellTools.dbNocow} datadir cmdline frappe-nix \
+                  ${lib.getExe tools.dbNocow} datadir cmdline frappe-nix \
                   2>&1 | tee "$out"
               '';
 
@@ -320,9 +345,85 @@
               ''
                 export HOME="$PWD"
                 bash ${./tests/sources.sh} \
-                  ${lib.getExe shellTools.sources} \
+                  ${lib.getExe tools.sources} \
                   2>&1 | tee "$out"
               '';
+
+          # frappe-nix-bootstrap and the bench template's .envrc: a fresh
+          # clone, its tree dirty, gets apps/* from the pinned
+          # frappe-nix-sources before `use flake`; `nix` is a stub
+          # (tests/bootstrap.sh).
+          bootstrap =
+            pkgs.runCommand "frappe-nix-bootstrap-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.gawk
+                ];
+              }
+              ''
+                export HOME="$PWD" GIT_CONFIG_GLOBAL=/dev/null
+                bash ${./tests/bootstrap.sh} \
+                  ${lib.getExe tools.bootstrap} \
+                  ${./templates/bench/.envrc} frappe-nix \
+                  2>&1 | tee "$out"
+              '';
+
+          # lib/bootstrap-lock.nix: the pinned frappe-nix, read from a bench's
+          # flake.lock alone (the node renamed, as a lock may have it).
+          bootstrap-lock =
+            let
+              pinned = import ./lib/bootstrap-lock.nix;
+              lock = builtins.toFile "flake.lock" (
+                builtins.toJSON {
+                  version = 7;
+                  root = "root";
+                  nodes = {
+                    root.inputs = {
+                      frappe-nix = "frappe-nix_2";
+                      nixpkgs = [
+                        "frappe-nix_2"
+                        "nixpkgs"
+                      ];
+                    };
+                    frappe-nix_2.locked = {
+                      type = "github";
+                      owner = "Avunu";
+                      repo = "frappe-nix";
+                      rev = "e1f14fa1c49b37d05bcc02b5e37b252c0b4bfcb1";
+                      narHash = "sha256-OlOiOcu7OpTvDBKYSHgEIQ9HbJQLCVoGKvLLMlhjKPA=";
+                      lastModified = 1792505124;
+                    };
+                  };
+                }
+              );
+              results = {
+                renamed-node =
+                  pinned {
+                    inherit lock;
+                    input = "frappe-nix";
+                  }
+                  == "github:Avunu/frappe-nix/e1f14fa1c49b37d05bcc02b5e37b252c0b4bfcb1?narHash=sha256-OlOiOcu7OpTvDBKYSHgEIQ9HbJQLCVoGKvLLMlhjKPA%3D";
+                follows =
+                  !(builtins.tryEval (pinned {
+                    inherit lock;
+                    input = "nixpkgs";
+                  })).success;
+                no-input =
+                  !(builtins.tryEval (pinned {
+                    inherit lock;
+                    input = "odoo-nix";
+                  })).success;
+              };
+              failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) results);
+            in
+            pkgs.runCommandLocal "frappe-nix-bootstrap-lock-check" { } ''
+              ${lib.optionalString (failed != [ ]) ''
+                echo "lib/bootstrap-lock.nix failed: ${toString failed}" >&2
+                exit 1
+              ''}
+              echo "lib/bootstrap-lock.nix: ${toString (lib.attrNames results)}" > "$out"
+            '';
 
           # Node-independent in the same spirit: a stub yarn stands in for the
           # install, and the assertions are about when a pulled app is judged to

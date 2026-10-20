@@ -10,11 +10,16 @@ Prerequisites: [Nix](https://nixos.org/download.html) (flakes enabled) and
 [direnv](https://direnv.net/).
 
 ```sh
-direnv allow                 # or: nix develop --no-pure-eval
+direnv allow                 # checks out a fresh clone's apps, then loads the dev shell
 devenv up                    # MariaDB, Redis, web, scheduler, worker, socketio, …
 provision-site               # (first run, another shell) create the site + install apps
 # → http://localhost:8000
 ```
+
+Nix reads `apps/*` while it evaluates `flake.nix`, so a fresh clone needs them
+checked out first; `.envrc` does that with frappe-nix's own tool, as partial
+clones. Without direnv, run `nix run github:Avunu/frappe-nix/release-1#bootstrap`
+before `nix develop --no-pure-eval`.
 
 ## Day-to-day
 

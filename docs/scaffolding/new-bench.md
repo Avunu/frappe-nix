@@ -3,7 +3,7 @@ title: Create a new bench
 description: Scaffold a fresh Frappe bench with frappe-nix, the equivalent of bench init, choosing a Frappe version and a set of apps.
 order: 1
 tags: [scaffolding, bench, uv]
-updated: 2026-10-16
+updated: 2026-10-20
 ---
 
 `nix run github:Avunu/frappe-nix` scaffolds a fresh bench: the frappe-nix equivalent of `bench init`. You choose a Frappe version, which fixes the Python and Node versions from a [preset](README.md#versions-and-presets), and an optional set of apps. The scaffolder then writes the wrapper flake, adds `frappe` and the apps as git submodules pinned to that version's branch, and runs `uv lock`.
@@ -61,7 +61,7 @@ Each app follows the chosen version's branch when the remote has one. The scaffo
 | File                                | Purpose                                                                                                       |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `flake.nix`                         | The thin wrapper. See [Write the flake by hand](write-the-flake.md).                                          |
-| `.envrc`                            | One line, `use flake . --no-pure-eval`, so direnv loads the shell.                                            |
+| `.envrc`                            | `use flake . --no-pure-eval`, so direnv loads the shell, after a fresh clone's apps are checked out.          |
 | `pyproject.toml` and `uv.lock`      | The uv workspace, with `members = apps/*`, and its lock.                                                      |
 | `apps/*`                            | `frappe` and your apps, as git submodules.                                                                    |
 | `sites/apps.txt`, `sites/apps.json` | The registered apps and their pins. See [Apps in a bench](../development/apps.md#the-app-registry).           |

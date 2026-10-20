@@ -13,6 +13,11 @@
 #                        Its scope is apps/, and a checkout does not recurse:
 #                        Frappe apps ship nested submodules with broken refs
 #                        that have no role in production.
+#   frappe-nix-bootstrap lib/bootstrap.sh: frappe-nix-sources from the
+#                        revision a bench's flake.lock pins, run before Nix
+#                        evaluates the bench's flake, which reads apps/*. A
+#                        bench's .envrc runs it on a fresh clone
+#                        (`nix run github:Avunu/frappe-nix/release-1#bootstrap`).
 #   frappe-nix-db-nocow  lib.dbNocow: the dev MariaDB datadir off btrfs
 #                        copy-on-write, created and marked before the server
 #                        writes to it; a running server is a process with
@@ -29,7 +34,7 @@
   # frappe-init and the bench commands, frappe-nix's tool interpreter.
   python ? pkgs.python3,
 }:
-{
+rec {
   # The CI banner names the site, read when the shell starts so one set in
   # .env is the one named.
   ciMode =
@@ -55,6 +60,25 @@
       "  'nix build' will not see it. Vendor it (frappe-init --migrate) or push it"
       "  and re-add it with bench-get-app; see README, 'Local apps'."
     ];
+  };
+
+  bootstrap = pkgs.writeShellApplication {
+    name = "frappe-nix-bootstrap";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.gnugrep
+      pkgs.coreutils
+    ];
+    text = ''
+      LABEL=frappe-nix
+      INPUT=frappe-nix
+      SOURCES=${pkgs.lib.getExe sources}
+      LOCKREF=${./bootstrap-lock.nix}
+      STATUS="-- apps"
+      TREELESS=
+    ''
+    + builtins.readFile ./bootstrap.sh;
+    meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
   };
 
   dbNocow = base.dbNocow {
