@@ -18,13 +18,13 @@ frappe-nix/
 │   ├── python.nix            # mkPythonEnvs: prod and editable-dev virtualenvs (uv2nix)
 │   ├── bench.nix             # app discovery, node_modules (yarn install --offline from each yarn.lock), benchRoot
 │   ├── app-workspace.nix     # app mode: the bench workspace, assembled in the store
-│   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list
+│   ├── bench-patches.nix     # keeps `bench update` past bench's own patch list (frappe_nix_tools.deps)
 │   ├── root-sync.nix         # shell entry: pyproject.toml up to date with frappe-nix, then uv lock
 │   ├── relock-advice.nix     # how a bench re-locks, for the stale-lock message
 │   ├── build-deps.nix        # [tool.uv.extra-build-dependencies] from uv.lock
 │   ├── overrides.nix         # mysqlclient (the shared fixes are python-devops-nix's)
 │   ├── yarn-lock.nix         # one fetchurl per tarball in a yarn.lock
-│   ├── node-locks.nix        # the node-locks/ fallback generator
+│   ├── node-locks.nix        # the node-locks/ fallback generator (frappe_nix_tools.deps)
 │   ├── secrets.nix           # python-devops-nix's secrets tools, with frappe-nix's names
 │   ├── shell-tools.nix       # python-devops-nix's dev-shell pieces (sources, db-nocow, banner, CI mode), configured
 │   ├── backup-fetch.nix      # the object-store half of bench restore (python-devops-nix's lib.backups)

@@ -5,7 +5,7 @@ interpolation).
 lib/scripts.nix writes it and the ``bench-*`` shims point
 ``FRAPPE_NIX_CLI_CONFIG`` at it. Each section is a frozen dataclass of the
 command family that reads it (frappe_nix_tools.restore.config,
-frappe_nix_tools.apps.config); a key this code does not know, or one it expects
+frappe_nix_tools.apps.config, frappe_nix_tools.deps.config); a key this code does not know, or one it expects
 and does not find, fails loudly (frappe_nix_tools.cli_config).
 """
 
@@ -15,6 +15,7 @@ from typing import Any
 
 from frappe_nix_tools.apps.config import AppsConfig
 from frappe_nix_tools.cli_config import ENV, ConfigError, load_dataclass, read_json
+from frappe_nix_tools.deps.config import DepsConfig
 from frappe_nix_tools.restore.config import RestoreConfig
 
 __all__ = ["ENV", "CliConfig", "ConfigError", "load", "parse"]
@@ -26,6 +27,7 @@ class CliConfig:
 
 	restore: RestoreConfig
 	apps: AppsConfig
+	deps: DepsConfig
 
 
 def parse(data: Any) -> CliConfig:

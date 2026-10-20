@@ -58,7 +58,7 @@ import subprocess
 import sys
 
 # Never descended into: nothing under them is an input to yarn, or belongs to
-# the app (see lib/node-modules.nix for the same list).
+# the app (see frappe_nix_tools/deps/node_modules.py for the same list).
 PRUNE = {".git", ".frappe-nix", ".devenv", ".direnv"}
 BINARY_SUFFIXES = (".node", ".so")
 

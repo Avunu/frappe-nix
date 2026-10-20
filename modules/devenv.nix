@@ -2387,11 +2387,17 @@ in
 
         # Keeps `bench update` importable — see lib/bench-patches.nix for the
         # upstream hole it fills.
-        benchPatchesTool = import ../lib/bench-patches.nix { inherit pkgs; };
+        benchPatchesTool = import ../lib/bench-patches.nix {
+          inherit pkgs;
+          inherit (standardsOutputs) frappeNixTools;
+        };
 
         # Keeps `bench build` buildable — see lib/node-modules.nix for why the
         # install cannot simply be skipped once it has run.
-        nodeModulesTool = import ../lib/node-modules.nix { inherit pkgs; };
+        nodeModulesTool = import ../lib/node-modules.nix {
+          inherit pkgs;
+          inherit (standardsOutputs) frappeNixTools;
+        };
 
         # Finds and repairs what yarn cannot see is broken in the cache and in
         # node_modules, ahead of that install. See lib/node-verify.py.
@@ -2573,7 +2579,10 @@ in
         # while the bench runs, else the preferred one.
         mailpitUi = "Mailpit (http://${mp.host}:@mailUi@)";
 
-        nodeLocksTool = import ../lib/node-locks.nix { inherit pkgs; };
+        nodeLocksTool = import ../lib/node-locks.nix {
+          inherit pkgs;
+          inherit (standardsOutputs) frappeNixTools;
+        };
 
         # The nested frontends the lock generator must leave alone, as flags.
         nodeLocksExcludeFlags = lib.escapeShellArgs (map (k: "--exclude=${k}") nodeExcludes);

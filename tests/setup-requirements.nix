@@ -5,6 +5,7 @@
 
 let
   inherit (pkgs) lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
   render =
     {
       appMode ? false,
@@ -24,6 +25,8 @@ let
       nodeVerifyBin = "node-verify";
       nodeModulesBin = "node-modules";
       pythonBin = "python";
+      # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).
+      benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };
     };
   scripts = render { };
 in
@@ -48,9 +51,7 @@ in
       }
       ''
         export HOME="$PWD"
-        shellcheck -s bash -S warning -e SC2317 "$setupPath"
-        # The app-mode and node-less renderings leave a flag variable unread.
-        shellcheck -s bash -S warning -e SC2317,SC2034 "$appSetupPath" "$noNodeSetupPath"
+        shellcheck -s bash -S warning -e SC2317 "$setupPath" "$appSetupPath" "$noNodeSetupPath"
         # The umbrella's `cd "$FRAPPE_BENCH_ROOT"` predates this lint.
         shellcheck -s bash -S warning -e SC2317,SC2164 "$umbrellaPath"
         bash ${./setup-requirements.sh} "$setupPath" "$umbrellaPath" "$appSetupPath" "$noNodeSetupPath" 2>&1 | tee "$out"

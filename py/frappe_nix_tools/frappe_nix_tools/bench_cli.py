@@ -76,6 +76,12 @@ def main(argv: list[str] | None = None) -> None:
 		"Install the apps sites/apps.txt names that a site lacks.",
 	)
 
+	passthrough(
+		"setup-requirements",
+		"frappe_nix_tools.deps.setup_requirements",
+		"Verify and repair what the apps need installed (bench setup requirements --help).",
+	)
+
 	cli.main(args=words, prog_name="frappe-nix-bench")
 
 
