@@ -3,7 +3,7 @@ title: Getting started
 description: Scaffold a new Frappe bench with frappe-nix, start the development shell and create your first site.
 order: 2
 tags: [quick-start, devenv, bench]
-updated: 2026-10-16
+updated: 2026-10-20
 ---
 
 This page takes you from an empty directory to a running Frappe site. It uses the new-bench path. If you already have a bench or a single app, pick the matching mode in [Choose a mode](scaffolding/README.md) and come back for the shell steps.
@@ -19,7 +19,7 @@ You need:
 The generated flake declares the `devenv.cachix.org` binary cache, so Nix may ask you to trust it the first time you enter the shell.
 
 > [!IMPORTANT]
-> The `--no-pure-eval` flag appears in every entry point: the generated `.envrc` is the single line `use flake . --no-pure-eval`, and the manual command is `nix develop --no-pure-eval`. Keep the flag when you load the shell by hand.
+> The `--no-pure-eval` flag appears in every entry point: the generated `.envrc` ends with `use flake . --no-pure-eval`, and the manual command is `nix develop --no-pure-eval`. Keep the flag when you load the shell by hand.
 
 ## 1. Scaffold a bench
 

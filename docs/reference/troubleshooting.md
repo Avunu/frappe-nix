@@ -3,12 +3,40 @@ title: FAQ and troubleshooting
 description: Answers to common questions about frappe-nix and the errors you are most likely to meet in the dev shell, in builds and on a deployed host, with their fixes.
 order: 6
 tags: [faq, troubleshooting, errors]
-updated: 2026-10-16
+updated: 2026-10-20
 ---
 
 Each entry starts with what you see, then what it means and what to do. Where a page explains the cause in depth, the entry links to it.
 
 ## The shell will not open
+
+### A fresh clone fails to evaluate: `does not appear to be a git repository`
+
+```text
+fatal: '…/apps/erpnext' does not appear to be a git repository
+error: Failed to fetch git repository 'file:///…/apps/erpnext'
+```
+
+The bench's flake sets `self.submodules = true`, so Nix reads every app while it evaluates the flake, which is before the dev shell exists to check them out. On a fresh clone with any change in the tree (a `flake.lock` being updated counts) it reads each app from its empty directory and fails as above. With a clean tree it fetches every app itself, a full clone each, past frappe-nix's partial clones of the paired branch.
+
+The `.envrc` the scaffolder writes handles it: when an app under `apps/` is not checked out, it runs `nix run github:Avunu/frappe-nix/release-1#bootstrap`, which runs `frappe-nix-sources` (the shell's own checkout) from the frappe-nix revision `flake.lock` pins, and then loads the shell. A bench scaffolded before that has a one-line `.envrc` and needs one of these:
+
+- Check the apps out once, with the same command the shell runs on entry, then `direnv reload`:
+
+  ```bash
+  nix run github:Avunu/frappe-nix/release-1#sources -- enter "$PWD"
+  ```
+
+- Or replace `.envrc` with the template's, so the next fresh clone does it by itself. The `.envrc` is the bench's own file, and neither `frappe-init --migrate` nor `frappe-nix sync` rewrites it:
+
+  ```bash
+  if git submodule status -- apps 2> /dev/null | grep '^-' > /dev/null; then
+    nix run github:Avunu/frappe-nix/release-1#bootstrap -- "$PWD" || true
+  fi
+  use flake . --no-pure-eval
+  ```
+
+To check the fix by hand: clone a bench, change any tracked file, `direnv allow`; the apps are checked out first, and `nix eval .#packages.x86_64-linux.default.name` (or the shell itself) evaluates.
 
 ### `attribute '<NAME>' missing`, from uv2nix
 

@@ -3,7 +3,7 @@ title: Write the flake by hand
 description: The shape of a frappe-nix bench flake, the inputs it needs, and the handful of options you will change most often.
 order: 4
 tags: [flake, flake-parts, configuration, options]
-updated: 2026-10-06
+updated: 2026-10-20
 ---
 
 A complete consuming flake is just a configured module. The scaffolder writes one for you, and this page explains what is in it so you can edit it or write your own.
@@ -60,7 +60,16 @@ provision-site          # (first run, in another shell) create the site + instal
 # → http://localhost:<PORT>
 ```
 
-The `.envrc` is a single line, `use flake . --no-pure-eval`. [Avunu/frappe-devenv](https://github.com/Avunu/frappe-devenv) is the reference bench: a working frappe, erpnext and hrms bench wired up exactly this way.
+The `.envrc` checks out a fresh clone's apps, then loads the shell:
+
+```bash
+if git submodule status -- apps 2> /dev/null | grep '^-' > /dev/null; then
+  nix run github:Avunu/frappe-nix/release-1#bootstrap -- "$PWD" || true
+fi
+use flake . --no-pure-eval
+```
+
+The first three lines are there because `self.submodules = true` makes Nix read `apps/*` while it evaluates the flake, before the shell exists to check them out. See [A fresh clone fails to evaluate](../reference/troubleshooting.md#a-fresh-clone-fails-to-evaluate-does-not-appear-to-be-a-git-repository). [Avunu/frappe-devenv](https://github.com/Avunu/frappe-devenv) is the reference bench: a working frappe, erpnext and hrms bench wired up exactly this way.
 
 > [!NOTE]
 > The scaffolder's flake also declares `nixConfig` with the `devenv.cachix.org` substituter and its public key, which is why Nix may ask you to trust the cache the first time.
