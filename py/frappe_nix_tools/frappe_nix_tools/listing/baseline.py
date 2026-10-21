@@ -176,7 +176,9 @@ def render(hits: list[Hit], marketplace_rev: str, previous: dict[tuple[str, str,
 
 def export(root: Path, dest: Path) -> None:
 	"""The tracked files under ``root``, as they are in the work tree, copied to ``dest``: what
-	the registry clones (no ``node_modules``, no bench, no pins). Links are copied as links."""
+	the registry clones (no ``node_modules``, no bench, no pins). Links are copied as links,
+	files with fresh mtimes, as a clone has them: L9 builds the app's wheel from the copy, and an
+	app checked out from the Nix store has 1970 ones, which no ZIP entry can carry."""
 	for rel in repo.ls_files(root):
 		src = root / rel
 		target = dest / rel
@@ -184,7 +186,7 @@ def export(root: Path, dest: Path) -> None:
 		if src.is_symlink():
 			target.symlink_to(os.readlink(src))
 		elif src.is_file():
-			shutil.copy2(src, target)
+			shutil.copy(src, target)
 
 
 def _semgrep_on_path(root: Path, shim: Path, floor: str, python: str) -> dict[str, str]:
