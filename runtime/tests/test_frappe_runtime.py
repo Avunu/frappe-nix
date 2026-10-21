@@ -1242,5 +1242,57 @@ class TestEnterSitesDir(unittest.TestCase):
 		self.assertEqual(self.cwd(), os.path.join(self.sites, "sites", "site1"))
 
 
+class _StopLoop(Exception):
+	"""Raised by the patched sleep to leave Scheduler._run's endless loop."""
+
+
+class TestSchedulerThread(unittest.TestCase):
+	"""Scheduler._run must outlive anything start_scheduler throws.
+
+	2026-10-19: filelock 3.20 opens its lock with O_NOFOLLOW, so the
+	scheduler_process symlink made start_scheduler raise ELOOP. The exception
+	ended the thread, and the site ran ~30h with no scheduled job while web and
+	jobs looked healthy.
+	"""
+
+	def run_scheduler(self, outcomes: list, tries: int) -> MagicMock:
+		from frappe_runtime import runner
+
+		start = MagicMock(side_effect=outcomes)
+		sleeps = iter(range(tries - 1))
+
+		def sleep(_seconds: float) -> None:
+			if next(sleeps, None) is None:
+				raise _StopLoop
+
+		scheduler = runner.Scheduler()
+		with (
+			patch.object(runner, "_init_frappe_for_thread"),
+			patch.object(runner, "get_bench_path", return_value="/bench"),
+			patch.object(runner, "start_scheduler", start),
+			patch.object(runner.time, "sleep", sleep),
+			self.assertRaises(_StopLoop),
+		):
+			scheduler._run()
+		return start
+
+	def test_a_raising_start_is_logged_once_and_retried(self) -> None:
+		eloop = OSError(40, "Too many levels of symbolic links")
+		with self.assertLogs("frappe.runner", level="ERROR") as logs:
+			start = self.run_scheduler([eloop, eloop, eloop], tries=3)
+		self.assertEqual(start.call_count, 3)
+		errors = [r for r in logs.records if "could not start" in r.getMessage()]
+		self.assertEqual(len(errors), 1)
+		self.assertIn("/bench/config/scheduler_process", errors[0].getMessage())
+		self.assertIsNotNone(errors[0].exc_info)
+
+	def test_a_busy_lock_is_still_logged_once_and_retried(self) -> None:
+		with self.assertLogs("frappe.runner", level="ERROR") as logs:
+			start = self.run_scheduler([None, None], tries=2)
+		self.assertEqual(start.call_count, 2)
+		busy = [r for r in logs.records if "locked by another scheduler" in r.getMessage()]
+		self.assertEqual(len(busy), 1)
+
+
 if __name__ == "__main__":
 	unittest.main()

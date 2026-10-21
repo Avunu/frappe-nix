@@ -89,10 +89,23 @@ let
   # and every later scheduler start sees "already running" and returns.
   schedulerLockDir = name: "/run/frappe-scheduler/${name}";
 
-  # Point config/scheduler_process at schedulerLockDir. Runs after the
-  # config/ copy, which ships a regular scheduler_process of its own.
-  linkSchedulerLock = name: benchRoot: ''
-    ln -sfn ${schedulerLockDir name}/scheduler_process ${benchRoot}/config/scheduler_process
+  # The units that run a scheduler bind-mount schedulerLockDir's file over
+  # config/scheduler_process (BindPaths), so the flock is host-local. Not a
+  # symlink: filelock >= 3.20 opens the lock with O_NOFOLLOW, the symlink this
+  # replaced made start_scheduler raise ELOOP, and the runtime ran ~30h with no
+  # scheduler (2026-10-19). A hand-run `bench schedule` locks the plain file
+  # underneath instead, so it no longer sees a unit's scheduler as running.
+  schedulerLockBind =
+    name: benchRoot: "${schedulerLockDir name}/scheduler_process:${benchRoot}/config/scheduler_process";
+
+  # Remove the symlink an earlier frappe-nix left at config/scheduler_process.
+  # Must run before the config/ copy: cp writes through a symlink, and systemd
+  # binds onto a symlink's target, which would keep the path a symlink and
+  # keep ELOOP. The copy then puts the package's regular file there.
+  unlinkSchedulerLock = benchRoot: ''
+    if [ -L ${benchRoot}/config/scheduler_process ]; then
+      rm -f ${benchRoot}/config/scheduler_process
+    fi
   '';
 
   libraryPath = lib.makeLibraryPath [
@@ -481,9 +494,9 @@ let
       # right after this unit anyway.
 
       mkdir -p ${runtimeBenchDir}/config
+      ${unlinkSchedulerLock runtimeBenchDir}
       cp -rT ${benchDir}/config ${runtimeBenchDir}/config
       chmod -R u+w ${runtimeBenchDir}/config
-      ${linkSchedulerLock name runtimeBenchDir}
 
       ${linkRegistry benchDir sitesPath}
       ${linkChromium runtimeBenchDir}
@@ -878,6 +891,8 @@ let
           # for what it runs.
           readWritePaths ? [ siteCfg.siteDir ],
           profiles ? frappeProfiles,
+          # systemd BindPaths, as "source:destination" strings.
+          bindPaths ? [ ],
         }:
         {
           inherit description;
@@ -902,6 +917,9 @@ let
           // harden { inherit readWritePaths profiles; }
           // optionalAttrs (stopTimeout != null) {
             TimeoutStopSec = toString stopTimeout;
+          }
+          // optionalAttrs (bindPaths != [ ]) {
+            BindPaths = bindPaths;
           };
         };
 
@@ -927,6 +945,7 @@ let
         "frappe-${name}" = mkService {
           description = "Frappe runtime (web, realtime, jobs, scheduler) for ${name}";
           role = "runtime";
+          bindPaths = [ (schedulerLockBind name runtimeBenchDir) ];
           execStart = mkExec pkg "runtime-${name}" (
             concatStringsSep " " (
               [ "${pyEnv}/bin/frappe-runtime" ]
@@ -1019,6 +1038,7 @@ let
         "frappe-scheduler-${name}" = mkService {
           description = "Frappe scheduler for ${name}";
           role = "scheduler";
+          bindPaths = [ (schedulerLockBind name runtimeBenchDir) ];
           execStart = mkExec pkg "scheduler-${name}" "${benchBin} schedule";
           extra = dependsOn;
           # It enqueues the scheduled jobs; the workers run them. Nothing here
@@ -1220,15 +1240,9 @@ let
       # config/ holds runtime state (scheduler lock/pid files), not just
       # static config — must be a real writable tree, same as frappe-init.
       mkdir -p "$FRAPPE_BENCH_ROOT"/config
+      ${unlinkSchedulerLock ''"$FRAPPE_BENCH_ROOT"''}
       cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
       chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
-      ${concatStringsSep "\n" (
-        mapAttrsToList (name: _: ''
-          if [ "''${FRAPPE_SITE:-}" = "${name}" ]; then
-            ${linkSchedulerLock name ''"$FRAPPE_BENCH_ROOT"''}
-          fi
-        '') enabledSites
-      )}
 
       # So a PDF rendered from here (`bench execute`, a print run by hand)
       # finds the same Chromium the units do.
@@ -2249,8 +2263,8 @@ in
       # Per-site tmpfiles rules to ensure siteDir exists with correct ownership.
       systemd.tmpfiles.rules =
         mapAttrsToList (_name: siteCfg: "d ${siteCfg.siteDir} 0750 ${cfg.user} ${cfg.group} -") enabledSites
-        # The file too, not just its directory: the config/ copy writes through
-        # the scheduler_process symlink, and cp refuses a dangling one.
+        # The file too, not just its directory: it is the BindPaths source of
+        # the scheduler units, and systemd refuses to start on a missing one.
         ++ lib.concatMap (name: [
           "d ${schedulerLockDir name} 0750 ${cfg.user} ${cfg.group} -"
           "f ${schedulerLockDir name}/scheduler_process 0640 ${cfg.user} ${cfg.group} -"
