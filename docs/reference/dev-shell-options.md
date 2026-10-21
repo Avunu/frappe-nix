@@ -102,7 +102,7 @@ What the shell links into the workspace for editors and language servers. See [E
 | --- | --- | --- | --- |
 | `ide.enable` | bool | `true` | On every shell entry, link `./.venv` to the dev virtualenv and `./pyrightconfig.json` to a generated file (the `.venv` interpreter, every app's root as `extraPaths`, `typeCheckingMode = "off"`) at the workspace root. A real file at either path is left alone, and the links go in `.git/info/exclude` unless already ignored. `nix build .#pyrightConfig` builds the file. |
 | `ide.pyrightSettings` | JSON attrs | `{ }` | Keys merged over the generated `pyrightconfig.json`. |
-| `ide.vscodeSettings` | bool | `true` | Seed `.vscode/settings.json` (the `.venv` interpreter, watcher excludes) and `.vscode/extensions.json` (Python, ruff) when they do not exist. Never overwrites. Needs `ide.enable`. |
+| `ide.vscodeSettings` | bool | `!app.enable` | Seed `.vscode/settings.json` (the `.venv` interpreter, watcher excludes) and `.vscode/extensions.json` (Python, ruff) when they do not exist. Never overwrites. Needs `ide.enable`. Off by default in app mode, so an existing app repository sees no change on shell entry. |
 | `ide.languageServer.enable` | bool | `false` | Put `ide.languageServer.package` on the dev shell's `PATH`, for an LSP editor. Needs `ide.enable`. |
 | `ide.languageServer.package` | package | `pkgs.basedpyright` | A pyright-compatible language server, which reads the generated `pyrightconfig.json`. |
 

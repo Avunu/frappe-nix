@@ -49,7 +49,7 @@ A real file or directory at either path is yours, and the shell leaves it alone 
 
 ## VS Code
 
-With `ide.vscodeSettings` (the default), the first shell entry seeds two files when they do not exist yet, and never overwrites either:
+With `ide.vscodeSettings`, the first shell entry seeds two files when they do not exist yet, and never overwrites either. It is on by default in a bench and **off by default in app mode**, where an existing app repository must see no change on shell entry, and a new untracked `.vscode/` would be one. odoo-nix defaults it on everywhere. Set `frappe-nix.ide.vscodeSettings = true;` in an app to have the files seeded:
 
 -   `.vscode/settings.json` sets `python.defaultInterpreterPath` to `${workspaceFolder}/.venv/bin/python`, and keeps the file watcher off `.devenv`, `.direnv`, `.frappe-nix` and `node_modules`.
 -   `.vscode/extensions.json` recommends the Python extension (`ms-python.python`, which brings Pylance) and ruff's (`charliermarsh.ruff`).
@@ -92,7 +92,7 @@ devenv.shells.default.languages.javascript.lsp.enable = true;
 | --- | --- | --- |
 | `ide.enable` | `true` | Keep `./.venv` and `./pyrightconfig.json` linked at the workspace root. |
 | `ide.pyrightSettings` | `{ }` | Keys merged over the generated `pyrightconfig.json`, for example `{ typeCheckingMode = "basic"; }`. |
-| `ide.vscodeSettings` | `true` | Seed `.vscode/settings.json` and `.vscode/extensions.json` once. Needs `ide.enable`. |
+| `ide.vscodeSettings` | `true` in a bench, `false` in app mode | Seed `.vscode/settings.json` and `.vscode/extensions.json` once. Needs `ide.enable`. |
 | `ide.languageServer.enable` | `false` | Put the language server on the dev shell's `PATH`. Needs `ide.enable`. |
 | `ide.languageServer.package` | `pkgs.basedpyright` | The server, a pyright-compatible one. |
 

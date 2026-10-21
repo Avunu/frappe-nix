@@ -6,7 +6,8 @@
 #                 extraPaths are the shell's PYTHONPATH, relative to the bench
 #                 root and in its order; ide.pyrightSettings merges over it; the
 #                 language server is on the shell's PATH only when asked for,
-#                 and nothing is linked with ide.enable off. And lib/ide.nix in
+#                 nothing is linked with ide.enable off, and ide.vscodeSettings
+#                 is on in bench mode and off in app mode (S35). And lib/ide.nix in
 #                 app mode, where the bench is generated under app.benchDir and
 #                 the app under development is the workspace root itself.
 #   ide-resolve   basedpyright over a copy of the fixture bench, with ./.venv
@@ -70,6 +71,8 @@ let
   hasServer = config: lib.elem pkgs.basedpyright (shell config).packages;
 
   generated = pyrightOf bench;
+  # The option's value alone: reading it forces nothing else of app mode.
+  vscodeIn = frappe-nix: (benchWith frappe-nix).frappe-nix.ide.vscodeSettings;
 in
 {
   ide-config = checks.eval "ide-config" {
@@ -100,6 +103,14 @@ in
         on = true;
         off = false;
       };
+      # On in bench mode, off in app mode (S35), and either can be set.
+      vscodeSettings = {
+        bench = true;
+        app = false;
+        appOverridden = true;
+        benchOverridden = false;
+        seeded = true;
+      };
       appMode = [
         ".frappe-nix/bench/apps/frappe"
         ".frappe-nix/bench/apps/erpnext"
@@ -124,6 +135,16 @@ in
       linked = {
         on = contains "pyrightconfig.json" (shell bench).enterShell;
         off = contains "pyrightconfig.json" (shell ideOff).enterShell;
+      };
+      vscodeSettings = {
+        bench = bench.frappe-nix.ide.vscodeSettings;
+        app = vscodeIn { app.enable = true; };
+        appOverridden = vscodeIn {
+          app.enable = true;
+          ide.vscodeSettings = true;
+        };
+        benchOverridden = vscodeIn { ide.vscodeSettings = false; };
+        seeded = contains ".vscode/settings.json" (shell bench).enterShell;
       };
       # frappe first, then the siblings, then the app itself, which is left
       # out: it is the workspace root.

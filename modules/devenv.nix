@@ -1463,13 +1463,22 @@ in
 
           vscodeSettings = mkOption {
             type = types.bool;
-            default = true;
+            # Off in app mode: an existing app repository sees no change on
+            # shell entry (docs/app-standards/spec.md S35), and a new
+            # untracked .vscode/ would be one. odoo-nix defaults it on.
+            default = !config.frappe-nix.app.enable;
+            defaultText = lib.literalExpression "!app.enable";
             description = ''
               Seed `.vscode/settings.json` (the `.venv` interpreter, and the
               watcher and search kept off `.devenv` and the generated bench) and
               `.vscode/extensions.json` (the Python and ruff extensions), each
               only when it does not exist yet. Never overwrites either. Only
               takes effect with `ide.enable`.
+
+              On by default in bench mode and off in app mode, where an
+              existing app repository must see no change on shell entry (an
+              untracked `.vscode/` would be one). Set it to `true` in an app
+              to have the files seeded.
             '';
           };
 
