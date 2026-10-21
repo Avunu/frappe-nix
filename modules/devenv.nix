@@ -2238,6 +2238,7 @@ in
           import ../lib/bench.nix {
             inherit pkgs lib;
             inherit (cfg)
+              python
               nodejs
               nodeOverrides
               extraPackages

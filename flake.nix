@@ -115,8 +115,11 @@
       flakeModules.default = ./modules/flake-module.nix;
 
       # importApply keeps the file's own path in the module system's errors.
+      # The module takes python-devops-nix's lib: the thread caps, the unit
+      # hardening, the migrate flow, the socket and nginx pieces and the journald
+      # vocabulary it shares with odoo-nix (PLAN.md, Phase 6).
       nixosModules.default = nixpkgs.lib.modules.importApply ./modules/nixos.nix {
-        inherit (inputs.python-devops-nix.lib.python) threadCaps;
+        base = inputs.python-devops-nix.lib;
       };
 
       lib = {
@@ -228,12 +231,14 @@
           # Frappe- and systemd-independent: stub frappe.utils.logger and
           # bench.utils modules stand in, JOURNAL_STREAM is pointed at the test's
           # own stderr, and the assertions are about the <N> prefix on every line
-          # and the bench.log that is never created. The runtime's copy of the
-          # formatter is rendered against the graft's, so the two cannot drift.
+          # and the bench.log that is never created. The runtime's formatter is
+          # rendered against the graft's, and its vendored _journald.py compared
+          # with the core the graft merges in (python-devops-nix's
+          # lib.journald.module), so the two cannot drift.
           journald = pkgs.runCommand "frappe-journald-check" { } ''
             ${graftTree "journald"}
             ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
-              ${./runtime/src/frappe_runtime/journald.py} | tee "$out"
+              ${./runtime/src/frappe_runtime} | tee "$out"
           '';
 
           # Frappe-, MariaDB- and percona-independent: a stub frappe.local.db
@@ -593,8 +598,12 @@
         # every PR.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
           import ./tests/logging-fields.nix { inherit self pkgs; }
-          # What services.frappe-nix.migrate.offline puts in the migrate unit, on and off.
+          # What services.frappe-nix.migrate.offline puts in the migrate unit, on and off,
+          # and the migrate flow around it.
           // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
+          # python-devops-nix's production pieces in the units: the sandbox and its
+          # profiles, environmentFiles, the slow query log, the socket directories.
+          // import ./tests/production-unit.nix { inherit self pkgs; }
           # What services.frappe-nix.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
           // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }

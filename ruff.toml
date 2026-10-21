@@ -9,7 +9,9 @@ extend = "dev/frappe-ruff.toml"
 # 3.11, so pyupgrade fixes must not reach past that.
 target-version = "py311"
 
-# Stand-ins for third-party apps and benches, which stay byte for byte; and the
+# Stand-ins for third-party apps and benches, which stay byte for byte; the
 # scaffolding templates, whose pyproject.toml is not TOML until frappe-init
-# substitutes its @PLACEHOLDERS@ (ruff would read it as nested config).
-extend-exclude = ["tests/fixtures", "templates"]
+# substitutes its @PLACEHOLDERS@ (ruff would read it as nested config); and the
+# runtime's vendored copy of python-devops-nix's journald core, which the
+# journald check compares byte for byte (written in Ruff's style, not Frappe's).
+extend-exclude = ["tests/fixtures", "templates", "runtime/src/frappe_runtime/_journald.py"]

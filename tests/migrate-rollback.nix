@@ -2,9 +2,11 @@
 #
 # It deliberately STUBS `bench migrate` — Frappe's own migration correctness is
 # out of scope. What is under test is the module's safety machinery in
-# mkSiteMigrate: the uninstalled-site guard, pre-migrate snapshot,
+# mkSiteMigrate (python-devops-nix's migrate flow with this module's steps): the
+# uninstalled-site guard, the pre-migrate snapshot and its verification,
 # rollback-on-failure, maintenance-mode handling, and the build-guard marker —
-# exercised against a real MariaDB.
+# exercised against a real MariaDB, with every unit under the module's sandbox
+# (lib.nixos.hardening).
 #
 # Run: nix build .#checks.x86_64-linux.migrate-rollback -L
 { self, pkgs }:
@@ -228,6 +230,8 @@ in
     ];
 
     services.frappe-nix = {
+      # The sandbox is opt-in through 1.x; the VM tests run under it.
+      hardening.enable = true;
       enable = true;
       package = stubBench;
       sites."${siteName}" = {
@@ -290,9 +294,16 @@ in
     machine.succeed("test -z \"$(find ${siteDir} ! -user frappe -o ! -group frappe)\"")
 
     # With a schema present the same build now migrates for real and records
-    # the marker.
+    # the marker, behind a snapshot it verified first.
     machine.succeed("systemctl restart ${migrateUnit}")
     machine.succeed("test -e ${markerPath}")
+    machine.succeed("journalctl -u ${migrateUnit} | grep -q 'frappe-migrate(${siteName}): snapshot verified'")
+    # The snapshot is whole: mysqldump's last line, which the verify reads.
+    machine.succeed("gzip -cd ${snapDir}/premigrate-*.sql.gz | tail -n 1 | grep -q '^-- Dump completed'")
+    # It ran sandboxed: the system read-only but for the site's directory.
+    assert machine.succeed(
+        "systemctl show -P ProtectSystem ${migrateUnit}"
+    ).strip() == "strict"
 
     # The snapshot is a full dump: owner-only, in an owner-only directory. What
     # migrate itself writes is not: nginx serves public/files as a member of the

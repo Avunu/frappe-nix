@@ -11,7 +11,9 @@ unit's ``APP_*`` fields, and reads nothing from files. Stock Frappe fails both:
 its stream format has no priority prefix, so every line — tracebacks included —
 lands at the unit's default of info; and bench appends to ``logs/bench.log``
 regardless of ``FRAPPE_STREAM_LOGGING``. See :mod:`._patches` for the two
-corrections and :mod:`._format` for the line format.
+corrections and :mod:`._format` for the line format, whose core (the priority
+prefix on every line, ANSI stripping, the ``JOURNAL_STREAM`` check) is
+python-devops-nix's ``_journald.py``, merged in at build time.
 
 Inert unless stderr is actually the journal (``JOURNAL_STREAM``, verified — see
 :func:`._format.journal_stream`). A terminal, the development shell, the OCI

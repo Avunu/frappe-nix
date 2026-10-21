@@ -53,7 +53,9 @@ The shared units serve every site on the host, so they carry no `APP_SITE`. Each
 
 The bench's virtualenv carries `frappe_journald` ([`lib/journald`](../../lib/journald), grafted like `frappe_unixsock` into both virtualenvs). When stderr is the journal, it reformats Frappe's loggers and bench's own as `<N>{module} [{site}] {message}`. It checks `JOURNAL_STREAM` against stderr's device and inode, so a terminal, the dev shell, the OCI images and a captured subprocess keep stock output.
 
-journald reads the `<N>` as the line's syslog priority (debug 7, info 6, warning 4, error 3, critical 2) and stamps the time itself, so the timestamp and level name are gone from the message. The site is added because Frappe's own format has none. Every line of a multi-line record carries the prefix, so a traceback stays at error from its first line to its last instead of dropping to info after the first.
+journald reads the `<N>` as the line's syslog priority (debug 7, info 6, warning 4, error 3, critical 2) and stamps the time itself, so the timestamp and level name are gone from the message. The site is added because Frappe's own format has none. Every line of a multi-line record carries the prefix, so a traceback stays at error from its first line to its last instead of dropping to info after the first. Terminal colour codes are stripped, so the journal holds the text and not the escapes.
+
+The line is the one odoo-nix writes too, `<N>{logger} [{site or database}] {message}`, from the same formatter core ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `python/journald.py`, merged into `frappe_journald` at build time). Frappe's half is the site and the module name.
 
 `frappe-runtime` formats its root logger the same way, and the migrate unit's failure lines are at error, so `journalctl -u frappe-migrate-<SITE> -p err` finds a failed migration. `-p` filters work as you would expect on Python log lines.
 
