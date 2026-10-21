@@ -15,7 +15,7 @@ def run_data_path(args: argparse.Namespace) -> int:
 
 def run_pin_path(args: argparse.Namespace) -> int:
 	lock = Path(args.lock) if args.lock else repo.find_up("flake.lock")
-	print(pin_path(args.input, lock.resolve()))
+	print(pin_path(args.input, lock.resolve(), writable=args.writable))
 	return CLEAN
 
 
@@ -37,12 +37,19 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 			"marketplace, pilot). It is the Nix store path when present, else "
 			".dev-dist/pins/<name>-<rev>/, fetched (github, gitlab and git inputs) and verified "
 			"against the lock's narHash (exit 3 on a mismatch). FRAPPE_NIX_FETCH_TOKEN "
-			"authenticates the fetch of a private repository."
+			"authenticates the fetch of a private repository. --writable never prints the store path, "
+			"which is read-only: the tree is copied from the store into .dev-dist/pins/<name>-<rev>/ "
+			"(or fetched there), for a caller that writes into it."
 		),
 	)
 	p.add_argument("input", help="the flake input name")
 	p.add_argument(
 		"--lock",
 		help="the flake.lock to read (default: the nearest flake.lock at or above the current directory, within the git work tree)",
+	)
+	p.add_argument(
+		"--writable",
+		action="store_true",
+		help="a tree the caller may write into (yarn install in frappe's): .dev-dist/pins/<name>-<rev>/, never the store path",
 	)
 	p.set_defaults(func=run_pin_path)

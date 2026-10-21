@@ -22,6 +22,12 @@ process listing), so private profiles, forks and siblings work (S43). Without it
 address), never with a redirect to another scheme, host or port, and a redirect from
 https to http is refused.
 
+``writable=True`` (``pin-path --writable``) never answers with the store path: a store tree
+is read-only, so a caller that writes into it (``yarn install`` in frappe's tree, for the
+typecheck gate's ``frappe-node-modules``) gets ``.dev-dist/pins/<name>-<rev>/`` instead,
+copied from the store when the tree is there (``copy_tree``) and fetched otherwise, and
+verified like any fetched tree.
+
 ``FRAPPE_NIX_PIN_URL`` replaces a tarball URL (``{host}``, ``{owner}``, ``{repo}`` and
 ``{rev}`` are filled in), for mirrors and for the tests, which serve a tarball from
 ``file://`` or a local server.
@@ -34,6 +40,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -193,6 +200,23 @@ def _clone(pin: flakelock.Pin, into: Path) -> Path:
 	return tree
 
 
+def copy_tree(tree: Path, dest: Path) -> None:
+	"""``tree`` copied to ``dest`` (links as links), every file and directory writable by its
+	owner and stamped with the current time, as ``cp -r --no-preserve=timestamps`` would.
+
+	A tree from the Nix store is read-only and every mtime in it is 1 (1970): a copy that
+	kept them could be written to by no one, and a wheel built from it fails (flit_core,
+	setuptools: ``ZIP does not support timestamps before 1980``) unless ``SOURCE_DATE_EPOCH``
+	happens to be set. The mode bits are kept otherwise, so the copy's NAR hash is the tree's.
+	"""
+	shutil.copytree(tree, dest, symlinks=True, copy_function=shutil.copy)
+	now = time.time()
+	for path in [dest, *dest.rglob("*")]:
+		if not path.is_symlink():
+			path.chmod(path.stat().st_mode | 0o200)
+			os.utime(path, (now, now))
+
+
 def _holds(dest: Path, nar_hash: str) -> bool:
 	"""Whether ``dest`` is a real directory whose NAR hash is ``nar_hash``.
 
@@ -207,15 +231,23 @@ def _holds(dest: Path, nar_hash: str) -> bool:
 		return False
 
 
-def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store", *, lock: dict | None = None) -> Path:
+def pin_path(
+	name: str,
+	lock_path: Path,
+	store_dir: str = "/nix/store",
+	*,
+	lock: dict | None = None,
+	writable: bool = False,
+) -> Path:
 	"""The directory holding input ``name`` as ``lock_path`` locks it.
 
 	``lock`` is a parsed lock read elsewhere (a committed one: ``git show <sha>:flake.lock``)
-	to use instead of ``lock_path``'s, which then only places the pins directory."""
+	to use instead of ``lock_path``'s, which then only places the pins directory.
+	``writable`` asks for a tree the caller may write into: never the store path."""
 	pin = flakelock.locked_pin(lock if lock is not None else flakelock.load(lock_path), name)
 
 	in_store = Path(nar.store_path(pin.nar_hash, store_dir=store_dir))
-	if in_store.is_dir():
+	if in_store.is_dir() and not writable:
 		return in_store
 
 	pins = lock_path.parent / PINS_DIR
@@ -230,7 +262,10 @@ def pin_path(name: str, lock_path: Path, store_dir: str = "/nix/store", *, lock:
 	pins.mkdir(parents=True, exist_ok=True)
 	with tempfile.TemporaryDirectory(dir=pins, prefix=".fetch-") as tmp:
 		work = Path(tmp)
-		if pin.type == "git":
+		if in_store.is_dir():
+			tree = work / "copy"
+			copy_tree(in_store, tree)
+		elif pin.type == "git":
 			tree = _clone(pin, work)
 		else:
 			tarball = work / "src.tar.gz"
