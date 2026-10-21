@@ -1451,7 +1451,7 @@ in
           };
 
           pyrightSettings = mkOption {
-            type = (pkgs.formats.json { }).type;
+            inherit (pkgs.formats.json { }) type;
             default = { };
             example = lib.literalExpression ''{ typeCheckingMode = "basic"; }'';
             description = ''
