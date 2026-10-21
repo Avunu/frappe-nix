@@ -24,7 +24,7 @@ It is consumed as a [flake-parts](https://flake.parts/) module, from a bench rep
 | try it | [Getting started](docs/getting-started.md) |
 | decide whether to adopt it | [Why frappe-nix](docs/why-frappe-nix.md) |
 | scaffold a bench, set up an app repository, or convert an existing bench | [Choose a mode](docs/scaffolding/README.md) |
-| work in the dev shell | [The development shell](docs/development/README.md), [Everyday commands](docs/development/commands.md), [Development guard rails](docs/development/guard-rails.md) |
+| work in the dev shell | [The development shell](docs/development/README.md), [Everyday commands](docs/development/commands.md), [Development guard rails](docs/development/guard-rails.md), [Editors and language servers](docs/development/editors.md) |
 | build images or deploy | [From development to production](docs/production/README.md), [Build production images](docs/production/images.md), [Run Frappe as a NixOS service](docs/production/nixos-service.md) |
 | manage secrets and restore production data | [Secrets](docs/development/secrets.md), [Restore a production backup](docs/development/restore-from-production.md) |
 | look up an option | [Dev shell options](docs/reference/dev-shell-options.md), [Secrets options](docs/reference/secrets-options.md), [`services.frappe-nix` options](docs/reference/nixos-options.md) |

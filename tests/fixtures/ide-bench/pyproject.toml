@@ -1,0 +1,19 @@
+# A bench root for tests/ide.nix: two apps under apps/ and one third-party
+# package in the dev virtualenv, so a language server reading frappe-nix.ide's
+# pyrightconfig.json has an app import and a site-packages import to resolve.
+# The apps are plain directories, not workspace members: what is checked is the
+# path to them, which is what a member's editable .pth hides from an analyser.
+# Re-lock after changing it:
+#
+#   uv lock --project tests/fixtures/ide-bench
+[project]
+name = "ide-bench"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["iniconfig"]
+
+[tool.uv]
+package = false

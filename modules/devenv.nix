@@ -1420,6 +1420,92 @@ in
           };
         };
 
+        # Editors and language servers (docs/development/editors.md). The same
+        # tree as odoo-nix's `ide`; what it writes is lib/ide.nix.
+        ide = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Expose the bench's Python to editors and language servers.
+              Neither file below is read by Frappe or bench; they exist so a
+              static analyser resolves the same imports the interpreter does.
+              Both are written on shell entry, at the workspace root (the
+              bench root, or the app's repository in app mode):
+
+              - `./.venv`, a symlink to the Nix-built dev virtualenv (the one
+                `env` links to), at the one path every editor probes without
+                configuration.
+              - `./pyrightconfig.json`, a symlink to a generated file for
+                Pylance, pyright and basedpyright: the `.venv` interpreter, and
+                every app's root as an `extraPaths` entry. The virtualenv
+                installs the apps editable, through `.pth` files a static
+                analyser does not run, so without those entries `import frappe`
+                is unresolved. It is refreshed on every entry, so an app added to
+                the bench is picked up.
+
+              A real file or directory already at either path is yours and is
+              left alone. A link the repository does not already ignore is added
+              to `.git/info/exclude`, so neither shows in `git status`.
+            '';
+          };
+
+          pyrightSettings = mkOption {
+            type = (pkgs.formats.json { }).type;
+            default = { };
+            example = lib.literalExpression ''{ typeCheckingMode = "basic"; }'';
+            description = ''
+              Keys merged over the generated `pyrightconfig.json`, which sets
+              `venvPath`, `venv`, `pythonVersion`, `extraPaths`, `exclude` and
+              `typeCheckingMode = "off"` (as Pylance's own default).
+            '';
+          };
+
+          vscodeSettings = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Seed `.vscode/settings.json` (the `.venv` interpreter, and the
+              watcher and search kept off `.devenv` and the generated bench) and
+              `.vscode/extensions.json` (the Python and ruff extensions), each
+              only when it does not exist yet. Never overwrites either. Only
+              takes effect with `ide.enable`.
+            '';
+          };
+
+          languageServer = {
+            enable = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                Put a Python language server on the dev shell's PATH, for an
+                editor whose LSP client starts one from PATH (Neovim, Helix,
+                Zed, Emacs). It reads the generated `pyrightconfig.json`, so it
+                needs `ide.enable`. VS Code's Pylance bundles its own server and
+                does not need this.
+
+                Off by default, as devenv's TypeScript language server is
+                (`languages.javascript.lsp.enable`): an editor's server should
+                not be what keeps a shell from building.
+              '';
+            };
+
+            package = mkOption {
+              type = types.package;
+              default = pkgs.basedpyright;
+              defaultText = lib.literalExpression "pkgs.basedpyright";
+              example = lib.literalExpression "pkgs.pyright";
+              description = ''
+                The language server. basedpyright (`basedpyright-langserver
+                --stdio`) or pyright (`pyright-langserver --stdio`) read the
+                generated `pyrightconfig.json`. For ty, add `pkgs.ty` to
+                `extraDevPackages` instead: it finds `.venv` itself and reads
+                the shell's PYTHONPATH, not pyrightconfig.json.
+              '';
+            };
+          };
+        };
+
         extraDevPackages = mkOption {
           type = types.listOf types.package;
           default = [ ];
@@ -2710,10 +2796,83 @@ in
         # what a bench whose pyproject.toml drops frappe-bench looks like.
         shippedBenchPatches = "${pythonEnvs.devPythonEnv}/${cfg.python.sitePackages}/bench/patches/patches.txt";
 
+        # ── Editors (frappe-nix.ide; lib/ide.nix) ─────────────────────────
+        ideLib = import ../lib/ide.nix { inherit lib; };
+        pyrightConfigFile = pkgs.writeText "frappe-nix-pyrightconfig.json" (
+          builtins.toJSON (
+            ideLib.pyrightConfig {
+              # PYTHONPATH's apps, in its order.
+              inherit (benchInfra) appNames;
+              inherit (cfg.python) pythonVersion;
+              benchDir = if appMode then cfg.app.benchDir else null;
+              devApp = if appMode then cfg.app.name else null;
+              settings = cfg.ide.pyrightSettings;
+            }
+          )
+        );
+        vscodeSettingsFile = pkgs.writeText "frappe-nix-vscode-settings.json" (
+          builtins.toJSON ideLib.vscodeSettings
+        );
+        vscodeExtensionsFile = pkgs.writeText "frappe-nix-vscode-extensions.json" (
+          builtins.toJSON ideLib.vscodeExtensions
+        );
+
+        # Anchored on $DEVENV_ROOT, not $PWD or $FRAPPE_BENCH_ROOT: the editor
+        # opens the workspace root, which in app mode is the app's repository
+        # and not the generated bench.
+        ideSetup = ''
+          # The repository's local exclude file (shared by its worktrees), or
+          # empty outside a git checkout.
+          _frappe_nix_ide_exclude="$(git -C "$DEVENV_ROOT" rev-parse --git-path info/exclude 2>/dev/null || true)"
+          case "$_frappe_nix_ide_exclude" in
+            "" | /*) ;;
+            *) _frappe_nix_ide_exclude="$DEVENV_ROOT/$_frappe_nix_ide_exclude" ;;
+          esac
+
+          # A store symlink at $1 pointing at $2, unless something of the
+          # developer's is there. A link the repository does not already
+          # ignore goes in .git/info/exclude, which is never committed, so
+          # it neither shows in `git status` nor needs a .gitignore change in
+          # an existing repository.
+          _frappe_nix_ide_link() {
+            if [ -e "$DEVENV_ROOT/$1" ] && [ ! -L "$DEVENV_ROOT/$1" ]; then
+              echo "frappe-nix: ./$1 is not a symlink, so it is yours; not linking $3 there (frappe-nix.ide)." >&2
+              return 0
+            fi
+            if [ "$(readlink "$DEVENV_ROOT/$1" 2>/dev/null)" != "$2" ]; then
+              ln -sfn "$2" "$DEVENV_ROOT/$1"
+            fi
+            if [ -n "$_frappe_nix_ide_exclude" ] &&
+              ! git -C "$DEVENV_ROOT" check-ignore -q -- "$1" 2>/dev/null; then
+              mkdir -p "$(dirname "$_frappe_nix_ide_exclude")"
+              printf '/%s\n' "$1" >> "$_frappe_nix_ide_exclude"
+            fi
+          }
+          _frappe_nix_ide_link .venv "${pythonEnvs.devPythonEnv}" "the dev virtualenv"
+          _frappe_nix_ide_link pyrightconfig.json "${pyrightConfigFile}" "the generated pyright config"
+          unset -f _frappe_nix_ide_link
+          unset _frappe_nix_ide_exclude
+
+          ${lib.optionalString cfg.ide.vscodeSettings ''
+            # Seeded once; a project's own files are never overwritten.
+            if [ ! -e "$DEVENV_ROOT/.vscode/settings.json" ]; then
+              mkdir -p "$DEVENV_ROOT/.vscode"
+              install -m 644 "${vscodeSettingsFile}" "$DEVENV_ROOT/.vscode/settings.json"
+            fi
+            if [ ! -e "$DEVENV_ROOT/.vscode/extensions.json" ]; then
+              mkdir -p "$DEVENV_ROOT/.vscode"
+              install -m 644 "${vscodeExtensionsFile}" "$DEVENV_ROOT/.vscode/extensions.json"
+            fi
+          ''}
+        '';
+
       in
       lib.mkIf cfg.enable {
         packages.prodPythonEnv = pythonEnvs.prodPythonEnv;
         packages.devPythonEnv = pythonEnvs.devPythonEnv;
+        # What `ide.enable` links to ./pyrightconfig.json, for an editor that
+        # wants it somewhere else (`nix build .#pyrightConfig`).
+        packages.pyrightConfig = pyrightConfigFile;
         # Unbuilt /bench tree — used by containers.nix and as input to builtBench.
         packages.benchRoot = benchInfra.benchRoot;
         # Production-ready bench with compiled assets + passthru interpreters.
@@ -3086,6 +3245,7 @@ in
               ]
               # For the one-off `frappe-nix-db-nocow migrate` shell entry asks for.
               ++ lib.optional cfg.mariadb.noCow dbNocowTool
+              ++ lib.optional (cfg.ide.enable && cfg.ide.languageServer.enable) cfg.ide.languageServer.package
               ++ cfg.extraDevPackages
               ++ cfg.extraPackages;
 
@@ -3317,6 +3477,8 @@ in
               if [ "$(readlink "$FRAPPE_BENCH_ROOT/env" 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
                 ln -sfn "${pythonEnvs.devPythonEnv}" "$FRAPPE_BENCH_ROOT/env"
               fi
+
+              ${lib.optionalString cfg.ide.enable ideSetup}
 
               # Record bench's own patches as already done, so `bench update`
               # does not die importing bench.patches.v3 — a module bench deleted
