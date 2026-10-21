@@ -260,6 +260,23 @@
           EOF
         '';
 
+        # A frappe command (`bench <args>` on a bench host), run the way
+        # `bench` runs it: frappe-bench's frappe_cmd execs
+        # `python -m frappe.utils.bench_helper frappe <args>` from sites/,
+        # which is the images' default WorkingDir. Not `bench` itself: it
+        # refuses to run as root, which the images are unless
+        # containers.nonRoot, so the split set's scheduler and workers exited
+        # at start.
+        frappeCmd =
+          args:
+          [
+            "${pyEnv}/bin/python"
+            "-m"
+            "frappe.utils.bench_helper"
+            "frappe"
+          ]
+          ++ args;
+
         # buildLayeredImage, with the image config readable without a build
         # (tests/containers-registry.nix).
         buildImage =
@@ -370,6 +387,8 @@
               chmod 1777 /tmp
               ${ownWritable [
                 "/bench/logs"
+                # frappe's scheduler takes its lock in config/ (scheduler_process).
+                "/bench/config"
                 "/bench/config/pids"
                 "/bench/sites"
                 home
@@ -478,16 +497,12 @@
 
                 scheduler = mkFrappeContainer {
                   name = "scheduler";
-                  cmd = [
-                    "${pyEnv}/bin/bench"
-                    "schedule"
-                  ];
+                  cmd = frappeCmd [ "schedule" ];
                 };
 
                 worker-default = mkFrappeContainer {
                   name = "worker-default";
-                  cmd = [
-                    "${pyEnv}/bin/bench"
+                  cmd = frappeCmd [
                     "worker"
                     "--queue"
                     "default"
@@ -496,8 +511,7 @@
 
                 worker-short = mkFrappeContainer {
                   name = "worker-short";
-                  cmd = [
-                    "${pyEnv}/bin/bench"
+                  cmd = frappeCmd [
                     "worker"
                     "--queue"
                     "short"
@@ -506,8 +520,7 @@
 
                 worker-long = mkFrappeContainer {
                   name = "worker-long";
-                  cmd = [
-                    "${pyEnv}/bin/bench"
+                  cmd = frappeCmd [
                     "worker"
                     "--queue"
                     "long"

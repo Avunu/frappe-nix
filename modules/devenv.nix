@@ -1792,7 +1792,7 @@ in
           nonRoot = mkOption {
             type = types.bool;
             default = false;
-            description = "Run every image as frappe (uid/gid 1000) instead of root, with the paths it writes (/bench/sites, /bench/logs, /bench/config/pids, nginx's log, cache and temp directories) owned by it. Opt-in through 1.x; the default becomes true in 2.0.0. A sites volume a root image wrote is owned by root and needs a one-time chown first: see Running as non-root in docs/production/images.md.";
+            description = "Run every image as frappe (uid/gid 1000) instead of root, with the paths it writes (/bench/sites, /bench/logs, /bench/config, nginx's log, cache and temp directories) owned by it. Opt-in through 1.x; the default becomes true in 2.0.0. A sites volume a root image wrote is owned by root and needs a one-time chown first: see Running as non-root in docs/production/images.md.";
           };
           aliases = mkOption {
             type = types.bool;
