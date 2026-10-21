@@ -2807,18 +2807,22 @@ in
 
         # ── Editors (frappe-nix.ide; lib/ide.nix) ─────────────────────────
         ideLib = import ../lib/ide.nix { inherit lib; };
-        pyrightConfigFile = pkgs.writeText "frappe-nix-pyrightconfig.json" (
-          builtins.toJSON (
-            ideLib.pyrightConfig {
-              # PYTHONPATH's apps, in its order.
-              inherit (benchInfra) appNames;
-              inherit (cfg.python) pythonVersion;
-              benchDir = if appMode then cfg.app.benchDir else null;
-              devApp = if appMode then cfg.app.name else null;
-              settings = cfg.ide.pyrightSettings;
-            }
-          )
-        );
+        pyrightConfig = ideLib.pyrightConfig {
+          # PYTHONPATH's apps, in its order.
+          inherit (benchInfra) appNames;
+          inherit (cfg.python) pythonVersion;
+          benchDir = if appMode then cfg.app.benchDir else null;
+          devApp = if appMode then cfg.app.name else null;
+          settings = cfg.ide.pyrightSettings;
+        };
+        # passthru.value is the same content as a Nix value, so a check can
+        # read it without building the file (`nix flake check --no-build`
+        # refuses import-from-derivation).
+        pyrightConfigFile = pkgs.writeTextFile {
+          name = "frappe-nix-pyrightconfig.json";
+          text = builtins.toJSON pyrightConfig;
+          passthru.value = pyrightConfig;
+        };
         vscodeSettingsFile = pkgs.writeText "frappe-nix-vscode-settings.json" (
           builtins.toJSON ideLib.vscodeSettings
         );

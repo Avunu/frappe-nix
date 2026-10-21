@@ -62,8 +62,9 @@ let
   };
 
   shell = config: config.devenv.shells.default;
-  # IFD on a writeText: the file is the option's whole output.
-  pyrightOf = config: builtins.fromJSON (builtins.readFile config.packages.pyrightConfig);
+  # The file's content as a value: reading the file itself would be
+  # import-from-derivation, which `nix flake check --no-build` refuses.
+  pyrightOf = config: config.packages.pyrightConfig.value;
   # Not lib.hasInfix: that is builtins.match ".*X.*", which overflows the C
   # stack on a long enterShell (tests/renames.nix).
   contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
