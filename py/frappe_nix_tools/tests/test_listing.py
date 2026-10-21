@@ -9,6 +9,7 @@ real in .github/workflows/selftest-product.yml.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+from frappe_nix_tools.common.report import EnvError
 from frappe_nix_tools.listing import baseline, check, getapp, readme, rules, target
 from frappe_nix_tools.listing.baseline import Hit
 from scaffold_helpers import AppCase, git
@@ -89,6 +91,19 @@ README = "\n\n".join(
 README += "\n"
 
 DEPS = '\n[tool.bench.frappe-dependencies]\nfrappe = ">=16.0.0,<17.0.0"\n'
+
+
+# The registry's check (marketplace validation/semgrep_check.py), reduced to how it runs semgrep.
+REGISTRY_CHECK = """import json, subprocess
+class SemgrepValidator:
+    def __init__(self, path, app):
+        self.path, self.findings, self.notes = path, [], []
+    def validate(self):
+        r = subprocess.run(["semgrep", "scan", "--json", "--quiet", str(self.path)], capture_output=True, text=True)
+        if r.returncode not in (0, 1):
+            raise RuntimeError(f"Semgrep failed: {r.stderr.strip()}")
+        json.loads(r.stdout)
+"""
 
 
 class ListingCase(AppCase):
@@ -332,6 +347,45 @@ class TestBaseline(ListingCase):
 			["run", "--frozen", "--python", "3.14", "--project", str(odd / "tools"), "semgrep", "--version"],
 		)
 		self.assertFalse((odd / "pwned").exists())
+
+	def scan_with_stub_semgrep(self, body: str) -> list[Hit]:
+		"""``baseline.scan`` with a stub ``semgrep`` (``body`` is its shell; it logs each call to
+		``self.calls``) and the registry's check as the pinned marketplace has it: a
+		``RuntimeError`` for an exit status other than 0 or 1, else ``json.loads`` of stdout."""
+		aux = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, aux, True)
+		(aux / "marketplace" / "validation").mkdir(parents=True)
+		(aux / "marketplace" / "validation" / "semgrep_check.py").write_text(REGISTRY_CHECK)
+		(aux / "bin").mkdir()
+		self.calls = aux / "calls"
+		self.calls.write_text("")
+		stub = aux / "bin" / "semgrep"
+		stub.write_text(f'#!/bin/sh\necho "$*" >> {self.calls}\nonce={aux / "once"}\n{body}\n')
+		stub.chmod(0o755)
+		with mock.patch.dict(os.environ, {"PATH": f"{aux / 'bin'}{os.pathsep}{os.environ['PATH']}"}):
+			return baseline.scan(self.root, "demo_app", aux / "marketplace")[0]
+
+	def test_semgrep_with_no_output_is_an_environment_error(self):
+		"""Avunu/jwt_bearer_auth#19: semgrep exited 1 and printed nothing, and L7 crashed with
+		``internal error: JSONDecodeError``. Now: exit 3, the status, stderr, one retry."""
+		with self.assertRaises(EnvError) as ctx:
+			self.scan_with_stub_semgrep('echo "registry download timed out" >&2\nexit 1')
+		self.assertEqual(ctx.exception.code, 3)
+		self.assertIn("semgrep exited 1 with no output (after one retry)", str(ctx.exception))
+		self.assertIn("registry download timed out", str(ctx.exception))
+		self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+	def test_semgrep_succeeding_on_the_retry_passes(self):
+		body = 'if [ -e "$once" ]; then echo \'{"results": []}\'; else touch "$once"; fi'
+		self.assertEqual(self.scan_with_stub_semgrep(body), [])
+		self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+	def test_semgrep_failing_reports_its_status_and_stderr(self):
+		with self.assertRaises(EnvError) as ctx:
+			self.scan_with_stub_semgrep('echo "Killed" >&2\nexit 137')
+		self.assertEqual(ctx.exception.code, 3)
+		self.assertIn("semgrep exited 137 (after one retry)", str(ctx.exception))
+		self.assertIn("Killed", str(ctx.exception))
 
 	def test_malformed_baseline_is_invalid(self):
 		self.write(baseline.PATH, '{"schema": 1, "findings": [{"rule": "x", "count": 0}]}')

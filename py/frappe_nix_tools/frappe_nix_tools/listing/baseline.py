@@ -189,34 +189,81 @@ def export(root: Path, dest: Path) -> None:
 			shutil.copy(src, target)
 
 
+# The recording shim around the real semgrep: its stdout, stderr and exit status land in the
+# shim directory, so a scan that prints no JSON can be reported with them (the registry's
+# check only raises a bare JSONDecodeError). A ``--json`` run that prints nothing is run once
+# more (one retry, never more): under load uv's first sync of tools/ or semgrep itself can
+# die without output, and a second run usually goes through.
+SHIM = """#!/bin/sh
+dir={dir}
+attempt=1
+while :; do
+  {command} "$@" > "$dir/stdout" 2> "$dir/stderr"
+  code=$?
+  echo "$code" > "$dir/status"
+  [ -s "$dir/stdout" ] && break
+  [ "$attempt" -ge 2 ] && break
+  case " $* " in *" --json "*) ;; *) break ;; esac
+  echo "exit $code with no output" >> "$dir/retried"
+  attempt=2
+done
+cat "$dir/stdout"
+cat "$dir/stderr" >&2
+exit "$code"
+"""
+
+
 def _semgrep_on_path(root: Path, shim: Path, floor: str, python: str) -> dict[str, str]:
-	"""The environment the scan runs in: ``semgrep`` on PATH, from PATH itself, else the app's
-	``tools/`` project when it pins semgrep, else ``uvx`` at the floor version. Both run on
-	``python`` (the preset's): ``requires-python`` is only a floor, and uv would otherwise take
-	the newest CPython, which a semgrep release may not run on yet (1.179.0 on 3.15)."""
+	"""The environment the scan runs in: ``semgrep`` (behind the recording ``SHIM``) from PATH
+	itself, else the app's ``tools/`` project when it pins semgrep, else ``uvx`` at the floor
+	version. Both run on ``python`` (the preset's): ``requires-python`` is only a floor, and uv
+	would otherwise take the newest CPython, which a semgrep release may not run on yet
+	(1.179.0 on 3.15)."""
 	env = dict(os.environ, EIO_BACKEND="posix")
-	if shutil.which("semgrep"):
-		return env
 	tools = root / "tools" / "pyproject.toml"
-	if tools.is_file() and "semgrep" in tools.read_text() and shutil.which("uv"):
+	found = shutil.which("semgrep")
+	if found:
+		command = shlex.quote(found)
+	elif tools.is_file() and "semgrep" in tools.read_text() and shutil.which("uv"):
 		command = (
-			f"exec uv run --frozen --python {shlex.quote(python)}"
-			f' --project {shlex.quote(str(root / "tools"))} semgrep "$@"'
+			f"uv run --frozen --python {shlex.quote(python)}"
+			f" --project {shlex.quote(str(root / 'tools'))} semgrep"
 		)
 	elif shutil.which("uvx"):
-		command = (
-			f'exec uvx --python {shlex.quote(python)} --from {shlex.quote(f"semgrep=={floor}")} semgrep "$@"'
-		)
+		command = f"uvx --python {shlex.quote(python)} --from {shlex.quote(f'semgrep=={floor}')} semgrep"
 	else:
 		raise EnvError(
 			"L7 needs semgrep: it is not on PATH, and neither the app's tools/ project nor uvx can run it"
 		)
 	shim.mkdir(parents=True, exist_ok=True)
 	script = shim / "semgrep"
-	script.write_text(f"#!/bin/sh\n{command}\n")
+	script.write_text(SHIM.format(dir=shlex.quote(str(shim)), command=command))
 	script.chmod(0o755)
 	env["PATH"] = f"{shim}{os.pathsep}{env.get('PATH', '')}"
 	return env
+
+
+def _scan_failure(shim: Path, error: Exception) -> EnvError:
+	"""The environment error for a scan that failed or printed no JSON: semgrep's exit status,
+	whether it was retried, and the tail of its stderr, as the shim recorded them."""
+
+	def read(name: str) -> str:
+		try:
+			return (shim / name).read_text(errors="replace").strip()
+		except OSError:
+			return ""
+
+	status = read("status") or "unknown"
+	if isinstance(error, RuntimeError):
+		what = ""  # the registry's check refused the exit status itself
+	else:
+		what = " with no output" if not read("stdout") else " with output that is not JSON"
+	retried = " (after one retry)" if read("retried") else ""
+	tail = "\n".join(read("stderr").splitlines()[-20:]) or "(stderr was empty)"
+	return EnvError(
+		f"L7: the registry semgrep scan failed: semgrep exited {status}{what}{retried}; "
+		f"the end of its stderr:\n{tail}"
+	)
 
 
 def _validator_class(marketplace: Path) -> Any:
@@ -254,7 +301,8 @@ def scan(
 	with tempfile.TemporaryDirectory(prefix="frappe-listing-") as tmp:
 		work = Path(tmp) / app
 		export(root, work)
-		env = _semgrep_on_path(root, Path(tmp) / "bin", floor, python)
+		shim = Path(tmp) / "bin"
+		env = _semgrep_on_path(root, shim, floor, python)
 		log = io.StringIO()
 		saved = dict(os.environ)
 		os.environ.clear()
@@ -263,8 +311,8 @@ def scan(
 			validator = validator_class(work, app)
 			with contextlib.redirect_stdout(log):
 				validator.validate()
-		except RuntimeError as e:
-			raise EnvError(f"L7: the registry semgrep scan failed: {e}") from e
+		except (RuntimeError, ValueError) as e:  # ValueError: json.JSONDecodeError on no output
+			raise _scan_failure(shim, e) from e
 		finally:
 			os.environ.clear()
 			os.environ.update(saved)
