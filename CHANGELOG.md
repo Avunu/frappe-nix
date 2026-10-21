@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.1](https://github.com/Avunu/frappe-nix/compare/v1.1.0...v1.1.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **ci:** probe a bench with ping, and cancel superseded runs on the shared host ([5ce00d1](https://github.com/Avunu/frappe-nix/commit/5ce00d14a46af5e039673abd1345b3fc407ae591))
+* **devenv:** latch readiness so one failed probe never skips nginx ([eb36543](https://github.com/Avunu/frappe-nix/commit/eb36543ec163906f5c1bb255cb119465e6d15637))
+* **gate:** build L9's wheels from trees with mtimes a ZIP can carry ([4e7fcae](https://github.com/Avunu/frappe-nix/commit/4e7fcae0555e887894eb4c349d2464ae7762c494))
+* **gate:** install frappe's node_modules into a writable tree, never the store ([81df8ab](https://github.com/Avunu/frappe-nix/commit/81df8ab09e60960860944251da7c89ac571e2e63))
+* **gate:** report a semgrep scan with no JSON as an environment error ([16ffba4](https://github.com/Avunu/frappe-nix/commit/16ffba4f8908305dbed2b78271015dee77336b90))
+
 ## [1.1.0](https://github.com/Avunu/frappe-nix/compare/v1.0.2...v1.1.0) (2026-10-20)
 
 
