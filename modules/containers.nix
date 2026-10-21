@@ -134,6 +134,39 @@
             cp "$PKG_SITES/common_site_config.json" "$SITES_DIR/common_site_config.json"
           fi
 
+          # The Redis URLs are bench-wide too: the split set's workers serve
+          # every site, so they read redis_queue from common_site_config.json
+          # rather than a site's config, and the socketio image (which has no
+          # FRAPPE_REDIS_* of its own) reads it there as well. Without these
+          # keys Frappe falls back to its own default ports (11311 for the
+          # queue), not the ones the site was given. Merged into whatever the
+          # file already holds: a variable that is set wins, a key the
+          # operator set is kept, and a missing key gets the same default
+          # the site config gets. Written only when it changes, through a
+          # temporary file unique to this container and a rename, so
+          # containers sharing the sites volume never see a partial file.
+          COMMON="$SITES_DIR/common_site_config.json"
+          if [ -s "$COMMON" ]; then current="$(cat "$COMMON")"; else current='{}'; fi
+          merged="$(printf '%s' "$current" | ${pkgs.jq}/bin/jq -S \
+            --arg cache "''${FRAPPE_REDIS_CACHE-}" --arg cache_set "''${FRAPPE_REDIS_CACHE+1}" \
+            --arg queue "''${FRAPPE_REDIS_QUEUE-}" --arg queue_set "''${FRAPPE_REDIS_QUEUE+1}" \
+            --arg socketio "''${FRAPPE_REDIS_SOCKETIO-}" --arg socketio_set "''${FRAPPE_REDIS_SOCKETIO+1}" \
+            'def put(k; set; v):
+               if set == "1" then .[k] = v
+               elif has(k) then .
+               else .[k] = "redis://127.0.0.1:13000" end;
+             put("redis_cache"; $cache_set; $cache)
+             | put("redis_queue"; $queue_set; $queue)
+             | put("redis_socketio"; $socketio_set; $socketio)')"
+          if [ "$merged" != "$(printf '%s' "$current" | ${pkgs.jq}/bin/jq -S .)" ]; then
+            tmp="$COMMON.tmp.''${HOSTNAME:-container}.$$"
+            printf '%s\n' "$merged" > "$tmp"
+            # Not secret enough to hide from the image's other user: Frappe's
+            # own bench writes this file world-readable too.
+            chmod 0644 "$tmp"
+            mv -f "$tmp" "$COMMON"
+          fi
+
           # Symlink compiled assets from the package into the mounted volume.
           if [ -d "$PKG_SITES/assets" ]; then
             ln -sfn "$PKG_SITES/assets" "$SITES_DIR/assets"

@@ -196,24 +196,38 @@ Mount two paths:
 - `/bench/sites` is a persistent volume for site state (writable by uid 1000 with `containers.nonRoot`).
 - `/secrets` holds secret files, mounted read-only.
 
-At every start the entrypoint links `apps.txt`, `apps.json` and the compiled `assets` from the image into `/bench/sites`, so a new image always brings its own app registry and assets. `common_site_config.json` is copied in once, and from then on it belongs to you.
+At every start the entrypoint links `apps.txt`, `apps.json` and the compiled `assets` from the image into `/bench/sites`, so a new image always brings its own app registry and assets. `common_site_config.json` is yours, apart from the three Redis keys described under [Environment variables](#environment-variables).
 
 ### Environment variables
 
 `FRAPPE_SITE` is required. Without it the container exits immediately. The rest have defaults you should usually override:
 
-| Variable                | Default                                          | Becomes                  |
-| ----------------------- | ------------------------------------------------ | ------------------------ |
-| `FRAPPE_DB_HOST`        | `127.0.0.1`                                      | `db_host`                |
-| `FRAPPE_DB_PORT`        | `3306`                                           | `db_port`                |
-| `FRAPPE_DB_TYPE`        | `mariadb`                                        | `db_type`                |
-| `FRAPPE_DB_NAME`        | the site name, with dots replaced by underscores | `db_name`                |
-| `FRAPPE_DB_USER`        | the same default as `FRAPPE_DB_NAME`             | `db_user`                |
-| `FRAPPE_REDIS_CACHE`    | `redis://127.0.0.1:13000`                        | `redis_cache`            |
-| `FRAPPE_REDIS_QUEUE`    | `redis://127.0.0.1:13000`                        | `redis_queue`            |
-| `FRAPPE_REDIS_SOCKETIO` | `redis://127.0.0.1:13000`                        | `redis_socketio`         |
-| `FRAPPE_DB_SOCKET`      | unset                                            | `db_socket`, when set    |
-| `FRAPPE_SOCKETIO_UDS`   | unset                                            | `socketio_uds`, when set |
+| Variable                | Default                                          | Becomes                                    |
+| ----------------------- | ------------------------------------------------ | ------------------------------------------ |
+| `FRAPPE_DB_HOST`        | `127.0.0.1`                                      | `db_host`                                  |
+| `FRAPPE_DB_PORT`        | `3306`                                           | `db_port`                                  |
+| `FRAPPE_DB_TYPE`        | `mariadb`                                        | `db_type`                                  |
+| `FRAPPE_DB_NAME`        | the site name, with dots replaced by underscores | `db_name`                                  |
+| `FRAPPE_DB_USER`        | the same default as `FRAPPE_DB_NAME`             | `db_user`                                  |
+| `FRAPPE_REDIS_CACHE`    | `redis://127.0.0.1:13000`                        | `redis_cache`, also bench-wide (see below) |
+| `FRAPPE_REDIS_QUEUE`    | `redis://127.0.0.1:13000`                        | `redis_queue`, also bench-wide             |
+| `FRAPPE_REDIS_SOCKETIO` | `redis://127.0.0.1:13000`                        | `redis_socketio`, also bench-wide          |
+| `FRAPPE_DB_SOCKET`      | unset                                            | `db_socket`, when set                      |
+| `FRAPPE_SOCKETIO_UDS`   | unset                                            | `socketio_uds`, when set                   |
+
+The entrypoint writes the variables to the site's `site_config.json`, and also merges the three Redis URLs into `sites/common_site_config.json`. Both are needed:
+
+- The split set's workers serve every site, so they read `redis_queue` from `common_site_config.json`, not from a site's config.
+- The `socketio` image takes no `FRAPPE_REDIS_*` variables of its own and reads them from that file too.
+- Without the bench-wide keys, both fall back to Frappe's default ports, such as 11311 for the queue.
+
+In `common_site_config.json`:
+
+- A variable that is set wins.
+- When a variable is unset, a key you set yourself is kept.
+- A key that is missing gets the default above.
+
+The entrypoint rewrites the file only when it changes, through a temporary file and a rename, so containers that share the sites volume never read a partial file. Give every container that shares the volume the same Redis variables.
 
 The images also set `FRAPPE_BENCH_ROOT=/bench`, `SITES_PATH=/bench/sites`, `FRAPPE_ENV_TYPE=production`, `FRAPPE_STREAM_LOGGING=1` and `FRAPPE_TUNE_GC=1`, and `GIT_PYTHON_REFRESH=quiet`, without which `bench` fails at startup on an image that has no git.
 
