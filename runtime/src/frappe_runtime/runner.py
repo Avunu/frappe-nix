@@ -379,25 +379,44 @@ class Scheduler:
 	a network filesystem kept) must not leave the process without a scheduler.
 	Each try also runs frappe's set_niceness again. On Linux nice is per thread,
 	so that lowers only this thread, which mostly sleeps and only enqueues.
+
+	start_scheduler can also raise, and that must not end the thread either. On
+	2026-10-19 filelock 3.20's O_NOFOLLOW refused the scheduler_process symlink
+	with ELOOP; the exception killed this thread and the site ran ~30h with no
+	scheduled job, while the web app and the jobs looked healthy. So a failure is
+	logged once, with its traceback, and retried like a busy lock.
 	"""
 
 	def _run(self) -> None:
 		_init_frappe_for_thread()
+		lock_file = os.path.join(get_bench_path(), "config", "scheduler_process")
 		while True:
-			start_scheduler()
-			if not self.lock_busy:
-				logger.error(
-					"scheduler: %s is locked by another scheduler, no scheduled job runs here;"
-					" retry every %ds",
-					os.path.join(get_bench_path(), "config", "scheduler_process"),
-					SCHEDULER_RETRY_SECONDS,
-				)
-				self.lock_busy = True
+			try:
+				start_scheduler()
+			except Exception:
+				if not self.start_failed:
+					logger.exception(
+						"scheduler: could not start (lock file %s), no scheduled job runs here;"
+						" retry every %ds",
+						lock_file,
+						SCHEDULER_RETRY_SECONDS,
+					)
+					self.start_failed = True
+			else:
+				if not self.lock_busy:
+					logger.error(
+						"scheduler: %s is locked by another scheduler, no scheduled job runs here;"
+						" retry every %ds",
+						lock_file,
+						SCHEDULER_RETRY_SECONDS,
+					)
+					self.lock_busy = True
 			time.sleep(SCHEDULER_RETRY_SECONDS)
 
 	def __init__(self):
-		# Log the busy lock once per process, not at each retry.
+		# Log the busy lock, and a failed start, once per process, not at each retry.
 		self.lock_busy = False
+		self.start_failed = False
 		self.thread = threading.Thread(target=self._run, name="scheduler", daemon=True)
 
 	def start(self) -> None:
