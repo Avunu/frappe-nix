@@ -65,6 +65,7 @@ let
     [project]
     name = "legacy-bench"
     version = "0.0.0"
+    requires-python = ">=3.14"
 
     [tool.uv.extra-build-dependencies]
     "frappe-runtime" = ["hatchling"]
@@ -111,7 +112,7 @@ in
         # With the block: derived from the lock, the bench's own entry in place
         # of the derived one, the git source given hatchling, the wheel and the
         # editable member left out.
-        { printf '[project]\nname = "b"\nversion = "0"\n\n[tool.uv.extra-build-dependencies]\n'
+        { printf '[project]\nname = "b"\nversion = "0"\nrequires-python = ">=3.14"\n\n[tool.uv.extra-build-dependencies]\n'
           printf '# >>> frappe-nix: sdist build deps (managed) >>>\n# <<< frappe-nix: sdist build deps (managed) <<<\n'
         } > pyproject.toml
         ${withExtra.sync}/bin/frappe-nix-build-deps-sync
@@ -127,8 +128,11 @@ in
         sed -i '/"frappe-runtime"/d' pyproject.toml
         cp pyproject.toml before
         frappe-nix-workspace ensure-root --pyproject pyproject.toml --template ${../templates/bench/pyproject.toml} > /dev/null
-        sed -n '/^\[tool.uv.extra-build-dependencies\]/,/^\[/p' pyproject.toml > after-table
-        sed -n '/^\[tool.uv.extra-build-dependencies\]/,/^\[/p' before > before-table
+        # The table alone, up to the next header (ensure-root may add other
+        # tables after it, [tool.uv.sources]), blank lines left out.
+        table() { awk '/^\[/ { p = ($0 == "[tool.uv.extra-build-dependencies]") } p && NF' "$1"; }
+        table pyproject.toml > after-table
+        table before > before-table
         diff -u before-table after-table || fail "ensure-root wrote into a bench with the block"
         cp ${legacy} pyproject.toml && chmod u+w pyproject.toml
         frappe-nix-workspace ensure-root --pyproject pyproject.toml --template ${../templates/bench/pyproject.toml} > /dev/null
