@@ -7,7 +7,8 @@ that aren't its own; ``frappe/marketplace#29`` puts them on the bench, and so do
 1. ``apps/frappe`` and each dependency app (``[tool.bench.frappe-dependencies]`` beyond
    frappe) are the source trees the app's ``flake.lock`` pins, fetched like every pin
    (``frappe-nix pin-path``, narHash-verified) and copied into the bench as git checkouts,
-   which pilot's inventory needs;
+   which pilot's inventory needs (writable, with fresh mtimes: a store tree's 1970 ones fail
+   frappe's wheel build);
 2. the app is its tracked files, as the registry clones them;
 3. ``getapp_runner.py`` runs every check of pilot's ``_all_checks()`` on its own, with the
    pinned ``frappe/pilot`` on ``PYTHONPATH`` and frappe's ``requires-python`` (3.14 for
@@ -39,18 +40,32 @@ from frappe_nix_tools.listing.target import Target
 RUNNER = Path(__file__).with_name("getapp_runner.py")
 
 
+# 1980-01-01T00:00:00Z, the earliest time a ZIP entry can carry (flit_core clamps to it).
+ZIP_EPOCH = "315532800"
+
+
 def _checkout(tree: Path, dest: Path, origin: str) -> None:
-	"""``tree`` copied to ``dest`` as a git checkout with ``origin`` (pilot reads the remote)."""
-	shutil.copytree(tree, dest, symlinks=True)
-	for path in [dest, *dest.rglob("*")]:
-		if not path.is_symlink():
-			path.chmod(path.stat().st_mode | 0o200)
+	"""``tree`` copied to ``dest`` as a git checkout with ``origin`` (pilot reads the remote).
+
+	Writable and with fresh mtimes (``pins.copy_tree``): ImportCheck builds frappe's wheel
+	from it, and a store tree's 1970 mtimes fail that build (``ZIP does not support
+	timestamps before 1980``)."""
+	pins.copy_tree(tree, dest)
 	env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 	for argv in (
 		["git", "init", "-q", "-b", "main"],
 		["git", "remote", "add", "origin", origin],
 	):
 		subprocess.run(argv, cwd=dest, check=True, capture_output=True, env=env)
+
+
+def runner_env(pilot: Path) -> dict[str, str]:
+	"""The runner's environment: pilot importable, and ``SOURCE_DATE_EPOCH`` (unless set) for
+	the wheels pilot's validation venvs build, so no file's mtime can fail them (a Nix dev
+	shell sets it, CI does not)."""
+	env = dict(os.environ, PYTHONPATH=str(pilot))
+	env.setdefault("SOURCE_DATE_EPOCH", ZIP_EPOCH)
+	return env
 
 
 def dependencies(t: Target) -> list[dict]:
@@ -108,7 +123,7 @@ def run(t: Target, report_dir: Path) -> list[Result]:
 				}
 			)
 		)
-		env = dict(os.environ, PYTHONPATH=str(pilot))
+		env = runner_env(pilot)
 		log = report_dir / "getapp.log"
 		report_dir.mkdir(parents=True, exist_ok=True)
 		with log.open("w") as handle:
