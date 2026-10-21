@@ -24,8 +24,11 @@ lint
                  a push or schedule, or with no base
   ci-lint        ``yarn -s ci:lint`` when ``package.json`` has that script
 typecheck
-  frappe-path    ``FRAPPE_PATH`` = ``frappe-nix pin-path frappe`` (kept when already set), passed on
-  frappe-node-modules  [typescript, ``frappe-node-modules = true``] ``yarn --cwd $FRAPPE_PATH install``
+  frappe-path    ``FRAPPE_PATH`` = ``frappe-nix pin-path frappe`` (kept when already set), passed on;
+                 ``--writable`` with ``frappe-node-modules``, as the store path is read-only
+  frappe-node-modules  [typescript, ``frappe-node-modules = true``] ``yarn --cwd $FRAPPE_PATH install``;
+                 a read-only ``FRAPPE_PATH`` is first copied to ``.dev-dist/frappe-path/``,
+                 which ``FRAPPE_PATH`` names from then on
   typecheck      [typescript] ``yarn -s typecheck`` when the script exists
   unchecked-js   [typescript with check-js, a non-empty list] ``frappe-nix unchecked-js --stale``
   js-unit        [tests with js-unit] when ``test:unit`` exists: a ``test/unit/**/*.test.ts`` is
@@ -53,6 +56,7 @@ import argparse
 import fnmatch
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -64,7 +68,7 @@ import yaml
 from frappe_nix_tools.common import data_path, repo
 from frappe_nix_tools.common.appgates import AppConfig
 from frappe_nix_tools.common.appgates import load as load_app
-from frappe_nix_tools.common.pins import pin_path
+from frappe_nix_tools.common.pins import copy_tree, pin_path
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError, FrappeNixError
 from frappe_nix_tools.scaffold import context, discover, globs
 from frappe_nix_tools.scaffold import hooks as app_hooks
@@ -340,44 +344,60 @@ def lint(g: Gate) -> None:
 # ── typecheck ─────────────────────────────────────────────────────────────────
 
 
+def writable_frappe(g: Gate) -> tuple[str, str]:
+	"""``FRAPPE_PATH``, made writable: a read-only tree (the Nix store path ``pin-path`` gives
+	where the store has it, as on a self-hosted NixOS runner) is copied to
+	``.dev-dist/frappe-path/<name>``, and ``FRAPPE_PATH`` names the copy from then on, for
+	the later steps and the app's scripts. ``(path, why)``; ``why`` is empty for the tree as is."""
+	fp = Path(g.env["FRAPPE_PATH"])
+	if os.access(fp, os.W_OK):
+		return str(fp), ""
+	dest = g.root / ".dev-dist" / "frappe-path" / fp.name
+	if dest.is_symlink() or dest.is_file():
+		dest.unlink()
+	elif dest.exists():
+		shutil.rmtree(dest)
+	dest.parent.mkdir(parents=True, exist_ok=True)
+	copy_tree(fp, dest)
+	g.env["FRAPPE_PATH"] = str(dest)
+	return str(dest), f"{fp} is read-only: installed into a copy, {dest}"
+
+
 def typecheck(g: Gate) -> None:
 	root = g.root
 	tracked = repo.ls_files(root)
 	pkg = scripts(root)
 	ts_on = g.on("typescript")
 
+	node_modules = ts_on and g.cfg("frappe-node-modules", False)
+
 	def frappe_path() -> tuple[str, str]:
 		have = g.env.get("FRAPPE_PATH", "")
 		if have and Path(have).is_dir():
 			return "ok", "FRAPPE_PATH from the environment"
-		g.env["FRAPPE_PATH"] = str(pin_path("frappe", repo.find_up("flake.lock", root).resolve()))
+		# The store path is read-only: frappe-node-modules installs into the tree.
+		lock = repo.find_up("flake.lock", root).resolve()
+		g.env["FRAPPE_PATH"] = str(pin_path("frappe", lock, writable=node_modules))
 		return "ok", ""
 
 	g.step("frappe-path", "", frappe_path)
-	fp = g.env.get("FRAPPE_PATH", "")
 
 	if not ts_on:
 		g.skip("frappe-node-modules", "typescript", "module typescript is off")
-	elif not g.cfg("frappe-node-modules", False):
+	elif not node_modules:
 		g.skip("frappe-node-modules", "typescript", "frappe-node-modules is false")
-	elif not fp:
+	elif not g.env.get("FRAPPE_PATH", ""):
 		g.skip("frappe-node-modules", "typescript", "no FRAPPE_PATH")
 	else:
-		g.step(
-			"frappe-node-modules",
-			"typescript",
-			lambda: ok(
-				g.run(
-					"yarn",
-					"--cwd",
-					fp,
-					"install",
-					"--frozen-lockfile",
-					"--ignore-scripts",
-					"--non-interactive",
-				)
-			),
-		)
+
+		def frappe_node_modules() -> tuple[str, str]:
+			fp, why = writable_frappe(g)
+			code = g.run(
+				"yarn", "--cwd", fp, "install", "--frozen-lockfile", "--ignore-scripts", "--non-interactive"
+			)
+			return ("failed", f"exit {code}") if code else ("ok", why)
+
+		g.step("frappe-node-modules", "typescript", frappe_node_modules)
 
 	if not ts_on:
 		g.skip("typecheck", "typescript", "module typescript is off")

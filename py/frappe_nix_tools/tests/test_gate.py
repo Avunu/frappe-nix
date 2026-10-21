@@ -32,6 +32,10 @@ echo "$(basename "$0") $*" >> "$STUB_LOG"
 if [ -n "${STUB_FAIL:-}" ]; then
   case "$(basename "$0") $*" in *"$STUB_FAIL"*) exit 1 ;; esac
 fi
+# yarn --cwd <dir> install creates <dir>/node_modules, as yarn does: EROFS in a store tree.
+if [ "$(basename "$0")" = yarn ] && [ "$1" = --cwd ] && [ "$3" = install ]; then
+  mkdir -p "$2/node_modules" || exit 1
+fi
 exit 0
 """
 
@@ -193,6 +197,65 @@ class TestTypecheck(GateCase):
 			self.assertEqual(steps[name]["status"], "skipped", name)
 			self.assertIn("typescript is off", steps[name]["reason"])
 		self.assertNotIn("yarn -s typecheck", self.calls())
+
+	def frappe_node_modules_on(self) -> None:
+		path = self.root / "pyproject.toml"
+		path.write_text(
+			path.read_text().replace(
+				"[tool.frappe-nix]\n", "[tool.frappe-nix]\nfrappe-node-modules = true\n", 1
+			)
+		)
+		self.commit()
+
+	def read_only_tree(self) -> Path:
+		"""A frappe tree as the Nix store holds it: read-only, every mtime 1970."""
+		tree = Path(self._tmp.name) / "store" / "hash-source"
+		(tree / "frappe").mkdir(parents=True)
+		(tree / "package.json").write_text('{"name": "frappe"}\n')
+		(tree / "frappe" / "__init__.py").write_text("")
+		for path in (*tree.rglob("*"), tree):
+			os.utime(path, (1, 1))
+			path.chmod(0o555 if path.is_dir() else 0o444)
+		if os.access(tree, os.W_OK):
+			self.skipTest("a read-only directory is writable here (running as root?)")
+		return tree
+
+	def test_node_modules_never_go_into_a_read_only_frappe_path(self) -> None:
+		"""On a NixOS runner FRAPPE_PATH is the store path: EROFS (carbon_theme#101)."""
+		self.frappe_node_modules_on()
+		ro = self.read_only_tree()
+		with mock.patch.dict(os.environ, {"FRAPPE_PATH": str(ro)}):
+			code, report, out = self.gate("typecheck")
+		self.assertEqual(code, 0, out)
+		step = self.steps(report)["frappe-node-modules"]
+		self.assertEqual(step["status"], "ok", out)
+		copy = self.root / ".dev-dist" / "frappe-path" / ro.name
+		self.assertIn("read-only", step["reason"])
+		self.assertFalse((ro / "node_modules").exists())
+		self.assertTrue((copy / "node_modules").is_dir())
+		self.assertEqual((copy / "package.json").read_text(), '{"name": "frappe"}\n')
+		self.assertIn(
+			f"yarn --cwd {copy} install --frozen-lockfile --ignore-scripts --non-interactive", self.calls()
+		)
+
+	def test_frappe_path_is_writable_when_node_modules_are_installed(self) -> None:
+		ro = self.read_only_tree()
+		seen: list[bool] = []
+
+		def pin(name: str, lock: Path, *, writable: bool = False) -> Path:
+			seen.append(writable)
+			return self.pins if writable else ro
+
+		with mock.patch.object(gate, "pin_path", side_effect=pin):
+			_code, report, out = self.gate("typecheck")
+			self.assertEqual(seen, [False])
+			self.frappe_node_modules_on()
+			seen.clear()
+			code, report, out = self.gate("typecheck")
+		self.assertEqual(code, 0, out)
+		self.assertEqual(seen, [True])
+		self.assertEqual(self.steps(report)["frappe-node-modules"]["reason"], "")
+		self.assertTrue((self.pins / "node_modules").is_dir())
 
 	def test_js_unit_without_tests_fails(self) -> None:
 		pkg = json.loads((self.root / "package.json").read_text())

@@ -47,7 +47,7 @@ Every step runs, and the gate fails after the last one if any failed. A step who
 | Step | Module | What |
 |---|---|---|
 | frappe-path | | `FRAPPE_PATH` is the app's locked frappe tree (`frappe-nix pin-path frappe`), fetched and hash-checked. Later steps and the app's scripts read it. |
-| frappe-node-modules | `typescript` | `yarn install` in frappe's tree, when `[tool.frappe-nix] frappe-node-modules = true`. |
+| frappe-node-modules | `typescript` | `yarn install` in frappe's tree, when `[tool.frappe-nix] frappe-node-modules = true`. The tree must be writable, so the workflow reads it with `pin-path --writable` (a copy in `.dev-dist/pins/`, never the read-only Nix store path a NixOS runner has), and a read-only `FRAPPE_PATH` is first copied to `.dev-dist/frappe-path/`, which `FRAPPE_PATH` then names. |
 | typecheck | `typescript` | `yarn -s typecheck`: the managed TypeScript solution, then each SPA's own check. |
 | unchecked-js | `typescript` with `check-js` | `frappe-nix unchecked-js --stale`, while `[[tool.frappe-nix.unchecked-js]]` lists anything. |
 | js-unit | `tests` with `js-unit` | At least one `test/unit/**/*.test.ts` is tracked, then `yarn -s test:unit`. |
