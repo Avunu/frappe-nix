@@ -1778,6 +1778,27 @@ in
             example = "ghcr.io/avunu";
             description = "Registry prefix for the image names: \"ghcr.io/avunu\" names them ghcr.io/avunu/<name>/<role>. A trailing slash is dropped; empty leaves the names bare.";
           };
+          labels = mkOption {
+            type = types.attrsOf types.str;
+            default = { };
+            example = literalExpression ''
+              {
+                "org.opencontainers.image.source" = "https://github.com/acme/bench";
+                "org.opencontainers.image.revision" = self.rev or "dirty";
+              }
+            '';
+            description = "Image labels, over the org.opencontainers.image.* ones every image gets (title, source, version, licenses, and revision when the bench's flake has frappe-nix as the `frappe-nix` input). Those describe frappe-nix; set source, version and revision here to describe the bench instead.";
+          };
+          nonRoot = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Run every image as frappe (uid/gid 1000) instead of root, with the paths it writes (/bench/sites, /bench/logs, /bench/config/pids, nginx's log, cache and temp directories) owned by it. Opt-in through 1.x; the default becomes true in 2.0.0. A sites volume a root image wrote is owned by root and needs a one-time chown first: see Running as non-root in docs/production/images.md.";
+          };
+          aliases = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Keep the packages' old names (runtime, nginx, bench-cli, web, …) as aliases of container-<role>, each warning when used. `nix flake check` evaluates every package, so set false once nothing uses them. The aliases go in frappe-nix 2.0.0.";
+          };
         };
       };
     }

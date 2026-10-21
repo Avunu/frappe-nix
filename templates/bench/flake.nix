@@ -66,7 +66,7 @@
               python = pkgs.@PYTHON@;
               nodejs = pkgs.@NODEJS@;
 
-              # Build production OCI images with `nix build .#web` (etc.).
+              # Build production OCI images with `nix build .#container-runtime` (etc.).
               # containers.enable = true;
             };
           };
