@@ -4,6 +4,11 @@ version: 2
 # run (nix, github-actions, pre-commit), so each such bump ships as a frappe-nix patch
 # release; `chore(deps)` for frappe-nix's own dev environment, which releases nothing.
 #
+# Every ecosystem waits seven days after a release before proposing it
+# (python-devops-nix CONVENTIONS.md, Dependabot), so a version that is pulled or
+# patched within the week never reaches a pull request. Security updates are not
+# held back.
+#
 # Keeps this repo's dependencies up to date. PRs auto-merge once the required checks go
 # green — see .github/workflows/dependabot-auto-merge.yml.
 #
@@ -27,6 +32,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "fix(deps)"
     groups:
@@ -42,6 +49,8 @@ updates:
     directory: /dev
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(deps)"
       prefix-development: "chore(deps)"
@@ -62,6 +71,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "fix(deps)"
     ignore:
@@ -75,6 +86,8 @@ updates:
     directory: /
     schedule:
       interval: daily
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "fix(deps)"
     groups:
