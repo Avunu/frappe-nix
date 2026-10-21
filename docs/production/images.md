@@ -160,7 +160,7 @@ The images run as root by default in 1.x, as they always have. Set `containers.n
 frappe-nix.containers.nonRoot = true;
 ```
 
-With it on, the image owns what that user writes: `/bench/sites`, `/bench/logs`, `/bench/config/pids` and the home directory `/home/frappe`, and in the nginx image also `/var/log/nginx`, `/var/cache/nginx` and `/tmp/nginx`. `/tmp` is writable by everyone.
+With it on, the image owns what that user writes: `/bench/sites`, `/bench/logs`, `/bench/config` (where the scheduler takes its lock) and the home directory `/home/frappe`, and in the nginx image also `/var/log/nginx`, `/var/cache/nginx` and `/tmp/nginx`. `/tmp` is writable by everyone.
 
 - A new named volume mounted at `/bench/sites` takes the image's ownership, so it needs nothing.
 - A bind mount, or a volume from a host path, must be writable by uid 1000: `chown -R 1000:1000 <DIR>` on the host.
@@ -259,7 +259,7 @@ docker run --rm \
   <BENCH_NAME>/bench:latest bench --site site1.example.com migrate
 ```
 
-frappe-bench's `bench` refuses to run as root, so this needs [`containers.nonRoot`](#running-as-non-root). Without it, call Frappe's own command line, which `bench` hands these commands to anyway: `python -m frappe.utils.bench_helper frappe --site site1.example.com migrate`.
+frappe-bench's `bench` refuses to run as root, so this needs [`containers.nonRoot`](#running-as-non-root). Without it, call Frappe's own command line, which `bench` hands these commands to anyway: `python -m frappe.utils.bench_helper frappe --site site1.example.com migrate`. This is only about commands you run yourself: the split set's `scheduler` and `worker-*` images start that command line directly, so they run as root or not.
 
 ### The nginx image
 
