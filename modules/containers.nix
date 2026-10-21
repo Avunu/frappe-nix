@@ -89,6 +89,13 @@
           "FRAPPE_ENV_TYPE=production"
           "FRAPPE_STREAM_LOGGING=1"
           "FRAPPE_TUNE_GC=1"
+          # frappe-bench's `bench` imports GitPython at startup, which raises
+          # when no git is on PATH. The images have none and need none: their
+          # apps are store paths, not checkouts, so get-app, update and
+          # switch-to-branch (bench's only git users) have nothing to act on.
+          # Quiet keeps the import from failing `bench`, and with it the split
+          # set's scheduler and workers, which run `bench schedule`/`worker`.
+          "GIT_PYTHON_REFRESH=quiet"
           "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
           "LD_LIBRARY_PATH=${libraryPath}"
         ]
