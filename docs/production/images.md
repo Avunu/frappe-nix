@@ -3,7 +3,7 @@ title: Build production images
 description: How frappe-nix turns a bench into an immutable build, which OCI images come out of it, and how to build, load, push and run them.
 order: 1
 tags: [oci, containers, builtbench, docker]
-updated: 2026-10-06
+updated: 2026-10-21
 ---
 
 This page explains how frappe-nix turns a Frappe bench into an immutable build, which container images come out of it, and how to build and run them. Use it when you want a Frappe deployment where nothing is installed or compiled at container start.
@@ -60,44 +60,54 @@ frappe-nix = {
 };
 ```
 
-Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<name>/<role>`, or `<registry>/<name>/<role>` with `containers.registry` set (see [Building, loading and pushing](#building-loading-and-pushing)). The [unified runtime](runtime.md) is on by default, which gives you three images.
+Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and named `<name>/<role>`, or `<registry>/<name>/<role>` with `containers.registry` set (see [Building, loading and pushing](#building-loading-and-pushing)). The package that builds it is `container-<role>`. The [unified runtime](runtime.md) is on by default, which gives you three images.
 
-| Package     | Image                         | Contents                                                                                     |
-| ----------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `runtime`   | `<BENCH_NAME>/runtime:latest` | One `frappe-runtime` process: web, realtime, background jobs and scheduler. Listens on 8000. |
-| `nginx`     | `<BENCH_NAME>/nginx:latest`   | nginx plus the built bench. Listens on 80.                                                   |
-| `bench-cli` | `<BENCH_NAME>/bench:latest`   | The `bench` command for migrations and one-off tasks.                                        |
+| Package             | Image                         | Contents                                                                                     |
+| ------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `container-runtime` | `<BENCH_NAME>/runtime:latest` | One `frappe-runtime` process: web, realtime, background jobs and scheduler. Listens on 8000. |
+| `container-nginx`   | `<BENCH_NAME>/nginx:latest`   | nginx plus the built bench. Listens on 80.                                                   |
+| `container-bench`   | `<BENCH_NAME>/bench:latest`   | The `bench` command for migrations and one-off tasks.                                        |
 
-Note that the package is `bench-cli` but the image is named `bench`.
+Every image carries [OCI labels](#labels), the ones that serve HTTP have a [healthcheck](#healthchecks), and with `containers.nonRoot` they [run as a non-root user](#running-as-non-root).
 
 ### The split image set
 
 Set `runtime.enable = false` and frappe-nix builds the classic split instead. You get eight packages instead of three:
 
-| Package          | Image                                | Process                           |
-| ---------------- | ------------------------------------ | --------------------------------- |
-| `web`            | `<BENCH_NAME>/web:latest`            | gunicorn on port 8000             |
-| `scheduler`      | `<BENCH_NAME>/scheduler:latest`      | `bench schedule`                  |
-| `worker-default` | `<BENCH_NAME>/worker-default:latest` | `bench worker --queue default`    |
-| `worker-short`   | `<BENCH_NAME>/worker-short:latest`   | `bench worker --queue short`      |
-| `worker-long`    | `<BENCH_NAME>/worker-long:latest`    | `bench worker --queue long`       |
-| `socketio`       | `<BENCH_NAME>/socketio:latest`       | Node realtime server on port 9000 |
-| `nginx`          | `<BENCH_NAME>/nginx:latest`          | nginx on port 80                  |
-| `bench-cli`      | `<BENCH_NAME>/bench:latest`          | `bench`                           |
+| Package                    | Image                                | Process                           |
+| -------------------------- | ------------------------------------ | --------------------------------- |
+| `container-web`            | `<BENCH_NAME>/web:latest`            | gunicorn on port 8000             |
+| `container-scheduler`      | `<BENCH_NAME>/scheduler:latest`      | `bench schedule`                  |
+| `container-worker-default` | `<BENCH_NAME>/worker-default:latest` | `bench worker --queue default`    |
+| `container-worker-short`   | `<BENCH_NAME>/worker-short:latest`   | `bench worker --queue short`      |
+| `container-worker-long`    | `<BENCH_NAME>/worker-long:latest`    | `bench worker --queue long`       |
+| `container-socketio`       | `<BENCH_NAME>/socketio:latest`       | Node realtime server on port 9000 |
+| `container-nginx`          | `<BENCH_NAME>/nginx:latest`          | nginx on port 80                  |
+| `container-bench`          | `<BENCH_NAME>/bench:latest`          | `bench`                           |
 
 > [!NOTE]
-> With the default `runtime.enable = true`, the `web` package does not exist. Build `runtime` instead. The scaffolded `flake.nix` carries a commented hint that mentions `nix build .#web`, which applies to the split set only.
+> With the default `runtime.enable = true`, the `container-web` package does not exist. Build `container-runtime` instead.
+
+### The old package names
+
+Before 1.2.0 the packages were named by role alone (`runtime`, `nginx`, `web`, …), and `container-bench` was `bench-cli`. The image names have not changed. The old package names still build the same images and print a warning:
+
+```text
+evaluation warning: frappe-nix: the package `runtime' has been renamed `container-runtime'. …
+```
+
+Move scripts and CI to `container-<role>`. The old names go in 2.0.0. `nix flake check` evaluates every package, so it prints the warning for each old name even when nothing uses it; set `containers.aliases = false` to drop them once you have moved.
 
 ## Building, loading and pushing
 
 Build an image from your bench repository:
 
 ```bash
-nix build .#runtime
+nix build .#container-runtime
 docker load < result
 ```
 
-`result` is an image tarball, and `docker load` registers it as `<BENCH_NAME>/runtime:latest`. Repeat with `.#nginx` and `.#bench-cli` for the other two.
+`result` is an image tarball, and `docker load` registers it as `<BENCH_NAME>/runtime:latest`. Repeat with `.#container-nginx` and `.#container-bench` for the other two.
 
 Set `containers.registry` and the images are named for the registry, so they load ready to push. The registry goes in front of the name with a slash, and a trailing slash on it is dropped. With it empty, the default, the names stay bare.
 
@@ -106,7 +116,7 @@ frappe-nix.containers.registry = "registry.example.com";
 ```
 
 ```bash
-nix build .#runtime
+nix build .#container-runtime
 docker load < result    # registry.example.com/<BENCH_NAME>/runtime:latest
 docker push registry.example.com/<BENCH_NAME>/runtime:latest
 ```
@@ -117,15 +127,73 @@ frappe-nix does not push anything itself. Without a registry set, `docker tag` t
 docker tag <BENCH_NAME>/runtime:latest registry.example.com/<BENCH_NAME>/runtime:latest
 ```
 
+### Labels
+
+Every image carries the `org.opencontainers.image.*` labels:
+
+| Label      | Value                                                                                               |
+| ---------- | --------------------------------------------------------------------------------------------------- |
+| `title`    | the image name, such as `<BENCH_NAME>/runtime`                                                      |
+| `source`   | `https://github.com/Avunu/frappe-nix`                                                               |
+| `version`  | the frappe-nix version that built the image                                                         |
+| `revision` | frappe-nix's commit, when your flake has frappe-nix as the `frappe-nix` input, as the scaffold does |
+| `licenses` | `MIT`                                                                                               |
+
+They describe frappe-nix. To describe your bench instead, set `containers.labels`, which goes over them and can add any other label:
+
+```nix
+frappe-nix.containers.labels = {
+  "org.opencontainers.image.source" = "https://github.com/acme/bench";
+  "org.opencontainers.image.revision" = self.rev or "dirty";
+};
+```
+
 ## Running the images
 
 Every image except `nginx` and `socketio` starts through the same entrypoint. It builds the site's configuration from environment variables and mounted secrets, then runs the image's command.
+
+### Running as non-root
+
+The images run as root by default in 1.x, as they always have. Set `containers.nonRoot = true` and every image runs as `frappe`, uid 1000 and gid 1000, instead. That becomes the default in 2.0.0.
+
+```nix
+frappe-nix.containers.nonRoot = true;
+```
+
+With it on, the image owns what that user writes: `/bench/sites`, `/bench/logs`, `/bench/config/pids` and the home directory `/home/frappe`, and in the nginx image also `/var/log/nginx`, `/var/cache/nginx` and `/tmp/nginx`. `/tmp` is writable by everyone.
+
+- A new named volume mounted at `/bench/sites` takes the image's ownership, so it needs nothing.
+- A bind mount, or a volume from a host path, must be writable by uid 1000: `chown -R 1000:1000 <DIR>` on the host.
+- Secret files in `/secrets` must be readable by uid 1000.
+
+> [!IMPORTANT]
+> A sites volume that a root image wrote is owned by root, so a non-root image cannot write to it, and the entrypoint fails on `site_config.json`. Before you turn `nonRoot` on for an existing deployment, change the volume's owner once, with the image's own `chown`:
+>
+> ```bash
+> docker run --rm --user 0 --entrypoint chown \
+>   -v <BENCH_NAME>-sites:/bench/sites \
+>   <BENCH_NAME>/runtime:latest -R 1000:1000 /bench/sites
+> ```
+
+nginx listens on port 80, below 1024. Docker lets any user bind those ports in a container's network namespace, but rootless Podman and some Kubernetes runtimes do not by default. With `nonRoot` on, run the nginx container there with the sysctl that allows it: `--sysctl net.ipv4.ip_unprivileged_port_start=0` in Podman, or a pod `securityContext.sysctls` entry in Kubernetes. Or have your `nginx.conf` listen on a port above 1024 and publish that one.
+
+### Healthchecks
+
+The images that serve HTTP have a `HEALTHCHECK`. Docker and Podman run it every 30 seconds, after a 120-second start period, and mark the container unhealthy after three failures in a row:
+
+| Image            | Healthy when                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `runtime`, `web` | `GET /api/method/ping` on port 8000, for the site in `FRAPPE_SITE`, answers 200               |
+| `socketio`       | the realtime server on port 9000 completes a Socket.IO handshake                              |
+| `nginx`          | nginx on port 80 answers with any HTTP status. The runtime behind it has its own healthcheck. |
+
+`scheduler`, the workers and `bench` serve nothing and have none. The probes use the image's own Python, Node or Bash, so the images need no `curl`. A runtime started on a unix socket instead of port 8000 has nothing for its probe to reach; run it with `--no-healthcheck`, or give it a `--health-cmd` of your own.
 
 ### Volumes
 
 Mount two paths:
 
-- `/bench/sites` is a persistent volume for site state.
+- `/bench/sites` is a persistent volume for site state (writable by uid 1000 with `containers.nonRoot`).
 - `/secrets` holds secret files, mounted read-only.
 
 At every start the entrypoint links `apps.txt`, `apps.json` and the compiled `assets` from the image into `/bench/sites`, so a new image always brings its own app registry and assets. `common_site_config.json` is copied in once, and from then on it belongs to you.
@@ -180,7 +248,7 @@ The default command is `frappe-runtime --host 0.0.0.0 --port 8000 --job-threads 
 
 ### One-off commands
 
-Run `bench` commands from the `bench-cli` image with the same variables and volumes:
+Run `bench` commands from the `bench` image with the same variables and volumes:
 
 ```bash
 docker run --rm \

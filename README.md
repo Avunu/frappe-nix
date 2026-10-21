@@ -11,7 +11,7 @@ Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench pro
 -   reproducible **node\_modules** for every app and nested frontend, straight from each one's own `yarn.lock`
 -   a `benchRoot` derivation that assembles the whole `/bench` tree
 -   a **`builtBench`** package that runs `bench build` at build time (immutable assets) — the production-ready deployable consumed by both the NixOS module and OCI containers
--   **OCI container images** — `runtime`, `nginx`, `bench-cli`, or the eight-image split set (web, scheduler, three workers, socketio, nginx, bench-cli) with `runtime.enable = false`
+-   **OCI container images** — `container-runtime`, `container-nginx`, `container-bench`, or the eight-image split set (`container-web`, `-scheduler`, three `-worker-*`, `-socketio`, `-nginx`, `-bench`) with `runtime.enable = false`; with OCI labels and healthchecks, and non-root with `containers.nonRoot`
 -   a multi-tenant **NixOS module** (`services.frappe-nix`) with per-site systemd units
 -   a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …)
 
@@ -152,7 +152,7 @@ When `frappe-nix.enable` is set, the module adds these **packages** to your flak
 
 and one **app** (`nix run .#<name>`): `relock`, which runs `uv lock` from a `uv` that does not come from the workspace, so it still works when a stale `uv.lock` stops the dev shell from opening. In app mode it also writes `nix/uv.lock` (and `nix/node-locks/`) back into the repo. See [Dependencies and locks](docs/development/locks.md).
 
-With `containers.enable = true` it additionally builds (named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set): `runtime`, `nginx`, `bench-cli` — or, with `runtime.enable = false`, `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx`, `bench-cli`. See [Build production images](docs/production/images.md).
+With `containers.enable = true` it additionally builds `container-<role>` (named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set): `container-runtime`, `container-nginx`, `container-bench` — or, with `runtime.enable = false`, `container-web`, `container-scheduler`, `container-worker-default`, `container-worker-short`, `container-worker-long`, `container-socketio`, `container-nginx`, `container-bench`. The old package names (`runtime`, `bench-cli`, …) are aliases that warn, until 2.0.0. See [Build production images](docs/production/images.md).
 
 ## The unified runtime
 

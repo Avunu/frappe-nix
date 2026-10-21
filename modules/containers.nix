@@ -9,6 +9,12 @@
 # Volume contract:
 #   /bench/sites  — mount a persistent volume here for site state
 #   /secrets/     — mount secret files (db_password, encryption_key, *.json)
+#
+# Every image carries the OCI labels, the ones that serve HTTP have a
+# HEALTHCHECK, and with containers.nonRoot they run as frappe (uid/gid 1000)
+# (python-devops-nix CONVENTIONS.md,
+# Containers). The outputs are container-<role>; the role-named outputs they
+# replaced stay as aliases until 2.0.0.
 { inputs, ... }:
 
 {
@@ -219,6 +225,97 @@
 
         prefix = cfg.name;
 
+        # The user the images run as with containers.nonRoot (opt-in through
+        # 1.x, the default in 2.0.0); root otherwise, as before. Fixed, so a
+        # volume or a bind mount can be owned to match before the first start;
+        # 1000 is the uid a desktop user usually has, and the one
+        # frappe_docker uses.
+        inherit (cfg.containers) nonRoot;
+        uid = 1000;
+        gid = 1000;
+        home = "/home/frappe";
+        user = if nonRoot then "${toString uid}:${toString gid}" else "0:0";
+        homeEnv = lib.optional nonRoot "HOME=${home}";
+
+        # /etc/passwd and /etc/group, so the uid has a name and a home: Python's
+        # getpass, Chromium and Node's os.userInfo() look it up.
+        containerUsers = pkgs.runCommand "frappe-nix-container-users" { } ''
+          mkdir -p $out/etc
+          cat > $out/etc/passwd <<'EOF'
+          root:x:0:0:root:/root:/bin/sh
+          frappe:x:${toString uid}:${toString gid}:frappe:${home}:/bin/sh
+          nobody:x:65534:65534:nobody:/var/empty:/bin/false
+          EOF
+          cat > $out/etc/group <<'EOF'
+          root:x:0:
+          frappe:x:${toString gid}:
+          nogroup:x:65534:
+          EOF
+        '';
+
+        # buildLayeredImage, with the image config readable without a build
+        # (tests/containers-registry.nix).
+        buildImage =
+          args: pkgs.dockerTools.buildLayeredImage (args // { passthru.imageConfig = args.config; });
+
+        # Directories the user writes, created and (with nonRoot) owned at
+        # build time. A fresh named volume mounted over one of them takes that
+        # ownership. -h: the links into the store are re-owned themselves,
+        # never followed.
+        ownWritable = dirs: ''
+          mkdir -p ${toString dirs}
+          ${lib.optionalString nonRoot "chown -Rh ${user} ${toString dirs}"}
+        '';
+
+        # org.opencontainers.image.* labels. revision is frappe-nix's own commit
+        # when the bench's flake has it as the `frappe-nix` input, as the
+        # scaffold does. containers.labels overrides any of them, for a bench
+        # that labels its images with its own repository and version.
+        version = lib.trim (builtins.readFile ../version.txt);
+        revision = (inputs.frappe-nix or { }).rev or null;
+        labels =
+          role:
+          {
+            "org.opencontainers.image.title" = imageName role;
+            "org.opencontainers.image.source" = "https://github.com/Avunu/frappe-nix";
+            "org.opencontainers.image.version" = version;
+            "org.opencontainers.image.licenses" = "MIT";
+          }
+          // lib.optionalAttrs (revision != null) {
+            "org.opencontainers.image.revision" = revision;
+          }
+          // cfg.containers.labels;
+
+        # HEALTHCHECK, with the durations in nanoseconds as the image config has
+        # them. A failure inside StartPeriod (the first imports) does not count.
+        second = 1000000000;
+        healthcheck = test: {
+          Test = [ "CMD" ] ++ test;
+          Interval = 30 * second;
+          Timeout = 10 * second;
+          StartPeriod = 120 * second;
+          Retries = 3;
+        };
+
+        # Frappe's readiness endpoint, asked for the container's site: Frappe
+        # picks the site from the Host header. The image has no curl; its
+        # Python does.
+        pingProbe = pkgs.writeScript "frappe-healthcheck" ''
+          #!${pyEnv}/bin/python
+          import os, sys, urllib.request
+
+          site = os.environ.get("FRAPPE_SITE", "localhost")
+          request = urllib.request.Request(
+              "http://127.0.0.1:8000/api/method/ping", headers={"Host": site}
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=8) as response:
+                  sys.exit(0 if response.status == 200 else 1)
+          except Exception as error:
+              print(f"frappe-healthcheck: {error}", file=sys.stderr)
+              sys.exit(1)
+        '';
+
         # Images are <name>/<role>, and containers.registry prefixes that:
         # "ghcr.io/avunu" (or "ghcr.io/avunu/") names them
         # ghcr.io/avunu/<name>/<role>; "" leaves them bare. The same rule
@@ -240,8 +337,9 @@
             extraPaths ? [ ],
             extraEnv ? [ ],
             exposedPorts ? { },
+            probe ? null,
           }:
-          pkgs.dockerTools.buildLayeredImage {
+          buildImage {
             name = imageName name;
             tag = "latest";
             maxLayers = 125;
@@ -256,228 +354,321 @@
                   "/etc"
                 ];
               })
+              containerUsers
               builtBench
             ];
             enableFakechroot = true;
             fakeRootCommands = ''
-              mkdir -p /tmp /bench/logs /bench/config/pids /bench/sites /secrets
+              mkdir -p /tmp /secrets
               chmod 1777 /tmp
+              ${ownWritable [
+                "/bench/logs"
+                "/bench/config/pids"
+                "/bench/sites"
+                home
+              ]}
             '';
             config = {
+              User = user;
               Entrypoint = [ "${containerEntrypoint}" ];
               Cmd = cmd;
               WorkingDir = workingDir;
               ExposedPorts = exposedPorts;
-              Env = containerEnvList ++ extraEnv;
+              Env = containerEnvList ++ homeEnv ++ extraEnv;
+              Labels = labels name;
+            }
+            // lib.optionalAttrs (probe != null) { Healthcheck = healthcheck probe; };
+          };
+
+        # The realtime server answers an Engine.IO handshake before any
+        # namespace (and so any session) is involved.
+        socketioProbe = pkgs.writeText "socketio-healthcheck.js" ''
+          const http = require("http");
+          const req = http.get(
+            { host: "127.0.0.1", port: 9000, path: "/socket.io/?EIO=4&transport=polling", timeout: 8000 },
+            (res) => process.exit(res.statusCode === 200 ? 0 : 1),
+          );
+          req.on("timeout", () => req.destroy(new Error("timed out")));
+          req.on("error", (error) => {
+            console.error(`socketio-healthcheck: ''${error.message}`);
+            process.exit(1);
+          });
+        '';
+
+        # nginx answering at all: the configuration is the bench's own, so the
+        # probe asks nothing of it but a status line. The runtime behind it has
+        # its own healthcheck. Bash's /dev/tcp, since the image has no curl.
+        nginxProbe = pkgs.writeShellScript "nginx-healthcheck" ''
+          exec 3<>/dev/tcp/127.0.0.1/80 || exit 1
+          printf 'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
+          IFS= read -r -t 8 status <&3 || exit 1
+          [[ $status == HTTP/* ]]
+        '';
+
+        # Images by role. The packages are container-<role>.
+        images =
+          (
+            if cfg.runtime.enable then
+              {
+                # One image for the whole site: the web app, realtime, the background
+                # jobs and the scheduler. Replaces web + scheduler + worker-* +
+                # socketio, and carries no Node at all.
+                #
+                # WorkingDir is /bench, not /bench/sites: the runtime chdirs into
+                # sites/ itself, and frappe's execute_job re-inits per job with
+                # sites_path=".".
+                runtime = mkFrappeContainer {
+                  name = "runtime";
+                  workingDir = "/bench";
+                  cmd = [
+                    "${pyEnv}/bin/frappe-runtime"
+                    "--host"
+                    "0.0.0.0"
+                    "--port"
+                    "8000"
+                    "--job-threads"
+                    "4"
+                  ];
+                  exposedPorts = {
+                    "8000/tcp" = { };
+                  };
+                  probe = [ "${pingProbe}" ];
+                };
+
+              }
+            else
+              {
+                web = mkFrappeContainer {
+                  name = "web";
+                  cmd = [
+                    "${pyEnv}/bin/gunicorn"
+                    "--bind"
+                    "0.0.0.0:8000"
+                    "--workers"
+                    "4"
+                    "--max-requests"
+                    "5000"
+                    "--max-requests-jitter"
+                    "500"
+                    "--timeout"
+                    "120"
+                    "--preload"
+                    "--graceful-timeout"
+                    "30"
+                    "--keep-alive"
+                    "5"
+                    "--access-logfile"
+                    "-"
+                    "--error-logfile"
+                    "-"
+                    "frappe.app:application"
+                  ];
+                  exposedPorts = {
+                    "8000/tcp" = { };
+                  };
+                  probe = [ "${pingProbe}" ];
+                };
+
+                scheduler = mkFrappeContainer {
+                  name = "scheduler";
+                  cmd = [
+                    "${pyEnv}/bin/bench"
+                    "schedule"
+                  ];
+                };
+
+                worker-default = mkFrappeContainer {
+                  name = "worker-default";
+                  cmd = [
+                    "${pyEnv}/bin/bench"
+                    "worker"
+                    "--queue"
+                    "default"
+                  ];
+                };
+
+                worker-short = mkFrappeContainer {
+                  name = "worker-short";
+                  cmd = [
+                    "${pyEnv}/bin/bench"
+                    "worker"
+                    "--queue"
+                    "short"
+                  ];
+                };
+
+                worker-long = mkFrappeContainer {
+                  name = "worker-long";
+                  cmd = [
+                    "${pyEnv}/bin/bench"
+                    "worker"
+                    "--queue"
+                    "long"
+                  ];
+                };
+
+                # Node's realtime server. Only built when the unified runtime is off — it is
+                # the last thing in the runtime closure that needs Node at all.
+                socketio = buildImage {
+                  name = imageName "socketio";
+                  tag = "latest";
+                  maxLayers = 125;
+                  contents = [
+                    (pkgs.buildEnv {
+                      name = "${prefix}-socketio-env";
+                      paths = with pkgs; [
+                        coreutils
+                        bashInteractive
+                        cacert
+                        nodejs
+                      ];
+                      pathsToLink = [
+                        "/bin"
+                        "/lib"
+                        "/share"
+                        "/etc"
+                      ];
+                    })
+                    containerUsers
+                    builtBench
+                  ];
+                  enableFakechroot = true;
+                  fakeRootCommands = ''
+                    mkdir -p /tmp
+                    chmod 1777 /tmp
+                    ${ownWritable [
+                      "/bench/sites"
+                      home
+                    ]}
+                  '';
+                  config = {
+                    User = user;
+                    Labels = labels "socketio";
+                    Healthcheck = healthcheck [
+                      "${nodejs}/bin/node"
+                      "${socketioProbe}"
+                    ];
+                    Entrypoint = [ "${socketioEntrypoint}" ];
+                    Cmd = [
+                      "${nodejs}/bin/node"
+                      "/bench/apps/frappe/socketio.js"
+                    ];
+                    WorkingDir = "/bench";
+                    ExposedPorts = {
+                      "9000/tcp" = { };
+                    };
+                    Env = [
+                      "NODE_ENV=production"
+                      "FRAPPE_BENCH_ROOT=/bench"
+                      "SITES_PATH=/bench/sites"
+                      "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                    ]
+                    ++ homeEnv;
+                  };
+                };
+
+              }
+          )
+          // {
+            nginx = buildImage {
+              name = imageName "nginx";
+              tag = "latest";
+              maxLayers = 125;
+              contents = [
+                (pkgs.buildEnv {
+                  name = "${prefix}-nginx-env";
+                  paths = with pkgs; [
+                    coreutils
+                    bashInteractive
+                    nginx
+                  ];
+                  pathsToLink = [
+                    "/bin"
+                    "/lib"
+                    "/share"
+                    "/etc"
+                  ];
+                })
+                containerUsers
+                builtBench
+              ];
+              enableFakechroot = true;
+              # nixpkgs' nginx keeps its pid file in /var/log/nginx and its temp
+              # files in /tmp.
+              fakeRootCommands = ''
+                mkdir -p /tmp
+                chmod 1777 /tmp
+                ${ownWritable [
+                  "/tmp/nginx"
+                  "/var/log/nginx"
+                  "/var/cache/nginx"
+                  "/bench/sites"
+                  home
+                ]}
+              '';
+              config = {
+                User = user;
+                Labels = labels "nginx";
+                Healthcheck = healthcheck [ "${nginxProbe}" ];
+                Env = homeEnv;
+                Entrypoint = [ "${nginxEntrypoint}" ];
+                Cmd = [
+                  "${pkgs.nginx}/bin/nginx"
+                  "-c"
+                  "/bench/config/nginx.conf"
+                  "-g"
+                  "daemon off;"
+                ];
+                WorkingDir = "/bench";
+                ExposedPorts = {
+                  "80/tcp" = { };
+                };
+              };
+            };
+
+            # One-off commands: no server, so no healthcheck.
+            bench = mkFrappeContainer {
+              name = "bench";
+              cmd = [
+                "${pyEnv}/bin/bench"
+                "--help"
+              ];
+              extraPaths = [ nodejs ];
             };
           };
+
+        # The outputs before python-devops-nix's container-<role> convention:
+        # the role itself, and bench-cli for the bench image. Kept, warning
+        # when used, until frappe-nix 2.0.0. The warning sits on what a build
+        # or a reference reads (drvPath, outPath), not on the attribute, so
+        # `nix flake show` stays quiet; `nix flake check` evaluates every
+        # package, so a bench that uses none of them sets
+        # containers.aliases = false.
+        alias =
+          old: role:
+          let
+            image = images.${role};
+            warn = lib.warn "frappe-nix: the package `${old}' has been renamed `container-${role}'. The old name works through frappe-nix 1.x and goes in 2.0.0; set frappe-nix.containers.aliases = false once nothing uses it.";
+          in
+          image
+          // {
+            drvPath = warn image.drvPath;
+            outPath = warn image.outPath;
+          };
+        oldName = role: if role == "bench" then "bench-cli" else role;
+        aliases = lib.mapAttrs' (
+          role: _: lib.nameValuePair (oldName role) (alias (oldName role) role)
+        ) images;
 
       in
       lib.mkIf (cfg.enable && cfg.containers.enable) {
-        # if/else over whole attrsets, not lib.mkIf per package: `packages` is an
-        # attrsOf, and mkIf false keeps the attribute *name* while removing its
+        # Whole attrsets, not lib.mkIf per package: `packages` is an attrsOf,
+        # and mkIf false keeps the attribute *name* while removing its
         # definition. `nix flake show` enumerates those names and dies with
         # "option ... was accessed but has no value defined".
-        packages = {
-          # One image for the whole site: the web app, realtime, the background jobs
-          # and the scheduler. Replaces web + scheduler + worker-* + socketio, and
-          # carries no Node at all.
-          #
-          # WorkingDir is /bench, not /bench/sites: the runtime chdirs into sites/
-          # itself, and frappe's execute_job re-inits per job with sites_path=".".
-        }
-        // (
-          if cfg.runtime.enable then
-            {
-              runtime = mkFrappeContainer {
-                name = "runtime";
-                workingDir = "/bench";
-                cmd = [
-                  "${pyEnv}/bin/frappe-runtime"
-                  "--host"
-                  "0.0.0.0"
-                  "--port"
-                  "8000"
-                  "--job-threads"
-                  "4"
-                ];
-                exposedPorts = {
-                  "8000/tcp" = { };
-                };
-              };
-
-            }
-          else
-            {
-              web = mkFrappeContainer {
-                name = "web";
-                cmd = [
-                  "${pyEnv}/bin/gunicorn"
-                  "--bind"
-                  "0.0.0.0:8000"
-                  "--workers"
-                  "4"
-                  "--max-requests"
-                  "5000"
-                  "--max-requests-jitter"
-                  "500"
-                  "--timeout"
-                  "120"
-                  "--preload"
-                  "--graceful-timeout"
-                  "30"
-                  "--keep-alive"
-                  "5"
-                  "--access-logfile"
-                  "-"
-                  "--error-logfile"
-                  "-"
-                  "frappe.app:application"
-                ];
-                exposedPorts = {
-                  "8000/tcp" = { };
-                };
-              };
-
-              scheduler = mkFrappeContainer {
-                name = "scheduler";
-                cmd = [
-                  "${pyEnv}/bin/bench"
-                  "schedule"
-                ];
-              };
-
-              worker-default = mkFrappeContainer {
-                name = "worker-default";
-                cmd = [
-                  "${pyEnv}/bin/bench"
-                  "worker"
-                  "--queue"
-                  "default"
-                ];
-              };
-
-              worker-short = mkFrappeContainer {
-                name = "worker-short";
-                cmd = [
-                  "${pyEnv}/bin/bench"
-                  "worker"
-                  "--queue"
-                  "short"
-                ];
-              };
-
-              worker-long = mkFrappeContainer {
-                name = "worker-long";
-                cmd = [
-                  "${pyEnv}/bin/bench"
-                  "worker"
-                  "--queue"
-                  "long"
-                ];
-              };
-
-              # Node's realtime server. Only built when the unified runtime is off — it is
-              # the last thing in the runtime closure that needs Node at all.
-              socketio = pkgs.dockerTools.buildLayeredImage {
-                name = imageName "socketio";
-                tag = "latest";
-                maxLayers = 125;
-                contents = [
-                  (pkgs.buildEnv {
-                    name = "${prefix}-socketio-env";
-                    paths = with pkgs; [
-                      coreutils
-                      bashInteractive
-                      cacert
-                      nodejs
-                    ];
-                    pathsToLink = [
-                      "/bin"
-                      "/lib"
-                      "/share"
-                      "/etc"
-                    ];
-                  })
-                  builtBench
-                ];
-                enableFakechroot = true;
-                fakeRootCommands = ''
-                  mkdir -p /bench/sites
-                '';
-                config = {
-                  Entrypoint = [ "${socketioEntrypoint}" ];
-                  Cmd = [
-                    "${nodejs}/bin/node"
-                    "/bench/apps/frappe/socketio.js"
-                  ];
-                  WorkingDir = "/bench";
-                  ExposedPorts = {
-                    "9000/tcp" = { };
-                  };
-                  Env = [
-                    "NODE_ENV=production"
-                    "FRAPPE_BENCH_ROOT=/bench"
-                    "SITES_PATH=/bench/sites"
-                    "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-                  ];
-                };
-              };
-
-            }
-        )
-        // {
-          nginx = pkgs.dockerTools.buildLayeredImage {
-            name = imageName "nginx";
-            tag = "latest";
-            maxLayers = 125;
-            contents = [
-              (pkgs.buildEnv {
-                name = "${prefix}-nginx-env";
-                paths = with pkgs; [
-                  coreutils
-                  bashInteractive
-                  nginx
-                ];
-                pathsToLink = [
-                  "/bin"
-                  "/lib"
-                  "/share"
-                  "/etc"
-                ];
-              })
-              builtBench
-            ];
-            enableFakechroot = true;
-            fakeRootCommands = ''
-              mkdir -p /tmp/nginx /var/log/nginx /var/cache/nginx /bench/sites
-              chmod 1777 /tmp
-            '';
-            config = {
-              Entrypoint = [ "${nginxEntrypoint}" ];
-              Cmd = [
-                "${pkgs.nginx}/bin/nginx"
-                "-c"
-                "/bench/config/nginx.conf"
-                "-g"
-                "daemon off;"
-              ];
-              WorkingDir = "/bench";
-              ExposedPorts = {
-                "80/tcp" = { };
-              };
-            };
-          };
-
-          bench-cli = mkFrappeContainer {
-            name = "bench";
-            cmd = [
-              "${pyEnv}/bin/bench"
-              "--help"
-            ];
-            extraPaths = [ nodejs ];
-          };
-        };
+        packages =
+          lib.mapAttrs' (role: image: lib.nameValuePair "container-${role}" image) images
+          // lib.optionalAttrs cfg.containers.aliases aliases;
       };
   };
 }

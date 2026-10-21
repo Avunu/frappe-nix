@@ -52,10 +52,12 @@ and one **app**, run with `nix run .#<name>`:
 
 The `builtBench` package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}`, so the NixOS module and the containers can discover interpreters from the package itself.
 
-With `containers.enable = true` it additionally builds, named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set:
+With `containers.enable = true` it additionally builds one package per image, `container-<role>`, named `<name>/<role>:latest`, or `<registry>/<name>/<role>:latest` with `containers.registry` set:
 
-- `runtime`, `nginx` and `bench-cli` (image name `bench`), or
-- with `runtime.enable = false`: `web`, `scheduler`, `worker-default`, `worker-short`, `worker-long`, `socketio`, `nginx` and `bench-cli`.
+- `container-runtime`, `container-nginx` and `container-bench`, or
+- with `runtime.enable = false`: `container-web`, `container-scheduler`, `container-worker-default`, `container-worker-short`, `container-worker-long`, `container-socketio`, `container-nginx` and `container-bench`.
+
+The names these packages had before 1.2.0, the role alone and `bench-cli` for `container-bench`, still work and warn when used. They go in 2.0.0, and `containers.aliases = false` drops them sooner.
 
 See [Build production images](../production/images.md).
 

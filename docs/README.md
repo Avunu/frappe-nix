@@ -19,7 +19,7 @@ From one `uv` workspace and an `apps/` tree, frappe-nix provides:
 - Reproducible **production Python environments**, built by [uv2nix](https://github.com/pyproject-nix/uv2nix) from your committed `uv.lock`.
 - Reproducible **`node_modules`** for every app and every nested frontend, built from each one's own `yarn.lock`.
 - A **`builtBench`** package that runs `bench build` at build time, so compiled assets are part of the artifact. The NixOS module and the container images both consume it.
-- **OCI container images**: `runtime`, `nginx` and `bench-cli`, or an eight-image split set when you turn the unified runtime off.
+- **OCI container images**: `container-runtime`, `container-nginx` and `container-bench`, or an eight-image split set when you turn the unified runtime off. Each carries OCI labels, the ones that serve HTTP have a healthcheck, and `containers.nonRoot` runs them as a non-root user.
 - A multi-tenant **NixOS module**, `services.frappe-nix`, with per-site systemd units, secrets handling, snapshot-protected migrations on deploy and journald logging.
 - A set of portable **bench scripts** such as `provision-site`, `bench-update` and `bench-get-app`, and a `bench` wrapper that sends the commands that need frappe-nix handling to them.
 - **Age-encrypted secrets** committed next to the code, which the dev shell decrypts and the deployment host can read from the same ciphertext.
