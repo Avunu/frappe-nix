@@ -134,6 +134,27 @@ class TestPins(unittest.TestCase):
 		self.tarball.unlink()
 		self.assertEqual(pin_path("pilot", self.lock, store_dir=self.store), in_store)
 
+	def test_writable_copies_the_store_tree(self):
+		"""``writable``: a store tree is read-only with 1970 mtimes; the copy is neither."""
+		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
+		in_store = Path(nar.store_path(TREE_NAR_HASH, store_dir=self.store))
+		make_tree(in_store)
+		for path in (*in_store.rglob("*"), in_store):
+			if not path.is_symlink():
+				os.utime(path, (1, 1))
+				path.chmod(path.stat().st_mode & 0o555)
+		self.tarball.unlink()
+		self.assertEqual(pin_path("pilot", self.lock, store_dir=self.store), in_store)
+		path = pin_path("pilot", self.lock, store_dir=self.store, writable=True)
+		self.assertEqual(path, self.app / ".dev-dist" / "pins" / f"pilot-{REV}")
+		self.assertEqual(nar.nar_hash(path), TREE_NAR_HASH)
+		for p in (path, *path.rglob("*")):
+			if not p.is_symlink():
+				self.assertTrue(p.stat().st_mode & 0o200, p)
+				self.assertGreater(p.stat().st_mtime, 315532800, p)
+		(path / "node_modules").mkdir()
+		self.assertFalse((in_store / "node_modules").exists())
+
 	def test_fetch_failure(self):
 		self.lock.write_text(json.dumps(lock_for(TREE_NAR_HASH)))
 		self.tarball.unlink()

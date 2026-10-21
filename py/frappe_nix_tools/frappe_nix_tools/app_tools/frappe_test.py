@@ -489,6 +489,7 @@ class Run:
 		self.keep_ports()
 		if not (db_up and web_up):
 			holder = devshell.who(port)
+			devshell.report_not_up(self.compose, "frappe-test")
 			raise self.environment_failure(
 				f"::error::frappe-test: the bench did not come up within {UP_TIMEOUT} s "
 				f"(database: {int(db_up)}, web on port {port or '?'}: {int(web_up)})"

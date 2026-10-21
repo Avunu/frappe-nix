@@ -129,10 +129,17 @@ jobs:
         name: The app's locked frappe tree
         run: |
           set -euo pipefail
-          path="$(frappe-nix pin-path frappe)"
+          node_modules="$(frappe-nix config frappe-node-modules)"
+          # The gate installs frappe's node_modules into the tree: never the read-only store
+          # path a NixOS runner has (--writable copies it into .dev-dist/pins).
+          if [ "$node_modules" = true ]; then
+            path="$(frappe-nix pin-path --writable frappe)"
+          else
+            path="$(frappe-nix pin-path frappe)"
+          fi
           echo "FRAPPE_PATH=$path" >> "$GITHUB_ENV"
           echo "rev=$(jq -r '.nodes[.nodes.root.inputs.frappe].locked.rev' flake.lock)" >> "$GITHUB_OUTPUT"
-          echo "node-modules=$(frappe-nix config frappe-node-modules)" >> "$GITHUB_OUTPUT"
+          echo "node-modules=$node_modules" >> "$GITHUB_OUTPUT"
 
       - if: steps.cfg.outputs.typescript == 'true' && steps.frappe.outputs.node-modules == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

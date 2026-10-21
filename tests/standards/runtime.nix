@@ -206,6 +206,38 @@ let
       && benchShell.processes.frappe-ports.restart.on == "never"
       && benchShell.processes.frappe-ports.process-compose.availability.restart == "exit_on_failure"
     ) "no frappe-ports process holding the leases, or one whose refusal does not end devenv up";
+    # process-compose reads a dependency's health once, late: one failed probe
+    # of a process that was ready skips its dependents for good (nginx, on a
+    # loaded CI host). So whatever something waits on is latched once ready,
+    # per start of that process (devenv.nix, `latched`).
+    assert lib.assertMsg (
+      let
+        # The runtime, or `web` on a bench that runs the split processes.
+        server = if benchShell.processes ? runtime then "runtime" else "web";
+      in
+      lib.all
+        (
+          p:
+          lib.hasInfix "${benchShell.env.DEVENV_RUNTIME}/frappe-nix/ready" (
+            benchShell.processes.${p}.ready.exec or ""
+          )
+        )
+        [
+          "frappe-ports"
+          "mailpit"
+          "mysql"
+          "redis"
+          server
+        ]
+      # (Not the server's exec: it names the bench's Python env, which this
+      # fixture cannot build. devenvSource has it.)
+      && lib.all (p: lib.hasInfix "frappe-nix/ready/${p}.start" benchShell.processes.${p}.exec) [
+        "frappe-ports"
+        "mailpit"
+      ]
+      && contains "startStamp \"runtime\"" devenvSource
+      && contains "exec = startStamp \"web\" + ''" devenvSource
+    ) "a process something waits on @ready has a readiness probe that can flap after it passed";
     assert lib.assertMsg (
       lib.all (p: lib.elem "devenv:processes:frappe-ports" benchShell.processes.${p}.after) [
         "nginx"

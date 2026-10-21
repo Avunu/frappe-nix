@@ -9,12 +9,17 @@ real in .github/workflows/selftest-product.yml.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
-from frappe_nix_tools.listing import baseline, check, readme, rules, target
+from frappe_nix_tools.common.report import EnvError
+from frappe_nix_tools.listing import baseline, check, getapp, readme, rules, target
 from frappe_nix_tools.listing.baseline import Hit
 from scaffold_helpers import AppCase, git
 
@@ -86,6 +91,19 @@ README = "\n\n".join(
 README += "\n"
 
 DEPS = '\n[tool.bench.frappe-dependencies]\nfrappe = ">=16.0.0,<17.0.0"\n'
+
+
+# The registry's check (marketplace validation/semgrep_check.py), reduced to how it runs semgrep.
+REGISTRY_CHECK = """import json, subprocess
+class SemgrepValidator:
+    def __init__(self, path, app):
+        self.path, self.findings, self.notes = path, [], []
+    def validate(self):
+        r = subprocess.run(["semgrep", "scan", "--json", "--quiet", str(self.path)], capture_output=True, text=True)
+        if r.returncode not in (0, 1):
+            raise RuntimeError(f"Semgrep failed: {r.stderr.strip()}")
+        json.loads(r.stdout)
+"""
 
 
 class ListingCase(AppCase):
@@ -329,6 +347,45 @@ class TestBaseline(ListingCase):
 			["run", "--frozen", "--python", "3.14", "--project", str(odd / "tools"), "semgrep", "--version"],
 		)
 		self.assertFalse((odd / "pwned").exists())
+
+	def scan_with_stub_semgrep(self, body: str) -> list[Hit]:
+		"""``baseline.scan`` with a stub ``semgrep`` (``body`` is its shell; it logs each call to
+		``self.calls``) and the registry's check as the pinned marketplace has it: a
+		``RuntimeError`` for an exit status other than 0 or 1, else ``json.loads`` of stdout."""
+		aux = Path(tempfile.mkdtemp())
+		self.addCleanup(shutil.rmtree, aux, True)
+		(aux / "marketplace" / "validation").mkdir(parents=True)
+		(aux / "marketplace" / "validation" / "semgrep_check.py").write_text(REGISTRY_CHECK)
+		(aux / "bin").mkdir()
+		self.calls = aux / "calls"
+		self.calls.write_text("")
+		stub = aux / "bin" / "semgrep"
+		stub.write_text(f'#!/bin/sh\necho "$*" >> {self.calls}\nonce={aux / "once"}\n{body}\n')
+		stub.chmod(0o755)
+		with mock.patch.dict(os.environ, {"PATH": f"{aux / 'bin'}{os.pathsep}{os.environ['PATH']}"}):
+			return baseline.scan(self.root, "demo_app", aux / "marketplace")[0]
+
+	def test_semgrep_with_no_output_is_an_environment_error(self):
+		"""Avunu/jwt_bearer_auth#19: semgrep exited 1 and printed nothing, and L7 crashed with
+		``internal error: JSONDecodeError``. Now: exit 3, the status, stderr, one retry."""
+		with self.assertRaises(EnvError) as ctx:
+			self.scan_with_stub_semgrep('echo "registry download timed out" >&2\nexit 1')
+		self.assertEqual(ctx.exception.code, 3)
+		self.assertIn("semgrep exited 1 with no output (after one retry)", str(ctx.exception))
+		self.assertIn("registry download timed out", str(ctx.exception))
+		self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+	def test_semgrep_succeeding_on_the_retry_passes(self):
+		body = 'if [ -e "$once" ]; then echo \'{"results": []}\'; else touch "$once"; fi'
+		self.assertEqual(self.scan_with_stub_semgrep(body), [])
+		self.assertEqual(len(self.calls.read_text().splitlines()), 2)
+
+	def test_semgrep_failing_reports_its_status_and_stderr(self):
+		with self.assertRaises(EnvError) as ctx:
+			self.scan_with_stub_semgrep('echo "Killed" >&2\nexit 137')
+		self.assertEqual(ctx.exception.code, 3)
+		self.assertIn("semgrep exited 137 (after one retry)", str(ctx.exception))
+		self.assertIn("Killed", str(ctx.exception))
 
 	def test_malformed_baseline_is_invalid(self):
 		self.write(baseline.PATH, '{"schema": 1, "findings": [{"rule": "x", "count": 0}]}')
@@ -790,3 +847,52 @@ class TestOffByDefault(AppCase):
 
 	def test_rules_module_shape(self):
 		self.assertEqual(rules.LISTING, "marketplace/listing.toml")
+
+
+class TestGetappStoreTrees(unittest.TestCase):
+	"""L9 builds frappe's wheel from a copy of its pinned tree; on a NixOS runner that is the
+	store path, read-only with every mtime 1970, and flit_core's wheel failed with ``ZIP does
+	not support timestamps before 1980`` (Avunu/jwt_bearer_auth#19)."""
+
+	def setUp(self) -> None:
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.tmp = Path(tmp.name)
+		self.store = self.tmp / "store" / "hash-source"
+		(self.store / "frappe").mkdir(parents=True)
+		(self.store / "frappe" / "__init__.py").write_text('__version__ = "16.0.0"\n')
+		(self.store / "pyproject.toml").write_text('[project]\nname = "frappe"\n')
+		(self.store / "frappe" / "link.py").symlink_to("__init__.py")
+		for path in (*self.store.rglob("*"), self.store):
+			if not path.is_symlink():
+				os.utime(path, (1, 1))
+				path.chmod(0o555 if path.is_dir() else 0o444)
+
+	def test_checkout_is_writable_with_zip_safe_mtimes(self) -> None:
+		dest = self.tmp / "bench" / "apps" / "frappe"
+		getapp._checkout(self.store, dest, "https://github.com/frappe/frappe")
+		self.assertTrue((dest / ".git").is_dir())
+		self.assertTrue((dest / "frappe" / "link.py").is_symlink())
+		with zipfile.ZipFile(self.tmp / "frappe.whl", "w") as whl:
+			for path in sorted(dest.rglob("*")):
+				if path.is_file() and not path.is_symlink() and ".git" not in path.parts:
+					whl.write(path, path.relative_to(dest))  # ValueError for a 1970 mtime
+					self.assertTrue(path.stat().st_mode & 0o200, path)
+		(dest / "frappe" / "new.py").write_text("")
+
+	def test_export_gives_the_app_fresh_mtimes(self) -> None:
+		with mock.patch.object(
+			baseline.repo, "ls_files", return_value=["pyproject.toml", "frappe/__init__.py"]
+		):
+			baseline.export(self.store, self.tmp / "app")
+		for rel in ("pyproject.toml", "frappe/__init__.py"):
+			zipfile.ZipInfo.from_file(self.tmp / "app" / rel)
+
+	def test_runner_sets_source_date_epoch(self) -> None:
+		with mock.patch.dict(os.environ, {}, clear=False):
+			os.environ.pop("SOURCE_DATE_EPOCH", None)
+			env = getapp.runner_env(self.tmp / "pilot")
+			self.assertEqual(env["SOURCE_DATE_EPOCH"], getapp.ZIP_EPOCH)
+			self.assertEqual(env["PYTHONPATH"], str(self.tmp / "pilot"))
+			os.environ["SOURCE_DATE_EPOCH"] = "1700000000"
+			self.assertEqual(getapp.runner_env(self.tmp / "pilot")["SOURCE_DATE_EPOCH"], "1700000000")

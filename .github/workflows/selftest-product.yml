@@ -131,10 +131,12 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: tests/standards/selftest-product/run.sh "$SUITE"
 
+      # process-compose.log: every process's output, and why one was Skipped.
       - name: Bench logs
         if: failure()
         run: |
-          for f in "$RUNNER_TEMP"/standards-n5/*/.frappe-nix/bench/logs/*.log; do
+          for f in "$RUNNER_TEMP"/standards-n5/*/.frappe-nix/bench/logs/*.log \
+            "$RUNNER_TEMP"/standards-n5/*/.devenv/state/process-compose/process-compose.log; do
             [ -f "$f" ] || continue
             echo "::group::$f"
             tail -n 200 "$f"
@@ -152,5 +154,6 @@ jobs:
             ${{ runner.temp }}/standards-n5/*.json
             ${{ runner.temp }}/standards-n5/shots-1/
             ${{ runner.temp }}/standards-n5/shots/.dev-dist/shots/
+            ${{ runner.temp }}/standards-n5/*/.devenv/state/process-compose/process-compose.log
           if-no-files-found: ignore
           include-hidden-files: true
