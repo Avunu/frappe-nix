@@ -215,7 +215,7 @@ At every start the entrypoint links `apps.txt`, `apps.json` and the compiled `as
 | `FRAPPE_DB_SOCKET`      | unset                                            | `db_socket`, when set    |
 | `FRAPPE_SOCKETIO_UDS`   | unset                                            | `socketio_uds`, when set |
 
-The images also set `FRAPPE_BENCH_ROOT=/bench`, `SITES_PATH=/bench/sites`, `FRAPPE_ENV_TYPE=production`, `FRAPPE_STREAM_LOGGING=1` and `FRAPPE_TUNE_GC=1`.
+The images also set `FRAPPE_BENCH_ROOT=/bench`, `SITES_PATH=/bench/sites`, `FRAPPE_ENV_TYPE=production`, `FRAPPE_STREAM_LOGGING=1` and `FRAPPE_TUNE_GC=1`, and `GIT_PYTHON_REFRESH=quiet`, without which `bench` fails at startup on an image that has no git.
 
 ### Secrets
 
@@ -258,6 +258,8 @@ docker run --rm \
   -v <SECRETS_DIR>:/secrets:ro \
   <BENCH_NAME>/bench:latest bench --site site1.example.com migrate
 ```
+
+frappe-bench's `bench` refuses to run as root, so this needs [`containers.nonRoot`](#running-as-non-root). Without it, call Frappe's own command line, which `bench` hands these commands to anyway: `python -m frappe.utils.bench_helper frappe --site site1.example.com migrate`.
 
 ### The nginx image
 
