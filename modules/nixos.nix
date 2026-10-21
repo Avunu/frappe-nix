@@ -98,14 +98,23 @@ let
   schedulerLockBind =
     name: benchRoot: "${schedulerLockDir name}/scheduler_process:${benchRoot}/config/scheduler_process";
 
-  # Remove the symlink an earlier frappe-nix left at config/scheduler_process.
-  # Must run before the config/ copy: cp writes through a symlink, and systemd
-  # binds onto a symlink's target, which would keep the path a symlink and
-  # keep ELOOP. The copy then puts the package's regular file there.
-  unlinkSchedulerLock = benchRoot: ''
-    if [ -L ${benchRoot}/config/scheduler_process ]; then
+  # Before the config/ copy: remove a config/scheduler_process that is a
+  # symlink (an earlier frappe-nix's; cp writes through it, and systemd binds
+  # onto a symlink's target, which would keep the path a symlink and keep
+  # ELOOP) or that the service user does not own (systemd's own, below), which
+  # the copy's chmod would fail on. config/ is the service user's, so it can.
+  clearSchedulerLock = benchRoot: ''
+    if [ -L ${benchRoot}/config/scheduler_process ] \
+      || { [ -e ${benchRoot}/config/scheduler_process ] && [ ! -O ${benchRoot}/config/scheduler_process ]; }; then
       rm -f ${benchRoot}/config/scheduler_process
     fi
+  '';
+
+  # After the copy: the BindPaths destination must exist as the service user's
+  # regular file. A package whose config/ ships none would otherwise have
+  # systemd create it, owned by root, and the next init's chmod fail on it.
+  ensureSchedulerLock = benchRoot: ''
+    touch ${benchRoot}/config/scheduler_process
   '';
 
   libraryPath = lib.makeLibraryPath [
@@ -494,9 +503,10 @@ let
       # right after this unit anyway.
 
       mkdir -p ${runtimeBenchDir}/config
-      ${unlinkSchedulerLock runtimeBenchDir}
+      ${clearSchedulerLock runtimeBenchDir}
       cp -rT ${benchDir}/config ${runtimeBenchDir}/config
       chmod -R u+w ${runtimeBenchDir}/config
+      ${ensureSchedulerLock runtimeBenchDir}
 
       ${linkRegistry benchDir sitesPath}
       ${linkChromium runtimeBenchDir}
@@ -1240,9 +1250,10 @@ let
       # config/ holds runtime state (scheduler lock/pid files), not just
       # static config — must be a real writable tree, same as frappe-init.
       mkdir -p "$FRAPPE_BENCH_ROOT"/config
-      ${unlinkSchedulerLock ''"$FRAPPE_BENCH_ROOT"''}
+      ${clearSchedulerLock ''"$FRAPPE_BENCH_ROOT"''}
       cp -rT ${benchDir}/config "$FRAPPE_BENCH_ROOT"/config
       chmod -R u+w "$FRAPPE_BENCH_ROOT"/config
+      ${ensureSchedulerLock ''"$FRAPPE_BENCH_ROOT"''}
 
       # So a PDF rendered from here (`bench execute`, a print run by hand)
       # finds the same Chromium the units do.
