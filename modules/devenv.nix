@@ -1965,11 +1965,16 @@ in
         # dispatch a single frappe command.
         #
         # Idempotent, and on the common path one `cat` and a string compare: the
-        # stamp holds the workspace's store path, which is exactly what changes
-        # when a pin moves.
+        # stamp is a store file naming each copied app's source, which is
+        # exactly what changes when a pin moves. Not the workspace's store path,
+        # which takes in the app under development too: every uncommitted edit
+        # would then recopy every pinned app.
+        appBenchPins = pkgs.writeText "frappe-nix-app-bench-pins" (
+          lib.concatMapStrings (a: "${a.name} ${a.src}\n") (lib.filter (a: a.name != cfg.app.name) appList)
+        );
         appBenchMaterialize = ''
           _bench="$FRAPPE_BENCH_ROOT"
-          _want="${appWorkspace}"
+          _want="${appBenchPins}"
           _stamp="$_bench/.frappe-nix-workspace"
 
           mkdir -p "$_bench/apps" "$_bench/sites" "$_bench/logs" "$_bench/config/pids"
@@ -1990,7 +1995,7 @@ in
             rm -rf "$_new"
             mkdir -p "$_new"
 
-            # Named apps, not `cp -R "$_want/apps"`: this skips the app under
+            # Named apps, not `cp -R` of the workspace's apps/: this skips the app under
             # development (about to become a symlink), and it makes an app that
             # was *removed* from the pins actually disappear, which merging into
             # the existing tree would not. Copied from the sources rather than
@@ -2002,19 +2007,23 @@ in
               chmod -R u+w "$_new/${a.name}"
             '') (lib.filter (a: a.name != cfg.app.name) appList)}
 
-            # Carry each app's node_modules across. It is not an output of the
+            # Carry each app's node_modules across, its nested frontends' too
+            # (erpnext's banking/node_modules). They are not an output of the
             # pin — the install runs outside Nix because nested frontends'
             # postinstall needs network the sandbox does not have — and
-            # re-fetching it on every bump would make `nix flake update` cost
-            # minutes per app. frappe-nix-node-modules re-checks each app's
-            # manifest fingerprint immediately after this and reinstalls only
-            # what genuinely moved.
-            for _old in "$_bench"/apps/*/node_modules; do
-              [ -e "$_old" ] || continue
-              _app="$(basename "$(dirname "$_old")")"
+            # re-fetching them on every bump would make `nix flake update` cost
+            # minutes per app. Carrying only apps/<app>/node_modules, which
+            # holds the install's sentinel, left the nested ones behind under
+            # a sentinel that still said "installed". frappe-nix-node-modules
+            # re-checks each app's manifests, and the nested installs its
+            # sentinel lists, immediately after this and reinstalls only what
+            # genuinely moved. The app under development is a symlink to the
+            # checkout, whose node_modules stay where they are.
+            for _old in "$_bench"/apps/*; do
+              [ -d "$_old" ] && [ ! -L "$_old" ] || continue
+              _app="$(basename "$_old")"
               [ -d "$_new/$_app" ] || continue
-              rm -rf "''${_new:?}/$_app/node_modules"
-              mv "$_old" "$_new/$_app/node_modules"
+              ${nodeModulesTool}/bin/frappe-nix-node-modules --carry "$_old" "$_new/$_app" || true
             done
 
             # Swap, then delete: a crash between the two leaves a complete old

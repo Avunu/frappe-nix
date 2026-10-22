@@ -3,7 +3,7 @@ title: Develop a single app
 description: Use frappe-nix from one Frappe app's own repository, where a small flake.nix is all you commit and the bench around the app is generated from flake inputs.
 order: 3
 tags: [scaffolding, app-mode, flake-inputs]
-updated: 2026-10-21
+updated: 2026-10-22
 ---
 
 A bench repository is the uv workspace: a committed `pyproject.toml`, a committed `uv.lock` and `apps/*` as git submodules. An app repository has none of that. It is one app, and the bench around it is an implementation detail of developing it.
@@ -112,7 +112,7 @@ nix run .#relock             # re-resolve, rewriting nix/uv.lock (+ nix/node-loc
 
 `relock` is deliberately reachable without a dev shell. A missing or stale `uv.lock` fails at evaluation, and the shell that carries `uv` is exactly what refuses to open. It stages both files for you, because a flake's source tree is only its tracked files.
 
-Re-entering the shell after a pin moves re-copies `apps/*` out of the store and tells you the compiled assets are stale. Each app's `node_modules` is carried across, so a bump does not cost a full `yarn install` per app.
+Re-entering the shell after a pin moves re-copies `apps/*` out of the store and tells you the compiled assets are stale. Only a moved pin does that: edits to your own app, committed or not, leave the copies alone. Each app's `node_modules` is carried across, its nested frontends' too (erpnext's `banking/node_modules`), so a bump does not cost a full `yarn install` per app. An install whose nested `node_modules` has gone missing anyway is redone on the next entry.
 
 > [!WARNING]
 > Edits made inside `.frappe-nix/bench/apps/frappe` are in a copy, and the next pin bump discards them. The app you are developing is the exception, because it is your repository and is symlinked in.
