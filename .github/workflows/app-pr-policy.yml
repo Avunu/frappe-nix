@@ -41,7 +41,7 @@ jobs:
   pr-policy:
     name: pr-policy
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read # the checkout
       pull-requests: read # the PR's title and base, and the open PRs it may be stacked on
@@ -66,7 +66,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          enable-cache: true
+          # Saving the cache uploads it to GitHub; from a self-hosted runner that
+          # is slow (100+ MB) and outlasts the job, so only hosted runners save it.
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
