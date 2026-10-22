@@ -11,6 +11,7 @@
 # recommended@<minor> snapshot with its content at the tag that introduced it.
 {
   pkgs,
+  checks,
   lib,
   ...
 }:
@@ -59,7 +60,7 @@ let
   '';
 in
 {
-  standards-profiles = pkgs.runCommand "standards-profiles-check" { } ''
+  standards-profiles = checks.script "standards-profiles" { } ''
     ${pkgs.python3}/bin/python3 ${compare} ${inputs}
     touch "$out"
   '';

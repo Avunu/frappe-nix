@@ -8,7 +8,7 @@
 # py/frappe_nix_tools/frappe_nix_tools/apps/provision.py) with the
 # configuration lib/scripts.nix generates: `bench provision` from the umbrella
 # wrapper's dispatch, provision-site from a shim that says it is deprecated.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -23,19 +23,21 @@ let
 in
 {
   provision =
-    pkgs.runCommand "frappe-nix-provision-check"
+    checks.script "provision"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           coreutils
           gnugrep
           shellcheck
         ];
-        script = scripts.provision-site.exec;
-        dispatch = scripts.bench.exec;
-        passAsFile = [
-          "script"
-          "dispatch"
-        ];
+        drvArgs = {
+          script = scripts.provision-site.exec;
+          dispatch = scripts.bench.exec;
+          passAsFile = [
+            "script"
+            "dispatch"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

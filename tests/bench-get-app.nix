@@ -6,7 +6,11 @@
 # get-app, py/frappe_nix_tools/frappe_nix_tools/apps/get_app.py) with the
 # configuration lib/scripts.nix generates, so this drives the real thing: the
 # shim, the generated JSON, the command and frappe-nix-sources' clone.
-{ pkgs, python-devops-nix }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
@@ -28,16 +32,18 @@ let
 in
 {
   bench-get-app =
-    pkgs.runCommand "frappe-nix-bench-get-app-check"
+    checks.script "bench-get-app"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           git
           coreutils
           python3
           shellcheck
         ];
-        script = rendered;
-        passAsFile = [ "script" ];
+        drvArgs = {
+          script = rendered;
+          passAsFile = [ "script" ];
+        };
       }
       ''
         export HOME="$PWD" WORKSPACE_TOOL=${workspaceTool}/bin/frappe-nix-workspace

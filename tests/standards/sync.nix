@@ -42,6 +42,7 @@
 #                       table's.
 {
   pkgs,
+  checks,
   frappeNixTools,
   ...
 }:
@@ -80,7 +81,7 @@ let
   };
 in
 {
-  standards-sync = pkgs.runCommand "standards-sync-check" { nativeBuildInputs = tools; } ''
+  standards-sync = checks.script "standards-sync" { inherit tools; } ''
     set -euo pipefail
     fail() { echo "FAIL $*" >&2; exit 1; }
     ${copyFixture}
@@ -127,9 +128,9 @@ in
   '';
 
   standards-manifest =
-    pkgs.runCommand "standards-manifest-check"
+    checks.script "standards-manifest"
       {
-        nativeBuildInputs = [
+        tools = [
           python
           pkgs.git
           pkgs.nixfmt
@@ -143,9 +144,9 @@ in
       '';
 
   standards-app-mode =
-    pkgs.runCommand "standards-app-mode-check"
+    checks.script "standards-app-mode"
       {
-        nativeBuildInputs = tools ++ [
+        tools = tools ++ [
           frappeInit
           pkgs.findutils
         ];

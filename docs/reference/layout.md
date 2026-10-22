@@ -76,9 +76,11 @@ nix build -L .#checks.x86_64-linux.<NAME>                 # one check
 
 On `x86_64-linux` the checks are:
 
-`app-workspace`, `apps-registry`, `assets-reassert`, `bench-get-app`, `bench-new-app`, `bench-patches`, `bench-remove-app`, `bench-rename-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `db-nocow`, `devguard`, `editable-src`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `nix-lint`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `production-unit`, `provision`, `reconcile-apps`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `secrets-module`, `setup-requirements`, `shared-config`, `socket`, `socket-runtime`, `sources`, `unixsock`, `update-deps` and `yarn-lock`.
+`app-workspace`, `apps-registry`, `assets-reassert`, `bench-get-app`, `bench-new-app`, `bench-patches`, `bench-remove-app`, `bench-rename-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `bootstrap`, `bootstrap-lock`, `build-deps`, `containers-registry`, `db-nocow`, `dev-build-deps`, `devguard`, `devguard-core`, `devguard-production`, `devguard-renames`, `devguard-test-relax`, `editable-src`, `frappe-upstream-config`, `grafts`, `ide-config`, `ide-resolve`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `nix-lint`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `pdf-renderers`, `pdf-renderers-unit`, `port-lease`, `production-unit`, `provision`, `reconcile-apps`, `relock`, `renames-devenv`, `renames-nixos`, `renames-option-tree`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `scaffold-modes`, `secrets-module`, `setup-requirements`, `shared-config`, `socket`, `socket-runtime`, `sources`, `ty`, `unixsock`, `update-deps` and `yarn-lock`, plus the 34 app standards checks, `standards-<name>` (tests/standards/; `standards-all` builds them all).
 
-Two of them, `migrate-rollback` and `socket`, run a NixOS virtual machine that builds a full Frappe bench inside the guest. `socket-runtime` does the same for the unified runtime. They are Linux-only and heavy.
+Each is registered through python-devops-nix's `lib.checks.mk`, so a build log names it `frappe-nix-<NAME>-check`, or `vm-test-run-frappe-nix-<NAME>` for a NixOS VM test. A new check takes `checks` (the helper) as an argument and is `checks.script "<NAME>" { tools = [ … ]; } ''…''`, `checks.eval`, or `checks.nixosTest`.
+
+Four of them, `migrate-rollback`, `pdf-renderers`, `socket` and `socket-runtime`, run a NixOS virtual machine against a stub bench. They are Linux-only.
 
 The unit suite of the runtime needs a real bench, because it imports `frappe`, so it runs from `runtime/scripts/run-tests.sh <BENCH>` and not from `nix flake check`.
 
@@ -88,9 +90,9 @@ The `check` workflow runs on every pull request and every push to `main`. Its `f
 
 1. `nix flake check --no-build --show-trace` evaluates every flake output on `x86_64-linux`. That is what breaks when nixpkgs or uv2nix move under the project: renamed attributes, changed function signatures, dropped packages.
 2. `nix build .#default` builds the scaffolder outright, which is also where shellcheck runs over `lib/sh/*`.
-3. The offline checks `devguard`, `migrate-classic` and `migrate-versions` are built.
+3. Every check that is not a VM test is built. The list is read from the flake, so a new check is on the pull request path as soon as it is in `checks`.
 
-The VM tests are not on the pull request path. They build a full Frappe bench inside a NixOS guest, which is far past what a hosted runner does in a reasonable time without a binary cache. Run them from the Actions tab with **Run workflow**.
+The `vm-tests` job then builds each NixOS VM test (a check with a `driver`) as its own matrix entry, on every pull request and push. A manual **Run workflow** runs them only with `vm-tests` ticked.
 
 Dependabot keeps the flake inputs and the GitHub Actions current, and its pull requests merge automatically once the required checks pass. See `.github/dependabot.yml`.
 

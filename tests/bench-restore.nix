@@ -5,7 +5,11 @@
 # py/frappe_nix_tools/frappe_nix_tools/restore/) with the configuration
 # lib/scripts.nix generates for it, so this drives the real thing: the shim,
 # the generated JSON and the command, against the real backup fetch command.
-{ pkgs, python-devops-nix }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
@@ -71,23 +75,25 @@ let
 in
 {
   bench-restore =
-    pkgs.runCommand "frappe-nix-bench-restore-check"
+    checks.script "bench-restore"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           jq
           coreutils
           shellcheck
         ];
-        guarded = render { };
-        unguarded = render { devguard = false; };
-        nofetch = render { enable = false; };
-        allfiles = render { files = "all"; };
-        passAsFile = [
-          "guarded"
-          "unguarded"
-          "nofetch"
-          "allfiles"
-        ];
+        drvArgs = {
+          guarded = render { };
+          unguarded = render { devguard = false; };
+          nofetch = render { enable = false; };
+          allfiles = render { files = "all"; };
+          passAsFile = [
+            "guarded"
+            "unguarded"
+            "nofetch"
+            "allfiles"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

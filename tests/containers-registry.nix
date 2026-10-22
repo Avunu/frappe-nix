@@ -12,7 +12,11 @@
 # Pure evaluation: a consumer's flake goes through lib.mkFlake and only each
 # image's imageName and config are read, so nothing is built and the
 # workspace is never looked into.
-{ self, pkgs }:
+{
+  self,
+  pkgs,
+  checks,
+}:
 
 let
   inherit (pkgs) lib;
@@ -149,7 +153,7 @@ let
   } ${toString (lib.attrNames runtimeLabels)}";
 in
 {
-  containers-registry = pkgs.runCommand "frappe-nix-containers-registry-check" { } ''
+  containers-registry = checks.script "containers-registry" { } ''
     fails=0
     ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no() { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

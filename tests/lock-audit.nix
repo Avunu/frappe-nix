@@ -6,7 +6,11 @@
 #
 # The audit is pure evaluation, so the answers are computed here at eval time and
 # the derivation only has to compare them against what was expected.
-{ pkgs, python-devops-nix }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
@@ -76,7 +80,7 @@ let
   ];
 in
 {
-  lock-audit = pkgs.runCommand "frappe-nix-lock-audit-check" { } ''
+  lock-audit = checks.script "lock-audit" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

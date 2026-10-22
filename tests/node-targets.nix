@@ -1,7 +1,7 @@
 # Checks for lib/node-targets.nix — which apps/<x> and apps/<x>/<y> get a node
 # lock and a node_modules. Pure evaluation over tests/fixtures/node-targets,
 # the same tree tests/node-locks.sh drives the shell discovery over.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -18,7 +18,7 @@ let
   desk = lib.findFirst (t: t.key == "alpha/desk") null all;
 in
 {
-  node-targets = pkgs.runCommand "frappe-nix-node-targets-check" { } ''
+  node-targets = checks.script "node-targets" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

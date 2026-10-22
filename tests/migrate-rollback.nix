@@ -219,8 +219,6 @@ let
   probeDir = "${siteDir}/private/files/admin-probe";
 in
 {
-  name = "frappe-migrate-rollback";
-
   nodes.machine = { ... }: {
     imports = [ self.nixosModules.default ];
     virtualisation.memorySize = 2048;

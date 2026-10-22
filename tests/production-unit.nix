@@ -19,7 +19,11 @@
 # Pure evaluation of NixOS configurations against a stub bench that is never
 # built, like tests/logging-fields.nix. The VM tests (migrate-rollback, socket,
 # socket-runtime, pdf-renderers) run the same units under the sandbox.
-{ self, pkgs }:
+{
+  self,
+  pkgs,
+  checks,
+}:
 
 let
   inherit (pkgs) lib;
@@ -129,7 +133,7 @@ let
 
   rule = config: dir: toString (lib.filter (lib.hasPrefix "d ${dir} ") config.systemd.tmpfiles.rules);
 
-  checks = [
+  cases = [
     # [ label expected actual ]
     [
       "by default (hardening.enable = false) no frappe-* unit has a sandbox key"
@@ -340,11 +344,11 @@ let
       "ok   ${label}"
     else
       "FAIL ${label}\n       expected: ${expected}\n       got:      ${actual}"
-  ) (checks ++ assertionChecks);
+  ) (cases ++ assertionChecks);
   failed = lib.filter (lib.hasPrefix "FAIL") results;
 in
 {
-  production-unit = pkgs.runCommand "frappe-nix-production-unit-check" { } ''
+  production-unit = checks.script "production-unit" { } ''
     cat <<'EOF'
     ${lib.concatStringsSep "\n" results}
     EOF

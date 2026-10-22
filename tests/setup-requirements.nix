@@ -1,7 +1,7 @@
 # `bench setup requirements`: the script and the wrapper's dispatch to it,
 # rendered from lib/scripts.nix, linted, and driven with stubs for the tools
 # they call (devenv never shellchecks a `scripts.<n>.exec` body).
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -32,22 +32,24 @@ let
 in
 {
   setup-requirements =
-    pkgs.runCommand "frappe-nix-setup-requirements-check"
+    checks.script "setup-requirements"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.shellcheck
           pkgs.gnused
         ];
-        setup = scripts.bench-setup-requirements.exec;
-        umbrella = scripts.bench.exec;
-        appSetup = (render { appMode = true; }).bench-setup-requirements.exec;
-        noNodeSetup = (render { appsWithNode = [ ]; }).bench-setup-requirements.exec;
-        passAsFile = [
-          "setup"
-          "umbrella"
-          "appSetup"
-          "noNodeSetup"
-        ];
+        drvArgs = {
+          setup = scripts.bench-setup-requirements.exec;
+          umbrella = scripts.bench.exec;
+          appSetup = (render { appMode = true; }).bench-setup-requirements.exec;
+          noNodeSetup = (render { appsWithNode = [ ]; }).bench-setup-requirements.exec;
+          passAsFile = [
+            "setup"
+            "umbrella"
+            "appSetup"
+            "noNodeSetup"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

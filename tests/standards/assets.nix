@@ -39,6 +39,7 @@
 #                                  skips.
 {
   pkgs,
+  checks,
   lib,
   self,
   inputs,
@@ -142,14 +143,14 @@ let
     };
 in
 {
-  standards-preload-vite = pkgs.runCommand "standards-preload-vite-check" {
-    nativeBuildInputs = [ pkgs.nodejs ];
+  standards-preload-vite = checks.script "standards-preload-vite" {
+    tools = [ pkgs.nodejs ];
   } "node ${../esbuild-preload.js} ${jsDir}/esbuild-preload.js 2>&1 | tee \"$out\"";
 
   standards-vite-register-copy =
-    pkgs.runCommand "standards-vite-register-copy-check"
+    checks.script "standards-vite-register-copy"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.nodejs
           pkgs.oxfmt
           pkgs.oxlint
@@ -207,10 +208,12 @@ in
       '';
 
   standards-node-targets-docs-site =
-    pkgs.runCommand "standards-node-targets-docs-site-check"
+    checks.script "standards-node-targets-docs-site"
       {
-        nativeBuildInputs = [ pkgs.findutils ];
-        facts = builtins.toJSON nodeTargetFacts;
+        tools = [ pkgs.findutils ];
+        drvArgs = {
+          facts = builtins.toJSON nodeTargetFacts;
+        };
       }
       ''
         set -euo pipefail
@@ -245,9 +248,9 @@ in
       '';
 
   standards-spa-app =
-    pkgs.runCommand "standards-spa-app-check"
+    checks.script "standards-spa-app"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.nodejs
           pkgs.git
           pkgs.jq

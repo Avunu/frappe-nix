@@ -48,6 +48,7 @@
 # `nix flake check --no-build` already; the derivations record what was seen.
 {
   pkgs,
+  checks,
   lib,
   self,
   inputs,
@@ -374,9 +375,9 @@ let
 in
 {
   standards-cli =
-    pkgs.runCommand "standards-cli-check"
+    checks.script "standards-cli"
       {
-        nativeBuildInputs = [
+        tools = [
           self.packages.${system}.frappe-nix
           pkgs.git
         ];
@@ -458,7 +459,7 @@ in
         touch "$out"
       '';
 
-  standards-loaders = pkgs.runCommand "standards-loaders-check" { } ''
+  standards-loaders = checks.script "standards-loaders" { } ''
     set -euo pipefail
     [ "$(${fixtureTools.apps.standards-fixture-tool.program})" = ${lib.escapeShellArg version} ]
     cat > "$out" <<'EOF'
@@ -469,13 +470,15 @@ in
   # The shell fragment's packages as a build's inputs set up the environment
   # the dev shell gets: any propagated Python would show in PYTHONPATH.
   standards-app-flake =
-    pkgs.runCommand "standards-app-flake-check"
+    checks.script "standards-app-flake"
       {
-        nativeBuildInputs = shellFragment.packages ++ [
+        tools = shellFragment.packages ++ [
           pkgs.git
           pkgs.uv
         ];
-        facts = builtins.toJSON flakeFacts;
+        drvArgs = {
+          facts = builtins.toJSON flakeFacts;
+        };
       }
       ''
         set -euo pipefail
@@ -534,7 +537,9 @@ in
         printf '%s\n' "$facts" > "$out"
       '';
 
-  standards-app-shell = pkgs.writeText "standards-app-shell-check" (builtins.toJSON shellFacts);
+  standards-app-shell = pkgs.writeText (checks.checkName "standards-app-shell") (
+    builtins.toJSON shellFacts
+  );
 
   # The opt-in test (S35). Each fixture's shell fragment is evaluated, so a
   # regression fails evaluation; the derivation records what was seen.
@@ -619,5 +624,5 @@ in
           "opt-in: an opted-in shell does not set blame.ignoreRevsFile";
         seen;
     in
-    pkgs.writeText "standards-optin-check" (builtins.toJSON facts);
+    pkgs.writeText (checks.checkName "standards-optin") (builtins.toJSON facts);
 }

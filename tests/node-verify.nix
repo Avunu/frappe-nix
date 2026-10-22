@@ -3,13 +3,13 @@
 # yarn cannot see, and a bench whose requirements are, or are not, in uv.lock.
 # Fabricated ELF files stand in for native binaries, so nothing here needs a
 # network or a package manager.
-{ pkgs }:
+{ pkgs, checks }:
 
 {
   node-verify =
-    pkgs.runCommand "frappe-nix-node-verify-check"
+    checks.script "node-verify"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.git
           pkgs.python3
           pkgs.findutils
@@ -22,13 +22,8 @@
         }/bin/frappe-nix-node-verify 2>&1 | tee "$out"
       '';
 
-  requirements-check =
-    pkgs.runCommand "frappe-nix-requirements-check-check"
-      {
-        nativeBuildInputs = [ pkgs.python3 ];
-      }
-      ''
-        export HOME="$PWD"
-        bash ${./requirements-check.sh} ${pkgs.python3}/bin/python3 ${../lib/requirements-check.py} 2>&1 | tee "$out"
-      '';
+  requirements-check = checks.script "requirements-check" { tools = [ pkgs.python3 ]; } ''
+    export HOME="$PWD"
+    bash ${./requirements-check.sh} ${pkgs.python3}/bin/python3 ${../lib/requirements-check.py} 2>&1 | tee "$out"
+  '';
 }

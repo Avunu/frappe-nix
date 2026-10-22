@@ -7,7 +7,7 @@
 # --defaults-file as its *first* one. A stub cannot catch getting that wrong —
 # only the server can, and the failure is a dev shell whose database never
 # starts ("unknown variable 'defaults-file=…'"). So: start it, and ask it.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) mariadb;
@@ -18,9 +18,9 @@ let
 in
 {
   mariadbd-wrapper =
-    pkgs.runCommand "frappe-nix-mariadbd-wrapper-check"
+    checks.script "mariadbd-wrapper"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.coreutils
           pkgs.procps
         ];

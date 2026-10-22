@@ -18,6 +18,7 @@
 #                           skips: its source is py/frappe_nix_tools alone)
 {
   pkgs,
+  checks,
   frappeNixTools,
   ...
 }:
@@ -43,9 +44,9 @@ let
 in
 lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
   standards-ci-workflows =
-    pkgs.runCommand "standards-ci-workflows-check"
+    checks.script "standards-ci-workflows"
       {
-        nativeBuildInputs = [
+        tools = [
           python
           pkgs.git
           pkgs.actionlint
@@ -116,9 +117,9 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       '';
 
   standards-ci-gate =
-    pkgs.runCommand "standards-ci-gate-check"
+    checks.script "standards-ci-gate"
       {
-        nativeBuildInputs = [
+        tools = [
           python
           pkgs.git
           pkgs.jq

@@ -6,7 +6,11 @@
 # tests/offline-migrate-unit.nix. Stubs stand in for both packages so this check
 # does not pull either closure; tests/pdf-renderers.nix renders a PDF with the
 # real ones in a VM.
-{ self, pkgs }:
+{
+  self,
+  pkgs,
+  checks,
+}:
 
 let
   inherit (pkgs) lib;
@@ -94,7 +98,7 @@ let
   link = "chromium/chrome-linux/headless_shell";
 in
 {
-  pdf-renderers-unit = pkgs.runCommand "frappe-nix-pdf-renderers-unit-check" { } ''
+  pdf-renderers-unit = checks.script "pdf-renderers-unit" { } ''
     fails=0
     ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no() { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

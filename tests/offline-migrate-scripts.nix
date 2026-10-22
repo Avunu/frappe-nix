@@ -5,7 +5,7 @@
 # Rendered rather than read, as tests/bench-restore.nix does: devenv never
 # shellchecks a `scripts.<n>.exec` body, so without this the step in front of
 # every migrate would ship unlinted and unexercised.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -31,22 +31,24 @@ let
 in
 {
   offline-migrate-scripts =
-    pkgs.runCommand "frappe-nix-offline-migrate-scripts-check"
+    checks.script "offline-migrate-scripts"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.shellcheck
           pkgs.coreutils
         ];
-        migrateOn = on.bench-migrate.exec;
-        migrateOff = off.bench-migrate.exec;
-        toolOn = on.bench-offline-migrate.exec;
-        toolOff = off.bench-offline-migrate.exec;
-        passAsFile = [
-          "migrateOn"
-          "migrateOff"
-          "toolOn"
-          "toolOff"
-        ];
+        drvArgs = {
+          migrateOn = on.bench-migrate.exec;
+          migrateOff = off.bench-migrate.exec;
+          toolOn = on.bench-offline-migrate.exec;
+          toolOff = off.bench-offline-migrate.exec;
+          passAsFile = [
+            "migrateOn"
+            "migrateOff"
+            "toolOn"
+            "toolOff"
+          ];
+        };
       }
       ''
         fails=0

@@ -4,7 +4,11 @@
 # prek on a commit and by CI's `lint` job. ty cannot be: it needs the dev env's
 # interpreter with the pinned upstream Frappe in it. The Nix linters are
 # python-devops-nix's nix-lint check, registered in flake.nix.
-{ pkgs, inputs }:
+{
+  pkgs,
+  checks,
+  inputs,
+}:
 
 let
   dev = import ./env.nix { inherit pkgs inputs; };
@@ -19,9 +23,11 @@ in
   # failure rather than an evaluation one, so `sync-frappe-upstream` can still
   # reach frappeSrc through it once they have drifted.
   frappe-upstream-config =
-    pkgs.runCommand "frappe-upstream-config"
+    checks.script "frappe-upstream-config"
       {
-        passthru = { inherit (dev) frappeSrc; };
+        drvArgs = {
+          passthru = { inherit (dev) frappeSrc; };
+        };
       }
       ''
         mkdir -p root/dev
@@ -34,7 +40,8 @@ in
   # dev/pyproject.toml's managed [tool.uv.extra-build-dependencies] block
   # against dev/uv.lock: `frappe-nix-build-deps update` after a hand-run
   # `uv lock --project dev` (update-frappe and sync-frappe-upstream run it).
-  build-deps = pkgs.runCommand "frappe-nix-build-deps-check" { } ''
+  # dev-, because tests/build-deps.nix's check is build-deps.
+  dev-build-deps = checks.script "dev-build-deps" { } ''
     ${pkgs.lib.getExe dev.buildDeps} check ${./pyproject.toml} ${./uv.lock}
     touch "$out"
   '';
@@ -44,12 +51,15 @@ in
   # ty.toml's default to find. The graft packages are checked as a build
   # merges them: python-devops-nix's devguard core and _hook.py copied in
   # (lib/grafts.nix), so their imports resolve.
-  ty = pkgs.runCommand "frappe-nix-ty" { nativeBuildInputs = [ dev.devPythonEnv ]; } ''
-    cp -r ${../.} src
-    chmod -R u+w src
-    cd src
-    ${grafts.copyVendored "."}
-    ty check --python ${dev.devPythonEnv}
-    touch "$out"
-  '';
+  ty =
+    checks.script "ty"
+      {
+        src = ../.;
+        tools = [ dev.devPythonEnv ];
+      }
+      ''
+        ${grafts.copyVendored "."}
+        ty check --python ${dev.devPythonEnv}
+        touch "$out"
+      '';
 }

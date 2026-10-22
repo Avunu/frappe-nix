@@ -5,7 +5,7 @@
 # reads (so nothing else feeds the derivation's hash), and that is enough — flit
 # really does build an editable wheel from it. The second is checked by running
 # flit_core's own PEP 660 hook over each trimmed tree.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -23,7 +23,7 @@ let
   python = pkgs.python3.withPackages (ps: [ ps.flit-core ]);
 in
 {
-  editable-src = pkgs.runCommand "frappe-nix-editable-src-check" { } ''
+  editable-src = checks.script "editable-src" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

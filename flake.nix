@@ -198,6 +198,13 @@
         pkgs:
         let
           inherit (pkgs) lib;
+          # Every check is registered through python-devops-nix's helper, which
+          # names it frappe-nix-<x>-check (CONVENTIONS.md, Tests). The files
+          # under tests/ take it as `checks`.
+          checks = inputs.python-devops-nix.lib.checks.mk {
+            inherit pkgs;
+            product = "frappe-nix";
+          };
           # python-devops-nix's development shell pieces, as the dev shell has
           # them (lib/shell-tools.nix).
           tools = shellTools pkgs;
@@ -223,7 +230,7 @@
           # Likewise Frappe-independent: stub modules stand in for frappe.app,
           # frappe.database and werkzeug.serving, and the assertions are about
           # which address the server was told to bind.
-          unixsock = pkgs.runCommand "frappe-unixsock-check" { } ''
+          unixsock = checks.script "unixsock" { } ''
             ${graftTree "unixsock"}
             ${pkgs.python3}/bin/python ./unixsock/tests/test_unixsock.py | tee "$out"
           '';
@@ -235,7 +242,7 @@
           # rendered against the graft's, and its vendored _journald.py compared
           # with the core the graft merges in (python-devops-nix's
           # lib.journald.module), so the two cannot drift.
-          journald = pkgs.runCommand "frappe-journald-check" { } ''
+          journald = checks.script "journald" { } ''
             ${graftTree "journald"}
             ${pkgs.python3}/bin/python ./journald/tests/test_journald.py \
               ${./runtime/src/frappe_runtime} | tee "$out"
@@ -246,13 +253,13 @@
           # pt-online-schema-change, and the assertions are about what planning
           # may write (nothing), what is on the command line (no credential) and
           # what is left behind (no option file). lib/offline-migrate.py.
-          offline-migrate = pkgs.runCommand "frappe-nix-offline-migrate-check" { } ''
+          offline-migrate = checks.script "offline-migrate" { } ''
             ${pkgs.python3}/bin/python ${./tests/test_offline_migrate.py} ${./lib/offline-migrate.py} | tee "$out"
           '';
 
           # Frappe- and node-independent: a stub frappe.build stands in, and the
           # assertions are about the NODE_OPTIONS frappe's build hands node.
-          nodebuild = pkgs.runCommand "frappe-nodebuild-check" { } ''
+          nodebuild = checks.script "nodebuild" { } ''
             ${graftTree "nodebuild"}
             ${pkgs.python3}/bin/python ./nodebuild/tests/test_nodebuild.py | tee "$out"
           '';
@@ -260,7 +267,7 @@
           # Frappe- and bench-independent: a stub bench.cli and two stub scripts
           # stand in, and the assertions are about which command runs. Given
           # lib/scripts.nix, it also checks that the routes are the wrapper's.
-          benchcli = pkgs.runCommand "frappe-benchcli-check" { } ''
+          benchcli = checks.script "benchcli" { } ''
             ${graftTree "benchcli"}
             ${pkgs.python3}/bin/python ./benchcli/tests/test_benchcli.py ${./lib/scripts.nix} | tee "$out"
           '';
@@ -268,16 +275,11 @@
           # Also Frappe-independent: a fixture stands in for the patch list
           # frappe-bench ships, and the assertions are about what the reconcile
           # leaves in the bench root's patches.txt.
-          bench-patches =
-            pkgs.runCommand "frappe-nix-bench-patches-check"
-              {
-                nativeBuildInputs = [ pkgs.findutils ];
-              }
-              ''
-                bash ${./tests/bench-patches.sh} \
-                  ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
-                  2>&1 | tee "$out"
-              '';
+          bench-patches = checks.script "bench-patches" { tools = [ pkgs.findutils ]; } ''
+            bash ${./tests/bench-patches.sh} \
+              ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
+              2>&1 | tee "$out"
+          '';
 
           # The datadir's btrfs NOCOW attribute: set on a fresh one, reported on
           # one already holding data, and the one-off copy that fixes that.
@@ -288,9 +290,9 @@
           # the no-op path everywhere else (frappe-nix#92: off btrfs, migrate
           # has nothing to do even with a server running).
           db-nocow =
-            pkgs.runCommand "frappe-nix-db-nocow-check"
+            checks.script "db-nocow"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.e2fsprogs
                   pkgs.procps
                 ];
@@ -307,9 +309,9 @@
           # skips the right-to-left build only where asked (a stand-in esbuild
           # with getter exports, like the real one).
           bench-watch =
-            pkgs.runCommand "frappe-nix-bench-watch-check"
+            checks.script "bench-watch"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.python3
                   pkgs.nodejs
                 ];
@@ -329,7 +331,7 @@
             let
               sassEmbedded = import ./lib/sass-embedded.nix { inherit pkgs; };
             in
-            pkgs.runCommand "frappe-nix-sass-embedded-check" { nativeBuildInputs = [ pkgs.nodejs ]; } ''
+            checks.script "sass-embedded" { tools = [ pkgs.nodejs ]; } ''
               export HOME="$PWD"
               node ${./tests/sass-embedded.js} ${sassEmbedded}/${sassEmbedded.module} 2>&1 | tee "$out"
             '';
@@ -340,9 +342,9 @@
           # submodule it found without a checkout, re-cloning apps that had
           # been removed.
           sources =
-            pkgs.runCommand "frappe-nix-sources-check"
+            checks.script "sources"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.git
                   pkgs.findutils
                 ];
@@ -359,9 +361,9 @@
           # frappe-nix-sources before `use flake`; `nix` is a stub
           # (tests/bootstrap.sh).
           bootstrap =
-            pkgs.runCommand "frappe-nix-bootstrap-check"
+            checks.script "bootstrap"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.git
                   pkgs.gawk
                 ];
@@ -418,54 +420,41 @@
                     input = "odoo-nix";
                   })).success;
               };
-              failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) results);
             in
-            pkgs.runCommandLocal "frappe-nix-bootstrap-lock-check" { } ''
-              ${lib.optionalString (failed != [ ]) ''
-                echo "lib/bootstrap-lock.nix failed: ${toString failed}" >&2
-                exit 1
-              ''}
-              echo "lib/bootstrap-lock.nix: ${toString (lib.attrNames results)}" > "$out"
-            '';
+            checks.eval "bootstrap-lock" {
+              expected = lib.mapAttrs (_: _: true) results;
+              actual = results;
+              message = "lib/bootstrap-lock.nix";
+            };
 
           # Node-independent in the same spirit: a stub yarn stands in for the
           # install, and the assertions are about when a pulled app is judged to
           # have outgrown its node_modules.
-          node-modules =
-            pkgs.runCommand "frappe-nix-node-modules-check"
-              {
-                nativeBuildInputs = [ pkgs.findutils ];
-              }
-              ''
-                bash ${./tests/node-modules.sh} \
-                  ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
-                  2>&1 | tee "$out"
-              '';
+          node-modules = checks.script "node-modules" { tools = [ pkgs.findutils ]; } ''
+            bash ${./tests/node-modules.sh} \
+              ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
+              2>&1 | tee "$out"
+          '';
 
           # The shell-entry root sync over a bench from before frappe-runtime,
           # with a stub uv standing in for the lock; the assertions are about
           # what pyproject.toml gains, when the lock is regenerated, and that a
           # failed lock leaves both files exactly as they were.
-          root-sync =
-            pkgs.runCommand "frappe-nix-root-sync-check"
-              {
-                nativeBuildInputs = [ pkgs.python3 ];
-              }
-              ''
-                bash ${./tests/root-sync.sh} \
-                  ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
-                  ${./templates/bench/pyproject.toml} \
-                  2>&1 | tee "$out"
-              '';
+          root-sync = checks.script "root-sync" { tools = [ pkgs.python3 ]; } ''
+            bash ${./tests/root-sync.sh} \
+              ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
+              ${./templates/bench/pyproject.toml} \
+              2>&1 | tee "$out"
+          '';
 
           # The fallback lock generator over the same fixture tree the Nix-side
           # discovery is checked against, with a stub yarn standing in for the
           # resolver; the assertions are about what lands in node-locks/, for
           # which targets, and when it is regenerated.
           node-locks =
-            pkgs.runCommand "frappe-nix-node-locks-check"
+            checks.script "node-locks"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.findutils
                   pkgs.jq
                 ];
@@ -483,9 +472,9 @@
           # repositories stand in for the checkouts, so the provenance
           # precedence is tested against git's answers rather than a stub's.
           apps-registry =
-            pkgs.runCommand "frappe-nix-apps-registry-check"
+            checks.script "apps-registry"
               {
-                nativeBuildInputs = [
+                tools = [
                   pkgs.git
                   pkgs.jq
                   pkgs.python3
@@ -502,7 +491,7 @@
           # installed must also not be reachable from its parent app's build
           # script, or `bench build` fails on the missing binary instead of
           # just missing the frontend's routes.
-          nested-frontend-scripts = pkgs.runCommand "frappe-nix-nested-frontend-scripts-check" { } ''
+          nested-frontend-scripts = checks.script "nested-frontend-scripts" { } ''
             bash ${./tests/nested-frontend-scripts.sh} \
               ${pkgs.nodejs}/bin/node \
               ${./lib/js/drop-nested-frontend-scripts.js} \
@@ -525,110 +514,112 @@
         // import ./tests/ide.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
-        // import ./tests/node-verify.nix { inherit pkgs; }
+        // import ./tests/node-verify.nix { inherit pkgs checks; }
         # The dev shell's runtime port leases: twenty benches at once on one
         # preferred port, kill -9, strict, and a port held outside frappe-nix.
-        // import ./tests/port-lease.nix { inherit pkgs; }
-        // import ./tests/setup-requirements.nix { inherit pkgs; }
+        // import ./tests/port-lease.nix { inherit pkgs checks; }
+        // import ./tests/setup-requirements.nix { inherit pkgs checks; }
         # The real mariadbd, started through the dev shell's wrapper the way
         # devenv starts it: argument order, and where its temp files go.
-        // import ./tests/mariadbd-wrapper.nix { inherit pkgs; }
+        // import ./tests/mariadbd-wrapper.nix { inherit pkgs checks; }
         # The `bench restore` script itself, rendered and driven against a
         # fixture bucket and a stub bench.
         // import ./tests/bench-restore.nix {
-          inherit pkgs;
+          inherit pkgs checks;
           inherit (inputs) python-devops-nix;
         }
         # `bench-migrate` and `bench-offline-migrate`: the step in front of the
         # migrate, over stubs.
-        // import ./tests/offline-migrate-scripts.nix { inherit pkgs; }
+        // import ./tests/offline-migrate-scripts.nix { inherit pkgs checks; }
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
-        // import ./tests/reconcile-apps.nix { inherit pkgs; }
+        // import ./tests/reconcile-apps.nix { inherit pkgs checks; }
         # `bench provision` and its alias provision-site: the site and its apps, over stubs.
-        // import ./tests/provision.nix { inherit pkgs; }
+        // import ./tests/provision.nix { inherit pkgs checks; }
         # The asset-shadow reassert check (issue #32, part 2): the
         # assets.json invariant and its reassert hooks, standalone.
-        // import ./tests/assets-reassert.nix { inherit pkgs; }
+        // import ./tests/assets-reassert.nix { inherit pkgs checks; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
-        // import ./tests/bench-update.nix { inherit pkgs; }
+        // import ./tests/bench-update.nix { inherit pkgs checks; }
         # `update-deps`: how it calls yarn in a bench (never writing a lock the
         # app's repository owns) and in app mode.
-        // import ./tests/update-deps.nix { inherit pkgs; }
+        // import ./tests/update-deps.nix { inherit pkgs checks; }
         # `nix run .#relock`, in a bench and in app mode, over stubs.
-        // import ./tests/relock.nix { inherit pkgs; }
+        // import ./tests/relock.nix { inherit pkgs checks; }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix {
-          inherit pkgs;
+          inherit pkgs checks;
           inherit (inputs) python-devops-nix;
         }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
         # .gitmodules too — and what it refuses to touch.
-        // import ./tests/bench-remove-app.nix { inherit pkgs; }
+        // import ./tests/bench-remove-app.nix { inherit pkgs checks; }
         # `bench-rename-app`: the bench's half of renaming an app — the checkout
         # and its clone moved, not downloaded again — and what it refuses first.
-        // import ./tests/bench-rename-app.nix { inherit pkgs; }
+        // import ./tests/bench-rename-app.nix { inherit pkgs checks; }
         # `bench-new-app` over a stub upstream scaffolder: what it registers.
-        // import ./tests/bench-new-app.nix { inherit pkgs; }
+        // import ./tests/bench-new-app.nix { inherit pkgs checks; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix {
-          inherit pkgs;
+          inherit pkgs checks;
           inherit (inputs) python-devops-nix;
         }
         # [tool.uv.extra-build-dependencies] from uv.lock: frappe-nix's always,
         # the template, the after-lock sync, a bench's own entries.
         // import ./tests/build-deps.nix {
-          inherit pkgs;
+          inherit pkgs checks;
           inherit (inputs) python-devops-nix;
         }
         # What an editable workspace member is built from in the dev shell.
-        // import ./tests/editable-src.nix { inherit pkgs; }
+        // import ./tests/editable-src.nix { inherit pkgs checks; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
-        // import ./tests/node-targets.nix { inherit pkgs; }
+        // import ./tests/node-targets.nix { inherit pkgs checks; }
         # yarn.lock → offline mirror: the parser, the naming, what is fetched.
-        // import ./tests/yarn-lock.nix { inherit pkgs; }
+        // import ./tests/yarn-lock.nix { inherit pkgs checks; }
         # Which lock each target builds from — its own, a fallback, a forced
         # fallback — and the notices that go with it.
-        // import ./tests/node-locks-precedence.nix { inherit pkgs; }
+        // import ./tests/node-locks-precedence.nix { inherit pkgs checks; }
         # The bench workspace app mode assembles around a single app.
-        // import ./tests/app-workspace.nix { inherit pkgs; }
+        // import ./tests/app-workspace.nix { inherit pkgs checks; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it
         # is cheap enough to gate PRs on.
         // import ./tests/migrate-classic.nix {
-          inherit pkgs;
+          inherit pkgs checks;
           frappe-init = frappeInit pkgs;
         }
         # The journald fields and services.frappe-nix.logging, at evaluation. Linux
         # only because it evaluates a NixOS system, but no VM: cheap enough for
         # every PR.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
-          import ./tests/logging-fields.nix { inherit self pkgs; }
+          import ./tests/logging-fields.nix { inherit self pkgs checks; }
           # What services.frappe-nix.migrate.offline puts in the migrate unit, on and off,
           # and the migrate flow around it.
-          // import ./tests/offline-migrate-unit.nix { inherit self pkgs; }
+          // import ./tests/offline-migrate-unit.nix { inherit self pkgs checks; }
           # python-devops-nix's production pieces in the units: the sandbox and its
           # profiles, environmentFiles, the slow query log, the socket directories.
-          // import ./tests/production-unit.nix { inherit self pkgs; }
+          // import ./tests/production-unit.nix { inherit self pkgs checks; }
           # What services.frappe-nix.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
-          // import ./tests/pdf-renderers-unit.nix { inherit self pkgs; }
+          // import ./tests/pdf-renderers-unit.nix { inherit self pkgs checks; }
           # The container image names, with and without containers.registry.
-          // import ./tests/containers-registry.nix { inherit self pkgs; }
+          // import ./tests/containers-registry.nix { inherit self pkgs checks; }
         )
-        # NixOS VM tests (Linux only — runNixOSTest builds a VM).
+        # NixOS VM tests (Linux only — each builds a VM), named vm-test-run-frappe-nix-<x>.
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          migrate-rollback = pkgs.testers.runNixOSTest (
+          migrate-rollback = checks.nixosTest "migrate-rollback" (
             import ./tests/migrate-rollback.nix { inherit self pkgs; }
           );
-          socket-runtime = pkgs.testers.runNixOSTest (
+          socket-runtime = checks.nixosTest "socket-runtime" (
             import ./tests/socket-runtime.nix { inherit self pkgs; }
           );
-          socket = pkgs.testers.runNixOSTest (import ./tests/socket.nix { inherit self pkgs; });
-          pdf-renderers = pkgs.testers.runNixOSTest (import ./tests/pdf-renderers.nix { inherit self pkgs; });
+          socket = checks.nixosTest "socket" (import ./tests/socket.nix { inherit self pkgs; });
+          pdf-renderers = checks.nixosTest "pdf-renderers" (
+            import ./tests/pdf-renderers.nix { inherit self pkgs; }
+          );
         }
         # frappe-nix's own lint and type checks, and the drift check that keeps
         # its ruff config on the pinned upstream Frappe's. See dev/.
-        // import ./dev/checks.nix { inherit pkgs inputs; }
+        // import ./dev/checks.nix { inherit pkgs inputs checks; }
         # The repository checks frappe-nix shares with odoo-nix
         # (python-devops-nix, CONVENTIONS.md, Formatter and Repository files):
         # nixfmt-rs, statix and deadnix over the tree with statix.toml compared

@@ -31,6 +31,7 @@
 #                            MySQLdb imports without LD_LIBRARY_PATH
 {
   pkgs,
+  checks,
   frappeNixTools,
   ...
 }:
@@ -65,7 +66,7 @@ let
   ];
 in
 lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-  standards-product-tools = pkgs.linkFarm "standards-product-tools" (
+  standards-product-tools = pkgs.linkFarm (checks.checkName "standards-product-tools") (
     map
       (name: {
         inherit name;
@@ -80,9 +81,9 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
   );
 
   standards-demo-shots =
-    pkgs.runCommand "standards-demo-shots-check"
+    checks.script "standards-demo-shots"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.git
           pkgs.python3
           pkgs.coreutils
@@ -98,7 +99,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         touch "$out"
       '';
 
-  standards-shots-types = pkgs.runCommand "standards-shots-types-check" { } ''
+  standards-shots-types = checks.script "standards-shots-types" { } ''
     cmp ${../../lib/shots/shots.d.ts} ${frappeNixTools}/${pkgs.python314.sitePackages}/frappe_nix_tools/data/templates/marketplace/shots.d.ts.j2 || {
       echo "FAIL lib/shots/shots.d.ts and the packaged data/templates/marketplace/shots.d.ts.j2 differ" >&2
       exit 1
@@ -106,20 +107,15 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     touch "$out"
   '';
 
-  standards-shots-cdp =
-    pkgs.runCommand "standards-shots-cdp-check"
-      {
-        nativeBuildInputs = [ pkgs.nodejs_24 ];
-      }
-      ''
-        export HOME="$TMPDIR"
-        mkdir -p "$TMPDIR/r"
-        CDP=${tools.frappe-shots.engine}/cdp.ts CHROMIUM=${lib.getExe pkgs.chromium} SHORT="$TMPDIR/r" \
-          node ${./shots-cdp.ts}
-        touch "$out"
-      '';
+  standards-shots-cdp = checks.script "standards-shots-cdp" { tools = [ pkgs.nodejs_24 ]; } ''
+    export HOME="$TMPDIR"
+    mkdir -p "$TMPDIR/r"
+    CDP=${tools.frappe-shots.engine}/cdp.ts CHROMIUM=${lib.getExe pkgs.chromium} SHORT="$TMPDIR/r" \
+      node ${./shots-cdp.ts}
+    touch "$out"
+  '';
 
-  standards-icon = pkgs.runCommand "standards-icon-check" { inherit nativeBuildInputs; } ''
+  standards-icon = checks.script "standards-icon" { tools = nativeBuildInputs; } ''
     set -euo pipefail
     fail() { echo "FAIL $*" >&2; exit 1; }
     ${exampleApp}
@@ -163,39 +159,41 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         ps.setuptools
       ]);
     in
-    pkgs.runCommandCC "standards-listing-mysqlclient-check" { nativeBuildInputs = [ python ]; } ''
-      set -euo pipefail
-      fail() { echo "FAIL $*" >&2; exit 1; }
-      export HOME="$TMPDIR"
-      wrapper=${tools.frappe-listing}/bin/frappe-listing
-      grep '^export MYSQLCLIENT_' "$wrapper" > flags.sh || fail "the wrapper exports no MYSQLCLIENT_* flags"
+    pkgs.runCommandCC (checks.checkName "standards-listing-mysqlclient")
+      { nativeBuildInputs = [ python ]; }
+      ''
+        set -euo pipefail
+        fail() { echo "FAIL $*" >&2; exit 1; }
+        export HOME="$TMPDIR"
+        wrapper=${tools.frappe-listing}/bin/frappe-listing
+        grep '^export MYSQLCLIENT_' "$wrapper" > flags.sh || fail "the wrapper exports no MYSQLCLIENT_* flags"
 
-      MYSQLCLIENT_CFLAGS=-Icaller bash -c '. ./flags.sh; [ "$MYSQLCLIENT_CFLAGS" = -Icaller ]' ||
-        fail "a caller's MYSQLCLIENT_CFLAGS does not win over the wrapper's default"
-      echo "ok   a caller's MYSQLCLIENT_CFLAGS wins over the wrapper's default"
+        MYSQLCLIENT_CFLAGS=-Icaller bash -c '. ./flags.sh; [ "$MYSQLCLIENT_CFLAGS" = -Icaller ]' ||
+          fail "a caller's MYSQLCLIENT_CFLAGS does not win over the wrapper's default"
+        echo "ok   a caller's MYSQLCLIENT_CFLAGS wins over the wrapper's default"
 
-      unset MYSQLCLIENT_CFLAGS MYSQLCLIENT_LDFLAGS LD_LIBRARY_PATH PKG_CONFIG_PATH
-      . ./flags.sh
-      [ -n "$MYSQLCLIENT_CFLAGS" ] && [ -n "$MYSQLCLIENT_LDFLAGS" ] || fail "the wrapper's flags are empty"
-      ! command -v pkg-config > /dev/null || fail "pkg-config is on PATH, so the flags are not what is tested"
-      # nixpkgs' src is an sdist tarball for some versions and an unpacked
-      # tree (fetchFromGitHub) for others; pip builds a tree in place, so a
-      # read-only store copy fails with "Permission denied" on build/.
-      src=${pkgs.python3.pkgs.mysqlclient.src}
-      if [ -d "$src" ]; then
-        cp -r --no-preserve=mode "$src" mysqlclient-src
-        src=./mysqlclient-src
-      fi
-      python -m pip install -q --no-index --no-build-isolation --no-deps --target site \
-        "$src" > pip.log 2>&1 || { cat pip.log; fail "mysqlclient does not build with the wrapper's flags"; }
-      echo "ok   mysqlclient ${pkgs.python3.pkgs.mysqlclient.version} builds from its source with only the wrapper's flags"
-      PYTHONPATH=site python -c 'import MySQLdb; print(MySQLdb._mysql.get_client_info())' > info ||
-        fail "MySQLdb does not import without LD_LIBRARY_PATH"
-      echo "ok   MySQLdb imports without LD_LIBRARY_PATH (client $(cat info))"
-      touch "$out"
-    '';
+        unset MYSQLCLIENT_CFLAGS MYSQLCLIENT_LDFLAGS LD_LIBRARY_PATH PKG_CONFIG_PATH
+        . ./flags.sh
+        [ -n "$MYSQLCLIENT_CFLAGS" ] && [ -n "$MYSQLCLIENT_LDFLAGS" ] || fail "the wrapper's flags are empty"
+        ! command -v pkg-config > /dev/null || fail "pkg-config is on PATH, so the flags are not what is tested"
+        # nixpkgs' src is an sdist tarball for some versions and an unpacked
+        # tree (fetchFromGitHub) for others; pip builds a tree in place, so a
+        # read-only store copy fails with "Permission denied" on build/.
+        src=${pkgs.python3.pkgs.mysqlclient.src}
+        if [ -d "$src" ]; then
+          cp -r --no-preserve=mode "$src" mysqlclient-src
+          src=./mysqlclient-src
+        fi
+        python -m pip install -q --no-index --no-build-isolation --no-deps --target site \
+          "$src" > pip.log 2>&1 || { cat pip.log; fail "mysqlclient does not build with the wrapper's flags"; }
+        echo "ok   mysqlclient ${pkgs.python3.pkgs.mysqlclient.version} builds from its source with only the wrapper's flags"
+        PYTHONPATH=site python -c 'import MySQLdb; print(MySQLdb._mysql.get_client_info())' > info ||
+          fail "MySQLdb does not import without LD_LIBRARY_PATH"
+        echo "ok   MySQLdb imports without LD_LIBRARY_PATH (client $(cat info))"
+        touch "$out"
+      '';
 
-  standards-readme = pkgs.runCommand "standards-readme-check" { inherit nativeBuildInputs; } ''
+  standards-readme = checks.script "standards-readme" { tools = nativeBuildInputs; } ''
     set -euo pipefail
     fail() { echo "FAIL $*" >&2; exit 1; }
     ${exampleApp}

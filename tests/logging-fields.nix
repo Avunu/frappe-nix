@@ -12,7 +12,11 @@
 # Pure evaluation of two NixOS configurations — the unified runtime and the
 # split units — against a stub bench that is never built. tests/socket-runtime.nix
 # covers the same fields end to end, in a VM, for the runtime topology.
-{ self, pkgs }:
+{
+  self,
+  pkgs,
+  checks,
+}:
 
 let
   inherit (pkgs) lib;
@@ -106,7 +110,7 @@ let
   offList = config: toString (lib.filter (role: !lib.elem role roles) (servicesOf config));
 in
 {
-  logging-fields = pkgs.runCommand "frappe-nix-logging-fields-check" { } ''
+  logging-fields = checks.script "logging-fields" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

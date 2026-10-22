@@ -1,7 +1,7 @@
 # `bench-new-app`, rendered from lib/scripts.nix and driven against a stub
 # upstream scaffolder: what is registered in pyproject.toml and sites/, and
 # what it refuses.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -18,15 +18,17 @@ let
 in
 {
   bench-new-app =
-    pkgs.runCommand "frappe-nix-bench-new-app-check"
+    checks.script "bench-new-app"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           coreutils
           python3
           shellcheck
         ];
-        script = rendered;
-        passAsFile = [ "script" ];
+        drvArgs = {
+          script = rendered;
+          passAsFile = [ "script" ];
+        };
       }
       ''
         export HOME="$PWD"

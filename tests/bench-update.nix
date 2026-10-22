@@ -6,7 +6,7 @@
 #
 # Rendered here for the same reason as bench-restore: devenv never shellchecks
 # a `scripts.<n>.exec` body.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -28,20 +28,22 @@ let
 in
 {
   bench-update =
-    pkgs.runCommand "frappe-nix-bench-update-check"
+    checks.script "bench-update"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           git
           jq
           coreutils
           shellcheck
         ];
-        script = render false;
-        appScript = render true;
-        passAsFile = [
-          "script"
-          "appScript"
-        ];
+        drvArgs = {
+          script = render false;
+          appScript = render true;
+          passAsFile = [
+            "script"
+            "appScript"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

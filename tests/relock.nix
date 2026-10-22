@@ -1,7 +1,7 @@
 # `nix run .#relock` (lib/relock.nix), built once for a bench and once for app
 # mode, and driven against stub uv, lock-generator and build-deps commands: what
 # it locks where, with which arguments, what it writes back and stages.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   # One line per call: "<tool> <cwd> <args>", to $CALLS.
@@ -49,9 +49,9 @@ let
 in
 {
   relock =
-    pkgs.runCommand "frappe-nix-relock-check"
+    checks.script "relock"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           git
           coreutils
         ];

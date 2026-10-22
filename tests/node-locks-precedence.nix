@@ -4,7 +4,7 @@
 # each of the node-locks/ shapes in tests/fixtures/node-locks. Nothing is
 # built — a target's node_modules is only named, never instantiated, so no
 # fetch is planned and the network is never needed.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -36,7 +36,7 @@ let
   has = needle: xs: toString (builtins.length (lib.filter (lib.hasInfix needle) xs));
 in
 {
-  node-locks-precedence = pkgs.runCommand "frappe-nix-node-locks-precedence-check" { } ''
+  node-locks-precedence = checks.script "node-locks-precedence" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

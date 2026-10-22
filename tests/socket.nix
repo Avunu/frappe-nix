@@ -142,8 +142,6 @@ let
   sockDir = "/run/frappe-test";
 in
 {
-  name = "frappe-socket";
-
   nodes.machine =
     { ... }:
     {

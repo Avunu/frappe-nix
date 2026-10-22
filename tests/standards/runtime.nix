@@ -42,6 +42,7 @@
 #                            against a dev shell of stubs.
 {
   pkgs,
+  checks,
   lib,
   self,
   inputs,
@@ -498,7 +499,7 @@ let
     }).frappe-test.exec;
 in
 {
-  standards-ports = pkgs.writeText "standards-ports.json" (builtins.toJSON portFacts);
+  standards-ports = pkgs.writeText (checks.checkName "standards-ports") (builtins.toJSON portFacts);
 
   standards-ci-mode =
     assert lib.assertMsg (contains "\${ciMode.exports}" devenvSource)
@@ -515,7 +516,7 @@ in
     ) "devenv.nix: the node steps are not wrapped in ciMode.unlessCi";
     assert lib.assertMsg (contains "\${ciMode.banner {" devenvSource)
       "devenv.nix: the banner is not ciMode.banner";
-    pkgs.runCommand "standards-ci-mode-check" { } ''
+    checks.script "standards-ci-mode" { } ''
       set -euo pipefail
       fail() { echo "FAIL $*" >&2; exit 1; }
       mkdir bin
@@ -557,9 +558,9 @@ in
     assert lib.assertMsg
       (contains "testToolsLock = if standardsShell.optedIn then null else lockPath;" devenvSource)
       "devenv.nix: the generated root of an app that has not opted in does not keep to its lock's test tools";
-    pkgs.runCommand "standards-bench-dev-group-check"
+    checks.script "standards-bench-dev-group"
       {
-        nativeBuildInputs = [
+        tools = [
           workspaceTool
           pkgs.python3
         ];
@@ -669,9 +670,9 @@ in
       '';
 
   standards-relock-main-lock =
-    pkgs.runCommand "standards-relock-main-lock-check"
+    checks.script "standards-relock-main-lock"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.uv
           pkgs.python314
         ];
@@ -717,7 +718,7 @@ in
         touch "$out"
       '';
 
-  standards-coverage-env = pkgs.runCommand "standards-coverage-env-check" { } ''
+  standards-coverage-env = checks.script "standards-coverage-env" { } ''
     set -euo pipefail
     ${envs.devPythonEnv}/bin/python -c 'import coverage, xmlrunner; print("coverage", coverage.__version__)'
     site="$(${envs.devPythonEnv}/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
@@ -731,9 +732,9 @@ in
   '';
 
   standards-frappe-test =
-    pkgs.runCommand "standards-frappe-test-check"
+    checks.script "standards-frappe-test"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.git
           pkgs.python3
           pkgs.curl
