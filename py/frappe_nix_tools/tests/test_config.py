@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from frappe_nix_tools import __version__
 from frappe_nix_tools.common import config
 from frappe_nix_tools.common.report import ConfigError, EnvError
 from helpers import run_cli
@@ -234,10 +235,13 @@ class TestResolve(unittest.TestCase):
 
 	def test_requires_frappe_nix(self):
 		profile = self.root / ".standards-profile" / "profile.toml"
+		# One major past this frappe-nix, so the range is never met whatever
+		# version release-please has stamped into __version__.
+		unmet = f">={int(__version__.split('.')[0]) + 1}"
 		profile.write_text(
 			ORG_PROFILE.replace(
 				'extends = "recommended@1.0"\n',
-				'extends = "recommended@1.0"\nrequires-frappe-nix = ">=1.2,<2"\n',
+				f'extends = "recommended@1.0"\nrequires-frappe-nix = "{unmet}"\n',
 			)
 		)
 		self.assertEqual(code_of(lambda: self.resolve(profile="./.standards-profile"))[0], 3)
