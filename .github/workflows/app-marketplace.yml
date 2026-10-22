@@ -103,7 +103,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          enable-cache: true
+          # Saving the cache uploads it to GitHub; from a self-hosted runner that
+          # is slow (a 769 MB save outlasted the job), so only hosted runners save it.
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-glob: ${{ inputs.app-root }}/flake.lock
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
