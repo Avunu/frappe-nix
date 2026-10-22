@@ -130,6 +130,22 @@ in
                  "frappe-worker-default", "frappe-worker-short", "frappe-worker-long"):
         machine.fail(f"systemctl cat {unit}-${siteName}.service")
 
+    # The scheduler lock is a regular file bind-mounted from /run into the
+    # unit, never a symlink: filelock >= 3.20 opens it with O_NOFOLLOW, and a
+    # symlink there made start_scheduler raise ELOOP (#154).
+    bind = machine.succeed(
+        "systemctl show -p BindPaths --value frappe-${siteName}.service"
+    ).strip()
+    assert bind.startswith("/run/frappe-scheduler/${siteName}/scheduler_process:"), bind
+    lock = bind.split(":")[1].split()[0]
+    assert lock.endswith("/config/scheduler_process"), bind
+    pid = machine.succeed(
+        "systemctl show -p MainPID --value frappe-${siteName}.service"
+    ).strip()
+    machine.succeed(f"nsenter -t {pid} -m -- sh -c 'test -f {lock} && test ! -L {lock}'")
+    machine.succeed(f"nsenter -t {pid} -m -- findmnt -n {lock}")
+    machine.succeed(f"test -f {lock} && test ! -L {lock}")
+
     # Same access model as the split topology: the directory is the gate.
     machine.succeed("stat -c '%a %U:%G' ${sockDir} | grep -x '770 frappe:frappe'")
     machine.succeed("id -nG nginx | tr ' ' '\\n' | grep -qx frappe")
