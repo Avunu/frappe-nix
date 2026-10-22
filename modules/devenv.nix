@@ -1966,11 +1966,16 @@ in
         #
         # Idempotent, and on the common path one `cat` and a string compare: the
         # stamp is a store file naming each copied app's source, which is
-        # exactly what changes when a pin moves. Not the workspace's store path,
-        # which takes in the app under development too: every uncommitted edit
-        # would then recopy every pinned app.
+        # exactly what changes when a pin moves, and the app under development
+        # by name only. Not the workspace's store path, which takes in that
+        # app's source too: every uncommitted edit would then recopy every
+        # pinned app. Its name has to be there: a rename (frappe-rename-app)
+        # leaves apps/<old name> linking to this checkout, which only the
+        # refresh's rebuilt apps/ removes, and frappe-test takes the first link
+        # to the checkout as the app it tests.
         appBenchPins = pkgs.writeText "frappe-nix-app-bench-pins" (
-          lib.concatMapStrings (a: "${a.name} ${a.src}\n") (lib.filter (a: a.name != cfg.app.name) appList)
+          "dev ${cfg.app.name}\n"
+          + lib.concatMapStrings (a: "${a.name} ${a.src}\n") (lib.filter (a: a.name != cfg.app.name) appList)
         );
         appBenchMaterialize = ''
           _bench="$FRAPPE_BENCH_ROOT"
