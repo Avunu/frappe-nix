@@ -3,7 +3,7 @@ title: Create a new bench
 description: Scaffold a fresh Frappe bench with frappe-nix, the equivalent of bench init, choosing a Frappe version and a set of apps.
 order: 1
 tags: [scaffolding, bench, uv]
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 `nix run github:Avunu/frappe-nix` scaffolds a fresh bench: the frappe-nix equivalent of `bench init`. You choose a Frappe version, which fixes the Python and Node versions from a [preset](README.md#versions-and-presets), and an optional set of apps. The scaffolder then writes the wrapper flake, adds `frappe` and the apps as git submodules pinned to that version's branch, and runs `uv lock`.
@@ -33,7 +33,7 @@ direnv allow
 devenv up
 ```
 
-In another terminal, run `provision-site` to create the site. [Getting started](../getting-started.md) walks through those steps.
+In another terminal, run `bench provision` to create the site. [Getting started](../getting-started.md) walks through those steps.
 
 ## Flags
 

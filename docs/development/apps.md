@@ -3,7 +3,7 @@ title: Apps in a bench
 description: How frappe-nix registers apps in sites/apps.txt and apps.json, the two shapes an app can have in a bench, and how it keeps a site's installed apps in step with them.
 order: 7
 tags: [apps, submodules, registry, apps-reconcile]
-updated: 2026-10-06
+updated: 2026-10-21
 ---
 
 This page covers three things that are easy to confuse: which apps the bench knows about (the registry), where their source lives (submodule or local), and which apps a site has actually installed.
@@ -79,4 +79,4 @@ reconcile-apps <SITE_NAME>
 ```
 
 > [!WARNING]
-> `provision-site` is not a substitute for this. It installs into a site it just created, and running it again to pick up a later-pinned sibling would drop the site's database, because it runs `bench new-site --force`.
+> `bench provision` is not a substitute for this. It installs into a site it just created, and running it again to pick up a later-pinned sibling would drop the site's database, because it runs `bench new-site --force`.

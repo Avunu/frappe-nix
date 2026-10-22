@@ -1,9 +1,9 @@
 ---
 title: Everyday commands
-description: The bench wrapper that redirects the commands needing frappe-nix handling, and the scripts behind it, from provision-site to bench-update.
+description: The bench wrapper that redirects the commands needing frappe-nix handling, and the scripts behind it, from bench provision to bench-update.
 order: 1
 tags: [bench, scripts, cli]
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules.
@@ -20,6 +20,7 @@ The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `be
 | `bench remove-app [--force] [--no-backup]`                             | `bench-remove-app`         | Submodule, `.gitmodules` and uv workspace instead of `apps.txt` and pip.                                                                                                             |
 | `bench rename-app [--no-pull] <OLD> <NEW>`                             | `bench-rename-app`         | Moves the submodule, its clone and the workspace member instead of removing and re-adding them.                                                                                      |
 | `bench restore [<FILE>]`                                               | `bench-restore`            | Injects the MariaDB root credentials. With no file, fetches the latest production backup.                                                                                            |
+| `bench provision [ADMIN_PASSWORD]`                                     | frappe-nix's own           | Creates `$FRAPPE_SITE` and installs every app from `sites/apps.txt`. Not an upstream command. See below.                                                                            |
 | `bench new-site`                                                       | the real bench             | Injects `--db-socket` and `--db-root-username root`, so site creation is non-interactive.                                                                                            |
 | `bench migrate`, `console`, `clear-cache`                              | `bench-*`                  | Inject `--site $FRAPPE_SITE`.                                                                                                                                                        |
 | everything else (`serve`, `install-app`, `uninstall-app`, `--help`, …) | the real bench             | Unchanged.                                                                                                                                                                           |
@@ -42,7 +43,7 @@ These back the wrapper and are also callable directly.
 
 | Script                                                                          | Description                                                                                                                                                                     |
 | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provision-site [ADMIN_PASSWORD]`                                               | Create `$FRAPPE_SITE` and install every app from `sites/apps.txt`. The Administrator password defaults to `admin`.                                                              |
+| `provision-site [ADMIN_PASSWORD]`                                               | `bench provision`'s name before frappe-nix 1.2, kept as an alias until 2.0.0. It says it is deprecated on stderr, then runs `bench provision`.                                  |
 | `reconcile-apps [SITE]`                                                         | Install whatever `sites/apps.txt` names that the site does not have installed yet. Idempotent. Also runs automatically; see [Installed-app drift](apps.md#installed-app-drift). |
 | `bench-update [--pull\|--migrate\|--build\|--node-locks]`                       | The submodule-aware replacement for `bench update`. See below.                                                                                                                  |
 | `bench-migrate`, `bench-build`, `bench-clear-cache`, `bench-console`            | Thin bench wrappers that honor `$FRAPPE_SITE`. With `offlineMigrate.enable`, `bench-migrate` runs `bench-offline-migrate` first and does not migrate if it fails.               |
@@ -58,6 +59,17 @@ These back the wrapper and are also callable directly.
 | `bench-rename-app [--url <U>] [--branch <B>] [--no-pull] <OLD> <NEW>`           | The bench's half of renaming an app. See below.                                                                                                                                 |
 | `relock [--uv-only\|--node-locks [<TARGET>…]] [<UV_LOCK_FLAGS>…]`              | Re-lock what the bench commits: `uv.lock`, then the fallback locks in `node-locks/`. The same program as `nix run .#relock`. See [Dependencies and locks](locks.md#relock).    |
 | `update-deps`                                                                   | `relock`'s Python half, then `uv sync`, `yarn install` in every app, and the fallback locks in `node-locks/`. Exits 1 if any step failed.                                      |
+
+### bench provision
+
+`bench provision` creates the site named by `FRAPPE_SITE` and installs every app `sites/apps.txt` lists, in that order. The Administrator password is the first argument, or `admin`. Put `--` before a password that starts with a dash. `--help` prints its usage.
+
+- It runs `bench new-site --force`, which drops an existing database for that site. To install an app added after the site exists, run `reconcile-apps` instead.
+- When `bench new-site` asks for the MariaDB root password, leave it blank and press Enter.
+- It stops at the first `bench new-site` or `install-app` that fails, with that command's exit status. A missing `FRAPPE_SITE` or `FRAPPE_DB_SOCKET` is exit 1, and a second argument is exit 2, before anything runs.
+- It ends with the site's URL, on the port the running bench leased, or on `webserver_port` from `sites/common_site_config.json` when the bench is down.
+
+`provision-site` was its name before frappe-nix 1.2. It still works, and says on stderr that it is deprecated. It goes in frappe-nix 2.0.0.
 
 ### bench-update
 

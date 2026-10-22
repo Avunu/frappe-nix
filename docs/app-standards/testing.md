@@ -3,7 +3,7 @@ title: Testing
 description: "frappe-test: the app's tests with coverage, the whitelist and hook test map, the composition check and CI mode."
 order: 3
 tags: [app-standards, testing, coverage, frappe-test]
-updated: 2026-10-19
+updated: 2026-10-21
 ---
 
 `frappe-test` runs an app's tests the way CI's `ci / test` job does, from the app's dev shell. It brings the bench up, prepares a site, runs the tests with coverage measured on the app alone, and then checks what the coverage cannot: that every whitelisted function and hook target ran, and that the app's controller extensions compose with other apps'. The same command, with `--ci`, is the whole test job.
@@ -29,7 +29,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 | Stage | What | Fails with |
 |---|---|---|
 | up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and for the web port to answer as this bench (its `/__frappe_nix/bench` identity, so another bench's nginx on the same port does not count); a failed `devenv up` (a taken port under `ports.strict`, say) fails at once. The leased ports are copied to `ports.json` in the output directory, and a web port that never answers is reported with `frappe-nix-ports who`. | 10 |
-| site | `provision-site` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps (without the guards `devguard-disable` names, see [Development guards in a test run](#development-guards-in-a-test-run)). | 10 |
+| site | `bench provision` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps (without the guards `devguard-disable` names, see [Development guards in a test run](#development-guards-in-a-test-run)). | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |
 | testmap | Every whitelisted function and hook target ran, or is exempt. | 3 |

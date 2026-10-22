@@ -3,7 +3,7 @@ title: Write the flake by hand
 description: The shape of a frappe-nix bench flake, the inputs it needs, and the handful of options you will change most often.
 order: 4
 tags: [flake, flake-parts, configuration, options]
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 A complete consuming flake is just a configured module. The scaffolder writes one for you, and this page explains what is in it so you can edit it or write your own.
@@ -56,7 +56,7 @@ Then enter the shell and start the stack:
 ```bash
 direnv allow            # or: nix develop --no-pure-eval
 devenv up               # start MariaDB, Redis, the Frappe runtime, watch, …
-provision-site          # (first run, in another shell) create the site + install apps
+bench provision         # (first run, in another shell) create the site + install apps
 # → http://localhost:<PORT>
 ```
 

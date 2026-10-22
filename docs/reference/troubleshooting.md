@@ -3,7 +3,7 @@ title: FAQ and troubleshooting
 description: Answers to common questions about frappe-nix and the errors you are most likely to meet in the dev shell, in builds and on a deployed host, with their fixes.
 order: 6
 tags: [faq, troubleshooting, errors]
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 Each entry starts with what you see, then what it means and what to do. Where a page explains the cause in depth, the entry links to it.
@@ -103,7 +103,7 @@ An install that was cut short looks finished to yarn. Shell entry detects exactl
 
 ### A page of an app I just added returns 404, or throws
 
-The app is importable but not installed on the site. With `defaultSite` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `provision-site` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
+The app is importable but not installed on the site. With `defaultSite` set, `devenv up` installs missing apps for you. In a multi-tenant bench, run `reconcile-apps <SITE_NAME>`. Do not run `bench provision` again: it drops the database. See [Installed-app drift](../development/apps.md#installed-app-drift).
 
 ### `bench update --reset` is not accepted
 
@@ -125,7 +125,7 @@ The virtualenv's own `bench` ran, not the wrapper, because something put `env/bi
 
 Frappe ends a build by running `yarn build` in every app that has one, and stops at the first that fails, so every app after it is left unbuilt. In the dev shell frappe-nix carries on: each failure is named where it happens, the other apps are built, and `bench build` still exits 1. Fix the error from the app named, then rebuild it with `bench build --app <APP>`. `builtBench` does not carry on; an image build stops at the first failure. On the `develop` preset Frappe's own build no longer runs the apps one after another, and its failure output differs: the builds already running finish, none is started after the failure, and each failure is listed as `yarn build failed for <app>`. See [Resolution the way apps assume](../development/assets.md#resolution-the-way-apps-assume).
 
-### `provision-site` asks for the MariaDB root password
+### `bench provision` asks for the MariaDB root password
 
 Leave it blank and press Enter. The development MariaDB root has none.
 
