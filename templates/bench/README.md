@@ -12,7 +12,7 @@ Prerequisites: [Nix](https://nixos.org/download.html) (flakes enabled) and
 ```sh
 direnv allow                 # checks out a fresh clone's apps, then loads the dev shell
 devenv up                    # MariaDB, Redis, web, scheduler, worker, socketio, …
-provision-site               # (first run, another shell) create the site + install apps
+bench provision              # (first run, another shell) create the site + install apps
 # → http://localhost:8000
 ```
 

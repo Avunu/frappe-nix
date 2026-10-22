@@ -13,7 +13,7 @@ Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench pro
 -   a **`builtBench`** package that runs `bench build` at build time (immutable assets) — the production-ready deployable consumed by both the NixOS module and OCI containers
 -   **OCI container images** — `container-runtime`, `container-nginx`, `container-bench`, or the eight-image split set (`container-web`, `-scheduler`, three `-worker-*`, `-socketio`, `-nginx`, `-bench`) with `runtime.enable = false`; with OCI labels and healthchecks, and non-root with `containers.nonRoot`
 -   a multi-tenant **NixOS module** (`services.frappe-nix`) with per-site systemd units
--   a set of portable **bench scripts** (`provision-site`, `bench-update`, `bench-get-app`, …)
+-   a set of portable **bench scripts** (`bench provision`, `bench-update`, `bench-get-app`, …)
 
 It is consumed as a [flake-parts](https://flake.parts/) module, from a bench repository or — see [Develop a single app](docs/scaffolding/app-mode.md) — from one Frappe app's own repository, where the bench around it is generated from flake inputs instead of committed.
 
@@ -70,7 +70,7 @@ nix run github:Avunu/frappe-nix                 # interactive (prompts for what 
 # or fully non-interactive:
 nix run github:Avunu/frappe-nix -- \
   --version version-15 --apps erpnext,hrms --name mybench mybench
-cd mybench && direnv allow && devenv up         # then `provision-site` in another shell
+cd mybench && direnv allow && devenv up         # then `bench provision` in another shell
 ```
 
 -   In an **empty directory** it scaffolds a fresh bench — the frappe-nix equivalent of `bench init`. See [Create a new bench](docs/scaffolding/new-bench.md).
@@ -125,7 +125,7 @@ Then:
 ```sh
 direnv allow            # or: nix develop --no-pure-eval
 devenv up               # start MariaDB, Redis, the Frappe runtime, watch, …
-provision-site          # (first run, in another shell) create the site + install apps
+bench provision         # (first run, in another shell) create the site + install apps
 # → http://localhost:<port>  (8000 plus a per-bench offset; the shell banner prints it)
 ```
 

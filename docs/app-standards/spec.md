@@ -2581,7 +2581,7 @@ frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
    - Wait at most 300 s for `mariadb-admin --socket "$FRAPPE_DB_SOCKET" ping`, then for an HTTP answer on `127.0.0.1:$(jq .webserver_port sites/common_site_config.json)`.
    - Failure → exit 10.
 2. **Site.**
-   - Unless `--reuse-site` is given and the site exists: `printf '\n' | provision-site "$ADMIN_PW"`.
+   - Unless `--reuse-site` is given and the site exists: `printf '\n' | bench provision "$ADMIN_PW"`.
    - Then `bench --site S set-config allow_tests true`.
    - Then each `[tool.frappe-nix.tests].setup` step, or the default (§2.1):
      - `module:X` → `bench --site S run-tests --module X`, with no coverage;
@@ -2781,7 +2781,7 @@ The defaults come from `marketplace/screenshots.ts`'s `demo` block when it exist
 | seed | `demo.seed`, `1` |
 | ERPNext demo data | `demo.erpnext-demo`, off |
 
-1. Bring the bench up as frappe-test stage 1 does, unless `--no-up`. With `--fresh`, or when the site is missing, run `provision-site`.
+1. Bring the bench up as frappe-test stage 1 does, unless `--no-up`. With `--fresh`, or when the site is missing, run `bench provision`.
 2. Run the setup wizard with fixed arguments:
    ```
    language <demo.language>, country <demo.country>, currency <demo.currency>, timezone <demo.timezone>,

@@ -4,7 +4,7 @@ description: Reusable Nix infrastructure for Frappe and ERPNext benches, from th
 nav_title: Overview
 order: 0
 tags: [frappe, erpnext, nix, overview]
-updated: 2026-10-06
+updated: 2026-10-21
 ---
 
 frappe-nix packages everything needed to develop and ship a [Frappe](https://frappeframework.com/) or ERPNext bench declaratively, so a project that uses it can be a thin wrapper around a `flake.nix` and a few lock files. The same description builds the development shell on a laptop and the production system on a server.
@@ -21,7 +21,7 @@ From one `uv` workspace and an `apps/` tree, frappe-nix provides:
 - A **`builtBench`** package that runs `bench build` at build time, so compiled assets are part of the artifact. The NixOS module and the container images both consume it.
 - **OCI container images**: `container-runtime`, `container-nginx` and `container-bench`, or an eight-image split set when you turn the unified runtime off. Each carries OCI labels, the ones that serve HTTP have a healthcheck, and `containers.nonRoot` runs them as a non-root user.
 - A multi-tenant **NixOS module**, `services.frappe-nix`, with per-site systemd units, secrets handling, snapshot-protected migrations on deploy and journald logging.
-- A set of portable **bench scripts** such as `provision-site`, `bench-update` and `bench-get-app`, and a `bench` wrapper that sends the commands that need frappe-nix handling to them.
+- A set of portable **bench scripts** such as `bench provision`, `bench-update` and `bench-get-app`, and a `bench` wrapper that sends the commands that need frappe-nix handling to them.
 - **Age-encrypted secrets** committed next to the code, which the dev shell decrypts and the deployment host can read from the same ciphertext.
 
 ## How the pieces fit

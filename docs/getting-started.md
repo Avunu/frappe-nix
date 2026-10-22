@@ -3,7 +3,7 @@ title: Getting started
 description: Scaffold a new Frappe bench with frappe-nix, start the development shell and create your first site.
 order: 2
 tags: [quick-start, devenv, bench]
-updated: 2026-10-20
+updated: 2026-10-21
 ---
 
 This page takes you from an empty directory to a running Frappe site. It uses the new-bench path. If you already have a bench or a single app, pick the matching mode in [Choose a mode](scaffolding/README.md) and come back for the shell steps.
@@ -60,19 +60,21 @@ devenv up
 In a second terminal, in the same directory:
 
 ```bash
-provision-site
+bench provision
 ```
 
-`provision-site` creates the site named by `FRAPPE_SITE` and installs every app listed in `sites/apps.txt`. It sets the Administrator password to `admin` unless you pass another one as the first argument:
+`bench provision` creates the site named by `FRAPPE_SITE` and installs every app listed in `sites/apps.txt`. It sets the Administrator password to `admin` unless you pass another one as the first argument:
 
 ```bash
-provision-site '<ADMIN_PASSWORD>'
+bench provision '<ADMIN_PASSWORD>'
 ```
 
-If the script prompts for a MariaDB root password, leave it blank and press Enter, because the development MariaDB root has none.
+`provision-site`, its name before frappe-nix 1.2, still works and says it is deprecated. It goes in frappe-nix 2.0.0.
+
+If the command prompts for a MariaDB root password, leave it blank and press Enter, because the development MariaDB root has none.
 
 > [!WARNING]
-> `provision-site` runs `bench new-site` with `--force`, which drops an existing database for that site. Do not run it again to pick up an app you added later. When `defaultSite` is set, `devenv up` installs missing apps for you. See [Apps in a bench](development/apps.md#installed-app-drift).
+> `bench provision` runs `bench new-site` with `--force`, which drops an existing database for that site. Do not run it again to pick up an app you added later. When `defaultSite` is set, `devenv up` installs missing apps for you. See [Apps in a bench](development/apps.md#installed-app-drift).
 
 ## 5. Open the site
 

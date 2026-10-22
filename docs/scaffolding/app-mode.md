@@ -3,7 +3,7 @@ title: Develop a single app
 description: Use frappe-nix from one Frappe app's own repository, where a small flake.nix is all you commit and the bench around the app is generated from flake inputs.
 order: 3
 tags: [scaffolding, app-mode, flake-inputs]
-updated: 2026-10-16
+updated: 2026-10-21
 ---
 
 A bench repository is the uv workspace: a committed `pyproject.toml`, a committed `uv.lock` and `apps/*` as git submodules. An app repository has none of that. It is one app, and the bench around it is an implementation detail of developing it.
@@ -18,7 +18,7 @@ From inside the app's repository, which must be a git repository:
 cd <APP_REPO>
 nix run github:Avunu/frappe-nix       # detects an app repo and sets up app mode
 direnv allow                          # or: nix develop --no-pure-eval
-devenv up                             # then `provision-site` in another shell
+devenv up                             # then `bench provision` in another shell
 ```
 
 The scaffolder recognizes an app by a `pyproject.toml` whose `[project].name` names a package that holds a `hooks.py`. It writes three files, `flake.nix`, `.envrc` and a managed `.gitignore` block, stages them with `git add`, and runs `nix run .#relock` to produce `nix/uv.lock`. Nothing is committed.
