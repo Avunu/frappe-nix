@@ -30,7 +30,7 @@ dev = [
     "ruff==0.14.10",
     # py/frappe_nix_tools's one dependency frappe does not bring (jinja2, packaging and
     # pyyaml it does), so ty resolves the managed-file engine's imports.
-    "tomlkit>=0.13",
+    "tomlkit>=0.15.2",
     "ty",
 ]
 
