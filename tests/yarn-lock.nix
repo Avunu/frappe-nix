@@ -3,7 +3,7 @@
 # mirror whose only member is a git dependency served by a stub fetchGit, so
 # nothing here touches the network: a registry tarball is checked by the
 # fetchurl it *would* run (URL, hash, mirror name), not by running it.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -102,7 +102,7 @@ let
   sh = lib.escapeShellArg;
 in
 {
-  yarn-lock = pkgs.runCommand "frappe-nix-yarn-lock-check" { } ''
+  yarn-lock = checks.script "yarn-lock" { } ''
     fails=0
     ok()  { printf '  \033[32m✓\033[0m %s\n' "$1"; }
     no()  { printf '  \033[31m✗\033[0m %s\n' "$1"; fails=$((fails + 1)); }

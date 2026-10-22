@@ -7,7 +7,7 @@
 # bench-remove-app is a shim that execs the Python command (frappe-nix-bench
 # remove-app, py/frappe_nix_tools/frappe_nix_tools/apps/remove_app.py) with
 # the configuration lib/scripts.nix generates.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -23,21 +23,23 @@ let
 in
 {
   bench-remove-app =
-    pkgs.runCommand "frappe-nix-bench-remove-app-check"
+    checks.script "bench-remove-app"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           git
           jq
           coreutils
           python3
           shellcheck
         ];
-        script = scripts.bench-remove-app.exec;
-        dispatch = scripts.bench.exec;
-        passAsFile = [
-          "script"
-          "dispatch"
-        ];
+        drvArgs = {
+          script = scripts.bench-remove-app.exec;
+          dispatch = scripts.bench.exec;
+          passAsFile = [
+            "script"
+            "dispatch"
+          ];
+        };
       }
       ''
         export HOME="$PWD" WORKSPACE_TOOL=${workspaceTool}/bin/frappe-nix-workspace

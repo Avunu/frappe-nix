@@ -224,8 +224,6 @@ let
       '';
 in
 {
-  name = "frappe-pdf-renderers";
-
   nodes.machine =
     { ... }:
     {

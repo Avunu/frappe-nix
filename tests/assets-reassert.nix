@@ -4,12 +4,12 @@
 #
 # Rendered and tested standalone (not through modules/devenv.nix) — the
 # whole point of factoring the check into its own file.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
 
-  mkCheck =
+  render =
     hooks:
     import ../lib/assets-reassert.nix {
       inherit lib pkgs;
@@ -19,27 +19,29 @@ let
       inherit hooks;
     };
 
-  oneHook = mkCheck [ "myapp.build.reassert_assets" ];
-  twoHooks = mkCheck [
+  oneHook = render [ "myapp.build.reassert_assets" ];
+  twoHooks = render [
     "myapp.build.reassert_assets"
     "myapp.build.another_hook"
   ];
 in
 {
   assets-reassert =
-    pkgs.runCommand "frappe-nix-assets-reassert-check"
+    checks.script "assets-reassert"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           jq
           coreutils
           shellcheck
         ];
-        one = oneHook;
-        two = twoHooks;
-        passAsFile = [
-          "one"
-          "two"
-        ];
+        drvArgs = {
+          one = oneHook;
+          two = twoHooks;
+          passAsFile = [
+            "one"
+            "two"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

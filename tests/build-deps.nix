@@ -3,7 +3,11 @@
 # its `always`, the template that seeds a bench with it, the after-lock `sync`
 # that leaves a bench without the block alone, a bench's own entries, and
 # ensure-root keeping out of the block.
-{ pkgs, python-devops-nix }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
@@ -83,9 +87,9 @@ let
 in
 {
   build-deps =
-    pkgs.runCommand "frappe-nix-build-deps-check"
+    checks.script "build-deps"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.diffutils
           workspaceTool
         ];

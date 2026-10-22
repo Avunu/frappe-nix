@@ -5,7 +5,7 @@
 # inspection is the point: devenv never shellchecks a `scripts.<n>.exec`
 # body, so without this it would ship unlinted and unexercised, same as
 # tests/bench-restore.nix.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -22,15 +22,17 @@ let
 in
 {
   reconcile-apps =
-    pkgs.runCommand "frappe-nix-reconcile-apps-check"
+    checks.script "reconcile-apps"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           jq
           coreutils
           shellcheck
         ];
-        rendered = render;
-        passAsFile = [ "rendered" ];
+        drvArgs = {
+          rendered = render;
+          passAsFile = [ "rendered" ];
+        };
       }
       ''
         export HOME="$PWD"

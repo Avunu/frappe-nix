@@ -5,7 +5,7 @@
 # repositories and a rewritten yarn.lock is a modified file their next
 # `git checkout` refuses over. Rendered here for the same reason as
 # bench-update: devenv never shellchecks a `scripts.<n>.exec` body.
-{ pkgs }:
+{ pkgs, checks }:
 
 let
   inherit (pkgs) lib;
@@ -26,18 +26,20 @@ let
 in
 {
   update-deps =
-    pkgs.runCommand "frappe-nix-update-deps-check"
+    checks.script "update-deps"
       {
-        nativeBuildInputs = with pkgs; [
+        tools = with pkgs; [
           coreutils
           shellcheck
         ];
-        benchScript = render false;
-        appScript = render true;
-        passAsFile = [
-          "benchScript"
-          "appScript"
-        ];
+        drvArgs = {
+          benchScript = render false;
+          appScript = render true;
+          passAsFile = [
+            "benchScript"
+            "appScript"
+          ];
+        };
       }
       ''
         export HOME="$PWD"

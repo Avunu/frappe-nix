@@ -28,6 +28,7 @@
 #                           installs anything, and replaces after.
 {
   pkgs,
+  checks,
   lib,
   self,
   frappeNixTools,
@@ -178,9 +179,9 @@ let
 in
 {
   standards-rename-code =
-    pkgs.runCommand "standards-rename-code-check"
+    checks.script "standards-rename-code"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.git
           pkgs.python3
         ];
@@ -359,7 +360,7 @@ in
         touch "$out"
       '';
 
-  standards-rename-nixos = pkgs.runCommand "standards-rename-nixos-check" { } ''
+  standards-rename-nixos = checks.script "standards-rename-nixos" { } ''
     set -euo pipefail
     fail() { echo "FAIL $*" >&2; exit 1; }
     export STATE="$PWD/state"
@@ -437,7 +438,7 @@ in
         && contains "\${reconcileAppsExec}" devenvSource
       )
       "devenv.nix: reconcile-apps or the frappe:apps-reconcile task does not get the renames and replacements";
-    pkgs.runCommand "standards-rename-devenv-check" { } ''
+    checks.script "standards-rename-devenv" { } ''
       set -euo pipefail
       fail() { echo "FAIL $*" >&2; exit 1; }
       export STATE="$PWD/state" FRAPPE_BENCH_ROOT="$PWD/bench" FRAPPE_SITE=dev.localhost

@@ -2,13 +2,13 @@
 # the build sandbox's own loopback: see port-lease.sh. The sandbox has a
 # network namespace of its own, so its abstract sockets and ports are nobody
 # else's.
-{ pkgs }:
+{ pkgs, checks }:
 
 {
   port-lease =
-    pkgs.runCommand "frappe-nix-port-lease-check"
+    checks.script "port-lease"
       {
-        nativeBuildInputs = [
+        tools = [
           pkgs.jq
           pkgs.coreutils
         ];

@@ -15,6 +15,7 @@
 #                             inside blocks introduced by "Avunu profile example".
 {
   pkgs,
+  checks,
   lib,
   ...
 }:
@@ -110,7 +111,7 @@ let
   '') plants;
 in
 {
-  standards-vendor-neutral = pkgs.runCommand "standards-vendor-neutral-check" { } ''
+  standards-vendor-neutral = checks.script "standards-vendor-neutral" { } ''
     set -euo pipefail
     if ! ${python} ${scanner} code ${scoped} ${denylist}; then
       echo "FAIL an organisation value is in frappe-nix's built-ins (spec S37); move it to a profile" >&2
@@ -121,7 +122,7 @@ in
     touch "$out"
   '';
 
-  standards-docs = pkgs.runCommand "standards-docs-check" { } ''
+  standards-docs = checks.script "standards-docs" { } ''
     set -euo pipefail
     fail() { echo "FAIL $*" >&2; exit 1; }
     d=${docs}/docs/app-standards

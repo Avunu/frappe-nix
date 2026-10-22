@@ -90,8 +90,6 @@ let
       '';
 in
 {
-  name = "frappe-socket-runtime";
-
   nodes.machine =
     { ... }:
     {

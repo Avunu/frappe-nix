@@ -1,10 +1,12 @@
 # The app standards' flake checks (docs/app-standards/spec.md §7).
 #
 # Every other tests/standards/<area>.nix is a function of
-# { pkgs, lib, self, inputs, frappeNixTools } (take `...`) returning an attrset
-# of checks, and its owner adds it without editing this file or flake.nix. They
-# are merged into the flake's `checks`, plus `standards-all`, a linkFarm of all
-# of them, which is the one name check.yml builds.
+# { pkgs, lib, self, inputs, frappeNixTools, checks } (take `...`) returning an
+# attrset of checks, each registered with `checks` (python-devops-nix's
+# lib.checks.mk, so its derivation is frappe-nix-standards-<x>-check), and
+# its owner adds it without editing this file or flake.nix. They are merged
+# into the flake's `checks`, plus `standards-all`, a linkFarm of all of them,
+# which is the one name check.yml builds.
 #
 # Every check is named `standards-<something>` (and none `standards-all`), and
 # no check of frappe-nix's own is, so flake.nix's `// import ./tests/standards`
@@ -28,6 +30,12 @@ let
       self
       inputs
       ;
+    # python-devops-nix's helper, which names each check
+    # frappe-nix-<x>-check (CONVENTIONS.md, Tests).
+    checks = inputs.python-devops-nix.lib.checks.mk {
+      inherit pkgs;
+      product = "frappe-nix";
+    };
     inherit (import ../../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
   };
 
@@ -53,7 +61,7 @@ let
 in
 checks
 // {
-  standards-all = pkgs.linkFarm "standards-all" (
+  standards-all = pkgs.linkFarm (args.checks.checkName "standards-all") (
     lib.mapAttrsToList (name: path: { inherit name path; }) checks
   );
 }
