@@ -898,8 +898,7 @@ def main(argv: list[str]) -> int:
 		if not compose.socket:
 			warn("frappe-test: PC_SOCKET_PATH is not set: run it inside the app dev shell (nix develop)")
 			return ENVIRONMENT
-		devshell.flush()
-		os.execvp("process-compose", compose.cmd("down"))
+		return compose.stop()
 
 	out = Path(args.out or repo / ".dev-dist" / "test")
 	out.mkdir(parents=True, exist_ok=True)

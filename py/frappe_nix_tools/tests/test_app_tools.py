@@ -217,13 +217,11 @@ class TestFrappeTestBench(unittest.TestCase):
 		env = {"FRAPPE_BENCH_ROOT": str(self.bench), "DEVENV_ROOT": str(self.repo), "PC_SOCKET_PATH": ""}
 		with mock.patch.dict(os.environ, env), quiet():
 			self.assertEqual(frappe_test.main(["--down"]), 10)
-			with mock.patch("os.execvp", side_effect=RuntimeError("exec")) as execvp:
+			with mock.patch.object(devshell.Compose, "stop", autospec=True, return_value=3) as stop:
 				os.environ["PC_SOCKET_PATH"] = "/run/pc.sock"
-				with self.assertRaisesRegex(RuntimeError, "exec"):
-					frappe_test.main(["--down"])
-			execvp.assert_called_once_with(
-				"process-compose", ["process-compose", "-U", "-u", "/run/pc.sock", "down"]
-			)
+				self.assertEqual(frappe_test.main(["--down"]), 3)
+			stop.assert_called_once()
+			self.assertEqual(stop.call_args.args[0].socket, "/run/pc.sock")
 
 	def test_usage_errors_before_anything_starts(self) -> None:
 		env = {"FRAPPE_BENCH_ROOT": str(self.bench), "DEVENV_ROOT": str(self.repo), "FRAPPE_SITE": "s"}
@@ -578,6 +576,39 @@ class TestDevshell(unittest.TestCase):
 				self.assertEqual(calls, [])
 		with mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": ""}):
 			self.assertEqual(devshell.Compose("").diagnose(), "")
+
+	def test_stop(self) -> None:
+		"""A down whose server exits before it replies (the client's "EOF") is a
+		stop; one whose server still answers, or never did, is not."""
+
+		def run(down_rc: int, answers: list[bool]) -> tuple[int, list[str]]:
+			"""stop() with `down` exiting DOWN_RC and `process list` answering
+			ANSWERS in turn (the last one from then on); its status and the
+			subcommands it ran."""
+			ran: list[str] = []
+			left = list(answers)
+
+			def fake(cmd: list[str], **_: object) -> int:
+				sub = " ".join(cmd[4:])
+				ran.append(sub)
+				if sub == "down":
+					return down_rc
+				answer = left.pop(0) if len(left) > 1 else left[0]
+				return 0 if answer else 1
+
+			with mock.patch.object(devshell, "call", fake), mock.patch("time.sleep"), quiet():
+				return devshell.Compose("/run/pc.sock").stop(settle=5), ran
+
+		self.assertEqual(run(0, [True]), (0, ["process list", "down"]))
+		# The reply lost to the server's exit: it stops answering.
+		self.assertEqual(
+			run(1, [True, True, False]), (0, ["process list", "down", "process list", "process list"])
+		)
+		# Nothing was up to stop: down's own failure.
+		self.assertEqual(run(1, [False]), (1, ["process list", "down"]))
+		# Still answering after SETTLE: down failed.
+		with mock.patch("time.monotonic", side_effect=[0, 1, 10]):
+			self.assertEqual(run(1, [True])[0], 1)
 
 
 class TestAdminPassword(unittest.TestCase):
