@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.2.0](https://github.com/Avunu/frappe-nix/compare/v1.1.1...v1.2.0) (2026-10-22)
+
+
+### Features
+
+* **containers:** container-&lt;role&gt; packages, OCI labels, healthchecks, opt-in non-root user ([144218c](https://github.com/Avunu/frappe-nix/commit/144218c83c81d4db7e421950cba5c3e535bd20f5))
+* **deps:** node-locks, node-modules, bench-patches and setup requirements in Python (Track D, D4) ([33b5327](https://github.com/Avunu/frappe-nix/commit/33b53274acce2696a98cab3d7f0af03aba18941b))
+* **devenv:** link .venv and a generated pyrightconfig.json for editors (frappe-nix.ide) ([#156](https://github.com/Avunu/frappe-nix/issues/156)) ([f4477b1](https://github.com/Avunu/frappe-nix/commit/f4477b1c3f63be14ca801abbbe202c12d659c109))
+* **devenv:** seed .vscode only in bench mode by default (ide.vscodeSettings): ([f4477b1](https://github.com/Avunu/frappe-nix/commit/f4477b1c3f63be14ca801abbbe202c12d659c109))
+* **journald:** build frappe_journald on python-devops-nix's formatter core ([d96ccf0](https://github.com/Avunu/frappe-nix/commit/d96ccf0d41c68e8bcbf6a045710a3e180b1c9abc))
+* **nixos:** adopt python-devops-nix's production pieces (hardening, migrate, sockets, nginx) ([d96ccf0](https://github.com/Avunu/frappe-nix/commit/d96ccf0d41c68e8bcbf6a045710a3e180b1c9abc))
+* **nixos:** adopt python-devops-nix's production pieces (hardening, migrate, sockets, nginx) ([#151](https://github.com/Avunu/frappe-nix/issues/151)) ([d96ccf0](https://github.com/Avunu/frappe-nix/commit/d96ccf0d41c68e8bcbf6a045710a3e180b1c9abc))
+* **nixos:** make the unit sandbox opt-in with hardening.enable through 1.x ([d96ccf0](https://github.com/Avunu/frappe-nix/commit/d96ccf0d41c68e8bcbf6a045710a3e180b1c9abc))
+* **update:** bench-update, update-deps and relock in Python, one relock entry point (Track D, D4) ([68ccf7b](https://github.com/Avunu/frappe-nix/commit/68ccf7b41ecf1d5b0bc9c6ef14e39ebf30ae8c42))
+
+
+### Bug Fixes
+
+* **app-tools:** treat a down whose process-compose exits before replying as stopped ([#162](https://github.com/Avunu/frappe-nix/issues/162)) ([f925b19](https://github.com/Avunu/frappe-nix/commit/f925b1991844a3d155176f87432aa5818b4217e6))
+* **ci:** app workflows hash yarn.lock in a step, and give self-hosted runs room ([#161](https://github.com/Avunu/frappe-nix/issues/161)) ([2f9c53d](https://github.com/Avunu/frappe-nix/commit/2f9c53d7e9a8f47475389f34b6c889fb6ce2b312))
+* **containers:** let bench start in images that have no git ([bea89e8](https://github.com/Avunu/frappe-nix/commit/bea89e88bd3035349fcc18dc748b2a16715a8843))
+* **containers:** start the split set's scheduler and workers without bench ([ec5c731](https://github.com/Avunu/frappe-nix/commit/ec5c731c1983e779f28c9d747b3fa21d1c22e020))
+* **containers:** write the Redis URLs bench-wide, so split workers find the queue ([638fabd](https://github.com/Avunu/frappe-nix/commit/638fabd1d26a25f0756c797ec2cc2f10408e0c10))
+* **deps:** bump the github-actions group across 1 directory with 2 updates ([4665aaf](https://github.com/Avunu/frappe-nix/commit/4665aafbbf8141c8dac948ef41417847512f9177))
+* **deps:** bump the nix group with 6 updates ([#163](https://github.com/Avunu/frappe-nix/issues/163)) ([8155aa2](https://github.com/Avunu/frappe-nix/commit/8155aa2f35ea6ee6f68f4dcb9c3da0e5f3f2c3ba))
+* **nixos,runtime:** bind-mount the scheduler lock; survive a failing start ([11e52a7](https://github.com/Avunu/frappe-nix/commit/11e52a7237cbb3d058db276ea1ff871b6b8b35bc))
+* **nixos:** own the scheduler lock's bind destination ([ff95644](https://github.com/Avunu/frappe-nix/commit/ff9564496a08ad6d49f8387e9438135a53f9f2a4))
+* **standards:** build mysqlclient's listing check from a writable copy of its source ([#167](https://github.com/Avunu/frappe-nix/issues/167)) ([215081d](https://github.com/Avunu/frappe-nix/commit/215081d3889773953a474b5feebe79c93a82b982))
+
 ## [1.1.1](https://github.com/Avunu/frappe-nix/compare/v1.1.0...v1.1.1) (2026-10-21)
 
 
