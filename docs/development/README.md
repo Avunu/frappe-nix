@@ -4,7 +4,7 @@ description: What devenv up runs, how several benches share one machine over uni
 nav_title: Development
 order: 4
 tags: [devenv, development, ports, sockets]
-updated: 2026-10-19
+updated: 2026-10-21
 ---
 
 `devenv up` runs the full stack through process-compose. **Several benches can run at once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which devenv gives each project uniquely, and the ports that remain are per bench.
@@ -101,6 +101,7 @@ It always does the full scan, and lists lockfiles that differ from their commit:
 - [Development guard rails](guard-rails.md): what keeps a restored production database from reaching the outside world.
 - [Secrets](secrets.md) and [Restore a production backup](restore-from-production.md).
 - [Memory and disk](memory-and-disk.md): how the stack stays light on a small machine.
+- [Editors and language servers](editors.md): the `.venv` and `pyrightconfig.json` the shell links, so an editor resolves every app's imports.
 - [Dependencies and locks](locks.md), [Apps in a bench](apps.md) and [Asset builds](assets.md).
 - [Upgrading frappe-nix](upgrading.md).
 - [Migrate large tables online](online-migrations.md): `pt-online-schema-change` in front of `bench migrate`, so an ALTER cannot lock a big table.

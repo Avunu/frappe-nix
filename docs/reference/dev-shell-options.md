@@ -3,7 +3,7 @@ title: Dev shell options
 description: Every perSystem.frappe-nix option that configures the development shell, the production package and the container images, with types and defaults.
 order: 1
 tags: [options, reference, devenv]
-updated: 2026-10-19
+updated: 2026-10-21
 ---
 
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
@@ -93,6 +93,18 @@ Runs `devenv up` in a systemd scope of its own. See [Memory and disk](../develop
 | `extraLibraryPaths`         | list of package | `[ ]`         | Extra `LD_LIBRARY_PATH` entries (dev shell).                                                                                                                                                                      |
 | `extraScripts`              | attrs           | `{ }`         | Extra devenv scripts, merged over the standard set.                                                                                                                                                               |
 | `extraEnv`                  | attrs of str    | `{ }`         | Extra environment variables (dev shell).                                                                                                                                                                          |
+
+## Editors
+
+What the shell links into the workspace for editors and language servers. See [Editors and language servers](../development/editors.md).
+
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `ide.enable` | bool | `true` | On every shell entry, link `./.venv` to the dev virtualenv and `./pyrightconfig.json` to a generated file (the `.venv` interpreter, every app's root as `extraPaths`, `typeCheckingMode = "off"`) at the workspace root. A real file at either path is left alone, and the links go in `.git/info/exclude` unless already ignored. `nix build .#pyrightConfig` builds the file. |
+| `ide.pyrightSettings` | JSON attrs | `{ }` | Keys merged over the generated `pyrightconfig.json`. |
+| `ide.vscodeSettings` | bool | `!app.enable` | Seed `.vscode/settings.json` (the `.venv` interpreter, watcher excludes) and `.vscode/extensions.json` (Python, ruff) when they do not exist. Never overwrites. Needs `ide.enable`. Off by default in app mode, so an existing app repository sees no change on shell entry. |
+| `ide.languageServer.enable` | bool | `false` | Put `ide.languageServer.package` on the dev shell's `PATH`, for an LSP editor. Needs `ide.enable`. |
+| `ide.languageServer.package` | package | `pkgs.basedpyright` | A pyright-compatible language server, which reads the generated `pyrightconfig.json`. |
 
 ## Runtime
 

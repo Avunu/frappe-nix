@@ -522,6 +522,7 @@
         # Track B's renames: each old option name still reaches the new one,
         # and is listed for its deprecation warning.
         // import ./tests/renames.nix { inherit self pkgs inputs; }
+        // import ./tests/ide.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.
         // import ./tests/node-verify.nix { inherit pkgs; }
