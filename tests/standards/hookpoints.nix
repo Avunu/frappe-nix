@@ -15,10 +15,15 @@
 #   standards-app-flake the fixture app's flake, evaluated against this checkout
 #                       (what `--override-input frappe-nix path:.` does),
 #                       exposes apps.frappe-init and the tools; the opted-in
-#                       app-mode shell fragment carries `frappe-nix` and
-#                       `frappe-init`, and none of its packages propagates
-#                       anything, so no Python site-packages reach the shell's
-#                       PYTHONPATH ahead of the bench venv's.
+#                       app-mode shell fragment carries `frappe-nix`,
+#                       `frappe-init` and `prek`, and none of its packages
+#                       propagates anything, so no Python site-packages reach
+#                       the shell's PYTHONPATH ahead of the bench venv's. `prek`
+#                       runs the prek the app's tools/uv.lock pins, through
+#                       `uv run --frozen --project <app>/tools`, from the app's
+#                       root or any directory under it, and is exit 3 naming
+#                       tools/pyproject.toml when the app has none or it pins
+#                       no prek.
 #   standards-app-shell modules/devenv.nix's wiring of that fragment, read from
 #                       the fixture app's own evaluation (opted in) and from
 #                       the same flake over a source without [tool.frappe-nix]:
@@ -332,6 +337,8 @@ let
       "app shell: frappe-nix is not among the packages";
     assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/frappe-init") shellPrograms)
       "app shell: frappe-init is not among the packages";
+    assert lib.assertMsg (builtins.any (lib.hasSuffix "/bin/prek") shellPrograms)
+      "app shell: prek is not among the packages";
     assert lib.assertMsg (
       propagating == [ ]
     ) "app shell: ${lib.concatStringsSep ", " propagating} propagates inputs into the dev shell";
@@ -464,11 +471,15 @@ in
   standards-app-flake =
     pkgs.runCommand "standards-app-flake-check"
       {
-        nativeBuildInputs = shellFragment.packages;
+        nativeBuildInputs = shellFragment.packages ++ [
+          pkgs.git
+          pkgs.uv
+        ];
         facts = builtins.toJSON flakeFacts;
       }
       ''
         set -euo pipefail
+        fail() { echo "FAIL $*" >&2; exit 1; }
         if [ -n "''${PYTHONPATH:-}" ]; then
           echo "FAIL the app shell's packages put $PYTHONPATH on PYTHONPATH" >&2
           exit 1
@@ -482,6 +493,44 @@ in
           fi
         done
         frappe-nix --version > /dev/null
+
+        # prek: the tools/uv.lock pin, run through uv. Offline, the tools project
+        # has no dependencies, and a stand-in prek on PATH (uv run looks there after
+        # the project's environment) reports how it was called and in which env.
+        export HOME="$TMPDIR" UV_CACHE_DIR="$TMPDIR/uv-cache" UV_OFFLINE=1 \
+          UV_PYTHON=${lib.getExe pkgs.python3} UV_PYTHON_DOWNLOADS=never
+        mkdir -p app/sub stub
+        git -C app init -q
+        cd app
+        set +e
+        DEVENV_ROOT="$PWD" prek install > ../log 2>&1
+        code=$?
+        set -e
+        [ "$code" = 3 ] || fail "prek without tools/pyproject.toml exited $code, not 3: $(cat ../log)"
+        grep -q "tools/pyproject.toml is missing" ../log || fail "prek does not name tools/pyproject.toml: $(cat ../log)"
+        echo "ok   prek without tools/pyproject.toml is exit 3 naming it"
+
+        mkdir tools
+        printf '[project]\nname = "app-tools"\nversion = "0"\nrequires-python = ">=3.10"\ndependencies = []\n' > tools/pyproject.toml
+        uv lock --quiet --project tools
+        set +e
+        DEVENV_ROOT="$PWD" prek run > ../log 2>&1
+        code=$?
+        set -e
+        [ "$code" = 3 ] || fail "prek with no prek pinned exited $code, not 3: $(cat ../log)"
+        grep -q "does not pin prek" ../log || fail "prek with no prek pinned does not say so: $(cat ../log)"
+        echo "ok   prek with no prek in tools/pyproject.toml is exit 3 saying so, not a loop"
+
+        printf '#!/bin/sh\necho "pinned prek $* in $VIRTUAL_ENV"\n' > ../stub/prek
+        chmod +x ../stub/prek
+        wrapper="$(command -v prek)"
+        got="$(PATH="$TMPDIR/stub:$PATH" DEVENV_ROOT="$PWD" "$wrapper" install)"
+        [ "$got" = "pinned prek install in $PWD/tools/.venv" ] || fail "prek in the app's root ran '$got'"
+        got="$(cd sub && PATH="$TMPDIR/stub:$PATH" env -u DEVENV_ROOT "$wrapper" run --all-files)"
+        [ "$got" = "pinned prek run --all-files in $PWD/tools/.venv" ] || fail "prek under the app's root ran '$got'"
+        echo "ok   prek runs uv run --frozen --project <app>/tools prek, from the root and below it"
+        cd ..
+
         printf '%s\n' "$facts" > "$out"
       '';
 

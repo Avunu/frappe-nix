@@ -9,7 +9,9 @@
 #   packages    every lib/standards/tools/*.nix tool (`frappe-nix`, and the
 #               frappe-listing, frappe-icon, … wrappers as they land) plus
 #               `frappe-init`, so `frappe-init --sync` runs the frappe-nix the
-#               app's flake.lock pins; and nixfmt, statix and deadnix, what
+#               app's flake.lock pins; `prek`, which runs the prek the app's
+#               tools/uv.lock pins (the README's `prek install`); and nixfmt,
+#               statix and deadnix, what
 #               `frappe-test --nix-lint` runs over the app's flake.nix and
 #               nix/*.nix (spec §5.1 stage 8), for interactive use;
 #   apps        the same tools as `nix run .#<tool>`, and `.#frappe-init`.
@@ -65,9 +67,42 @@ let
     };
   };
 
+  # The hook runner the managed .pre-commit-config.yaml is written for, at the version
+  # the app pins in tools/uv.lock (S1): the same prek CI's lint job runs as
+  # `uv run --frozen --project tools prek`, never a second pin. The README's
+  # `prek install` and a bare `prek run` need it on PATH; `prek install` writes the
+  # synced binary's own path into the git hook. From the app's root (DEVENV_ROOT),
+  # whatever the working directory, as tools/ is there.
+  prek = pkgs.writeShellApplication {
+    name = "prek";
+    runtimeInputs = [
+      pkgs.git
+      pkgs.uv
+    ];
+    text = ''
+      root="''${DEVENV_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+      if [ ! -f "$root/tools/pyproject.toml" ]; then
+        echo "prek: $root/tools/pyproject.toml is missing; it pins prek while .pre-commit-config.yaml is live (frappe-init --sync)" >&2
+        exit 3
+      fi
+      # uv run finds a command on PATH after the project's environment: with no prek
+      # pinned there, that is this wrapper again.
+      if [ -n "''${FRAPPE_NIX_PREK_WRAPPER:-}" ]; then
+        echo "prek: $root/tools/pyproject.toml does not pin prek (frappe-init --sync adds it while .pre-commit-config.yaml is live)" >&2
+        exit 3
+      fi
+      export FRAPPE_NIX_PREK_WRAPPER=1
+      exec uv run --frozen --project "$root/tools" prek "$@"
+    '';
+    meta.description = "prek, as the app's tools/uv.lock pins it";
+  };
+
   packages = lib.optionals optedIn (
     builtins.attrValues outputs.tools
-    ++ [ frappeInit ]
+    ++ [
+      frappeInit
+      prek
+    ]
     # Pinned by frappe-nix's nixpkgs; frappe-test carries its own copies
     # (lib/scripts.d/frappe-test.nix), so its stage 8 needs none of these.
     ++ [
