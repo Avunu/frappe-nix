@@ -190,6 +190,48 @@ async function freePort(): Promise<number> {
 }
 
 /**
+ * The longest path a Unix socket can have: `sun_path` is 108 bytes, its NUL included.
+ */
+const SOCKET_PATH_MAX = 107;
+
+/**
+ * What Chromium puts under its TMPDIR for its process singleton (`mkdtemp` of
+ * `org.chromium.Chromium.XXXXXX`, then a socket), and what `launch` mints under the base.
+ * Chromium aborts (SIGABRT, "Socket path too long") when the whole is over SOCKET_PATH_MAX,
+ * which a worktree's long TMPDIR easily is.
+ */
+const SINGLETON_SOCKET = "/org.chromium.Chromium.XXXXXX/SingletonSocket";
+const RUN_DIR = "/cdp-XXXXXX";
+
+function writableDir(dir: string): boolean {
+	try {
+		if (!fs.statSync(dir).isDirectory()) return false;
+		fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Where `launch` makes its run directory: the browser's profile and its TMPDIR, so the
+ * singleton socket lands there too. The first of TMPDIR, XDG_RUNTIME_DIR, /tmp and /dev/shm
+ * that is a writable directory short enough for that socket; TMPDIR whenever it is.
+ */
+export function runDirBase(env: NodeJS.ProcessEnv = process.env): string {
+	const candidates = [env["TMPDIR"] || os.tmpdir(), env["XDG_RUNTIME_DIR"], "/tmp", "/dev/shm"];
+	for (const base of candidates) {
+		if (!base || !path.isAbsolute(base)) continue;
+		const dir = path.resolve(base);
+		if (dir.length + RUN_DIR.length + SINGLETON_SOCKET.length > SOCKET_PATH_MAX) continue;
+		if (writableDir(dir)) return dir;
+	}
+	throw new Error(
+		`no writable directory short enough for chromium's singleton socket (tried ${candidates.filter(Boolean).join(", ")})`,
+	);
+}
+
+/**
  * Delete Chromium profiles left by earlier runs.
  *
  * Cleaning up on exit is not enough on its own: a suite killed by a timeout —
@@ -201,17 +243,16 @@ async function freePort(): Promise<number> {
  *
  * Only profiles older than the cutoff go, so a concurrent run is never touched.
  */
-function sweepStaleProfiles(maxAgeMs = 60 * 60 * 1000): void {
-	const tmp = os.tmpdir();
+function sweepStaleProfiles(base: string, maxAgeMs = 60 * 60 * 1000): void {
 	let entries: string[] = [];
 	try {
-		entries = fs.readdirSync(tmp).filter((n) => n.startsWith("cdp-"));
+		entries = fs.readdirSync(base).filter((n) => n.startsWith("cdp-"));
 	} catch {
 		return;
 	}
 	const cutoff = Date.now() - maxAgeMs;
 	for (const name of entries) {
-		const full = path.join(tmp, name);
+		const full = path.join(base, name);
 		try {
 			if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true });
 		} catch {
@@ -227,9 +268,13 @@ export async function launch({
 	args: extra = [],
 	binary = "chromium",
 }: LaunchOptions = {}): Promise<Browser> {
-	sweepStaleProfiles();
+	const base = runDirBase();
+	sweepStaleProfiles(base);
 	port = port || (await freePort());
-	const dir = userDataDir || fs.mkdtempSync(path.join(os.tmpdir(), "cdp-"));
+	// The run directory is the profile (unless the caller brings one) and chromium's TMPDIR,
+	// both short whatever TMPDIR is, and removed with the browser.
+	const run = fs.mkdtempSync(path.join(base, "cdp-"));
+	const dir = userDataDir || run;
 	const args = [
 		`--remote-debugging-port=${port}`,
 		`--user-data-dir=${dir}`,
@@ -249,7 +294,10 @@ export async function launch({
 	if (headless && !extra.some((a) => a.startsWith("--headless"))) args.unshift("--headless=new");
 	// The stdio tuple is what makes `proc.stderr` a stream rather than `null`:
 	// slot 2 is "pipe", so the drain below has something to attach to.
-	const proc = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+	const proc = spawn(binary, args, {
+		stdio: ["ignore", "pipe", "pipe"],
+		env: { ...process.env, TMPDIR: run },
+	});
 	proc.stderr.on("data", () => {});
 	// A missing binary is an 'error' event, which would otherwise end the process with an
 	// unhandled exception; it, an early exit, or no answer within 20 s rejects the launch.
@@ -272,7 +320,7 @@ export async function launch({
 	}
 	if (!ready) {
 		proc.kill();
-		if (!userDataDir) fs.rmSync(dir, { recursive: true, force: true });
+		fs.rmSync(run, { recursive: true, force: true });
 		throw failed ?? new Error(`${binary} did not answer on port ${port} within 20 s`);
 	}
 	// Best-effort teardown for the normal path. `proc.kill()` is asynchronous, so
@@ -280,7 +328,7 @@ export async function launch({
 	// the sweep above, which is what actually keeps /tmp bounded.
 	const cleanup = () => {
 		try {
-			if (!userDataDir) fs.rmSync(dir, { recursive: true, force: true });
+			fs.rmSync(run, { recursive: true, force: true });
 		} catch {
 			/* still in use; the next run's sweep will take it */
 		}
