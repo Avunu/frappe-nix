@@ -4,10 +4,10 @@ description: "Opt-in app standards for Frappe apps in frappe-nix app mode: manag
 nav_title: App standards
 order: 7
 tags: [app-standards, apps, ci, releases, marketplace]
-updated: 2026-10-07
+updated: 2026-10-22
 ---
 
-The app standards are an opt-in part of frappe-nix app mode. An app that opts in gets one set of managed files kept in step by `frappe-init --sync`, the CI gates and release flow its profile enables, and the checks the Frappe marketplace runs. They are driven by the `frappe-nix` command, which is on `PATH` in an opted-in app's dev shell.
+The app standards are an opt-in part of frappe-nix app mode. An app that opts in gets one set of managed files kept in step by `frappe-init --sync`, the CI gates and release flow its profile enables, and the checks the Frappe marketplace runs. They are driven by the `frappe-nix` command, which is on `PATH` in an opted-in app's dev shell. So is `prek`, which runs the prek the app pins in `tools/uv.lock` (the one CI runs), so `prek install` sets up the git hooks once per clone.
 
 Nothing changes for an app that has not opted in: without a `[tool.frappe-nix]` table in its `pyproject.toml`, `frappe-init --app` and the dev shell behave exactly as they always have. An app opts in with a profile. The built-in `minimal` profile manages only the dev shell's files, `recommended` adds vendor-neutral lint, format, type, test, commit, release, Dependabot and CI standards, and an organisation can publish its own profile on top of either.
 
