@@ -13,6 +13,9 @@
 #                            clock, the bench brought up and stopped again)
 #   standards-shots-types    lib/shots/shots.d.ts and the packaged copy sync renders into
 #                            marketplace/shots.d.ts are the same file
+#   standards-shots-cdp      tests/standards/shots-cdp.ts: the engine's launch starts the real
+#                            chromium under a TMPDIR too long for its singleton socket, in a
+#                            short run directory it removes again
 #   standards-icon           on the fixture with the example-org profile (tile #336699):
 #                            `frappe-icon check` passes, raster rules included; `build`
 #                            writes the same bytes twice; a stroke fails it (exit 1); an
@@ -102,6 +105,19 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
     }
     touch "$out"
   '';
+
+  standards-shots-cdp =
+    pkgs.runCommand "standards-shots-cdp-check"
+      {
+        nativeBuildInputs = [ pkgs.nodejs_24 ];
+      }
+      ''
+        export HOME="$TMPDIR"
+        mkdir -p "$TMPDIR/r"
+        CDP=${tools.frappe-shots.engine}/cdp.ts CHROMIUM=${lib.getExe pkgs.chromium} SHORT="$TMPDIR/r" \
+          node ${./shots-cdp.ts}
+        touch "$out"
+      '';
 
   standards-icon = pkgs.runCommand "standards-icon-check" { inherit nativeBuildInputs; } ''
     set -euo pipefail
