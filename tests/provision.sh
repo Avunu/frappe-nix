@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Checks for `provision-site`: create $FRAPPE_SITE and install every app
-# sites/apps.txt names, against a stub bench and a stub frappe-nix-ports. No
-# database, no Frappe, no network.
+# Checks for `bench provision` (and `provision-site`, its alias): create
+# $FRAPPE_SITE and install every app sites/apps.txt names, against a stub bench
+# and a stub frappe-nix-ports. No database, no Frappe, no network.
 #
-# Usage: provision.sh <rendered-provision-site>
+# Usage: provision.sh <rendered-provision-site> <rendered-bench-dispatch>
 set -euo pipefail
 
 SCRIPT="$1"
+DISPATCH="$2"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -64,15 +65,26 @@ mkdir -p "$B/sites" "$ROOT/elsewhere"
 printf 'frappe\nerpnext\n\nhrms\n' > "$B/sites/apps.txt"
 echo '{"webserver_port": 8042}' > "$B/sites/common_site_config.json"
 calls() { cut -d' ' -f2- "$CALLS" | tr '\n' '|'; }
-# provision <log> [args…]: run it from somewhere other than the bench; its status in $rc.
-provision() {
-  local log=$1
-  shift
+# provision <log> [args…]: `bench provision`, run from somewhere other than
+# the bench; its status in $rc. alias <log> [args…]: the same, as provision-site.
+run_it() { # <log> <script> [args…]
+  local log=$1 script=$2
+  shift 2
   : > "$CALLS"
   : > "$ROOT/stdin"
   : > "$ROOT/env"
   rc=0
-  (cd "$ROOT/elsewhere" && printf '\n' | bash "$SCRIPT" "$@") > "$ROOT/$log.out" 2> "$ROOT/$log.err" || rc=$?
+  (cd "$ROOT/elsewhere" && printf '\n' | bash "$script" "$@") > "$ROOT/$log.out" 2> "$ROOT/$log.err" || rc=$?
+}
+provision() {
+  local log=$1
+  shift
+  run_it "$log" "$DISPATCH" provision "$@"
+}
+alias_() {
+  local log=$1
+  shift
+  run_it "$log" "$SCRIPT" "$@"
 }
 NEW_SITE="new-site mysite.localhost --db-type mariadb --db-socket $FRAPPE_DB_SOCKET --db-root-username root"
 
@@ -84,6 +96,10 @@ check "says so on stderr" grep -qxF "ERROR: FRAPPE_SITE is not set. Set it in yo
 check_eq "…and runs nothing" "" "$(calls)"
 FRAPPE_SITE= provision emptysite
 check_eq "an empty FRAPPE_SITE is the same: exit 1" 1 "$rc"
+FRAPPE_SITE=mysite.localhost FRAPPE_DB_SOCKET= provision nosocket
+check_eq "no FRAPPE_DB_SOCKET: exit 1" 1 "$rc"
+check "…naming it" grep -q "FRAPPE_DB_SOCKET is not set" "$ROOT/nosocket.err"
+check_eq "…before anything runs" "" "$(calls)"
 
 export FRAPPE_SITE=mysite.localhost
 
@@ -106,6 +122,35 @@ provision pw 's3cret pass'
 check_eq "exits 0" 0 "$rc"
 check "the first argument is Administrator's password" grep -qF -- "--admin-password s3cret pass --set-default --force" "$CALLS"
 check "…and is printed" grep -qxF "   Admin password: s3cret pass" "$ROOT/pw.out"
+provision emptypw ''
+check "an empty one is admin" grep -qF -- "--admin-password admin --set-default" "$CALLS"
+provision dashpw -- -x
+check_eq "after --, one that starts with a dash: exit 0" 0 "$rc"
+check "…is the password" grep -qF -- "--admin-password -x --set-default" "$CALLS"
+
+echo "── arguments ───────────────────────────────────────────────────"
+provision help --help
+check_eq "--help: exit 0" 0 "$rc"
+check "…prints the usage" grep -q "^Usage: bench provision \[ADMIN_PASSWORD\]" "$ROOT/help.out"
+check_eq "…and runs nothing (it once dropped the site, with --help as the password)" "" "$(calls)"
+provision h -h
+check_eq "-h: the same" "0 " "$rc $(calls)"
+provision extra pw extra
+check_eq "a second argument: exit 2" 2 "$rc"
+check "…naming it" grep -qF "unexpected argument 'extra'" "$ROOT/extra.err"
+check_eq "…and runs nothing" "" "$(calls)"
+
+echo "── provision-site, the alias ───────────────────────────────────"
+alias_ alias 's3cret'
+check_eq "exits 0" 0 "$rc"
+check_eq "the same calls" \
+  "$NEW_SITE --admin-password s3cret --set-default --force|--site mysite.localhost install-app erpnext|--site mysite.localhost install-app hrms|" \
+  "$(calls)"
+check "the same stdout" grep -qxF "✅ Site mysite.localhost provisioned!" "$ROOT/alias.out"
+check_eq "one line on stderr: it is deprecated" \
+  "provision-site is deprecated: run \`bench provision\` (the alias goes in frappe-nix 2.0.0)" "$(cat "$ROOT/alias.err")"
+STUB_FAIL=erpnext alias_ aliasfail
+check_eq "a failure: the same status" 3 "$rc"
 
 echo "── the URL's port ──────────────────────────────────────────────"
 STUB_PORTS_FAIL=1 provision noports
@@ -115,6 +160,10 @@ check_not "…and frappe-nix-ports' stderr is not shown" grep -q "no bench runni
 echo '{}' > "$B/sites/common_site_config.json"
 STUB_PORTS_FAIL=1 provision noport
 check "no webserver_port: 8000" grep -qxF "   URL: http://127.0.0.1:8000" "$ROOT/noport.out"
+rm "$B/sites/common_site_config.json"
+STUB_PORTS_FAIL=1 provision noconfig
+check_eq "no common_site_config.json: still 0 (the site is made)" 0 "$rc"
+check "…and 8000" grep -qxF "   URL: http://127.0.0.1:8000" "$ROOT/noconfig.out"
 echo '{"webserver_port": 8042}' > "$B/sites/common_site_config.json"
 
 echo "── failures ────────────────────────────────────────────────────"
@@ -128,10 +177,18 @@ check_eq "a failed install-app: its status" 3 "$rc"
 check_not "…and the apps after it are not installed" grep -q "install-app hrms" "$CALLS"
 check_not "…and it does not say provisioned" grep -q provisioned "$ROOT/installfail.out"
 
+printf '  erpnext \nhrms' > "$B/sites/apps.txt"
+provision lastline
+check_eq "apps.txt's blanks are trimmed and a last line without a newline is installed" \
+  "--site mysite.localhost install-app erpnext|--site mysite.localhost install-app hrms|" \
+  "$(calls | cut -d'|' -f2-)"
+printf 'frappe\nerpnext\n\nhrms\n' > "$B/sites/apps.txt"
+
 mv "$B/sites/apps.txt" "$B/sites/apps.txt.off"
 provision noapps
 check_eq "no sites/apps.txt: exit 1, after the site is made" 1 "$rc"
 check_eq "…which new-site did" "$NEW_SITE --admin-password admin --set-default --force|" "$(calls)"
+check "…naming the file" grep -q "sites/apps.txt" "$ROOT/noapps.err"
 mv "$B/sites/apps.txt.off" "$B/sites/apps.txt"
 
 echo

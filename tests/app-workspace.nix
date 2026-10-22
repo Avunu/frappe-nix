@@ -11,7 +11,7 @@
 #   [tool.uv].package must stay false, or uv tries to build the workspace root
 #   itself and lib/python.nix's filter stops removing it from the venv;
 #
-#   sites/apps.txt is the order provision-site installs in, and frappe has to
+#   sites/apps.txt is the order `bench provision` installs in, and frappe has to
 #   be first.
 { pkgs }:
 

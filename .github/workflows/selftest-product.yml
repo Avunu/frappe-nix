@@ -28,7 +28,7 @@ on:
     paths:
       - .github/workflows/selftest-product.yml
       # What frappe-demo and frappe-shots stand on: the dev shell (modules/, lib/scripts.nix's
-      # provision-site, lib/standards/'s shell and outputs), the flake, and the pins run.sh
+      # bench provision, lib/standards/'s shell and outputs), the flake, and the pins run.sh
       # reads (dev/pyproject.toml, templates/bench/), as selftest-runtime filters.
       - flake.nix
       - flake.lock

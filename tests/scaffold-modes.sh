@@ -163,8 +163,8 @@ check "nothing is committed" test -z "$(git rev-list --all 2> /dev/null)"
 OUT="$ROOT/new.log"
 says "Next steps:" && says "git diff --cached --stat" && says "direnv allow" && says "devenv up" &&
   ok "the next steps" || no "the next steps: $(cat "$OUT")"
-says "provision-site               # (in another shell) create acme.localhost + install apps" &&
-  ok "…name provision-site for a bench without secrets" || no "…name provision-site for a bench without secrets"
+says "bench provision              # (in another shell) create acme.localhost + install apps" &&
+  ok "…name bench provision for a bench without secrets" || no "…name bench provision for a bench without secrets"
 says "To restore this bench from production backups, declare its secrets" &&
   ok "…and say how to declare them, though the template mentions them in a comment" ||
   no "…and say how to declare them, though the template mentions them in a comment"

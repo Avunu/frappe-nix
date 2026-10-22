@@ -328,7 +328,7 @@ in
 
               A list rather than an attrset because the order is load-bearing: it
               is the order of the workspace members, and therefore of
-              sites/apps.txt, which is the order `provision-site` installs in —
+              sites/apps.txt, which is the order `bench provision` installs in —
               erpnext has to land before hrms. Nix sorts attribute names, which
               would silently reorder that. `frappe` is always first and
               `app.name` always last; these sit in between, in the order written.
@@ -2102,7 +2102,7 @@ in
           # `conf.get("mariadb_root_password") or ... or getpass(...)`
           # (frappe/database/mariadb/setup_db.py), and an empty string is falsy,
           # so `bench new-site` asks anyway. The empty answer is the right one —
-          # this MariaDB's root has no password — which is why provision-site
+          # this MariaDB's root has no password — which is why `bench provision`
           # says to press Enter.
           if [ ! -f "$_bench/sites/common_site_config.json" ]; then
             ${pkgs.jq}/bin/jq -n ${
@@ -3104,7 +3104,7 @@ in
             # Deliberately not `curl -f`: any HTTP response means the server is
             # accepting connections, which is all a dependent needs to know. On a
             # bench whose site has not been created yet Frappe answers 500, and
-            # requiring 2xx would keep nginx down until after `provision-site`.
+            # requiring 2xx would keep nginx down until after `bench provision`.
             socketReady = name: socket: path: {
               exec = latched name ''${pkgs.curl}/bin/curl -s -o /dev/null --max-time 4 --unix-socket "${socket}" http://localhost${path}'';
               initial_delay = 2;

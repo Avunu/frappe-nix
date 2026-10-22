@@ -48,7 +48,7 @@
   # Ordered [{ name; src; }] — frappe first, the app under development last.
   # Ordered, not an attrset, because this becomes the order of the workspace
   # members, which is the order of sites/apps.txt and therefore the order
-  # provision-site installs in: erpnext has to land before hrms, and Nix sorts
+  # `bench provision` installs in: erpnext has to land before hrms, and Nix sorts
   # attribute names.
   apps,
   # [project].name for the workspace root. uv refuses a root whose name collides

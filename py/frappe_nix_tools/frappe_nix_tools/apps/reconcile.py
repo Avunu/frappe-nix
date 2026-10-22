@@ -5,7 +5,7 @@ lib/rename/reconcile.nix (PLAN.md, Track D, D3).
 
 It runs as `reconcile-apps [<site>]` by hand and as `devenv up`'s
 frappe:apps-reconcile task, and the one rendering has to be right in both. This
-is what provision-site leaves undone afterwards: a sibling pinned into the
+is what `bench provision` leaves undone afterwards: a sibling pinned into the
 flake *after* a site already exists never gets installed by anything else
 (frappe-nix#32).
 
@@ -82,7 +82,7 @@ def rename(config: AppsConfig, site: str, site_dir: Path) -> None:
 def reconcile(config: AppsConfig, site: str, skip: set[str]) -> int:
 	site_dir = Path("sites", site)
 	if not site_dir.is_dir():
-		proc.say(f"reconcile-apps: sites/{site} does not exist yet — run provision-site first.")
+		proc.say(f"reconcile-apps: sites/{site} does not exist yet — run bench provision first.")
 		return 0
 	apps_txt = Path("sites/apps.txt")
 	if not apps_txt.is_file():

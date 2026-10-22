@@ -12,7 +12,7 @@
 # way to reach) and nixfmt, statix and deadnix for stage 8, all pinned by
 # frappe-nix's nixpkgs, with the PATH the bash version had, which the app's
 # shell checks inherit. The dev shell supplies the rest (devenv,
-# process-compose, provision-site, uv).
+# process-compose, `bench provision`, uv).
 {
   lib,
   pkgs,

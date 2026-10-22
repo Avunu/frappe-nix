@@ -545,7 +545,7 @@
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
         // import ./tests/reconcile-apps.nix { inherit pkgs; }
-        # `provision-site` (`bench provision`): the site, its apps, over stubs.
+        # `bench provision` and its alias provision-site: the site and its apps, over stubs.
         // import ./tests/provision.nix { inherit pkgs; }
         # The asset-shadow reassert check (issue #32, part 2): the
         # assets.json invariant and its reassert hooks, standalone.
