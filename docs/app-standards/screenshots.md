@@ -3,10 +3,10 @@ title: Screenshots
 description: "Repeatable screenshots from a demo site: the screenshot spec, frappe-demo and frappe-shots."
 order: 9
 tags: [app-standards, screenshots, demo]
-updated: 2026-10-07
+updated: 2026-10-22
 ---
 
-`frappe-demo` builds a demo site the same way every time, and `frappe-shots` photographs it the same way every time, so the screenshots in `docs/screenshots/` change only when the app does. Both are dev-shell commands of an app that turned their modules on: `demo`, and `screenshots`, which needs `demo`. Both are off in the built-in profiles.
+`frappe-demo` builds a demo site the same way every time, and `frappe-shots` photographs it the same way every time, so the screenshots in `docs/screenshots/` change only when the app does. Both are dev-shell commands of an app that turned their modules on: `demo`, and `screenshots`, which needs `demo`. Both are off in the built-in profiles. They need the bench the dev shell sets up (`FRAPPE_BENCH_ROOT`), so `nix run .#frappe-shots` on its own stops with exit 3 (frappe-demo: 10); from outside the shell, run them as `nix develop -c frappe-shots ...`.
 
 ```toml
 [tool.frappe-nix.demo]

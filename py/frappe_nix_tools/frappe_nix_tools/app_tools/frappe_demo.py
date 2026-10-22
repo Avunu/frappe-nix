@@ -207,7 +207,9 @@ def demo(argv: list[str]) -> int:
 
 	bench_root = os.environ.get("FRAPPE_BENCH_ROOT", "")
 	if not bench_root:
-		raise Fail("run it in the app's dev shell (nix develop): FRAPPE_BENCH_ROOT is unset")
+		raise Fail(
+			"FRAPPE_BENCH_ROOT is unset: run it in the app's dev shell, or from the app's directory as `nix develop -c frappe-demo ...`"
+		)
 	bench = Path(bench_root)
 	repo = devshell.repo_root()
 	if repo is None:
