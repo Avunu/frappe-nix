@@ -4,7 +4,7 @@
               [--date YYYY-MM-DD] [--seed N] [--no-up]
 
 Run by lib/standards/tools/frappe-demo.nix inside an opted-in app's dev shell,
-which supplies devenv, process-compose, provision-site, bench and mariadb-admin.
+which supplies devenv, process-compose, bench (and its `bench provision`) and mariadb-admin.
 The defaults are the `demo` block of marketplace/screenshots.ts when the app has
 one, else the demo module's parameters.
 
@@ -266,9 +266,9 @@ def demo(argv: list[str]) -> int:
 		say(f"frappe-demo: provisioning {site}")
 		# As frappe-test does: with the app processes stopped, so the
 		# apps-reconcile task the runtime runs on start does not race
-		# provision-site's installs.
+		# bench provision's installs.
 		if not devshell.provision(site, compose):
-			raise Fail(f"provision-site {site} failed")
+			raise Fail(f"bench provision {site} failed")
 
 	# ── 2-5. the wizard, the demo data, the app's hook, demo.json ───────────
 	sites = bench / "sites"

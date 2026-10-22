@@ -194,7 +194,7 @@ Next steps:
   git diff --cached --stat     # review; nothing has been committed
   direnv allow                 # or: nix develop --no-pure-eval
   devenv up                    # MariaDB, Redis, web, scheduler, worker, …
-  provision-site               # (in another shell) create {st.site} + install {st.app_name}
+  bench provision              # (in another shell) create {st.site} + install {st.app_name}
 """
 	)
 	if standards:

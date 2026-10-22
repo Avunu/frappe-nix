@@ -3,12 +3,12 @@
 Run by lib/scripts.d/frappe-test.nix, with git, frappe-nix, nixfmt, statix and
 deadnix on PATH, from an app-mode dev shell, which provides FRAPPE_BENCH_ROOT,
 FRAPPE_SITE, DEVENV_ROOT, PC_SOCKET_PATH, `devenv`, `process-compose`,
-`provision-site` and `uv`.
+`bench` (its `bench provision`) and `uv`.
 
 Stages, in order; every stage after 3 runs even when an earlier one failed:
 
   1 up            devenv up -D unless process-compose is already listening   (exit 10)
-  2 site          provision-site, allow_tests, the [tool.frappe-nix.tests] setup (exit 10)
+  2 site          bench provision, allow_tests, the [tool.frappe-nix.tests] setup (exit 10)
   3 tests         coverage run … frappe … run-tests --app A                   verdict 1
   4 coverage      coverage report (fail_under) and the upward ratchet         verdict 2
   5 testmap       frappe-nix testmap                                          verdict 3

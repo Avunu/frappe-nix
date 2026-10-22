@@ -9,7 +9,7 @@
 #
 # The stubs log every call to $STATE/log: devenv (up; STUB_DEVENV_RC), process-compose
 # (`process list` answers while $STATE/pc-up exists; `process get` answers for the names
-# in $STATE/procs), mariadb-admin, provision-site (STUB_PROVISION_RC), `bench` on PATH
+# in $STATE/procs), mariadb-admin, `bench` on PATH (`bench provision`: STUB_PROVISION_RC)
 # (`bench build`; STUB_BUILD_RC) and the bench's python, which runs `-c` with the real
 # interpreter and logs anything else (the demo script; STUB_DEMO_RC). The web server is a
 # real one on loopback. frappe-shots' runner is the real one: `--only` with a name the
@@ -52,9 +52,11 @@ stub stubs/process-compose 'case "$*" in
   *" down") rm -f "$STATE/pc-up" ;;
 esac'
 stub stubs/mariadb-admin 'exit 0'
-stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"
-rc="${STUB_PROVISION_RC:-0}"; [ "$rc" != 0 ] || mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"; exit "$rc"'
-stub stubs/bench 'exit "${STUB_BUILD_RC:-0}"'
+stub stubs/bench 'if [ "$1" = provision ]; then
+  echo "bench provision created $FRAPPE_SITE" >> "$STATE/log"
+  rc="${STUB_PROVISION_RC:-0}"; [ "$rc" != 0 ] || mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"; exit "$rc"
+fi
+exit "${STUB_BUILD_RC:-0}"'
 # The bench's interpreter: -c is real (frappe-demo reads [project].name with it), the demo
 # script is logged with the clock it would run on.
 cat > bench/env/bin/python << EOF
@@ -154,7 +156,7 @@ run 0 "frappe-demo on a bench that is down" "$DEMO"
 has 'starting the bench (devenv up -D)' "bench down"
 has 'dev.localhost, date 2026-01-15, seed 1, erpnext demo off' "the summary line"
 logged '^devenv up -D' "bench down"
-logged '^provision-site created dev.localhost' "no site"
+logged '^bench provision created dev.localhost' "no site"
 logged "^python [^ ]*frappe_demo.py --site dev.localhost --sites-path $root/bench/sites --app standards_fixture --date 2026-01-15 --seed 1 --demo {.*} --password admin FAKETIME= " "the demo script"
 not_logged ' down' "the bench is left up"
 not_logged 'erpnext-demo FAKETIME' "erpnext off"
@@ -164,7 +166,7 @@ ok "frappe-demo: brings the bench up, provisions a missing site, runs the demo s
 run 0 "frappe-demo again" "$DEMO"
 has 'the bench is already up' "bench up"
 not_logged '^devenv' "bench up"
-not_logged '^provision-site' "the site exists"
+not_logged '^bench provision' "the site exists"
 logged '^python ' "the site exists"
 ok "frappe-demo: a bench that is up is not started; an existing site is not provisioned without --fresh"
 
@@ -176,13 +178,13 @@ has 'pass --recreate-site' "--fresh refusal"
 run_tty 64 "--fresh, answered no" n "$DEMO" --fresh
 has 'kept dev.localhost' "--fresh answered no"
 has 'Recreate it? \[y/N\]' "the prompt"
-not_logged '^provision-site' "answered no"
+not_logged '^bench provision' "answered no"
 run_tty 0 "--fresh, answered yes" y "$DEMO" --fresh
-logged '^provision-site created dev.localhost' "answered yes"
+logged '^bench provision created dev.localhost' "answered yes"
 run 0 "--fresh in CI" env CI=true "$DEMO" --fresh
-logged '^provision-site created dev.localhost' "--fresh in CI"
+logged '^bench provision created dev.localhost' "--fresh in CI"
 run 0 "--recreate-site" "$DEMO" --recreate-site
-logged '^provision-site created dev.localhost' "--recreate-site"
+logged '^bench provision created dev.localhost' "--recreate-site"
 ok "frappe-demo: --fresh on an existing site is 64 without a terminal and on a no, recreates it on a yes, in CI and with --recreate-site"
 
 # --no-up, --site, the date, seed and erpnext sources.
@@ -190,7 +192,7 @@ reset
 run 0 "--no-up --site other.localhost" "$DEMO" --no-up --site other.localhost --date 2025-02-03 --seed 9
 not_logged '^devenv' "--no-up"
 not_logged 'process list' "--no-up"
-logged '^provision-site created other.localhost' "--site"
+logged '^bench provision created other.localhost' "--site"
 logged '^python .* --site other.localhost .* --date 2025-02-03 --seed 9 ' "flags win"
 mv repo/marketplace/screenshots.ts screenshots.ts.away
 pyproject $'[tool.frappe-nix.demo]\nenable = true\ndate = "2024-04-04"\nseed = 7\nerpnext-demo = true'
@@ -222,8 +224,8 @@ STUB_DEVENV_RC=1 run 10 "devenv up fails" env STUB_DEVENV_RC=1 "$DEMO"
 has 'devenv up -D failed' "devenv up fails"
 reset
 printf 'web\nworker\n' > "$STATE/procs"
-run 10 "provision-site fails" env STUB_PROVISION_RC=1 "$DEMO" --no-up
-has 'provision-site dev.localhost failed' "provision-site fails"
+run 10 "bench provision fails" env STUB_PROVISION_RC=1 "$DEMO" --no-up
+has 'bench provision dev.localhost failed' "bench provision fails"
 logged 'process stop web' "processes stopped"
 logged 'process stop worker' "processes stopped"
 logged 'process start web' "processes started again"
@@ -232,7 +234,7 @@ not_logged '^python ' "no demo after a failed provision"
 reset
 mkdir -p bench/sites/dev.localhost
 run 1 "the demo hook raises" env STUB_DEMO_RC=1 "$DEMO" --no-up
-ok "frappe-demo: devenv up or provision-site failing is 10 (the app processes restarted); the demo script's exit is frappe-demo's"
+ok "frappe-demo: devenv up or bench provision failing is 10 (the app processes restarted); the demo script's exit is frappe-demo's"
 
 # frappe-shots' clock.
 run 0 "on frappe-shots' clock" env FRAPPE_NIX_SHOTS_FAKETIME="@2026-01-15 14:00:00" FRAPPE_NIX_SHOTS_PRELOAD=/nowhere/libfaketime.so.1 "$DEMO" --no-up
@@ -291,7 +293,7 @@ reset
 run 2 "a fresh run" "$SHOTS" --only nosuch
 has 'the demo data is made from 2026-01-15 09:00 America/New_York (2026-01-15 14:00:00 UTC, libfaketime)' "the demo clock"
 logged '^devenv up -D' "a fresh run"
-logged '^provision-site created dev.localhost' "a fresh run"
+logged '^bench provision created dev.localhost' "a fresh run"
 logged "^python .* --site dev.localhost .* --date 2026-01-15 --seed 1 --demo .* --password admin FAKETIME=@2026-01-15 14:00:00 TZ=UTC PRELOAD=.*/libfaketime.so.1" "the demo on the fake clock"
 logged '^bench build' "bench build"
 has '--only names no shot: nosuch' "the runner's --only"
@@ -304,17 +306,17 @@ reset
 mkdir -p bench/sites/dev.localhost
 touch "$STATE/pc-up"
 run_tty 2 "answered yes" y "$SHOTS" --theme purple
-logged '^provision-site created dev.localhost' "answered yes"
+logged '^bench provision created dev.localhost' "answered yes"
 has '--theme is light or dark, not purple' "--theme reaches the runner"
 not_logged ' down$' "a bench that was up is left up"
 not_logged 'erpnext-demo FAKETIME' "erpnext off"
 pyproject $'[tool.frappe-nix.demo]\nenable = true\nerpnext-demo = true\n\n[tool.frappe-nix.screenshots]\nenable = true\ntimezone = "Asia/Tokyo"'
 run 2 "in CI, erpnext and Tokyo" env CI=true "$SHOTS" --only nosuch
-logged '^provision-site created dev.localhost' "in CI"
+logged '^bench provision created dev.localhost' "in CI"
 logged 'erpnext-demo FAKETIME=@2026-01-15 00:00:00' "the module's erpnext-demo and timezone"
 has '2026-01-15 09:00 Asia/Tokyo (2026-01-15 00:00:00 UTC' "the module's timezone"
 run 2 "--recreate-site" "$SHOTS" --recreate-site --only nosuch
-logged '^provision-site created dev.localhost' "--recreate-site"
+logged '^bench provision created dev.localhost' "--recreate-site"
 pyproject "$ON"
 ok "frappe-shots: a yes recreates the site; CI and --recreate-site need no answer; a bench that was up stays up; the module's erpnext-demo and timezone reach the demo"
 
@@ -325,7 +327,7 @@ run 3 "--reuse-site, bench down" "$SHOTS" --reuse-site
 has 'the bench is not up' "--reuse-site, bench down"
 touch "$STATE/pc-up"
 run 2 "--reuse-site" "$SHOTS" --reuse-site --only nosuch
-not_logged '^provision-site\|^python \|^bench build\|^devenv' "--reuse-site"
+not_logged '^bench provision\|^python \|^bench build\|^devenv' "--reuse-site"
 echo '{}' > bench/sites/common_site_config.json
 run 3 "no webserver_port" "$SHOTS" --reuse-site
 has 'no webserver_port in' "no webserver_port"

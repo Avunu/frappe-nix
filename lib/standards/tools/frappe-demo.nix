@@ -5,7 +5,7 @@
 # the PATH the bench's commands inherit. A dev-shell command of an opted-in app only
 # (lib/standards/shell.nix puts every tool here on its PATH), so an app that has not opted in
 # gets no new command (S35). It runs inside that shell, which supplies devenv,
-# process-compose, provision-site, bench and mariadb-admin.
+# process-compose, bench (and its `bench provision`) and mariadb-admin.
 {
   pkgs,
   lib,

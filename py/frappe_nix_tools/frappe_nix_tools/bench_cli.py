@@ -11,7 +11,7 @@ module when that command runs, so a command pays only for what it uses.
 import sys
 
 #: The commands a `--` straight after the name must reach (see main).
-KEEP_DASHES = frozenset({"restore", "update", "update-deps", "setup-requirements"})
+KEEP_DASHES = frozenset({"restore", "update", "update-deps", "setup-requirements", "provision"})
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -78,6 +78,12 @@ def main(argv: list[str] | None = None) -> None:
 		"reconcile-apps",
 		"frappe_nix_tools.apps.reconcile",
 		"Install the apps sites/apps.txt names that a site lacks.",
+	)
+
+	passthrough(
+		"provision",
+		"frappe_nix_tools.apps.provision",
+		"Create $FRAPPE_SITE and install the bench's apps (bench provision --help).",
 	)
 
 	passthrough(

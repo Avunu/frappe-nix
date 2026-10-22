@@ -382,7 +382,7 @@ class TestUpdateDeps(unittest.TestCase):
 		self.assertIn("unexpected argument '--bogus'", err.getvalue())
 
 	def test_dashes_reach_the_command(self):
-		self.assertTrue({"update", "update-deps", "restore"} <= bench_cli.KEEP_DASHES)
+		self.assertTrue({"update", "update-deps", "restore", "provision"} <= bench_cli.KEEP_DASHES)
 
 
 if __name__ == "__main__":

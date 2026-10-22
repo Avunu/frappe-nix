@@ -121,7 +121,7 @@ Next steps:
 				f"  bench restore                # (in another shell) clone {st.site} from the latest production backup"
 			)
 		else:
-			ui.out(f"  provision-site               # (in another shell) create {st.site} + install apps")
+			ui.out(f"  bench provision              # (in another shell) create {st.site} + install apps")
 	if not declared:
 		ui.out(
 			'\nTo restore this bench from production backups, declare its secrets —\nsee "Secrets" in the frappe-nix README, or the commented block in flake.nix.'

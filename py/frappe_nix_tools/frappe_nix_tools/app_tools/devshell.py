@@ -23,7 +23,7 @@ from typing import Any
 #: The bench's app processes. Provisioning runs with them stopped: each start of
 #: the runtime (or of `web`, without it) re-runs the frappe:apps-reconcile task,
 #: and once new-site has made the site's directory that task installs the same
-#: apps alongside provision-site, which then fails on a duplicate Module Def or
+#: apps alongside `bench provision`, which then fails on a duplicate Module Def or
 #: Role. Started again afterwards, the task finds every app installed.
 APP_PROCESSES = ("runtime", "web", "worker", "scheduler", "socketio")
 
@@ -398,15 +398,15 @@ def who(port: str) -> str:
 
 
 def provision(site: str, compose: Compose) -> bool:
-	"""``provision-site`` for SITE, with the app processes stopped meanwhile.
+	"""``bench provision`` for SITE, with the app processes stopped meanwhile.
 
 	bench new-site asks for the MariaDB root password through getpass, which
 	reads a line from stdin without a tty; the dev bench's root has none.
-	provision-site creates $FRAPPE_SITE: it is pointed at SITE.
+	bench provision creates $FRAPPE_SITE: it is pointed at SITE.
 	"""
 	stopped = compose.stop_app_processes()
 	rc = call(
-		["provision-site", admin_password()],
+		["bench", "provision", admin_password()],
 		env={**os.environ, "FRAPPE_SITE": site},
 		stdin_text="\n",
 	)

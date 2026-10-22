@@ -1,8 +1,8 @@
 """The apps commands (frappe_nix_tools.apps, PLAN.md Track D, D3): what the
 shell tests (tests/bench-get-app.sh, bench-remove-app.sh, bench-new-app.sh,
-reconcile-apps.sh, root-sync.sh) reach only indirectly — argument parsing, URL
-and app-name resolution, the installed-apps query, the reconcile plan, and the
-configuration schema.
+reconcile-apps.sh, root-sync.sh, provision.sh) reach only indirectly — argument
+parsing, URL and app-name resolution, the installed-apps query, the reconcile
+plan, provisioning's apps and port, and the configuration schema.
 """
 
 import contextlib
@@ -12,10 +12,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest import mock
 
 from frappe_nix_tools import bench_cli
-from frappe_nix_tools.apps import get_app, proc, reconcile, remove_app, rename_app, root_sync
+from frappe_nix_tools.apps import get_app, proc, provision, reconcile, remove_app, rename_app, root_sync
 from frappe_nix_tools.apps.config import AppPair, AppsConfig, ConfigError
 from frappe_nix_tools.bench_config import parse
 
@@ -417,12 +418,87 @@ class TestRootSync(unittest.TestCase):
 			self.assertEqual((code, out.getvalue()), (0, ""))
 
 
+class TestProvision(unittest.TestCase):
+	ENV: ClassVar[dict[str, str]] = {
+		"FRAPPE_BENCH_ROOT": "/bench",
+		"FRAPPE_SITE": "s.localhost",
+		"FRAPPE_DB_SOCKET": "/sock",
+	}
+
+	def run_body(self, argv, env=None):
+		out, err = io.StringIO(), io.StringIO()
+		with (
+			mock.patch.dict(os.environ, env or {}, clear=False),
+			mock.patch.object(provision, "provision", return_value=0) as run,
+			mock.patch.object(proc, "apps_config", return_value=apps_config()),
+			mock.patch.object(os, "chdir"),
+			contextlib.redirect_stdout(out),
+			contextlib.redirect_stderr(err),
+		):
+			status = provision.main(argv)
+		return status, run, out.getvalue(), err.getvalue()
+
+	def test_the_password(self):
+		for argv, password in (([], "admin"), ([""], "admin"), (["pw"], "pw"), (["--", "-h"], "-h")):
+			with self.subTest(argv=argv):
+				status, run, _, _ = self.run_body(argv, self.ENV)
+				self.assertEqual(status, 0)
+				self.assertEqual(run.call_args.args[1:], ("s.localhost", password))
+
+	def test_usage(self):
+		for argv, status_ in ((["--help"], 0), (["-h"], 0), (["a", "b"], 2), (["--", "a", "b"], 2)):
+			with self.subTest(argv=argv):
+				status, run, _, _ = self.run_body(argv, self.ENV)
+				self.assertEqual(status, status_)
+				run.assert_not_called()
+
+	def test_the_environment(self):
+		for unset, text in (
+			("FRAPPE_SITE", "FRAPPE_SITE is not set"),
+			("FRAPPE_DB_SOCKET", "FRAPPE_DB_SOCKET"),
+		):
+			with self.subTest(unset=unset):
+				status, run, _, err = self.run_body([], {**self.ENV, unset: ""})
+				self.assertEqual(status, 1)
+				self.assertIn(text, err)
+				run.assert_not_called()
+
+	def test_apps_to_install(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			apps = Path(tmp, "apps.txt")
+			apps.write_text("frappe\n erpnext \n\nhrms")
+			self.assertEqual(provision.apps_to_install(apps), ["erpnext", "hrms"])
+			with self.assertRaises(proc.Abort) as abort:
+				provision.apps_to_install(Path(tmp, "missing"))
+			self.assertEqual(abort.exception.status, 1)
+
+	def test_web_port(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			config = Path(tmp, "common_site_config.json")
+			with mock.patch.object(proc, "probe", return_value=(0, "8123\n")):
+				self.assertEqual(provision.web_port(config), "8123")
+			with mock.patch.object(proc, "probe", return_value=(127, "")):
+				for text, port in (
+					('{"webserver_port": 8042}', "8042"),
+					('{"webserver_port": null}', "8000"),
+					("{}", "8000"),
+					("[]", "8000"),
+					("not json", "8000"),
+				):
+					with self.subTest(text=text):
+						config.write_text(text)
+						self.assertEqual(provision.web_port(config), port)
+				config.unlink()
+				self.assertEqual(provision.web_port(config), "8000")
+
+
 class TestBenchCli(unittest.TestCase):
 	def test_help_reaches_the_command(self):
 		for command, text in (
 			("get-app", "Usage: bench-get-app"),
 			("remove-app", "Usage: bench-remove-app"),
 			("rename-app", "Usage: bench-rename-app"),
+			("provision", "Usage: bench provision"),
 		):
 			out = io.StringIO()
 			with (

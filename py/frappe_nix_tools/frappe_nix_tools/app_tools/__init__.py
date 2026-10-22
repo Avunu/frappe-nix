@@ -4,7 +4,7 @@
 Each runs as ``python -I -m frappe_nix_tools.app_tools.<tool>`` from an
 environment that holds frappe-nix-tools (lib/scripts.d/frappe-test.nix,
 lib/standards/tools/frappe-demo.nix and frappe-shots.nix), inside an app-mode dev
-shell, which supplies devenv, process-compose, provision-site, mariadb-admin and
+shell, which supplies devenv, process-compose, `bench provision`, mariadb-admin and
 the bench. None imports Frappe: what needs it runs in the bench's own
 interpreter, as a subprocess.
 """

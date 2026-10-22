@@ -783,7 +783,9 @@ in
           *" down") rm -f "$STATE/pc-up" ;;
         esac'
         stub stubs/mariadb-admin 'exit 0'
-        stub stubs/provision-site 'echo "provision-site created $FRAPPE_SITE" >> "$STATE/log"
+        # The dev shell's bench, for `bench provision` (frappe-test calls nothing else on it).
+        stub stubs/bench '[ "$1" = provision ] || exit 0
+        echo "bench provision created $FRAPPE_SITE" >> "$STATE/log"
         [ -z "''${STUB_PROVISION_FAILS:-}" ] || exit 1; mkdir -p "$FRAPPE_BENCH_ROOT/sites/$FRAPPE_SITE"'
         stub stubs/uv 'echo "error[x]: something"; echo "Found 3 diagnostics"; exit 1'
         stub bench/env/bin/bench 'exit 0'
@@ -843,7 +845,7 @@ in
         echo "ok   a failed devenv up -D exits 10 at once, with devenv's message"
 
         run 0 "--site other.localhost" --no-coverage --no-composition --site other.localhost
-        grep -qx 'provision-site created other.localhost' "$STATE/log" || fail "--site: provisioned $(grep created "$STATE/log")"
+        grep -qx 'bench provision created other.localhost' "$STATE/log" || fail "--site: provisioned $(grep created "$STATE/log")"
         grep -q 'bench --site other.localhost set-config allow_tests true' "$STATE/log" || fail "--site: allow_tests on the wrong site"
         grep -q 'bench --site other.localhost execute fixture.setup' "$STATE/log" || fail "--site: setup on the wrong site"
         echo "ok   --site S provisions S, not \$FRAPPE_SITE, and runs [tool.frappe-nix.tests] setup"
@@ -858,10 +860,10 @@ in
         # The dev site exists: without --ci it is never dropped unasked.
         run 64 "an existing site, neither --reuse-site nor --recreate-site" --no-coverage --no-composition
         grep -q 'dev.localhost exists: pass --reuse-site' run.log || fail "no hint: $(cat run.log)"
-        ! grep -q 'devenv\|provision-site\|bench ' "$STATE/log" || fail "it started something: $(cat "$STATE/log")"
+        ! grep -q 'devenv\|bench ' "$STATE/log" || fail "it started something: $(cat "$STATE/log")"
         run 64 "--reuse-site with --recreate-site" --reuse-site --recreate-site
         run 0 "--recreate-site" --no-coverage --no-composition --recreate-site
-        grep -qx 'provision-site created dev.localhost' "$STATE/log" || fail "--recreate-site did not recreate the site: $(cat "$STATE/log")"
+        grep -qx 'bench provision created dev.localhost' "$STATE/log" || fail "--recreate-site did not recreate the site: $(cat "$STATE/log")"
         echo "ok   an existing site needs --reuse-site or --recreate-site outside --ci (exit 64, nothing started); --recreate-site recreates it"
 
         pyproject 'no-such-key = 1'
@@ -873,7 +875,7 @@ in
         # --ci runs the stages the configuration turns on. tests off: no bench.
         pyproject "" $'enable = false\n\n[tool.frappe-nix.python-types]\nenable = false'
         run 0 "--ci with the tests and python-types modules off" --ci
-        ! grep -q 'devenv\|process-compose\|provision-site\|bench ' "$STATE/log" || fail "tests off started the bench: $(cat "$STATE/log")"
+        ! grep -q 'devenv\|process-compose\|bench ' "$STATE/log" || fail "tests off started the bench: $(cat "$STATE/log")"
         [ ! -e pc.sock ] || fail "a process-compose socket appeared"
         for name in up site tests coverage testmap composition ty; do
           [ "$(stage "$name")" = skipped ] || fail "tests off: stage $name is $(stage "$name"), not skipped"
@@ -931,9 +933,9 @@ in
         # The prompt for an existing site, on a terminal.
         run_tty 64 "an existing site, answered no" n --no-coverage --no-composition
         grep -q 'Recreate it? \[y/N\]' run.log && grep -q 'kept dev.localhost' run.log || fail "answered no: $(cat run.log)"
-        ! grep -q 'provision-site' "$STATE/log" || fail "answered no provisioned: $(cat "$STATE/log")"
+        ! grep -q 'bench provision' "$STATE/log" || fail "answered no provisioned: $(cat "$STATE/log")"
         run_tty 0 "an existing site, answered yes" y --no-coverage --no-composition
-        grep -qx 'provision-site created dev.localhost' "$STATE/log" || fail "answered yes did not recreate: $(cat "$STATE/log")"
+        grep -qx 'bench provision created dev.localhost' "$STATE/log" || fail "answered yes did not recreate: $(cat "$STATE/log")"
         echo "ok   on a terminal an existing site is recreated on a yes and kept (exit 64) on a no"
 
         # The bench: brought up and stopped again, unless --keep-up; --down stops it.
@@ -954,7 +956,7 @@ in
         run 0 "provision with app processes" --recreate-site --no-coverage --no-composition
         grep -q 'process stop web' "$STATE/log" && grep -q 'process start worker' "$STATE/log" \
           && ! grep -q 'process stop scheduler' "$STATE/log" || fail "processes: $(cat "$STATE/log")"
-        STUB_PROVISION_FAILS=1 run 10 "provision-site fails" --recreate-site --no-coverage --no-composition
+        STUB_PROVISION_FAILS=1 run 10 "bench provision fails" --recreate-site --no-coverage --no-composition
         grep -q 'could not prepare dev.localhost' run.log && [ "$(stage site)" = error ] || fail "provision fails: $(cat run.log)"
         grep -q 'process start web' "$STATE/log" || fail "not restarted after a failed provision: $(cat "$STATE/log")"
         rm "$STATE/procs"

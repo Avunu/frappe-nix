@@ -410,6 +410,8 @@ secretScripts
       remove-app)  shift; exec bench-remove-app "$@" ;;
       rename-app)  shift; exec bench-rename-app "$@" ;;
       restore)     shift; exec bench-restore "$@" ;;
+      # Was the standalone provision-site, which stays as an alias below.
+      provision)   shift; FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@" ;;
       setup)
         # Only `setup requirements` is ours; the rest of `bench setup` (nginx,
         # supervisor, production, …) configures a conventional bench and is left
@@ -421,7 +423,7 @@ secretScripts
       clear-cache) shift; exec bench-clear-cache "$@" ;;
       new-site)
         # Inject env-specific DB connection flags so site creation isn't
-        # interactive; provision-site stays the create-and-install-all flow.
+        # interactive; `bench provision` stays the create-and-install-all flow.
         shift
         exec ${benchBin} new-site --db-socket "$FRAPPE_DB_SOCKET" --db-root-username root "$@" ;;
       *)           exec ${benchBin} "$@" ;;
@@ -528,52 +530,13 @@ secretScripts
 }
 // {
 
-  # One-shot: creates $FRAPPE_SITE and installs every sites/apps.txt entry.
-  # Not safe to re-run to pick up a later-pinned sibling — `--force` below
-  # drops the site's database. That case is `reconcile-apps` instead (and,
-  # in app mode with a fixed defaultSite, `frappe:apps-reconcile` runs it
-  # automatically on every `devenv up` — see `appsReconcile.enable`).
+  # `bench provision`'s old name, kept as an alias until frappe-nix 2.0.0
+  # (python-devops-nix CONVENTIONS.md, Command layout). frappe-nix's own code
+  # calls `bench provision`, so the note reaches only a person or a script of
+  # the consumer's. py/frappe_nix_tools/frappe_nix_tools/apps/provision.py.
   provision-site.exec = ''
-    set -euo pipefail
-    export _FRAPPE_BENCH_RAW=1
-    cd "$FRAPPE_BENCH_ROOT"
-
-    if [ -z "''${FRAPPE_SITE:-}" ]; then
-      echo "ERROR: FRAPPE_SITE is not set. Set it in your .env or devenv config." >&2
-      exit 1
-    fi
-
-    echo "⚠  When prompted for the MySQL root password, leave it blank and press Enter."
-
-    ADMIN_PASS="''${1:-admin}"
-
-    echo "Creating site $FRAPPE_SITE..."
-    bench new-site "$FRAPPE_SITE" \
-      --db-type mariadb \
-      --db-socket "$FRAPPE_DB_SOCKET" \
-      --db-root-username root \
-      --admin-password "$ADMIN_PASS" \
-      --set-default \
-      --force
-
-    while IFS= read -r app; do
-      [ -z "$app" ] && continue
-      [ "$app" = "frappe" ] && continue
-      echo "Installing app: $app"
-      bench --site "$FRAPPE_SITE" install-app "$app"
-    done < sites/apps.txt
-
-    echo ""
-    echo "✅ Site $FRAPPE_SITE provisioned!"
-    echo "   Admin password: $ADMIN_PASS"
-    # Read the port back rather than trusting an env var: `devenv up` leases
-    # the ports (frappe-ports), so anything resolved in a plain shell is the
-    # bench's preferred port, which may not be the one nginx actually took.
-    # `frappe-nix-ports web` names it while the bench runs; the config's
-    # webserver_port, which frappe:config writes, is the fallback.
-    _url_port="$(frappe-nix-ports web 2>/dev/null)" \
-      || _url_port="$(${pkgs.jq}/bin/jq -r '.webserver_port // 8000' sites/common_site_config.json)"
-    echo "   URL: http://127.0.0.1:$_url_port"
+    echo "provision-site is deprecated: run \`bench provision\` (the alias goes in frappe-nix 2.0.0)" >&2
+    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@"
   '';
 
   # Diffs sites/apps.txt — the candidate list frappe-nix regenerates from the
@@ -589,7 +552,7 @@ secretScripts
   # from tasks."frappe:apps-reconcile", which has no wrapper on PATH — so the
   # one rendering has to be correct in both contexts.
   #
-  # This is what provision-site leaves undone afterwards: a sibling pinned
+  # This is what `bench provision` leaves undone afterwards: a sibling pinned
   # into the flake *after* a site already exists never gets installed by
   # anything else. See https://github.com/Avunu/frappe-nix/issues/32.
   #
