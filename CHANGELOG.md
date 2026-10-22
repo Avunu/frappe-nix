@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/Avunu/frappe-nix/compare/v1.2.0...v1.2.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **app-tools:** frappe-nix-tools builds at 1.2.0 (its requires-frappe-nix test had pinned &lt;1.2) ([d7ef1e7](https://github.com/Avunu/frappe-nix/commit/d7ef1e786a515d8cca3b493caa9f87f9415681c5))
+* **ci:** app-marketplace saves the uv cache only on GitHub-hosted runners ([b6f6cf9](https://github.com/Avunu/frappe-nix/commit/b6f6cf9565df435fb27ec5e89649100682ff619f))
+
 ## [1.2.0](https://github.com/Avunu/frappe-nix/compare/v1.1.1...v1.2.0) (2026-10-22)
 
 
