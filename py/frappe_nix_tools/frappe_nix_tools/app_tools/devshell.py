@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -219,6 +220,27 @@ class Compose:
 
 	def down(self) -> None:
 		call(self.cmd("down"), quiet=True)
+
+	def stop(self, settle: float = 30) -> int:
+		"""`process-compose down`, its exit status, for a caller that reports it.
+
+		process-compose answers /project/stop only once every process has
+		stopped, and its main loop exits on that same event, so the server can
+		be gone before the reply is flushed: the client then fails with
+		``Post "http://unix/project/stop": EOF`` although the bench did stop.
+		A server that answered before the down and stops answering within
+		SETTLE seconds after it is taken as stopped (0)."""
+		was_up = self.up()
+		rc = call(self.cmd("down"))
+		if rc == 0 or not was_up:
+			return rc
+		deadline = time.monotonic() + settle
+		while self.up():
+			if time.monotonic() >= deadline:
+				return rc
+			time.sleep(0.5)
+		warn("frappe-nix: process-compose exited before it answered the down; the bench is stopped")
+		return 0
 
 	def stop_app_processes(self) -> list[str]:
 		"""Stop those of APP_PROCESSES that exist (one between restarts is
