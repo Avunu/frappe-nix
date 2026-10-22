@@ -43,6 +43,8 @@ check_eq() { # <description> <expected> <actual>
 #              a postinstall's non-frozen nested `yarn install` rewrites, writes
 #              where upstream ships none, or removes. Ahead of YARN_FAIL: a
 #              failed install can have touched a lock first.
+# YARN_NESTED — directories, relative to the app, whose node_modules the app's
+#              postinstall installs (`cd banking && yarn install`)
 BIN="$ROOT/bin"
 mkdir -p "$BIN"
 # Not `#!/usr/bin/env bash`: this also runs as a Nix check, where the sandbox
@@ -66,6 +68,11 @@ fi
 # A real install writes thousands of package.json files under node_modules.
 mkdir -p node_modules/left-pad
 echo '{"name":"left-pad","version":"1.0.0"}' > node_modules/left-pad/package.json
+for nested in ${YARN_NESTED:-}; do
+  mkdir -p "$nested/node_modules/.bin"
+  printf '#!/bin/sh\n' > "$nested/node_modules/.bin/vite"
+  chmod +x "$nested/node_modules/.bin/vite"
+done
 if [ -n "${YARN_REWRITE:-}" ]; then
   printf '{"name":"rewritten-by-postinstall","stamp":"%s"}\n' "$RANDOM" > "$YARN_REWRITE"
 fi
@@ -325,6 +332,89 @@ check_eq "a package-lock.json it rewrote is put back" '{"lockfileVersion":3}' "$
 check "and reported" grep -q 'apps/iota/desk/package-lock.json: rewritten by the install, put back' "$ROOT/lock7.log"
 check "the success line names the app" grep -qxF '  ✓ iota' "$ROOT/lock7.log"
 check "and the install line" grep -qxF 'Installing node_modules for iota (incl. nested frontends)...' "$ROOT/lock7.log"
+
+echo "── a nested frontend's node_modules (app mode's refresh) ────────"
+# erpnext's shape: the app's postinstall installs banking/node_modules, and the
+# sentinel lives in the app's own node_modules. App mode's refresh of the pinned
+# apps used to carry only apps/<app>/node_modules across, so the sentinel came
+# back saying "installed" over a banking/ with no node_modules, and `bench build`
+# died on `vite: command not found`.
+SRC="$ROOT/erpnext-src"
+mkdir -p "$SRC/banking"
+echo '{"name":"erpnext","scripts":{"postinstall":"cd banking && yarn install"}}' > "$SRC/package.json"
+echo '# erpnext lock' > "$SRC/yarn.lock"
+echo '{"name":"banking","devDependencies":{"vite":"^5"}}' > "$SRC/banking/package.json"
+echo '# banking lock' > "$SRC/banking/yarn.lock"
+ERP="$BENCH/apps/erpnext"
+cp -R "$SRC" "$ERP"
+mkdir -p "$ERP/erpnext/public"
+ln -s ../../node_modules "$ERP/erpnext/public/node_modules" # what the shell links
+export YARN_NESTED=banking
+before=$(calls)
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "the first install runs" "$((before + 1))" "$(calls)"
+check "and installs the nested frontend" test -x "$ERP/banking/node_modules/.bin/vite"
+check_eq "the sentinel lists the nested install, not the public/ link" 'nested ["banking/node_modules"]' \
+  "$(sed -n 2p "$ERP/node_modules/.frappe-nix-installed")"
+
+refresh_apps() { # <carry> — app mode's refresh of apps/erpnext from its source
+  rm -rf "$BENCH/.apps.new" && mkdir -p "$BENCH/.apps.new"
+  cp -R "$SRC" "$BENCH/.apps.new/erpnext"
+  "$1" "$ERP" "$BENCH/.apps.new/erpnext"
+  rm -rf "$ERP" && mv "$BENCH/.apps.new/erpnext" "$ERP" && rmdir "$BENCH/.apps.new"
+}
+top_only() { mv "$1/node_modules" "$2/node_modules"; } # what the refresh did before
+carry() { "$TOOL" --carry "$1" "$2"; }
+
+echo "  · refreshed carrying only the app's own node_modules"
+refresh_apps top_only
+check_not "banking/node_modules is gone" test -e "$ERP/banking/node_modules"
+before=$(calls)
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "the sentinel no longer passes for installed: it reinstalls" "$((before + 1))" "$(calls)"
+check "and banking has its node_modules back" test -x "$ERP/banking/node_modules/.bin/vite"
+
+echo "  · refreshed with --carry"
+echo 'kept' > "$ERP/banking/node_modules/.kept"
+refresh_apps carry
+check "banking/node_modules came across" test -f "$ERP/banking/node_modules/.kept"
+check "with the app's own" test -s "$ERP/node_modules/.frappe-nix-installed"
+before=$(calls)
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "and nothing is reinstalled" "$before" "$(calls)"
+
+echo "  · a nested frontend the new source no longer has"
+CARRY_OLD="$ROOT/carry-old" CARRY_NEW="$ROOT/carry-new"
+mkdir -p "$CARRY_OLD/node_modules/dep/node_modules" "$CARRY_OLD/gone/node_modules" "$CARRY_OLD/banking/node_modules" "$CARRY_NEW/banking/node_modules"
+echo old > "$CARRY_OLD/banking/node_modules/v"
+echo new > "$CARRY_NEW/banking/node_modules/v"
+"$TOOL" --carry "$CARRY_OLD" "$CARRY_NEW"
+check_eq "a node_modules the new tree has is replaced" "old" "$(cat "$CARRY_NEW/banking/node_modules/v")"
+check_not "one whose directory the new tree lacks is not created" test -e "$CARRY_NEW/gone"
+check "a node_modules inside node_modules moves with its parent" test -d "$CARRY_NEW/node_modules/dep/node_modules"
+rc=0
+"$TOOL" --carry "$CARRY_OLD" > /dev/null 2>&1 || rc=$?
+check_eq "--carry without both directories is exit 2" "2" "$rc"
+
+echo "  · a sentinel from before it listed nested installs"
+fingerprint="$(sed -n 1p "$ERP/node_modules/.frappe-nix-installed")"
+echo "$fingerprint" > "$ERP/node_modules/.frappe-nix-installed"
+before=$(calls)
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "is believed while every nested frontend has node_modules" "$before" "$(calls)"
+echo "$fingerprint" > "$ERP/node_modules/.frappe-nix-installed"
+rm -rf "$ERP/banking/node_modules"
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "and not once one that declares dependencies has none" "$((before + 1))" "$(calls)"
+check "which the reinstall puts back" test -d "$ERP/banking/node_modules"
+unset YARN_NESTED
+mkdir -p "$ERP/docs-site"
+echo '{"name":"docs","private":true}' > "$ERP/docs-site/package.json"
+echo "$fingerprint" > "$ERP/node_modules/.frappe-nix-installed"
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+before=$(calls)
+"$TOOL" "$BENCH" erpnext > /dev/null 2>&1
+check_eq "a nested package.json the install leaves alone does not reinstall every time" "$before" "$(calls)"
 
 echo "── exit statuses ────────────────────────────────────────────────"
 echo '# yarn lockfile v1 (bumped for the statuses)' > "$BENCH/apps/alpha/yarn.lock"
