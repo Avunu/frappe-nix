@@ -1294,5 +1294,50 @@ class TestSchedulerThread(unittest.TestCase):
 		self.assertEqual(len(busy), 1)
 
 
+class TestSourceWatch(unittest.TestCase):
+	"""--dev's source watcher must not take the web server down with it.
+
+	2026-10-22: with the host's inotify watches spent by other benches,
+	observer.start() raised OSError(ENOSPC) and the runtime exited before it
+	served, so frappe-demo saw "connection refused" for 300 s."""
+
+	def start_with(self, error: OSError | None) -> MagicMock:
+		from frappe_runtime import runner
+
+		observer = MagicMock()
+		observer.start.side_effect = error
+		observers = types.ModuleType("watchdog.observers")
+		observers.Observer = MagicMock(return_value=observer)
+		fake_frappe = MagicMock()
+		fake_frappe.get_all_apps.return_value = ["frappe", "demo"]
+		fake_frappe.get_app_path.side_effect = lambda app: f"/bench/apps/{app}/{app}"
+		with (
+			patch.dict(
+				sys.modules, {"watchdog": types.ModuleType("watchdog"), "watchdog.observers": observers}
+			),
+			patch.object(runner, "frappe", fake_frappe),
+		):
+			runner.SourceWatch(threading.Event()).start()
+		return observer
+
+	def test_watching_starts(self) -> None:
+		with self.assertLogs("frappe.runner", level="INFO") as logs:
+			observer = self.start_with(None)
+		observer.start.assert_called_once()
+		self.assertEqual(observer.schedule.call_count, 2)
+		self.assertTrue(any("dev: watching" in r.getMessage() for r in logs.records))
+
+	def test_an_inotify_limit_is_a_warning_not_an_exit(self) -> None:
+		for code in (28, 24):  # ENOSPC, EMFILE
+			with self.subTest(errno=code), self.assertLogs("frappe.runner", level="WARNING") as logs:
+				observer = self.start_with(OSError(code, "inotify watch limit reached"))
+			observer.stop.assert_called_once()
+			self.assertTrue(any("not reloading on source changes" in r.getMessage() for r in logs.records))
+
+	def test_another_os_error_still_raises(self) -> None:
+		with self.assertRaises(OSError):
+			self.start_with(OSError(13, "Permission denied"))
+
+
 if __name__ == "__main__":
 	unittest.main()

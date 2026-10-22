@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import logging
 import os
 import signal
@@ -499,11 +500,26 @@ class SourceWatch:
 				paths.append(frappe.get_app_path(app))
 		observer = Observer()
 		observer.daemon = True
-		for path in paths:
-			# Duck-typed: watchdog only calls dispatch(), and importing its base
-			# class at module level would make watchdog a hard dependency.
-			observer.schedule(self, path, recursive=True)  # ty: ignore[invalid-argument-type]
-		observer.start()
+		try:
+			for path in paths:
+				# Duck-typed: watchdog only calls dispatch(), and importing its base
+				# class at module level would make watchdog a hard dependency.
+				observer.schedule(self, path, recursive=True)  # ty: ignore[invalid-argument-type]
+			observer.start()
+		except OSError as e:
+			# Out of inotify watches (ENOSPC) or instances (EMFILE): the host's
+			# limit is shared by every bench and editor on it. A dev server that
+			# does not reload beats one that does not start.
+			if e.errno not in (errno.ENOSPC, errno.EMFILE):
+				raise
+			with suppress(Exception):
+				observer.stop()
+			logger.warning(
+				"dev: not reloading on source changes: %s (raise fs.inotify.max_user_watches"
+				" or max_user_instances, or stop another watcher); restart by hand",
+				e,
+			)
+			return
 		logger.info("dev: watching %s", ", ".join(paths))
 
 	def dispatch(self, event) -> None:
