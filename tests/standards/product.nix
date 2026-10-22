@@ -162,9 +162,17 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       . ./flags.sh
       [ -n "$MYSQLCLIENT_CFLAGS" ] && [ -n "$MYSQLCLIENT_LDFLAGS" ] || fail "the wrapper's flags are empty"
       ! command -v pkg-config > /dev/null || fail "pkg-config is on PATH, so the flags are not what is tested"
+      # nixpkgs' src is an sdist tarball for some versions and an unpacked
+      # tree (fetchFromGitHub) for others; pip builds a tree in place, so a
+      # read-only store copy fails with "Permission denied" on build/.
+      src=${pkgs.python3.pkgs.mysqlclient.src}
+      if [ -d "$src" ]; then
+        cp -r --no-preserve=mode "$src" mysqlclient-src
+        src=./mysqlclient-src
+      fi
       python -m pip install -q --no-index --no-build-isolation --no-deps --target site \
-        ${pkgs.python3.pkgs.mysqlclient.src} > pip.log 2>&1 || { cat pip.log; fail "mysqlclient does not build with the wrapper's flags"; }
-      echo "ok   mysqlclient ${pkgs.python3.pkgs.mysqlclient.version} builds from its sdist with only the wrapper's flags"
+        "$src" > pip.log 2>&1 || { cat pip.log; fail "mysqlclient does not build with the wrapper's flags"; }
+      echo "ok   mysqlclient ${pkgs.python3.pkgs.mysqlclient.version} builds from its source with only the wrapper's flags"
       PYTHONPATH=site python -c 'import MySQLdb; print(MySQLdb._mysql.get_client_info())' > info ||
         fail "MySQLdb does not import without LD_LIBRARY_PATH"
       echo "ok   MySQLdb imports without LD_LIBRARY_PATH (client $(cat info))"
