@@ -121,6 +121,7 @@ for flag in --site --date --seed; do
 done
 run 10 "no dev shell" env -u FRAPPE_BENCH_ROOT "$DEMO"
 has 'FRAPPE_BENCH_ROOT is unset' "no dev shell"
+has 'nix develop -c frappe-demo' "no dev shell"
 run 10 "no site" env FRAPPE_SITE= "$DEMO"
 has 'no site' "no site"
 ok "frappe-demo: --help is 0; an unknown flag, a missing value, no dev shell and no site are 10"
@@ -251,6 +252,7 @@ for flag in --spec --only --theme --out --video; do
 done
 run 3 "no dev shell" env -u FRAPPE_BENCH_ROOT "$SHOTS"
 has 'FRAPPE_BENCH_ROOT is unset' "no dev shell"
+has 'nix develop -c frappe-shots' "no dev shell"
 run 3 "no site" env FRAPPE_SITE= "$SHOTS"
 has 'FRAPPE_SITE is unset' "no site"
 run 2 "--reuse-site with --recreate-site" "$SHOTS" --reuse-site --recreate-site
