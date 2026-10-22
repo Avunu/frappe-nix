@@ -42,7 +42,7 @@ jobs:
     name: lint
     if: ${{ !startsWith(github.ref, 'refs/heads/version-') }}
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read # the checkout
       pull-requests: read # the dispatch guard looks up the open PR
@@ -94,10 +94,19 @@ jobs:
           node-version-file: ${{ inputs.app-root }}/package.json
 
       - if: steps.files.outputs.node == 'true'
+        name: Hash yarn.lock for the node_modules cache key
+        id: yarn-lock
+        # Not hashFiles(): the runner evaluates it with its own externals/node20,
+        # which nixpkgs' github-runner does not ship (it has node24 only).
+        env:
+          APP_ROOT: ${{ inputs.app-root }}
+        run: echo "sha256=$(sha256sum "$APP_ROOT/yarn.lock" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - if: steps.files.outputs.node == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ inputs.app-root }}/node_modules
-          key: node-modules-${{ runner.os }}-${{ hashFiles(format('{0}/yarn.lock', inputs.app-root)) }}
+          key: node-modules-${{ runner.os }}-${{ steps.yarn-lock.outputs.sha256 }}
 
       # GitHub-hosted images ship yarn classic; a self-hosted runner may not.
       - if: steps.files.outputs.node == 'true' && runner.environment != 'github-hosted'
@@ -109,7 +118,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          enable-cache: true
+          # Saving the cache uploads it to GitHub; from a self-hosted runner that
+          # is slow (100+ MB) and outlasts the job, so only hosted runners save it.
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
           cache-dependency-glob: ${{ inputs.app-root }}/tools/uv.lock
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
