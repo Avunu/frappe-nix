@@ -143,7 +143,7 @@ The module never puts secrets in the Nix store. On every start, the `frappe-init
 2. The database password and encryption key, read from `database.passwordFile` and `encryptionKeyFile` into `db_password` and `encryption_key`.
 3. Each file in `settingsFiles`, deep-merged last with `jq`, so it can override earlier values.
 
-Since the computed keys live in `settings`, `config.services.frappe-nix.sites."<SITE>".settings` is the effective first layer: `nix eval` it to see what the site gets before the secrets. [Site settings](../reference/nixos-options.md#site-settings) lists the keys the module owns.
+Since the computed keys live in `settings`, `config.services.frappe-nix.sites."<SITE>".settings` is the effective first layer: `nix eval` it to see what the site gets before the secrets. [Site settings](../reference/nixos-options.md#site-settings) lists the computed keys, and the two (`db_name`, `db_type`) that warn when they differ.
 
 systemd's `LoadCredential` hands the secret files to the unit, so the service account never needs read access to the originals. The result is written to `<siteDir>/sites/<SITE>/site_config.json` with mode `0600`.
 

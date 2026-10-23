@@ -1575,6 +1575,28 @@ let
     );
   };
 
+  # A site's settings.db_name or db_type that the rest of the module does not
+  # follow. Warnings through 1.x; both keys become the module's in 2.0.0.
+  settingsWarnings =
+    name: siteCfg:
+    let
+      site = "services.frappe-nix.sites.\"${name}\"";
+      inherit (siteCfg.settings) db_name db_type;
+    in
+    lib.optional (db_name != siteCfg.database.name) (
+      "${site}.settings.db_name is ${builtins.toJSON db_name} but database.name is"
+      + " \"${siteCfg.database.name}\": the pre-migrate snapshot and its rollback,"
+      + " database.createLocally and the database grants all use database.name, so a"
+      + " failed migrate would not restore the database the site uses. Set"
+      + " database.name instead. This becomes an error in frappe-nix 2.0.0."
+    )
+    ++ lib.optional (db_type != "mariadb") (
+      "${site}.settings.db_type is ${builtins.toJSON db_type}: this module provisions,"
+      + " snapshots and restores MariaDB only (the units set FRAPPE_DB_TYPE=mariadb),"
+      + " so migrate's snapshot and rollback and database.createLocally would not"
+      + " work. Remove it. This becomes an error in frappe-nix 2.0.0."
+    );
+
   # Site submodule option definition.
   siteModule = types.submodule (
     { name, config, ... }:
@@ -1733,8 +1755,9 @@ let
             file as written, before the secrets in `settingsFiles`,
             `database.passwordFile` and `encryptionKeyFile` are merged in. A
             key set here wins over a computed one, and attribute sets merge
-            key by key. `db_type` and `db_name` are the module's: set
-            `database.name` instead.
+            key by key. Set `database.name` rather than `db_name`: a
+            `db_name` other than it, or a `db_type` other than `mariadb`,
+            warns, and is an error from frappe-nix 2.0.0.
           '';
         };
 
@@ -1824,14 +1847,16 @@ let
         redis_socketio = lib.mkDefault config.redis.socketioUrl;
         socketio_port = lib.mkDefault config.socketio.port;
 
-        # The module's, at normal priority: a different value is a conflict.
-        # Only MariaDB is provisioned, dumped and restored here (FRAPPE_DB_TYPE
-        # says so too), and the pre-migrate snapshot and its rollback, the
-        # local database and its grants all name database.name. A db_name
-        # that differs would leave the database the site uses out of the
-        # snapshot a failed migrate rolls back to.
-        db_type = "mariadb";
-        db_name = config.database.name;
+        # mkDefault through 1.x, so a config that set them still evaluates, but
+        # a different value warns (settingsWarnings): only MariaDB is
+        # provisioned, dumped and restored here (FRAPPE_DB_TYPE says so too),
+        # and the pre-migrate snapshot and its rollback, the local database and
+        # its grants all name database.name. A db_name that differs leaves the
+        # database the site uses out of the snapshot a failed migrate rolls
+        # back to. They become the module's (normal priority, a different value
+        # an error) in 2.0.0.
+        db_type = lib.mkDefault "mariadb";
+        db_name = lib.mkDefault config.database.name;
 
         # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
         # merges this file too, so the realtime server still finds the socket if
@@ -2269,6 +2294,7 @@ in
       # do nothing.
       warnings =
         lib.concatMap (siteCfg: siteCfg.deprecations) (lib.attrValues cfg.sites)
+        ++ lib.concatLists (mapAttrsToList settingsWarnings enabledSites)
         ++ lib.optionals cfg.runtime.enable (
           lib.concatLists (
             mapAttrsToList (

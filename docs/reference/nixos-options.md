@@ -86,7 +86,7 @@ These sit under `services.frappe-nix.sites.<NAME>`, where `<NAME>` is the site n
 
 ## Site settings
 
-`sites.<NAME>.settings` is a freeform block in the shape of the nixpkgs `settings` options (RFC 42). The module puts its own keys in it at `mkDefault` priority: `db_host`, `db_port`, `db_user`, `db_socket`, `redis_cache`, `redis_queue`, `redis_socketio`, `socketio_port` and, under the split units, `socketio_uds`. A key you set replaces one of those without `lib.mkForce`, and attribute sets from several modules merge key by key. Two keys are the module's and refuse a different value: `db_type` (always `mariadb`) and `db_name` (set `database.name`; the migrate snapshot and its rollback use it). A value JSON cannot hold, such as a function, is a type error.
+`sites.<NAME>.settings` is a freeform block in the shape of the nixpkgs `settings` options (RFC 42). The module puts its own keys in it at `mkDefault` priority: `db_host`, `db_port`, `db_user`, `db_socket`, `redis_cache`, `redis_queue`, `redis_socketio`, `socketio_port` and, under the split units, `socketio_uds`. A key you set replaces one of those without `lib.mkForce`, and attribute sets from several modules merge key by key. Set `database.name` rather than `db_name`: the migrate snapshot and its rollback, `database.createLocally` and the grants all use `database.name`, and this module runs MariaDB only. A `db_name` other than `database.name`, or a `db_type` other than `mariadb`, is a warning through 1.x and becomes an error in frappe-nix 2.0.0. A value JSON cannot hold, such as a function, is a type error.
 
 Because the computed keys are in it, evaluating the option shows the base `site_config.json`:
 
