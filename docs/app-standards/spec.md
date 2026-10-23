@@ -607,7 +607,7 @@ Files whose entry isn't live MUST NOT exist. Sync deletes them (and retracts mer
 | `package.json` | json-merge (§2.8) | key groups of `metadata`, `js`, `stylelint`, `typescript`, `tests`, `python-lint`, `python-types`, `vite-register` | `org.license`, `org.publisher` (only when set), `metadata.package-type`, `metadata.package-manager`, `metadata.node-engine`, `typescript.preset`, `tests.js-coverage-min` | N3 |
 | `yarn.lock` | seed (`yarn install`) | as `package.json` | none | N3 |
 | `.oxlintrc.json` | whole (JSON, no header) | `js` (tool `oxc`) | `js.oxlint.*`, `js.locked-rules` | N3 |
-| `.oxfmtrc.jsonc` | whole | `js` (tool `oxc`) | `js.oxfmt.*`, `js.format-width`, `js.format-tabs` | N3 |
+| `.oxfmtrc.jsonc` | whole | `js` (tool `oxc`) | `js.oxfmt.*`, `js.format-width`, `js.format-tabs`, `js.format-tab-width` | N3 |
 | `.stylelintrc.json` | json-merge | `stylelint` (`discover.scss`) | none | N3 |
 | `tsconfig.json` or `tsconfig.solution.json` (`discover.solution`) | whole | `typescript` (any managed TS project) | none | N3 |
 | `tsconfig.base.json` | whole | `typescript` (`browser_ts or scripts_ts or test_ts`) | `typescript.strict-extras`, `typescript.preset` | N3 |
@@ -957,7 +957,7 @@ The desk and web projects are rendered from the same file sets as `discover.desk
 
 ### 2.10 `.oxlintrc.json` (whole JSON, no comments) and `.oxfmtrc.jsonc` (whole)
 
-Module `js` with `js.tool = "oxc"` (`"none"` renders neither file and no `format`/`lint` scripts). Profile values: `js.oxlint.categories` (the `categories` object below is the `recommended` value), `js.locked-rules` (when true, the three `typescript/*` rules below are `"error"` and an app override may not touch them; when false they are ordinary rules an app may override), `js.format-width` (110) and `js.format-tabs` (true), plus the app's `js.oxlint` and `js.oxfmt` lists.
+Module `js` with `js.tool = "oxc"` (`"none"` renders neither file and no `format`/`lint` scripts). Profile values: `js.oxlint.categories` (the `categories` object below is the `recommended` value), `js.locked-rules` (when true, the three `typescript/*` rules below are `"error"` and an app override may not touch them; when false they are ordinary rules an app may override), `js.format-width` (110), `js.format-tabs` (true) and `js.format-tab-width` (2, the columns a tab counts for), plus the app's `js.oxlint` and `js.oxfmt` lists.
 
 `.oxlintrc.json`. The desk and web overrides are generated from the same file sets tsc uses (§2.2), not from fixed globs:
 
@@ -1007,6 +1007,7 @@ An override whose file list is empty is omitted.
 {
 	"$schema": "./node_modules/oxfmt/configuration_schema.json",
 	"useTabs": true,      // js.format-tabs
+	"tabWidth": 2,        // js.format-tab-width; oxfmt 0.74+ otherwise reads .editorconfig's indent_size
 	"printWidth": 110,    // js.format-width
 	"ignorePatterns": [
 		// frappe's exporter writes every JSON under the package and rewrites it on export
@@ -3507,7 +3508,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `python-lint` | ruff hooks, `[tool.ruff*]`, `lint:py` (§2.12, §2.14) | `tool` ("ruff"\|"none", "ruff"); `select` (list, carbon's 12 codes, S27); `ignore` (list, `["E501","W191"]`); `line-length` (int, 110); `indent-style` ("tab"\|"space", "tab"); `quote-style` ("double"\|"single", "double"); `typing-modules` (list, `["frappe.types.DF"]`) | — | off | on | on |
 | `ssort` | the ssort hook (S2) | none | — | off | off | on |
 | `python-types` | ty: `[tool.ty*]`, `typecheck:py`, frappe-test stage 7, R2 | `tool` ("ty"\|"none", "ty"); `error-on-warning` (bool, false) | — | off | on | on (`error-on-warning = true`) |
-| `js` | oxlint and oxfmt: configs, hooks, `format`/`lint` scripts, devDependencies (§2.10) | `tool` ("oxc"\|"none", "oxc"); `locked-rules` (bool, true); `format-width` (int, 110); `format-tabs` (bool, true); `oxlint.categories` (table, `{correctness="error", suspicious="error", perf="warn", pedantic="off"}`) | — | off | on | on |
+| `js` | oxlint and oxfmt: configs, hooks, `format`/`lint` scripts, devDependencies (§2.10) | `tool` ("oxc"\|"none", "oxc"); `locked-rules` (bool, true); `format-width` (int, 110); `format-tabs` (bool, true); `format-tab-width` (int, 2); `oxlint.categories` (table, `{correctness="error", suspicious="error", perf="warn", pedantic="off"}`) | — | off | on | on |
 | `typescript` | `tsconfig*.json`, `typecheck` script and job, C7, C9 (§2.9) | `preset` ("frappe-types"\|"inline", "frappe-types"); `strict-extras` (bool, true); `check-js` (bool, false); `audit-consumer` (bool, false) | — | off | on | on (`check-js = true`) |
 | `stylelint` | `.stylelintrc.json`, its hook and `lint:css` script, when SCSS exists (§2.11) | none | — | off | on | on |
 | `tests` | frappe-test gate (`ci / test`), coverage tables, testmap, composition, JS unit tests, R1/R4/R7 (§5.1) | `coverage.enable` (bool, true); `coverage.target` (number, 80); `coverage.raise-margin` (number, 2.0; 0 turns the upward ratchet off); `coverage.initial-floor` (number, 0); `testmap` (bool, true); `composition` (bool, true); `js-unit` (bool, true); `js-coverage-min` (int, 50) | — | off | on | on |
@@ -3727,6 +3728,7 @@ tool = "oxc"
 locked-rules = true
 format-width = 110
 format-tabs = true
+format-tab-width = 2
 
 [js.oxlint.categories]
 correctness = "error"
@@ -3945,6 +3947,7 @@ tool = "oxc"
 locked-rules = true
 format-width = 110
 format-tabs = true
+format-tab-width = 2
 
 [js.oxlint.categories]
 correctness = "error"

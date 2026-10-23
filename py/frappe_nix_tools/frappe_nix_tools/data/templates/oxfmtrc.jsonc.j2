@@ -3,6 +3,9 @@
 {
 	"$schema": "./node_modules/oxfmt/configuration_schema.json",
 	"useTabs": {{ cfg.js["format-tabs"] | tojson }},
+	// The columns a tab counts for (js.format-tab-width). Set here because oxfmt 0.74 and
+	// later otherwise take it from .editorconfig's indent_size, which is 4.
+	"tabWidth": {{ cfg.js["format-tab-width"] }},
 	"printWidth": {{ cfg.js["format-width"] }},
 	"ignorePatterns": [
 		// frappe's exporter writes every JSON under the package and rewrites it on export

@@ -1,8 +1,10 @@
 """The engine's parts: globs, the oxfmt-shaped JSON, the manifest, blocks, compat and unchecked-js."""
 
 import json
+import tomllib
 import unittest
 
+from frappe_nix_tools.common import data_path, schema
 from frappe_nix_tools.scaffold import blocks, globs, jsonfmt, manifest
 from scaffold_helpers import AppCase
 
@@ -37,6 +39,15 @@ class TestJsonfmt(unittest.TestCase):
 
 		self.assertTrue(line(94).endswith("],"), "110 columns fits")
 		self.assertTrue(line(95).endswith("["), "111 columns breaks")
+
+	def test_widths_are_the_profile_defaults(self):
+		# The managed .oxfmtrc.jsonc pins tabWidth and printWidth from these profile values;
+		# the emitter must count columns the way that oxfmt does.
+		defaults = schema.defaults("profile.schema.json")["js"]
+		recommended = tomllib.loads(data_path("profiles/recommended@1.0.toml").read_text())["js"]
+		for js in (defaults, recommended):
+			self.assertEqual(js["format-tab-width"], jsonfmt.TAB_WIDTH)
+			self.assertEqual(js["format-width"], jsonfmt.PRINT_WIDTH)
 
 	def test_jsonc_trailing_commas(self):
 		self.assertEqual(
