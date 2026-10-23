@@ -1,7 +1,7 @@
 """``relock`` (``nix run .#relock`` outside the dev shell): regenerate what a
 repository commits on frappe-nix's behalf. frappe-nix's one consumer-facing
-relock (python-devops-nix CONVENTIONS.md, Relock). Was bash in
-modules/devenv.nix and lib/relock.nix (PLAN.md, Track D, D4);
+relock (python-devops-nix docs/conventions.md, Relock). Was bash in
+modules/devenv.nix and lib/relock.nix;
 tests/relock.sh is its acceptance suite.
 
     relock [--uv-only | --node-locks [<app>[/<subdir>]…]] [uv lock flags…]

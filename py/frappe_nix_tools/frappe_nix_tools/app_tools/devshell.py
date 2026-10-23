@@ -1,7 +1,7 @@
 """What frappe-test, frappe-demo and frappe-shots share: running commands in the
 dev shell, the bench's processes, and the guard on dropping an existing site.
 
-Process semantics follow the bash these replace (PLAN.md, Track D): output that
+Process semantics follow the bash these replace: output that
 is not captured streams through unchanged; a step's failure is the caller's to
 handle, as the bash checked each one; Ctrl-C reaches the child from the terminal
 along with this process, which waits for the child to finish with it, then stops
@@ -165,9 +165,9 @@ def truthy(value: Any) -> bool:
 	return value is not None and value is not False
 
 
-#: The Administrator password the tools give a site, and its name before CONVENTIONS.md's
-#: FRAPPE_NIX_* rule (python-devops-nix, Tool-owned variables), still read with a warning
-#: through 1.x, until frappe-nix 2.0.0.
+#: The Administrator password the tools give a site, and its name before the
+#: FRAPPE_NIX_* rule (python-devops-nix docs/conventions.md, Tool-owned
+#: variables), still read with a warning through 1.x, until frappe-nix 2.0.0.
 ENV_ADMIN_PASSWORD = "FRAPPE_NIX_TEST_ADMIN_PASSWORD"
 OLD_ENV_ADMIN_PASSWORD = "FRAPPE_TEST_ADMIN_PASSWORD"
 

@@ -1,6 +1,6 @@
 # frappe-nix-backup-fetch: the object-store half of `bench restore`.
 #
-# python-devops-nix's backup fetch layer (lib.backups.fetch; PLAN.md, Phase 2)
+# python-devops-nix's backup fetch layer (lib.backups.fetch)
 # with frappe-nix's names and its backup layout: one folder per backup, named
 # for its timestamp, as Frappe's S3 backup integration writes them
 # (py/frappe_nix_tools/frappe_nix_tools/restore/backup_layout.py).
@@ -10,9 +10,9 @@
 # `fetch` prints a JSON manifest and touches no database, which is what lets a
 # production host reuse it with its own restore half.
 #
-# The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_MC and
-# FRAPPE_NIX_BACKUP_CACHE (CONVENTIONS.md, Tool-owned variables). The names
-# frappe-nix used before are read too, with a warning, through 1.x, until frappe-nix 2.0.0.
+# The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_MC and FRAPPE_NIX_BACKUP_CACHE
+# (python-devops-nix docs/conventions.md, Tool-owned variables). The names frappe-nix used
+# before are read too, with a warning, through 1.x, until frappe-nix 2.0.0.
 { pkgs, python-devops-nix }:
 
 python-devops-nix.lib.backups.fetch {
@@ -25,7 +25,7 @@ python-devops-nix.lib.backups.fetch {
     MC = "FRAPPE_BACKUP_MC";
     BACKUP_CACHE = "FRAPPE_BACKUP_CACHE";
   };
-  # frappe-nix's tool interpreter (PLAN.md, Python versions), as
-  # frappe-nix-tools uses.
+  # frappe-nix's tool interpreter (python-devops-nix docs/library.md, Python
+  # versions), as frappe-nix-tools uses.
   python = pkgs.python314;
 }

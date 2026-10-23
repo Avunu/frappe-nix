@@ -60,7 +60,7 @@ let
     };
 
   # Per-bench port offset, 0..899, hashed from the bench name: python-devops-nix's
-  # lib.ports (PLAN.md, Phase 5), which every port below comes from.
+  # lib.ports, which every port below comes from.
   #
   # NOT from the project path, though that is the obvious choice and is what
   # devenv itself hashes for DEVENV_RUNTIME. In bench mode the web port has to be
@@ -134,9 +134,10 @@ in
       ...
     }:
     {
-      # Renames, each kept through 1.x, until frappe-nix 2.0.0 (PLAN.md, design
-      # rule 2; CONVENTIONS.md, Identity options, Restore, devguard and the
-      # development shell option tree). Old path = new path.
+      # Renames, each kept through 1.x, until frappe-nix 2.0.0 (python-devops-nix
+      # docs/library.md, design rule 2; docs/conventions.md, Identity options,
+      # Restore, devguard and the development shell option tree). Old path = new
+      # path.
       imports =
         lib.mapAttrsToList (from: to: renamed (lib.splitString "." from) (lib.splitString "." to))
           {
@@ -2245,8 +2246,8 @@ in
             google.enable = dg.google.enable;
             webhooks.enable = dg.webhooks.enable;
             plaid.enable = dg.plaid.enable;
-            # The shared job denylist (CONVENTIONS.md, Job denylist), which
-            # guards/scheduler.py enforces.
+            # The shared job denylist (python-devops-nix docs/conventions.md,
+            # Job denylist), which guards/scheduler.py enforces.
             jobs = {
               inherit (dg.jobs) enable;
               block_server_scripts = dg.jobs.blockServerScripts;
@@ -2430,7 +2431,7 @@ in
           pyproject = cfg.app.src + "/pyproject.toml";
         };
 
-        # python-devops-nix's development shell pieces (PLAN.md, Phase 5),
+        # python-devops-nix's development shell pieces,
         # configured for frappe-nix: see lib/shell-tools.nix. On the bench's
         # own interpreter, so the shell carries no second Python.
         shellTools = import ../lib/shell-tools.nix {
@@ -3131,7 +3132,8 @@ in
           in
           {
             # devenv's own "Name of the project": the shell and frappe-nix name
-            # the project the same way (CONVENTIONS.md, Identity options).
+            # the project the same way (python-devops-nix docs/conventions.md,
+            # Identity options).
             name = lib.mkDefault cfg.name;
 
             # devenv's dotenv integration is loaded by the devenv CLI and
@@ -3248,8 +3250,9 @@ in
                 FRAPPE_NIX_KEEP_GOING = "1";
                 # The shell's statement that devguard is on (devguard.enable),
                 # for frappe-nix's own tools, as odoo-nix's ODOO_NIX_DEVGUARD
-                # (CONVENTIONS.md, Tool-owned variables). frappe_devguard does
-                # not read it; FRAPPE_DEVGUARD_* is its own.
+                # (python-devops-nix docs/conventions.md, Tool-owned variables).
+                # frappe_devguard does not read it; FRAPPE_DEVGUARD_* is its
+                # own.
                 FRAPPE_NIX_DEVGUARD = if dg.enable then "1" else "0";
                 # Where `devenv up` records the ports it leased and the bench's
                 # identity (portLease): frappe-test, frappe-demo and frappe-shots

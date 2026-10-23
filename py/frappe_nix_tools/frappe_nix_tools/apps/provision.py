@@ -1,5 +1,5 @@
 """``bench provision``: create $FRAPPE_SITE and install every app sites/apps.txt
-names. Was ``provision-site``, bash in lib/scripts.nix (PLAN.md, Track D, D5),
+names. Was ``provision-site``, bash in lib/scripts.nix,
 which stays as an alias; tests/provision.sh is its acceptance suite.
 
 One-shot: ``bench new-site --force`` drops the site's database, so it is not

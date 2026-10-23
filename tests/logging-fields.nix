@@ -6,8 +6,9 @@
 # a unit added without them is a unit whose logs nobody finds.
 #
 # The roles are python-devops-nix's one written list (lib.journald.roles;
-# CONVENTIONS.md, Journald vocabulary), which odoo-nix's tests/module-eval.nix
-# asserts against too: every APP_SERVICE here must be on it.
+# docs/conventions.md, Journald vocabulary), which odoo-nix's
+# tests/module-eval.nix asserts against too: every APP_SERVICE here must be on
+# it.
 #
 # Pure evaluation of two NixOS configurations — the unified runtime and the
 # split units — against a stub bench that is never built. tests/socket-runtime.nix

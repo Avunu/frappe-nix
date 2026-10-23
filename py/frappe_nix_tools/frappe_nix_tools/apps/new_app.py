@@ -1,6 +1,5 @@
 """``bench new-app``: scaffold a brand-new app with upstream's `bench new-app`
-and register it in the uv workspace. Was bash in lib/scripts.nix (PLAN.md,
-Track D, D3).
+and register it in the uv workspace. Was bash in lib/scripts.nix.
 
 Upstream's trailing pip-install step fails in the read-only Nix environment;
 that is expected and ignored, and whether the scaffold exists is what counts.

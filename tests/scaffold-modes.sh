@@ -96,8 +96,9 @@ expect_exit "a value flag at the end of the line" 1 "--name needs a value" --ini
 expect_exit "a value flag at the end of the line, under --check" 2 "--format needs a value" --check --format
 
 echo "── renamed flags ────────────────────────────────────────────"
-# CONVENTIONS.md, Scaffolder: --version and --default-site; the old names are
-# read, with a warning, through 1.x, until frappe-nix 2.0.0.
+# python-devops-nix docs/conventions.md, Scaffolder: --version and
+# --default-site; the old names are read, with a warning, through 1.x, until
+# frappe-nix 2.0.0.
 expect_exit "--frappe-version is still read" 0 "scaffold bench 'old' (version-16" \
   --init --dry-run --frappe-version version-16 --name old "$ROOT/old"
 says "--frappe-version is now --version" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"

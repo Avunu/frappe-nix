@@ -108,7 +108,7 @@ def _top_level_string(text: str, key: str) -> str | None:
 def existing_bench_name() -> str:
 	"""The project name a frappe-nix bench's flake.nix already sets, or "".
 
-	``frappe-nix.name`` (CONVENTIONS.md, Identity options), or ``benchName``, its
+	``frappe-nix.name`` (python-devops-nix docs/conventions.md, Identity options), or ``benchName``, its
 	name before, which a bench scaffolded earlier still has."""
 	if not is_frappe_nix_bench():
 		return ""

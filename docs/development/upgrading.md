@@ -40,7 +40,7 @@ nix run github:Avunu/frappe-nix -- -y
 
 The scaffolder's `--frappe-version` and `--site` are now `--version` and `--default-site`. The old names work, with a warning, through 1.x, until frappe-nix 2.0.0; see [Renamed flags](../reference/scaffolder.md#renamed-flags).
 
-Some options were renamed to the names frappe-nix shares with odoo-nix (python-devops-nix's `CONVENTIONS.md`). The old names still work, with an evaluation warning naming the new one, through 1.x, until frappe-nix 2.0.0:
+Some options were renamed to the names frappe-nix shares with odoo-nix ([python-devops-nix's conventions](https://github.com/Avunu/python-devops-nix/blob/main/docs/conventions.md#renames-and-the-1x-line)). The old names still work, with an evaluation warning naming the new one, through 1.x, until frappe-nix 2.0.0:
 
 | Old                                     | New                                |
 | --------------------------------------- | ---------------------------------- |
@@ -59,7 +59,7 @@ Some options were renamed to the names frappe-nix shares with odoo-nix (python-d
 | `devguard.scheduler.blockServerScripts` | `devguard.jobs.blockServerScripts` |
 | `devguard.scheduler.extraBlockedJobs`   | `devguard.jobs.extraBlocked`       |
 
-The last of those follow the development shell's option tree (python-devops-nix's `CONVENTIONS.md`): `watch` is what the shell does when a file changes, `mailpit` is the catcher as a service, `devguard` is guard policy only, and `ports` has one attribute per service (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3`, `ports.socketio`) that the rest of the module reads. Two behaviours changed with them:
+The last of those follow the development shell's option tree ([python-devops-nix's conventions](https://github.com/Avunu/python-devops-nix/blob/main/docs/conventions.md#the-development-shell-option-tree)): `watch` is what the shell does when a file changes, `mailpit` is the catcher as a service, `devguard` is guard policy only, and `ports` has one attribute per service (`ports.http`, `ports.db`, `ports.smtp`, `ports.mailUi`, `ports.pop3`, `ports.socketio`) that the rest of the module reads. Two behaviours changed with them:
 
 - **Mailpit runs whether or not the mail guard is on** (`mailpit.enable`, default `true`). Before, it ran only with `devguard.mail.enable`, and turning the guard off also stopped the catcher. The server, workers and scheduler start after it whenever it runs.
 - **`watch.python = false` keeps serving `/assets` and `/files`.** `runtime.dev = false` used to turn both off, because frappe-runtime's `--dev` did both. The runtime now has a separate `--serve-assets`, which the shell always passes. With `runtime.enable = false`, `watch.python = false` runs `bench serve --noreload`.

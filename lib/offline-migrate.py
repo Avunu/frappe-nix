@@ -50,8 +50,9 @@ ENV_ENABLED = "FRAPPE_NIX_OFFLINE_MIGRATE"
 ENV_THRESHOLD = "FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD"
 #: Absolute path of pt-online-schema-change, where it is not on PATH.
 ENV_PT_OSC = "FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC"
-#: Each variable's name before CONVENTIONS.md's FRAPPE_NIX_* rule (python-devops-nix,
-#: Tool-owned variables), still read, with a warning, through 1.x, until frappe-nix 2.0.0.
+#: Each variable's name before the FRAPPE_NIX_* rule (python-devops-nix
+#: docs/conventions.md, Tool-owned variables), still read, with a warning, through 1.x,
+#: until frappe-nix 2.0.0.
 RENAMED = {
 	ENV_ENABLED: "FRAPPE_OFFLINE_MIGRATE",
 	ENV_THRESHOLD: "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD",

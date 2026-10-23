@@ -1,6 +1,6 @@
 # The packages lib/python.nix grafts into the virtualenvs, built from this
-# repository's trees and python-devops-nix's shared Python (PLAN.md, Phase 3;
-# CONVENTIONS.md, "The core and the product's package" and "Grafts"):
+# repository's trees and python-devops-nix's shared Python (docs/conventions.md,
+# "The core and the product's package" and "Grafts"):
 #
 #   devguard  frappe_devguard: the devguard core (python/devguard) merged with
 #             lib/devguard/frappe_devguard (_product.py, _frappe.py and the
@@ -10,7 +10,7 @@
 #             lib/<x>/frappe_<x> with the shared _hook.py, by lib.python.mkGraft.
 #   journald  lib/journald/frappe_journald with the shared _hook.py and the
 #             journald formatter core (python/journald.py) as _journald.py, by
-#             lib.journald.mkGraft (PLAN.md, Phase 6). Ships to production.
+#             lib.journald.mkGraft. Ships to production.
 #
 # Neither tree may carry a file the other supplies: the build fails naming it.
 { pkgs, python-devops-nix }:

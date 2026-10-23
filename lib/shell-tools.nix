@@ -1,4 +1,4 @@
-# The dev shell's pieces that come from python-devops-nix (PLAN.md, Phase 5),
+# The dev shell's pieces that come from python-devops-nix,
 # configured for frappe-nix in one place: modules/devenv.nix, the scaffolder
 # (lib/init.nix), the bench commands (lib/bench-cli.nix) and the flake's checks
 # all take them from here.
@@ -29,9 +29,10 @@
 {
   pkgs,
   base,
-  # The tools' interpreter (PLAN.md, Python versions: out-of-process tools).
-  # The dev shell passes the bench's, so the shell carries no second one;
-  # frappe-init and the bench commands, frappe-nix's tool interpreter.
+  # The tools' interpreter (python-devops-nix docs/library.md, Python versions:
+  # out-of-process tools). The dev shell passes the bench's, so the shell
+  # carries no second one; frappe-init and the bench commands, frappe-nix's tool
+  # interpreter.
   python ? pkgs.python3,
 }:
 rec {

@@ -3,8 +3,8 @@
 # for every app-mode user: in an app without [tool.frappe-nix] it reads no
 # configuration and `--ci` runs the recommended profile's stages.
 #
-# The command is Python, `frappe_nix_tools.app_tools.frappe_test` (PLAN.md
-# Track D, D6), run as `python -I -m` from an environment that holds
+# The command is Python, `frappe_nix_tools.app_tools.frappe_test`,
+# run as `python -I -m` from an environment that holds
 # frappe-nix-tools, as frappe-init is (lib/init.nix): a console script's
 # wrapper would put the package's own bin/ and python3.14 on the PATH every
 # stage inherits. This wrapper carries what it calls that an app-mode shell

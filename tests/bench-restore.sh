@@ -258,7 +258,7 @@ else
 fi
 
 # ── 13. the old variable names still work, and say so ────────────────────
-# FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (CONVENTIONS.md,
+# FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (python-devops-nix docs/conventions.md,
 # Tool-owned variables); the old name is read, with a warning, through 1.x, until frappe-nix 2.0.0.
 FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
 if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
@@ -405,8 +405,8 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
     no "the unguarded override restores" "rc=$RC out=$OUT"
   fi
 
-  # The name it had before (CONVENTIONS.md, Tool-owned variables), read with a
-  # warning through 1.x, until frappe-nix 2.0.0.
+  # The name it had before (python-devops-nix docs/conventions.md, Tool-owned
+  # variables), read with a warning through 1.x, until frappe-nix 2.0.0.
   FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
   if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
     ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"
@@ -414,8 +414,9 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
     no "the legacy unguarded override still works" "rc=$RC out=$OUT"
   fi
 
-  # Unguarded always refuses now (CONVENTIONS.md, Unguarded restore): not
-  # only when production's key would cross over, and an explicit file too.
+  # Unguarded always refuses now (python-devops-nix docs/conventions.md,
+  # Unguarded restore): not only when production's key would cross over, and an
+  # explicit file too.
   rm -rf "$ROOT/sites/$FRAPPE_SITE"
   run_with "$UNGUARDED_SCRIPT" --at 20260101_010101 --no-site-config
   if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then

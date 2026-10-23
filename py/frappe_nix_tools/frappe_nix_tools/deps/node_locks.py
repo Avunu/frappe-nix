@@ -1,6 +1,6 @@
 """``frappe-nix-node-locks``: write node-locks/<target>/yarn.lock, the fallback
 lock for a node target that ships no yarn.lock of its own. Was bash in
-lib/node-locks.nix (PLAN.md, Track D, D4); tests/node-locks.sh is its
+lib/node-locks.nix; tests/node-locks.sh is its
 acceptance suite.
 
 The rule is that an app's node_modules is built from the app's yarn.lock

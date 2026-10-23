@@ -1,7 +1,7 @@
 """``frappe-nix-bench-patches <shipped-patches.txt> [bench-root]``: reconcile a
 bench root's patches.txt with the patch list frappe-bench ships. Run from the
-dev shell's enterShell. Was bash in lib/bench-patches.nix (PLAN.md, Track D,
-D4); tests/bench-patches.sh is its acceptance suite.
+dev shell's enterShell. Was bash in lib/bench-patches.nix;
+tests/bench-patches.sh is its acceptance suite.
 
 ``bench update`` begins with ``bench.patches.run()``, which imports and runs
 every entry in ``<bench-package>/patches/patches.txt`` that the bench root's own

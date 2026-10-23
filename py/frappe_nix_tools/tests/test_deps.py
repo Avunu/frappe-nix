@@ -1,4 +1,4 @@
-"""The dependency commands (frappe_nix_tools.deps, PLAN.md Track D, D4): what the
+"""The dependency commands (frappe_nix_tools.deps): what the
 shell tests (tests/node-modules.sh, node-locks.sh, bench-patches.sh,
 setup-requirements.sh, bench-update.sh, update-deps.sh, relock.sh) reach only
 indirectly — the fingerprint's bytes against the bash pipeline it replaces,

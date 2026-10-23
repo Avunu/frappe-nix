@@ -531,9 +531,9 @@ secretScripts
 // {
 
   # `bench provision`'s old name, kept as an alias until frappe-nix 2.0.0
-  # (python-devops-nix CONVENTIONS.md, Command layout). frappe-nix's own code
-  # calls `bench provision`, so the note reaches only a person or a script of
-  # the consumer's. py/frappe_nix_tools/frappe_nix_tools/apps/provision.py.
+  # (python-devops-nix docs/conventions.md, Command layout). frappe-nix's own
+  # code calls `bench provision`, so the note reaches only a person or a script
+  # of the consumer's. py/frappe_nix_tools/frappe_nix_tools/apps/provision.py.
   provision-site.exec = ''
     echo "provision-site is deprecated: run \`bench provision\` (the alias goes in frappe-nix 2.0.0)" >&2
     FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@"

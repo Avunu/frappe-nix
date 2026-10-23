@@ -1,5 +1,4 @@
-"""``frappe-init``: the scaffolder behind ``nix run github:Avunu/frappe-nix``
-(PLAN.md, Track D, D2).
+"""``frappe-init``: the scaffolder behind ``nix run github:Avunu/frappe-nix``.
 
 It writes a new bench, converts an existing ``bench init`` bench in place, or
 puts a dev environment in one Frappe app's own repository, and hands

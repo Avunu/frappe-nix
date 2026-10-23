@@ -12,7 +12,7 @@
 #
 # With services.frappe-nix.hardening.enable, every unit it defines runs under
 # python-devops-nix's systemd sandboxing baseline (lib.nixos.hardening;
-# CONVENTIONS.md, Unit hardening): a read-only system but for the site's
+# docs/conventions.md, Unit hardening): a read-only system but for the site's
 # directory, no capabilities, a syscall filter, no W+X memory unless a unit
 # names a profile for it. See `harden` below. Off by default through 1.x.
 #
@@ -189,10 +189,10 @@ let
       # Read by frappe_journald as Frappe's default logger level. Frappe's own
       # production default is ERROR, which drops every frappe.logger().warning().
       FRAPPE_NIX_LOG_LEVEL = lib.toUpper cfg.logging.level;
-      # Its name before (CONVENTIONS.md, Tool-owned variables), for a bench
-      # package built from an older frappe-nix than this module, whose graft
-      # reads only that. The graft prefers the new name. Removed with the
-      # aliases in frappe-nix 2.0.0.
+      # Its name before (python-devops-nix docs/conventions.md, Tool-owned
+      # variables), for a bench package built from an older frappe-nix than this
+      # module, whose graft reads only that. The graft prefers the new name.
+      # Removed with the aliases in frappe-nix 2.0.0.
       FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
       # A block-buffered stdout holds print() output back until the buffer fills
       # or the process exits, so a crash loses exactly the lines that explain it,
@@ -231,13 +231,13 @@ let
 
   # The journald fields every unit this module defines carries, shared with
   # odoo-nix and wordpress-nix (python-devops-nix's lib.journald.fields;
-  # CONVENTIONS.md, Journald vocabulary): a host shipping the journal to a log
-  # store labels by these, so they are a contract, not decoration. APP_SERVICE
-  # is the unit's role, one of lib.journald.roles; APP_SITE the site FQDN, only
-  # for a unit tied to exactly one site; SyslogIdentifier frappe-<role> (or
-  # `identifier`), stable whatever the process is called (`python3`, `bench`, a
-  # store script named after the site), and not on the upstream units (mysql,
-  # redis, nginx), which keep their own.
+  # docs/conventions.md, Journald vocabulary): a host shipping the journal to a
+  # log store labels by these, so they are a contract, not decoration.
+  # APP_SERVICE is the unit's role, one of lib.journald.roles; APP_SITE the site
+  # FQDN, only for a unit tied to exactly one site; SyslogIdentifier
+  # frappe-<role> (or `identifier`), stable whatever the process is called
+  # (`python3`, `bench`, a store script named after the site), and not on the
+  # upstream units (mysql, redis, nginx), which keep their own.
   #
   # LogExtraFields applies to everything journald receives from the unit's
   # processes — stdout/stderr, syslog(3) and sd_journal — so nginx's access log
@@ -604,8 +604,8 @@ let
 
   # Safe deploy-time migration (ExecStart of frappe-migrate-<site>).
   #
-  # python-devops-nix's migrate flow (lib.nixos.migrate.script; CONVENTIONS.md,
-  # Migrate on deploy) with this module's steps:
+  # python-devops-nix's migrate flow (lib.nixos.migrate.script;
+  # docs/conventions.md, Migrate on deploy) with this module's steps:
   #
   #   check      the build marker, then the uninstalled-site guard; exit 100
   #              (nothing to do) for either
@@ -831,8 +831,8 @@ let
       extension = ".sql.gz";
       verify = base.nixos.migrate.verifiers.mysqldump { inherit pkgs; };
       # The bench's own interpreter, already in the closure, when the package
-      # names it (python-devops-nix PLAN.md, Python versions); a package built
-      # by an older frappe-nix does not.
+      # names it (python-devops-nix docs/library.md, Python versions); a package
+      # built by an older frappe-nix does not.
       python = pkg.passthru.python or pkgs.python3;
     };
 
@@ -1601,7 +1601,7 @@ let
   siteModule = types.submodule (
     { name, config, ... }:
     {
-      # python-devops-nix CONVENTIONS.md, Framework config blocks.
+      # python-devops-nix docs/conventions.md, Framework config blocks.
       imports = [
         (renamedSiteOption "extraConfig" "settings")
         (renamedSiteOption "extraConfigFiles" "settingsFiles")
@@ -1877,8 +1877,8 @@ in
 {
   # The module was services.frappe. It matches the devenv and flake-parts roots
   # (frappe-nix.*) now, and cannot collide with a future nixpkgs module
-  # (python-devops-nix CONVENTIONS.md, NixOS module path). The whole tree is
-  # aliased, with NixOS's own warning, through 1.x, until frappe-nix 2.0.0.
+  # (python-devops-nix docs/conventions.md, NixOS module path). The whole tree
+  # is aliased, with NixOS's own warning, through 1.x, until frappe-nix 2.0.0.
   #
   # lib.mkRenamedOptionModule, but withPriority = false: its priority wrapper
   # puts a whole tree's definitions under one mkOverride, which leaves a nested

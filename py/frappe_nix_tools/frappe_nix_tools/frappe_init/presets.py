@@ -1,5 +1,5 @@
-"""lib/frappe-presets.json, read and checked (CONVENTIONS.md, Scaffolder: presets
-file).
+"""lib/frappe-presets.json, read and checked (python-devops-nix docs/conventions.md,
+Scaffolder: presets file).
 
 One object per Frappe series, keyed by the name ``--version`` takes::
 

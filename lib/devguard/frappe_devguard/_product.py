@@ -4,7 +4,7 @@ The rest of this package's core (``__init__``, ``_hook``, ``_settings``,
 ``_patch``, ``guards/egress`` and ``guards/mail_stdlib``) is python-devops-nix's
 (``python/devguard``), merged in by ``lib.devguard.mkPackage`` together with
 the ``_baked.json`` it writes from the ``frappe-nix.devguard`` options.
-python-devops-nix's CONVENTIONS.md, "The core and the product's package", has
+python-devops-nix's docs/conventions.md, "The core and the product's package", has
 the contract this module fills in.
 
 Development only: grafted into the development virtualenv, never into

@@ -1,5 +1,5 @@
 # [tool.uv.extra-build-dependencies], derived from uv.lock rather than kept by
-# hand (python-devops-nix's lib.python.buildDeps; PLAN.md, Phase 4).
+# hand (python-devops-nix's lib.python.buildDeps).
 #
 # uv2nix builds a package the lock has no wheel for from its sdist, in the
 # sandbox, with only the build dependencies it is told about, and an old sdist

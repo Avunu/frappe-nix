@@ -12,7 +12,7 @@ documented ones (docs/reference/scaffolder.md) and neither parser can say them:
     is known, outside app mode.
 
 ``--frappe-version`` and ``--site`` are the names ``--version`` and
-``--default-site`` had before CONVENTIONS.md (Scaffolder: version flag;
+``--default-site`` had before python-devops-nix docs/conventions.md (Scaffolder: version flag;
 Identity options). They are still read, with a warning, through 1.x, until frappe-nix 2.0.0, and are not in the help.
 """
 
@@ -73,7 +73,8 @@ With a terminal and no flags you are prompted for what is missing.
 
 DEFAULT_COMMIT_MSG = "chore: migrate bench to frappe-nix"
 
-#: The old name of a flag → its name now (CONVENTIONS.md, Scaffolder).
+#: The old name of a flag → its name now (python-devops-nix docs/conventions.md,
+#: Scaffolder).
 RENAMED = {"--frappe-version": "--version", "--site": "--default-site"}
 
 #: Flags that take a value, as `--flag <v>` or `--flag=<v>`, and the field each sets.

@@ -1,5 +1,5 @@
-# What services.frappe-nix takes from python-devops-nix's production pieces
-# (PLAN.md, Phase 6), checked at evaluation:
+# What services.frappe-nix takes from python-devops-nix's production pieces,
+# checked at evaluation:
 #
 #   * by default (hardening.enable = false, through 1.x) no unit carries any
 #     of the sandbox;

@@ -4,7 +4,7 @@
 # the forced ones), with the stamp that keeps regenerating it cheap.
 #
 # The logic is Python, py/frappe_nix_tools/frappe_nix_tools/deps/node_locks.py
-# (PLAN.md, Track D, D4), whose docstring has the reasoning; this is its glue.
+# whose docstring has the reasoning; this is its glue.
 # yarn is taken from PATH on purpose: the dev shell pins its own nodejs and
 # yarn via `frappe-nix.nodejs`, and `relock` puts the same on PATH, so the lock
 # is resolved by the yarn that will install it.

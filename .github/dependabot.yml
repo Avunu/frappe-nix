@@ -5,9 +5,9 @@ version: 2
 # release; `chore(deps)` for frappe-nix's own dev environment, which releases nothing.
 #
 # Every ecosystem waits seven days after a release before proposing it
-# (python-devops-nix CONVENTIONS.md, Dependabot), so a version that is pulled or
-# patched within the week never reaches a pull request. Security updates are not
-# held back.
+# (python-devops-nix docs/conventions.md, Dependabot), so a version that is
+# pulled or patched within the week never reaches a pull request. Security
+# updates are not held back.
 #
 # Keeps this repo's dependencies up to date. PRs auto-merge once the required checks go
 # green — see .github/workflows/dependabot-auto-merge.yml.

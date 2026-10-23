@@ -68,7 +68,8 @@ MANAGED_INPUTS = ("frappe-nix", "nixpkgs", "frappe", flakelock.PROFILE_INPUT)
 APP_TEMPLATE = {"flake.nix": "app-template/flake.nix.in", ".envrc": "app-template/envrc"}
 #: What ``templates/app`` gave before: ``frappe-init --app`` wrote these too, so an app
 #: still carrying one opts in without ``--force``. ``flake.nix.v0.in`` is the template
-#: from before CONVENTIONS.md's renames (``siteName``, ``x86_64-darwin``).
+#: from before the renames in python-devops-nix docs/conventions.md (``siteName``,
+#: ``x86_64-darwin``).
 APP_TEMPLATE_BEFORE = {"flake.nix": ("app-template/flake.nix.v0.in",)}
 
 
@@ -228,7 +229,7 @@ def strip_nix_comments(text: str) -> str:
 
 def flake_facts(text: str | None) -> tuple[int | None, list[str], str | None]:
 	"""``frappeVersion``'s major, the sibling names and the default site (``defaultSite``, or
-	``siteName`` from before CONVENTIONS.md's Identity options) an existing ``flake.nix`` declares."""
+	``siteName``, its name before python-devops-nix docs/conventions.md, Identity options) an existing ``flake.nix`` declares."""
 	if not text:
 		return None, [], None
 	text = strip_nix_comments(text)

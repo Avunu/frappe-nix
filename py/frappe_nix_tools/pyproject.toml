@@ -27,9 +27,9 @@ dependencies = [
     # sync compares YAML whole files as data while an app formats them with its own tool
     # (spec §2.10, §3.2).
     "pyyaml>=6",
-    # The bench commands' command line (frappe-nix-bench, PLAN.md Track D).
+    # The bench commands' command line (frappe-nix-bench).
     "click>=8.1",
-    # frappe-init's prompts (frappe_nix_tools.frappe_init, PLAN.md Track D).
+    # frappe-init's prompts (frappe_nix_tools.frappe_init).
     "rich>=13",
 ]
 

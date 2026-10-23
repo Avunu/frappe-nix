@@ -1,7 +1,7 @@
 """Frappe's half of the journald line: the site, the level variable, the formatter.
 
 The line itself is python-devops-nix's (``_journald.py`` beside this file, its
-python/journald.py, merged in by ``lib.journald.mkGraft``; CONVENTIONS.md,
+python/journald.py, merged in by ``lib.journald.mkGraft``; docs/conventions.md,
 Journald line format)::
 
 	<N>{module} [{site}] {message}
@@ -38,9 +38,9 @@ __all__ = [
 	"priority",
 ]
 
-#: The level's variable, and its name before CONVENTIONS.md's FRAPPE_NIX_* rule
-#: (python-devops-nix, Tool-owned variables), still read with a warning through
-#: 1.x, until frappe-nix 2.0.0.
+#: The level's variable, and its name before the FRAPPE_NIX_* rule
+#: (python-devops-nix docs/conventions.md, Tool-owned variables), still read
+#: with a warning through 1.x, until frappe-nix 2.0.0.
 ENV_LEVEL = "FRAPPE_NIX_LOG_LEVEL"
 OLD_ENV_LEVEL = "FRAPPE_LOG_LEVEL"
 _warned_old_level = []

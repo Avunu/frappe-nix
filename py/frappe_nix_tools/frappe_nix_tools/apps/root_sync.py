@@ -1,7 +1,7 @@
 """``frappe-nix-root-sync <bench-root>``: keep a bench's workspace root —
 pyproject.toml, and uv.lock when the root moved — in step with what this
 frappe-nix expects of one. Run from the dev shell's enterShell. Was bash in
-lib/root-sync.nix (PLAN.md, Track D, D3).
+lib/root-sync.nix.
 
 A frappe-nix bump that asks something new of a bench is answered on the next
 shell entry rather than by a command run from outside it. The case it was

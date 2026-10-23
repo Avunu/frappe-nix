@@ -48,8 +48,9 @@ def enabled():
 	return True
 
 
-#: The variables' names before CONVENTIONS.md's FRAPPE_NIX_* rule (python-devops-nix,
-#: Tool-owned variables), still read, with a warning, through 1.x, until frappe-nix 2.0.0.
+#: The variables' names before the FRAPPE_NIX_* rule (python-devops-nix
+#: docs/conventions.md, Tool-owned variables), still read, with a warning, through 1.x,
+#: until frappe-nix 2.0.0.
 RENAMED = {
 	"FRAPPE_NIX_WEB_SOCKET": "FRAPPE_WEB_SOCKET",
 	"FRAPPE_NIX_REPLICA_DB_SOCKET": "FRAPPE_REPLICA_DB_SOCKET",

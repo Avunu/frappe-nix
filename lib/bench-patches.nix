@@ -4,7 +4,7 @@
 # module bench deleted in 2022 and still lists). Run from enterShell.
 #
 # The logic is Python, py/frappe_nix_tools/frappe_nix_tools/deps/bench_patches.py
-# (PLAN.md, Track D, D4), whose docstring has the reasoning; this is its glue.
+# whose docstring has the reasoning; this is its glue.
 {
   pkgs,
   frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,

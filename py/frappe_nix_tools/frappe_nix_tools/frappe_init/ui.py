@@ -1,7 +1,7 @@
 """Output and prompts.
 
 The lines are the bash version's, escape codes included, so a log reads the
-same. Prompts are rich's (PLAN.md, Track D: gum is gone); rich is imported
+same. Prompts are rich's (gum is gone); rich is imported
 only when one is asked, and none is asked without a terminal on both stdin
 and stdout.
 """

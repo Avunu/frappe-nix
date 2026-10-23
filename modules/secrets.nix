@@ -2,7 +2,7 @@
 # the dev shell, one declaration serving both, and the deployment host too.
 #
 # The option tree, the schema and the agenix-shell wiring are the shared
-# secrets toolkit's (python-devops-nix, lib.secrets.mkModule; PLAN.md, Phase 2).
+# secrets toolkit's (python-devops-nix, lib.secrets.mkModule).
 # What is frappe-nix's own is below: the option path, the `frappe_` variable
 # prefix, and `sites`, a group whose units are Frappe sites, each with the three
 # secrets services.frappe-nix consumes in production.
@@ -27,7 +27,7 @@
       # the same path.
       inherit (inputs) agenix-shell;
       # flake.lib.secrets, the name both products share; frappeSecrets for the
-      # deprecation window (CONVENTIONS.md, Secrets).
+      # deprecation window (python-devops-nix docs/conventions.md, Secrets).
       libAliases = [ "frappeSecrets" ];
 
       groups.sites = {
