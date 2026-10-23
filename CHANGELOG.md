@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.0](https://github.com/Avunu/frappe-nix/compare/v1.2.1...v1.3.0) (2026-10-23)
+
+
+### Features
+
+* **provision:** bench provision in Python, provision-site its alias (Track D, D5) ([492d966](https://github.com/Avunu/frappe-nix/commit/492d966baabf617de7de81d58c918e7bc549248c))
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#172](https://github.com/Avunu/frappe-nix/issues/172)) ([b35ce7f](https://github.com/Avunu/frappe-nix/commit/b35ce7f6c8587c53012fa80de6b17a89c68e1332))
+* **devenv:** keep nested frontends' node_modules through app mode's refresh of the pinned apps ([bf9f7e5](https://github.com/Avunu/frappe-nix/commit/bf9f7e5598db71a4a413ff1970a5557f978147eb))
+* **devenv:** refresh the app bench when the app under development is renamed ([a679964](https://github.com/Avunu/frappe-nix/commit/a6799640eccced2099f02cc91be16d6a2da1616c))
+* **runtime:** keep the dev server up when the host is out of inotify watches ([#176](https://github.com/Avunu/frappe-nix/issues/176)) ([72fefce](https://github.com/Avunu/frappe-nix/commit/72fefce5e77e99b23cc57363a17e0e44c4e4e83a))
+* **standards:** put prek on PATH in an opted-in app's dev shell, for the README's `prek install` ([#170](https://github.com/Avunu/frappe-nix/issues/170)) ([2f3a525](https://github.com/Avunu/frappe-nix/commit/2f3a52550ec2b461a7c5631aafc12a8cddb316a1))
+* **standards:** say `nix develop -c` when frappe-shots or frappe-demo runs outside the dev shell ([#169](https://github.com/Avunu/frappe-nix/issues/169)) ([0ef3305](https://github.com/Avunu/frappe-nix/commit/0ef3305f3c58278463ebd33082d295012ba88878))
+* **standards:** start frappe-shots' chromium in a short run directory when TMPDIR is long ([#168](https://github.com/Avunu/frappe-nix/issues/168)) ([9e85fd1](https://github.com/Avunu/frappe-nix/commit/9e85fd111ced7b02f503e30dc2be283cf217c9ff))
+
 ## [1.2.1](https://github.com/Avunu/frappe-nix/compare/v1.2.0...v1.2.1) (2026-10-22)
 
 
