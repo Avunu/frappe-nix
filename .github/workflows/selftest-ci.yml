@@ -193,7 +193,7 @@ jobs:
     name: ci
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # app-test's test-report comments on a dispatched run's pull request
     uses: ./.github/workflows/app-test.yml # zizmor: ignore[self-repository]
     with:
       app: standards_fixture
