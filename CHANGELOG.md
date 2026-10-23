@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.0](https://github.com/Avunu/frappe-nix/compare/v1.3.0...v1.4.0) (2026-10-23)
+
+
+### Features
+
+* **nixos:** keep db_name and db_type overridable through 1.x, with a warning ([99ec77b](https://github.com/Avunu/frappe-nix/commit/99ec77b05f4c698ee145ded70c9151af7b158efe))
+* **nixos:** make a site's settings an RFC 42 block holding the computed site_config keys ([7aaa2b5](https://github.com/Avunu/frappe-nix/commit/7aaa2b59f688e169c3ec866a3d712fe8785facac))
+
+
+### Bug Fixes
+
+* **runtime:** accept any 5.x python-socketio and 4.x python-engineio, as Frappe v16 now needs ([#188](https://github.com/Avunu/frappe-nix/issues/188)) ([c8ca4be](https://github.com/Avunu/frappe-nix/commit/c8ca4be5da3b3f7230b34514e4fe44ed774b8d70))
+* **standards:** pin oxfmt tabWidth to 2 so oxfmt 0.74 stops taking it from .editorconfig ([#187](https://github.com/Avunu/frappe-nix/issues/187)) ([ae70ef1](https://github.com/Avunu/frappe-nix/commit/ae70ef100245d5158022dfc5116277413422236f))
+
 ## [1.3.0](https://github.com/Avunu/frappe-nix/compare/v1.2.1...v1.3.0) (2026-10-23)
 
 
