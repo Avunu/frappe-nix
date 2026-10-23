@@ -76,9 +76,22 @@ These sit under `services.frappe-nix.sites.<NAME>`, where `<NAME>` is the site n
 | `redis.queueUrl`         | str             | `"redis://127.0.0.1:13000"` | The Redis queue URL.                                                                                                                                                                                                           |
 | `redis.socketioUrl`      | str             | `"redis://127.0.0.1:13000"` | The Redis URL for realtime.                                                                                                                                                                                                    |
 | `encryptionKeyFile`      | path or null    | `null`                      | A file containing the Frappe encryption key. Merged into `site_config.json` at activation.                                                                                                                                     |
-| `settings`               | attrs           | `{ }`                       | Keys merged into the base `site_config.json`, under Frappe's spelling. Nix values, no secrets. Was `extraConfig`, which still works with a warning through 1.x, until frappe-nix 2.0.0.                                                                                                                                                    |
+| `settings`               | JSON attrs      | computed keys               | The site's `site_config.json`, under Frappe's spelling: any JSON value, no secrets. It already holds the keys computed from the options above, so it shows the file as written, before the secrets are merged in. See [Site settings](#site-settings). Was `extraConfig`, which still works with a warning through 1.x, until frappe-nix 2.0.0. |
+| `settings.host_name`     | str or null     | `null`                      | The site's public URL, scheme included, for links built without a request (scheduled jobs, workers). Left out of the file when `null`. |
 | `settingsFiles`          | list of path    | `[ ]`                       | JSON files deep-merged into `site_config.json` at activation. Was `extraConfigFiles`, which still works with a warning through 1.x, until frappe-nix 2.0.0. This is the place for secrets such as object-storage credentials.                                                                                                |
 | `renamedApps`            | attrs of str    | `{ }`                       | Apps renamed in place, `OLD = NEW`. The migrate unit runs `frappe-rename-app --site` after maintenance mode goes on and before migrating, inside the snapshot. See [Renaming an app](../app-standards/rename.md).                    |
 | `replacedApps`           | attrs of str    | `{ }`                       | Apps replaced by a new app, `OLD = NEW`. Where OLD is installed, the migrate unit installs NEW and uninstalls OLD before migrating, inside the snapshot. See [Renaming an app](../app-standards/rename.md#replacing-an-app-instead). |
 | `nginx.enable`           | bool            | `false`                     | Create an nginx virtual host for this site.                                                                                                                                                                                    |
 | `nginx.socketPath`       | str             | `""`                        | Also serve the virtual host on a unix socket, for a co-located reverse proxy or tunnel connector that terminates TLS elsewhere. The client address then comes from `CF-Connecting-IP`. Requires `nginx.enable`.                |
+
+## Site settings
+
+`sites.<NAME>.settings` is a freeform block in the shape of the nixpkgs `settings` options (RFC 42). The module puts its own keys in it at `mkDefault` priority: `db_host`, `db_port`, `db_user`, `db_socket`, `redis_cache`, `redis_queue`, `redis_socketio`, `socketio_port` and, under the split units, `socketio_uds`. A key you set replaces one of those without `lib.mkForce`, and attribute sets from several modules merge key by key. Two keys are the module's and refuse a different value: `db_type` (always `mariadb`) and `db_name` (set `database.name`; the migrate snapshot and its rollback use it). A value JSON cannot hold, such as a function, is a type error.
+
+Because the computed keys are in it, evaluating the option shows the base `site_config.json`:
+
+```console
+$ nix eval --json '.#nixosConfigurations.<HOST>.config.services.frappe-nix.sites."<NAME>".settings'
+```
+
+The units' environment (`FRAPPE_DB_HOST` and the rest) and the migrate snapshot follow the typed options, not `settings`, so change a database or Redis address through `database.*` and `redis.*`.

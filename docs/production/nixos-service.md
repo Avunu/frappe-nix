@@ -139,9 +139,11 @@ Setting `package` on a site lets you run, for example, a staging site on a newer
 
 The module never puts secrets in the Nix store. On every start, the `frappe-init-<SITE>` unit builds `site_config.json` in three layers:
 
-1. A base file generated from your Nix options: database and Redis settings, plus `settings`. It is written to the store from Nix-declared values and holds no secrets.
+1. A base file rendered from the site's `settings`. The module fills `settings` with the database, Redis and realtime keys it computes from your options, at `mkDefault` priority, so a key you set there wins and nested sets merge. It is written to the store from Nix-declared values and holds no secrets.
 2. The database password and encryption key, read from `database.passwordFile` and `encryptionKeyFile` into `db_password` and `encryption_key`.
 3. Each file in `settingsFiles`, deep-merged last with `jq`, so it can override earlier values.
+
+Since the computed keys live in `settings`, `config.services.frappe-nix.sites."<SITE>".settings` is the effective first layer: `nix eval` it to see what the site gets before the secrets. [Site settings](../reference/nixos-options.md#site-settings) lists the keys the module owns.
 
 systemd's `LoadCredential` hands the secret files to the unit, so the service account never needs read access to the originals. The result is written to `<siteDir>/sites/<SITE>/site_config.json` with mode `0600`.
 

@@ -598,6 +598,9 @@
           # python-devops-nix's production pieces in the units: the sandbox and its
           # profiles, environmentFiles, the slow query log, the socket directories.
           // import ./tests/production-unit.nix { inherit self pkgs checks; }
+          # sites.<site>.settings as an RFC 42 block: the computed keys in it, a
+          # host's key over one, nested sets merged, a non-JSON value refused.
+          // import ./tests/settings-nixos.nix { inherit self pkgs checks; }
           # What services.frappe-nix.chromium and .wkhtmltopdf put in the units and the
           # bench wrapper.
           // import ./tests/pdf-renderers-unit.nix { inherit self pkgs checks; }
