@@ -46,7 +46,7 @@ The modules and their parameters are in the spec (§8.2), and in the schema `fra
 - `metadata`: `build-backend` (`"flit"` or `"any"`), `package-type`, `package-manager`, `node-engine` (`""` leaves the key to the app);
 - `python-lint`: `select`, `ignore`, `line-length`, `indent-style`, `quote-style`, `typing-modules`;
 - `python-types`: `error-on-warning`;
-- `js`: `tool`, `locked-rules`, `format-width`, `format-tabs`, `oxlint.categories`;
+- `js`: `tool`, `locked-rules`, `format-width`, `format-tabs`, `format-tab-width`, `oxlint.categories`;
 - `typescript`: `preset` (`"frappe-types"`, the npm package's presets, or `"inline"`, which needs no extra dependency but rules out `check-js`), `strict-extras`, `check-js`;
 - `commits`: `allowed-types`, `subject-length`;
 - `releases`: `branching` (`"develop+version"` or `"main+tags"`), `version-scheme` (`"semver"` or `"frappe-major"`), `tag-prefix`;

@@ -220,7 +220,7 @@
 			"template": "oxfmtrc.jsonc.j2",
 			"strategy": "whole",
 			"module": "js",
-			"uses": ["js.format-width", "js.format-tabs", "js.oxfmt.ignore"],
+			"uses": ["js.format-width", "js.format-tabs", "js.format-tab-width", "js.oxfmt.ignore"],
 			"header": "jsonc",
 			"header_note": "Customise via [tool.frappe-nix.js.oxfmt]."
 		},
