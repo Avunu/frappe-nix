@@ -71,6 +71,10 @@ let
 
   cfg = config.services.frappe-nix;
 
+  # A site's `settings` is site_config.json (RFC 42): any JSON value, rendered
+  # as is.
+  settingsFormat = pkgs.formats.json { };
+
   enabledSites = filterAttrs (_: s: s.enable) cfg.sites;
 
   # Resolve the effective package for a site (per-site override or top-level).
@@ -445,34 +449,13 @@ let
       sitesPath = "${siteCfg.siteDir}/sites";
       runtimeBenchDir = "${siteCfg.siteDir}/bench";
 
-      # Base site_config.json from Nix options (no secrets).
-      baseConfig = {
-        db_host = siteCfg.database.host;
-        db_port = siteCfg.database.port;
-        db_type = "mariadb";
-        db_name = siteCfg.database.name;
-        db_user = siteCfg.database.user;
-        redis_cache = siteCfg.redis.cacheUrl;
-        redis_queue = siteCfg.redis.queueUrl;
-        redis_socketio = siteCfg.redis.socketioUrl;
-        socketio_port = siteCfg.socketio.port;
-      }
-      // optionalAttrs (!cfg.runtime.enable && siteCfg.socketio.socketPath != "") {
-        # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
-        # merges this file too, so the realtime server still finds the socket if
-        # it is ever started outside the unit.
-        #
-        # Not written under the unified runtime: nothing binds a separate realtime
-        # socket there, and a stale socketio_uds would point anything that reads it
-        # (a hand-run `frappe-realtime`, say) at a path with no listener.
-        socketio_uds = siteCfg.socketio.socketPath;
-      }
-      // optionalAttrs (siteCfg.database.socket != "") {
-        db_socket = siteCfg.database.socket;
-      }
-      // siteCfg.settings;
-
-      baseConfigFile = pkgs.writeText "site-config-${name}.json" (builtins.toJSON baseConfig);
+      # Base site_config.json (no secrets): the site's `settings`, which holds
+      # the keys computed from the typed options (siteModule's config) and the
+      # host's own. `host_name` is declared and null when unset; a null there is
+      # no key at all, as before it was declared.
+      baseConfigFile = settingsFormat.generate "site-config-${name}.json" (
+        removeAttrs siteCfg.settings (lib.optional (siteCfg.settings.host_name == null) "host_name")
+      );
 
       # Secrets merged via systemd LoadCredential — see mkSiteCredentials.
       secretFiles =
@@ -1594,7 +1577,8 @@ let
 
   # Site submodule option definition.
   siteModule = types.submodule (
-    { name, ... }: {
+    { name, config, ... }:
+    {
       # python-devops-nix CONVENTIONS.md, Framework config blocks.
       imports = [
         (renamedSiteOption "extraConfig" "settings")
@@ -1724,13 +1708,33 @@ let
         };
 
         settings = mkOption {
-          type = types.attrsOf types.anything;
+          type = types.submodule {
+            freeformType = settingsFormat.type;
+            options.host_name = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              example = "https://erp.example.com";
+              description = ''
+                The site's public URL, scheme included. Frappe builds the links
+                in mail, print formats and webhooks from it when there is no
+                request to take them from (a scheduled job, a worker). Unset, it
+                is not written.
+              '';
+            };
+          };
           default = { };
           example = lib.literalExpression ''{ host_name = "https://erp.example.com"; monitor = 1; }'';
           description = ''
-            Keys merged into the site's site_config.json, under Frappe's own
-            spelling (Nix values, no secrets: they land in the store). Was
-            `extraConfig`.
+            The site's site_config.json, under Frappe's own spelling (Nix
+            values, no secrets: they land in the store). Was `extraConfig`.
+
+            It already holds the keys this module computes from the other
+            options (`db_*`, `redis_*`, `socketio_*`), so reading it shows the
+            file as written, before the secrets in `settingsFiles`,
+            `database.passwordFile` and `encryptionKeyFile` are merged in. A
+            key set here wins over a computed one, and attribute sets merge
+            key by key. `db_type` and `db_name` are the module's: set
+            `database.name` instead.
           '';
         };
 
@@ -1805,6 +1809,41 @@ let
             '';
           };
         };
+      };
+
+      # The keys site_config.json takes from the options above. mkDefault, so
+      # a host's `settings.<key>` replaces one without mkForce; the typed option
+      # is still the way to change most of them, since the units' environment
+      # (siteEnv) and the migrate snapshot read the options, not this file.
+      config.settings = {
+        db_host = lib.mkDefault config.database.host;
+        db_port = lib.mkDefault config.database.port;
+        db_user = lib.mkDefault config.database.user;
+        redis_cache = lib.mkDefault config.redis.cacheUrl;
+        redis_queue = lib.mkDefault config.redis.queueUrl;
+        redis_socketio = lib.mkDefault config.redis.socketioUrl;
+        socketio_port = lib.mkDefault config.socketio.port;
+
+        # The module's, at normal priority: a different value is a conflict.
+        # Only MariaDB is provisioned, dumped and restored here (FRAPPE_DB_TYPE
+        # says so too), and the pre-migrate snapshot and its rollback, the
+        # local database and its grants all name database.name. A db_name
+        # that differs would leave the database the site uses out of the
+        # snapshot a failed migrate rolls back to.
+        db_type = "mariadb";
+        db_name = config.database.name;
+
+        # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
+        # merges this file too, so the realtime server still finds the socket if
+        # it is ever started outside the unit.
+        #
+        # Not written under the unified runtime: nothing binds a separate realtime
+        # socket there, and a stale socketio_uds would point anything that reads it
+        # (a hand-run `frappe-realtime`, say) at a path with no listener.
+        socketio_uds = mkIf (!cfg.runtime.enable && config.socketio.socketPath != "") (
+          lib.mkDefault config.socketio.socketPath
+        );
+        db_socket = mkIf (config.database.socket != "") (lib.mkDefault config.database.socket);
       };
     }
   );
