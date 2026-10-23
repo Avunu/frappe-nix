@@ -743,6 +743,11 @@
             "type": "boolean",
             "default": true
           },
+          "format-tab-width": {
+            "type": "integer",
+            "default": 2,
+            "minimum": 1
+          },
           "oxlint": {
             "type": "object",
             "additionalProperties": false,

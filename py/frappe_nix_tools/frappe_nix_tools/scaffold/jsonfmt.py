@@ -3,7 +3,9 @@ output form").
 
 A managed JSON file is compared byte for byte, and sync runs oxfmt over what it writes, so
 the emitter has to produce oxfmt's own output with the managed ``.oxfmtrc.jsonc``
-(``useTabs``, ``printWidth`` 110). oxfmt follows prettier here:
+(``useTabs``, ``tabWidth`` 2, ``printWidth`` 110). ``TAB_WIDTH`` and ``PRINT_WIDTH`` are the
+``js.format-tab-width`` and ``js.format-width`` defaults, and a test holds them to the profile
+schema and ``recommended``. oxfmt follows prettier here:
 
 - an object stays expanded when its source has a line break after ``{``: this emitter
   always expands a non-empty object, so oxfmt keeps it as written;
