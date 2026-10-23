@@ -6,7 +6,9 @@
 #   * a host's `settings.<key>` replaces a computed (mkDefault) key without
 #     mkForce, and nested attribute sets from several definitions merge key by
 #     key instead of the last one replacing the rest;
-#   * the module's own keys (db_type, db_name) refuse a different value;
+#   * a db_name other than database.name, or a db_type other than mariadb,
+#     still evaluates (1.x) but warns, naming what breaks; an equal value is
+#     silent;
 #   * a value JSON cannot hold (a function) is refused;
 #   * the declared host_name is null and left out of the file when unset.
 #
@@ -66,6 +68,16 @@ let
     }).config;
 
   settingsOf = extra: (eval { } extra).services.frappe-nix.sites.${site}.settings;
+
+  # The module's settings warnings for a configuration, as the words that
+  # matter: which key, and that it names the snapshot and 2.0.0.
+  settingsWarnings =
+    extra:
+    map (w: {
+      key = builtins.head (builtins.match ".*settings\\.(db_[a-z]+) is.*" w);
+      namesSnapshot = lib.hasInfix "snapshot" w;
+      namesTwo = lib.hasInfix "error in frappe-nix 2.0.0" w;
+    }) (lib.filter (lib.hasInfix ".settings.db_") (eval { } extra).warnings);
 
   # Whether evaluating the whole of `settings` succeeds: false for a type error
   # or a conflict.
@@ -137,11 +149,29 @@ in
         runtime = null;
       };
       evaluates = {
-        sameDbName = true;
-        otherDbName = false;
-        otherDbType = false;
+        otherDbName = true;
         function = false;
         nestedFunction = false;
+      };
+      otherDbNameValue = "other";
+      warnings = {
+        defaults = [ ];
+        sameDbName = [ ];
+        sameDbType = [ ];
+        otherDbName = [
+          {
+            key = "db_name";
+            namesSnapshot = true;
+            namesTwo = true;
+          }
+        ];
+        otherDbType = [
+          {
+            key = "db_type";
+            namesSnapshot = true;
+            namesTwo = true;
+          }
+        ];
       };
     };
     actual = {
@@ -161,11 +191,17 @@ in
         runtime = udsUnder true;
       };
       evaluates = {
-        sameDbName = evaluates [ { settings.db_name = "erp_example_com"; } ];
         otherDbName = evaluates [ { settings.db_name = "other"; } ];
-        otherDbType = evaluates [ { settings.db_type = "postgres"; } ];
         function = evaluates [ { settings.hook = x: x; } ];
         nestedFunction = evaluates [ { settings.workers.custom.timeout = _: 1; } ];
+      };
+      otherDbNameValue = (settingsOf [ { settings.db_name = "other"; } ]).db_name;
+      warnings = {
+        defaults = settingsWarnings [ ];
+        sameDbName = settingsWarnings [ { settings.db_name = "erp_example_com"; } ];
+        sameDbType = settingsWarnings [ { settings.db_type = "mariadb"; } ];
+        otherDbName = settingsWarnings [ { settings.db_name = "other"; } ];
+        otherDbType = settingsWarnings [ { settings.db_type = "postgres"; } ];
       };
     };
   };
