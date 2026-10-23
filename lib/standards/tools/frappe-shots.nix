@@ -1,5 +1,5 @@
 # `frappe-shots` (docs/app-standards/spec.md §5.5): repeatable screenshots of an app's demo
-# site, `frappe_nix_tools.app_tools.frappe_shots` (PLAN.md Track D, D6, run as `python -I -m`
+# site, `frappe_nix_tools.app_tools.frappe_shots` (run as `python -I -m`
 # as frappe-init is) around the lib/shots engine. Everything that decides a pixel
 # comes from frappe-nix's own nixpkgs: chromium, libwebp's cwebp and dwebp, ffmpeg (videos),
 # libfaketime, Node 24, and a fixed FONTCONFIG_FILE with the Inter, IBM Plex and Noto sets;

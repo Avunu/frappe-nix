@@ -31,7 +31,7 @@ let
       inputs
       ;
     # python-devops-nix's helper, which names each check
-    # frappe-nix-<x>-check (CONVENTIONS.md, Tests).
+    # frappe-nix-<x>-check (python-devops-nix docs/conventions.md, Tests).
     checks = inputs.python-devops-nix.lib.checks.mk {
       inherit pkgs;
       product = "frappe-nix";

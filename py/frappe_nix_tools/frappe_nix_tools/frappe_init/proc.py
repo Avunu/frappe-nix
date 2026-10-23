@@ -1,7 +1,6 @@
 """Running git, uv, frappe-nix-workspace and frappe-nix.
 
-The bash ran under ``set -euo pipefail``; here that is spelled out per call
-(PLAN.md, Track D, process semantics):
+The bash ran under ``set -euo pipefail``; here that is spelled out per call:
 
 -   ``run`` is a step whose failure stops frappe-init with the step's own exit
     status, after the step has said why on stderr (ui.Exit);

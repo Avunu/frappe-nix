@@ -7,7 +7,7 @@
 # detected from the target directory.
 #
 # The scaffolder itself is Python, `frappe_nix_tools.frappe_init` in
-# frappe-nix-tools (py/frappe_nix_tools, PLAN.md Track D, D2), on
+# frappe-nix-tools (py/frappe_nix_tools), on
 # frappe-nix's tool interpreter. This file is its glue: the store paths it
 # needs, as the JSON FRAPPE_NIX_CLI_CONFIG names, and the commands it runs on
 # PATH.

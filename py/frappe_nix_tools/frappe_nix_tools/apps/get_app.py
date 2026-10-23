@@ -1,6 +1,6 @@
 """``bench get-app``: add an existing app as a git submodule and register it in
 the uv workspace ([tool.uv.workspace] members and [tool.uv.sources]) and
-sites/apps.txt. Was bash in lib/scripts.nix (PLAN.md, Track D, D3).
+sites/apps.txt. Was bash in lib/scripts.nix.
 
 The clone is python-devops-nix's lib.sources (`frappe-nix-sources clone`), the
 shape shell entry gives every app: a partial clone of the one branch, every

@@ -1,5 +1,5 @@
 """The configuration Nix hands the bench command line: one file per dev shell,
-one section per command family (PLAN.md, Track D: configuration as JSON, not
+one section per command family (configuration as JSON, not
 interpolation).
 
 lib/scripts.nix writes it and the ``bench-*`` shims point

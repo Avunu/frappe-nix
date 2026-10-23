@@ -1,11 +1,11 @@
 name: Dependabot auto-merge
 
 # Dependabot pull requests, through python-devops-nix's reusable workflow (its
-# CONVENTIONS.md, CI) with its default policy: every update type auto-merges, and
-# github-actions bumps, which change what CI runs, are reviewed by a person. GitHub
-# merges once the branch is mergeable and every *required* status check passes, so
-# auto-merge is only as safe as the checks marked required on `main`. Dependabot's
-# github-actions entry moves the pin below.
+# docs/conventions.md, CI) with its default policy: every update type auto-merges,
+# and github-actions bumps, which change what CI runs, are reviewed by a person.
+# GitHub merges once the branch is mergeable and every *required* status check
+# passes, so auto-merge is only as safe as the checks marked required on `main`.
+# Dependabot's github-actions entry moves the pin below.
 #
 # Requires (one-time, in repo settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"

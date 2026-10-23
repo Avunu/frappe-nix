@@ -1,5 +1,5 @@
 """``frappe-nix-bench <command>``: the bench subcommands frappe-nix writes in
-Python (PLAN.md, Track D).
+Python.
 
 The dev shell's ``bench`` dispatcher stays bash and hands these over through the
 ``bench-<command>`` shims, which point ``FRAPPE_NIX_CLI_CONFIG`` at the

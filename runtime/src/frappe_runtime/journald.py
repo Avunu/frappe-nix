@@ -8,7 +8,7 @@ at the unit's default of info, below any PRIORITY filter that should catch it.
 So when stderr is the journal, the root handler writes
 ``<N>{logger} [{site}] {message}`` instead — the same line Frappe's own loggers
 get from the frappe_journald graft in frappe-nix, and the same format
-(python-devops-nix CONVENTIONS.md, Journald line format).
+(python-devops-nix docs/conventions.md, Journald line format).
 
 The formatter core is ``_journald.py`` beside this file: python-devops-nix's
 python/journald.py, vendored byte for byte (its ``lib.journald.module``). This

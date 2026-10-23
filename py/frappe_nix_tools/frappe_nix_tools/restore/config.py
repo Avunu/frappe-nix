@@ -2,7 +2,7 @@
 line (frappe_nix_tools.bench_config), as a typed dataclass.
 
 Nix writes one JSON file per dev shell and the ``bench-*`` shims point
-``FRAPPE_NIX_CLI_CONFIG`` at it (PLAN.md, Track D: configuration as JSON, not
+``FRAPPE_NIX_CLI_CONFIG`` at it (configuration as JSON, not
 interpolation). The file is generated, so a key this code does not know, or one
 it expects and does not find, is a mismatch between the Nix side and the Python
 side of one frappe-nix revision: it fails loudly here rather than being guessed

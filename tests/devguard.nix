@@ -1,4 +1,4 @@
-# frappe_devguard (PLAN.md, Phase 3; python-devops-nix's CONVENTIONS.md, "The
+# frappe_devguard (python-devops-nix's docs/conventions.md, "The
 # core and the product's package"):
 #
 #   devguard             lib/devguard/tests/test_devguard.py against the package
@@ -19,7 +19,7 @@
 #                        interpreters start with every .pth graft importing
 #                        cleanly (a graft built without its _hook.py fails
 #                        each interpreter start with "Error processing line").
-#   devguard-renames     the Track B renames (devguard.mail.smtpPort, now mailpit.port; the
+#   devguard-renames     the shared renames (devguard.mail.smtpPort, now mailpit.port; the
 #                        devguard.scheduler tree): the old names still set the
 #                        new options and the baked settings, and are listed for
 #                        the evaluation warning. At evaluation; nothing is built.
@@ -194,7 +194,7 @@ in
       schema = lib.importJSON ../py/frappe_nix_tools/frappe_nix_tools/data/schema/profile.schema.json;
       relaxable = schema."$defs".modules.tests.properties.devguard-disable.items.enum;
       # Every guard in the tree, less the switch for all of them and the alias
-      # tree the Track B rename keeps until 2.0.0 (devguard.scheduler, now jobs).
+      # tree the shared rename keeps until 2.0.0 (devguard.scheduler, now jobs).
       guards = lib.attrNames (
         lib.filterAttrs (
           name: value: builtins.isAttrs value && value ? enable && name != "scheduler"

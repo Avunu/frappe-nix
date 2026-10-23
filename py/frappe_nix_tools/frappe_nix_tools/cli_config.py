@@ -1,7 +1,7 @@
 """Reading the JSON configuration Nix generates for frappe-nix's command line.
 
 Nix writes the options and store paths a command needs to one file and its
-wrapper points ``FRAPPE_NIX_CLI_CONFIG`` at it (PLAN.md, Track D: configuration
+wrapper points ``FRAPPE_NIX_CLI_CONFIG`` at it (configuration
 as JSON, not interpolation). Each command reads the file into a frozen
 dataclass of its own (frappe_nix_tools.restore.config,
 frappe_nix_tools.frappe_init.config). The file is generated, so a key the

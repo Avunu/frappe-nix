@@ -1,7 +1,7 @@
 """Running git, uv, bench and frappe-nix-workspace for the apps commands.
 
 The bash they replace ran under ``set -euo pipefail``; here that is spelled out
-per call (PLAN.md, Track D, process semantics):
+per call:
 
 -   ``run`` is a step whose failure stops the command with the step's own exit
     status (``set -e``); the step says why on stderr itself;

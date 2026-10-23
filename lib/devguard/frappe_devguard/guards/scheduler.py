@@ -13,7 +13,7 @@ rows: DB state survives ``bench migrate`` but does *not* survive the thing that
 actually matters here — a restore from a production dump, which carries
 ``stopped = 0``.
 
-Its settings are the shared ``jobs`` tree (python-devops-nix's CONVENTIONS.md,
+Its settings are the shared ``jobs`` tree (python-devops-nix's docs/conventions.md,
 Job denylist): ``devguard.jobs.*``, ``FRAPPE_DEVGUARD_JOBS_*`` and
 ``FRAPPE_DEVGUARD_DISABLE=jobs``. Its log lines keep Frappe's word,
 ``frappe_devguard[scheduler]``.

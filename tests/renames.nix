@@ -1,11 +1,11 @@
-# Track B's renames (python-devops-nix PLAN.md, Track B; CONVENTIONS.md): each
+# The shared renames (python-devops-nix docs/conventions.md): each
 # old name still reaches the new option, and is reported for the deprecation
 # warning. At evaluation; nothing is built.
 #
 #   renames-devenv   frappe-nix.benchName → name, siteName → defaultSite; the
 #                    new names set devenv's `name` and FRAPPE_SITE, and the old
 #                    ones are listed in frappe-nix.deprecations (lib.warn).
-#   renames-option-tree  the development shell option tree (CONVENTIONS.md):
+#   renames-option-tree  the development shell option tree (docs/conventions.md):
 #                    runtime.dev → watch.python, assets.reassert → watch.reassert,
 #                    devguard.mail.{host,port,httpPort,pop3.*} → mailpit.*, each
 #                    reaching the new option and listed for its warning; and the

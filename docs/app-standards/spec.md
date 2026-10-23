@@ -184,8 +184,8 @@ frappe-nix/
 ├── lib/scripts.d/
 │   ├── frappe-test.nix, frappe-rename-app.nix [N1]
 │   └── frappe-demo.nix, frappe-shots.nix      [N5]
-├── py/frappe_nix_tools/…/app_tools/          [N1, N5] frappe-test, frappe-demo, frappe-shots (Python since PLAN.md D6)
-├── py/frappe_nix_tools/…/frappe_init/        [N3]   (frappe-init, in Python since PLAN.md D2; new flags: --sync, --check, --standards, --format, --only)
+├── py/frappe_nix_tools/…/app_tools/          [N1, N5] frappe-test, frappe-demo, frappe-shots (Python)
+├── py/frappe_nix_tools/…/frappe_init/        [N3]   (frappe-init, in Python; new flags: --sync, --check, --standards, --format, --only)
 ├── lib/init.nix                               [N3]   (frappe-init's wrapper, and the frappe-nix-tools runtime input)
 ├── lib/rename/frappe_rename_app.py            [N1]   (ported from the Phase 0 rename-mechanics prototype)
 ├── lib/demo/frappe_demo.py                    [N5]

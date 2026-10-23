@@ -276,7 +276,8 @@ class TestDetect(unittest.TestCase):
 			self.assertEqual(detect.existing_bench_name(), "")
 			Path("flake.nix").write_text('{\n  frappe-nix = {\n    benchName = "acme";\n  };\n}\n')
 			self.assertEqual(detect.existing_bench_name(), "acme")
-			# The name now (CONVENTIONS.md, Identity options); a nested `name` is not it.
+			# The name now (python-devops-nix docs/conventions.md, Identity
+			# options); a nested `name` is not it.
 			Path("flake.nix").write_text(
 				'{\n  inputs.frappe-nix.url = "x";\n  frappe-nix = {\n'
 				'    app = { name = "inner"; };\n    siblings = [ { name = "erpnext"; } ];\n'

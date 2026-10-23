@@ -1,7 +1,7 @@
 """``reconcile-apps``: install every app sites/apps.txt names that the site's
 database does not have yet, with frappe-nix.renamedApps and replacedApps around
 it (docs/app-standards/spec.md §5.10). Was bash in lib/scripts.nix and
-lib/rename/reconcile.nix (PLAN.md, Track D, D3).
+lib/rename/reconcile.nix.
 
 It runs as `reconcile-apps [<site>]` by hand and as `devenv up`'s
 frappe:apps-reconcile task, and the one rendering has to be right in both. This

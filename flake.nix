@@ -117,7 +117,7 @@
       # importApply keeps the file's own path in the module system's errors.
       # The module takes python-devops-nix's lib: the thread caps, the unit
       # hardening, the migrate flow, the socket and nginx pieces and the journald
-      # vocabulary it shares with odoo-nix (PLAN.md, Phase 6).
+      # vocabulary it shares with odoo-nix.
       nixosModules.default = nixpkgs.lib.modules.importApply ./modules/nixos.nix {
         base = inputs.python-devops-nix.lib;
       };
@@ -199,8 +199,9 @@
         let
           inherit (pkgs) lib;
           # Every check is registered through python-devops-nix's helper, which
-          # names it frappe-nix-<x>-check (CONVENTIONS.md, Tests). The files
-          # under tests/ take it as `checks`.
+          # names it frappe-nix-<x>-check (python-devops-nix
+          # docs/conventions.md, Tests). The files under tests/ take it as
+          # `checks`.
           checks = inputs.python-devops-nix.lib.checks.mk {
             inherit pkgs;
             product = "frappe-nix";
@@ -508,8 +509,8 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
-        # Track B's renames: each old option name still reaches the new one,
-        # and is listed for its deprecation warning.
+        # The renames shared with odoo-nix: each old option name still reaches
+        # the new one, and is listed for its deprecation warning.
         // import ./tests/renames.nix { inherit self pkgs inputs; }
         // import ./tests/ide.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
@@ -624,7 +625,7 @@
         # its ruff config on the pinned upstream Frappe's. See dev/.
         // import ./dev/checks.nix { inherit pkgs inputs checks; }
         # The repository checks frappe-nix shares with odoo-nix
-        # (python-devops-nix, CONVENTIONS.md, Formatter and Repository files):
+        # (python-devops-nix docs/conventions.md, Formatter and Repository files):
         # nixfmt-rs, statix and deadnix over the tree with statix.toml compared
         # to the shared copy, and .editorconfig, .pre-commit-config.yaml and
         # ruff.toml carrying the shared settings.

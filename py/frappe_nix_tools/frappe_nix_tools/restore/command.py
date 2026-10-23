@@ -1,5 +1,5 @@
 """``bench restore``: restore the dev bench from a Frappe backup, an explicit file
-or the newest one in the object store (PLAN.md, Track D, D1).
+or the newest one in the object store.
 
 Imports no Frappe. Everything that needs Frappe is ``bench …`` run as a
 subprocess, through the dev shell's ``bench`` wrapper, so this runs on
@@ -32,7 +32,8 @@ from frappe_nix_tools.restore.config import ConfigError, RestoreConfig, load
 PREFIX = "bench restore"
 
 #: The override for an unguarded restore, and the name it had before
-#: (CONVENTIONS.md, Tool-owned variables), read with a warning through 1.x, until frappe-nix 2.0.0.
+#: (python-devops-nix docs/conventions.md, Tool-owned variables), read with a
+#: warning through 1.x, until frappe-nix 2.0.0.
 ALLOW_UNGUARDED = "FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"
 ALLOW_UNGUARDED_LEGACY = "FRAPPE_RESTORE_ALLOW_UNGUARDED"
 

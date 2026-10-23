@@ -1,4 +1,4 @@
-"""The apps commands (frappe_nix_tools.apps, PLAN.md Track D, D3): what the
+"""The apps commands (frappe_nix_tools.apps): what the
 shell tests (tests/bench-get-app.sh, bench-remove-app.sh, bench-new-app.sh,
 reconcile-apps.sh, root-sync.sh, provision.sh) reach only indirectly — argument
 parsing, URL and app-name resolution, the installed-apps query, the reconcile

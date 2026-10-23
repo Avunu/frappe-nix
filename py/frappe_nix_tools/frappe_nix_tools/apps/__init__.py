@@ -1,4 +1,4 @@
-"""The bench's apps and its workspace root, in Python (PLAN.md, Track D, D3):
+"""The bench's apps and its workspace root, in Python:
 ``bench get-app``, ``bench remove-app``, ``bench new-app``, ``reconcile-apps``
 and the shell-entry root sync.
 

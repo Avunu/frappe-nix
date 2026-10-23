@@ -1,4 +1,4 @@
-"""The bench's dependencies, in Python (PLAN.md, Track D, D4): the node_modules
+"""The bench's dependencies, in Python: the node_modules
 refresh, the fallback lock generator, the bench patch record and ``bench setup
 requirements``.
 

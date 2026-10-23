@@ -793,7 +793,8 @@ class TestFirstOptIn(OptOutCase):
 		self._the_app_templates_flake_is_replaced_silently("app-template/flake.nix.in")
 
 	def test_the_earlier_app_templates_flake_is_replaced_silently(self):
-		# templates/app before CONVENTIONS.md's renames (siteName, x86_64-darwin).
+		# templates/app before the renames in python-devops-nix
+		# docs/conventions.md (siteName, x86_64-darwin).
 		self._the_app_templates_flake_is_replaced_silently("app-template/flake.nix.v0.in")
 
 

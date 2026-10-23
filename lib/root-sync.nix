@@ -1,8 +1,8 @@
 # Keeps a bench's workspace root — pyproject.toml, and uv.lock when the root
 # moved — in step with what this frappe-nix expects of one, on shell entry:
 # `frappe-nix-root-sync <bench-root>`. The logic is Python,
-# py/frappe_nix_tools/frappe_nix_tools/apps/root_sync.py (PLAN.md, Track D,
-# D3), whose docstring has the reasoning; this is its glue: the store paths it
+# py/frappe_nix_tools/frappe_nix_tools/apps/root_sync.py,
+# whose docstring has the reasoning; this is its glue: the store paths it
 # needs, as the JSON FRAPPE_NIX_CLI_CONFIG names.
 #
 # `python -I -m` from an environment that holds frappe-nix-tools, as

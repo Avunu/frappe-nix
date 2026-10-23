@@ -1,5 +1,5 @@
 # `frappe-demo` (docs/app-standards/spec.md §5.4): a repeatable demo site,
-# `frappe_nix_tools.app_tools.frappe_demo` (PLAN.md Track D, D6) around the bench-side
+# `frappe_nix_tools.app_tools.frappe_demo` around the bench-side
 # lib/demo/frappe_demo.py, whose store path it reads from FRAPPE_NIX_CLI_CONFIG. Run as
 # `python -I -m`, as frappe-init is (lib/init.nix), so no console-script wrapper changes
 # the PATH the bench's commands inherit. A dev-shell command of an opted-in app only

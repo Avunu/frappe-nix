@@ -1,5 +1,5 @@
 """``bench update`` / ``bench-update``: the submodule-aware replacement for
-``bench update``. Was bash in lib/scripts.nix (PLAN.md, Track D, D4);
+``bench update``. Was bash in lib/scripts.nix;
 tests/bench-update.sh is its acceptance suite.
 
     bench-update [--pull | --migrate | --build | --node-locks [<app>[/<subdir>]…]]

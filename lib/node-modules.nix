@@ -4,7 +4,7 @@
 # last install. Run on every shell entry and in front of every build.
 #
 # The logic is Python, py/frappe_nix_tools/frappe_nix_tools/deps/node_modules.py
-# (PLAN.md, Track D, D4), whose docstring has the reasoning; this is its glue.
+# whose docstring has the reasoning; this is its glue.
 # yarn is taken from PATH on purpose: the dev shell pins its own nodejs and
 # yarn via `frappe-nix.nodejs`.
 {

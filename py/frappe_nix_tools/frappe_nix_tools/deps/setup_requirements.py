@@ -3,7 +3,7 @@ way of Nix and whose node_modules are installed by frappe-nix: not the
 conventional bench's ``pip install -e`` and ``yarn install`` of every app, which
 here would either fight the read-only environment or skip the checks that
 matter. See lib/node-verify.py and lib/requirements-check.py. Was bash in
-lib/scripts.nix (PLAN.md, Track D, D4); tests/setup-requirements.sh is its
+lib/scripts.nix; tests/setup-requirements.sh is its
 acceptance suite.
 """
 

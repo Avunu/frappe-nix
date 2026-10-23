@@ -18,11 +18,11 @@ allowed_types = [
 	"deprecate",
 ]
 # A scope is optional; when there is one it names a part of the product. One list for
-# frappe-nix and odoo-nix (python-devops-nix CONVENTIONS.md, Commits): every scope either
-# repository has used, so a scope the other one coins is not refused here. `deps` is
-# Dependabot's and `main` is release-please's (`chore(main): release X.Y.Z`). committed
-# compares the text between the parentheses whole, so a commit that names two areas
-# (`fix(nixos,runtime): ...`) needs that pair listed as written.
+# frappe-nix and odoo-nix (python-devops-nix docs/conventions.md, Commits): every scope
+# either repository has used, so a scope the other one coins is not refused here.
+# `deps` is Dependabot's and `main` is release-please's (`chore(main): release X.Y.Z`).
+# committed compares the text between the parentheses whole, so a commit that names two
+# areas (`fix(nixos,runtime): ...`) needs that pair listed as written.
 allowed_scopes = [
 	"addons",
 	"app-mode",

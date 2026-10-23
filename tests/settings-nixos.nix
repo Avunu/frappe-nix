@@ -1,5 +1,5 @@
 # services.frappe-nix.sites.<site>.settings as an RFC 42 block, at evaluation
-# (python-devops-nix CONVENTIONS.md, Framework config blocks):
+# (python-devops-nix docs/conventions.md, Framework config blocks):
 #
 #   * `settings` shows the keys the module computes from the typed options, so
 #     it is the site_config.json the init unit writes, less the secrets;

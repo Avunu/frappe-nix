@@ -12,7 +12,7 @@
 #
 # Every image carries the OCI labels, the ones that serve HTTP have a
 # HEALTHCHECK, and with containers.nonRoot they run as frappe (uid/gid 1000)
-# (python-devops-nix CONVENTIONS.md,
+# (python-devops-nix docs/conventions.md,
 # Containers). The outputs are container-<role>; the role-named outputs they
 # replaced stay as aliases until 2.0.0.
 { inputs, ... }:

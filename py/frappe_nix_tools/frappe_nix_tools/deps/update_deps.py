@@ -1,7 +1,7 @@
 """``update-deps``: re-lock and reinstall every dependency of the bench — the
 relock (``uv lock``, the managed build-dependency block, node-locks/), then
-``uv sync`` and each node app's ``yarn install``. Was bash in lib/scripts.nix
-(PLAN.md, Track D, D4); tests/update-deps.sh is its acceptance suite.
+``uv sync`` and each node app's ``yarn install``. Was bash in lib/scripts.nix;
+tests/update-deps.sh is its acceptance suite.
 
 In a bench the apps are other people's repositories, and a yarn.lock rewritten
 here is a modified file their next ``git checkout`` refuses over (``bench

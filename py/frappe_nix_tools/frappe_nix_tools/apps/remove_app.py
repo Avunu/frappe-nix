@@ -1,5 +1,4 @@
-"""``bench remove-app``: the inverse of get-app. Was bash in lib/scripts.nix
-(PLAN.md, Track D, D3).
+"""``bench remove-app``: the inverse of get-app. Was bash in lib/scripts.nix.
 
 It replaces the real subcommand, which moves apps/<app> aside, edits
 sites/apps.txt in place and pip-uninstalls into a read-only venv — none of which
