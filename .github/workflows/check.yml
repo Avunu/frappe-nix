@@ -23,6 +23,10 @@ name: check
 # runs them only with `vm-tests: true`: the release flow (release.yml) dispatches
 # this workflow on its release PR without inputs, and gets `lint` and `flake` alone.
 #
+# A failed `flake` or VM test uploads the failed derivations and the end of their logs, and
+# `report` comments them, with every job's result, on the pull request (python-devops-nix's
+# nix-failures and check-report actions). A passing run only edits an earlier comment.
+#
 # Every job that uses nix sets up magic-nix-cache on a GitHub-hosted runner, so a run reuses what
 # earlier runs built; the self-hosted runner keeps its own /nix/store between jobs.
 
@@ -110,12 +114,14 @@ jobs:
       # Evaluates checks/packages/apps/devShells and the NixOS module without building
       # the VM tests. Catches the overwhelming majority of flake.lock breakage.
       - name: Evaluate all flake outputs
-        run: nix flake check --no-build --show-trace
+        shell: bash # -o pipefail, through the tee
+        run: nix flake check --no-build --show-trace 2>&1 | tee "$RUNNER_TEMP/nix.log"
 
       # The scaffolder is small enough to build outright, so the gate is not eval-only.
       # This is also where shellcheck runs over lib/sh/*.
       - name: Build the bench scaffolder
-        run: nix build .#default --show-trace
+        shell: bash # -o pipefail, through the tee
+        run: nix build .#default --show-trace 2>&1 | tee -a "$RUNNER_TEMP/nix.log"
 
       # checks.x86_64-linux, split in two: the NixOS VM tests (a runNixOSTest result
       # has a `driver`) go to the `vm-tests` job, everything else is built below.
@@ -139,9 +145,25 @@ jobs:
       # check, and every app standards check. All offline and no KVM. `--keep-going` so one failure
       # does not hide the others.
       - name: Build the offline checks
+        shell: bash # -o pipefail, through the tee
         run: |
           sed 's|^|.#checks.x86_64-linux.|' "$RUNNER_TEMP/offline-checks" \
-            | xargs nix build -L --show-trace --keep-going --no-link
+            | xargs nix build -L --show-trace --keep-going --no-link 2>&1 \
+            | tee -a "$RUNNER_TEMP/nix.log"
+
+      - if: failure()
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        with:
+          log: ${{ runner.temp }}/nix.log
+          title: flake
+          output: ${{ runner.temp }}/failures/flake.md
+
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failures-flake
+          path: ${{ runner.temp }}/failures/flake.md
+          if-no-files-found: ignore
 
   vm-tests:
     needs: flake
@@ -172,6 +194,38 @@ jobs:
           use-flakehub: false
 
       - name: Run the ${{ matrix.test }} NixOS test
+        shell: bash # -o pipefail, through the tee
         env:
           TEST: ${{ matrix.test }}
-        run: nix build ".#checks.x86_64-linux.$TEST" -L --show-trace
+        run: nix build ".#checks.x86_64-linux.$TEST" -L --show-trace 2>&1 | tee "$RUNNER_TEMP/nix.log"
+
+      - if: failure()
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        with:
+          log: ${{ runner.temp }}/nix.log
+          title: vm-tests (${{ matrix.test }})
+          output: ${{ runner.temp }}/failures/vm-${{ matrix.test }}.md
+
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: failures-vm-${{ matrix.test }}
+          path: ${{ runner.temp }}/failures/vm-${{ matrix.test }}.md
+          if-no-files-found: ignore
+
+  report:
+    needs: [lint, flake, vm-tests]
+    # `!cancelled()`: a run a newer push superseded has nothing to say. A fork's pull
+    # request gets a read-only token, so no comment. A dispatched run (release.yml's,
+    # autofix.yml's) finds its pull request by branch.
+    if: >-
+      !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write # the comment
+    steps:
+      - uses: Avunu/python-devops-nix/.github/actions/check-report@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        with:
+          needs: ${{ toJSON(needs) }}

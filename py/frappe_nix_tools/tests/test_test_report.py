@@ -12,11 +12,22 @@ from helpers import run_cli
 JUNIT_TWO_DOCUMENTS = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
-\t<testsuite name="a" tests="4" failures="1" errors="0" skipped="1"></testsuite>
+\t<testsuite name="a" tests="4" failures="1" errors="0" skipped="1">
+\t\t<testcase classname="demo.tests.test_api.TestApi" name="test_ok"/>
+\t\t<testcase classname="demo.tests.test_api.TestApi" name="test_total" time="0.1">
+\t\t\t<failure type="AssertionError" message="AssertionError: 3 != 4">Traceback (most recent call last):
+  File "demo/tests/test_api.py", line 9, in test_total
+AssertionError: 3 != 4</failure>
+\t\t</testcase>
+\t</testsuite>
 </testsuites>
 <?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
-\t<testsuite name="b" tests="2" failures="0" errors="1" skipped="0"></testsuite>
+\t<testsuite name="b" tests="2" failures="0" errors="1" skipped="0">
+\t\t<testcase classname="demo.tests.test_hooks.TestHooks" name="test_boot">
+\t\t\t<error type="KeyError" message="KeyError: &lt;boot&gt;">printed ```` in the log</error>
+\t\t</testcase>
+\t</testsuite>
 </testsuites>
 """
 
@@ -27,6 +38,27 @@ COVERAGE = {
 		"demo/hooks.py": {"summary": {"percent_covered": 100.0}},
 	},
 }
+
+
+class TestFailures(unittest.TestCase):
+	def test_bounded(self):
+		failures = [
+			{
+				"test": f"t.T.test_{i}",
+				"kind": "failure",
+				"message": "",
+				"text": "\n".join(map(str, range(100))),
+			}
+			for i in range(test_report.FAILURES_SHOWN + 3)
+		]
+		text = test_report.failures_markdown(failures)
+		self.assertEqual(text.count("<details>"), test_report.FAILURES_SHOWN)
+		self.assertIn("And 3 more", text)
+		# The end of each traceback, where the assertion is.
+		self.assertIn(f"\n{100 - test_report.FAILURE_LINES}\n", text)
+		self.assertNotIn(f"\n{100 - test_report.FAILURE_LINES - 1}\n", text)
+		# No message: the kind stands in for it.
+		self.assertIn("<code>t.T.test_0</code>: failure</summary>", text)
 
 
 class TestRatchet(unittest.TestCase):
@@ -224,6 +256,21 @@ class TestReport(unittest.TestCase):
 		self.assertEqual((self.out / "junit.xml").read_text().count("<?xml"), 1)
 		self.assertIn("## frappe-test: demo", summary.read_text())
 		self.assertIn("| composition | failed |", (self.out / "summary.md").read_text())
+
+	def test_failed_tests_in_the_summary(self):
+		self.report("tests=failed")
+		text = (self.out / "summary.md").read_text()
+		self.assertIn("### Failed tests", text)
+		self.assertIn(
+			"<summary><code>demo.tests.test_api.TestApi.test_total</code>: AssertionError: 3 != 4</summary>",
+			text,
+		)
+		self.assertIn('  File "demo/tests/test_api.py", line 9, in test_total', text)
+		# The message is escaped for the HTML it sits in, and the log's own fence cannot
+		# close the one around it.
+		self.assertIn("<code>demo.tests.test_hooks.TestHooks.test_boot</code>: KeyError: &lt;boot&gt;", text)
+		self.assertIn("`````text\nprinted ```` in the log\n`````", text)
+		self.assertNotIn("test_ok", text)
 
 	def test_first_failing_stage_wins(self):
 		report, _ = self.report("ty=failed", "coverage=failed", "tests=ok")

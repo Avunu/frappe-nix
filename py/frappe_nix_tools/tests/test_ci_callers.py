@@ -90,7 +90,9 @@ class TestGates(CallerCase):
 			self.assertRegex(
 				job["uses"], rf"^Avunu/frappe-nix/\.github/workflows/app-{gate}\.yml@[0-9a-f]{{40}}$"
 			)
-			self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": "read"})
+			# test's own test-report job comments on the pull request.
+			comments = "write" if gate == "test" else "read"
+			self.assertEqual(job["permissions"], {"contents": "read", "pull-requests": comments})
 			self.assertEqual(job["with"]["integration-branch"], "develop")
 		for name in ("pr-policy", "release", "deps", "nightly", "assets"):
 			self.assertIn(f"{WORKFLOWS}/{name}.yml", files)

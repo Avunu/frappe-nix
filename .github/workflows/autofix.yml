@@ -1,0 +1,54 @@
+name: autofix
+
+# Pushes what `nix fmt` and the prek hooks would rewrite to the pull request's branch, for
+# a clone that does not run them, through python-devops-nix's pre-commit-autofix action
+# (its docs/conventions.md, CI). check.yml's `lint` and the nix-lint check in `flake` stay
+# the gate; this makes them pass. The push is GITHUB_TOKEN's and starts no workflow, so
+# the action dispatches the workflows whose checks `main` requires on the branch, as
+# release.yml's dispatch-ci does for the release pull request: check.yml (with the VM
+# tests a pull request runs), pr-policy.yml and docs.yml. Its commit is `style:`, which
+# pr-policy accepts.
+#
+# Only a branch of this repository: a fork's is not this token's to push to, and the lint
+# job's diff is the answer there.
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: autofix-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 20
+    permissions:
+      contents: write # the push
+      actions: write # gh workflow run
+      pull-requests: write # the comment
+    steps:
+      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
+      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true # zizmor: ignore[artipacked] the action pushes
+
+      - uses: Avunu/python-devops-nix/.github/actions/pre-commit-autofix@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        with:
+          fixers: nix fmt
+          dispatch: |
+            check.yml -f vm-tests=true
+            pr-policy.yml
+            docs.yml
