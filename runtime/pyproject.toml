@@ -17,9 +17,12 @@ license = { text = "MIT" }
 dependencies = [
     # Socket.IO v5 / Engine.IO v4, wire-compatible with the browser's
     # socket.io-client ^4.7.1. The WebSocket transport underneath is uvicorn's,
-    # which is the `websockets` library Frappe already depends on.
-    "python-socketio~=5.16.2",
-    "python-engineio~=4.13.2",
+    # which is the `websockets` library Frappe already depends on. Frappe v16
+    # pins its own minor of each (5.17 and 4.14 today) and moves it on its own
+    # schedule: a minor pin here makes every bench on a newer Frappe
+    # unresolvable, so this takes the major line and lets Frappe pick the minor.
+    "python-socketio>=5.16.2,<6",
+    "python-engineio>=4.13.2,<5",
     # ASGI server. Upstream pins ~=0.52.1; we relax the floor because nixpkgs
     # ships 0.51.0 and a Frappe v16 bench ships 0.42.0, and the only Config
     # options used here (uds, host/port, log_config, access_log,
