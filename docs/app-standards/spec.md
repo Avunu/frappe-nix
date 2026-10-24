@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-22
+updated: 2026-10-24
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -459,6 +459,9 @@ bootstrap-sha = "3c33bb4b…"                  # optional; rendered into release
 
 [tool.frappe-nix.pilot-assets]
 enable = false                               # true → managed .github/workflows/assets.yml and the release dispatch
+
+[tool.frappe-nix.listing]
+approved = false                             # true once the app's marketplace listing is approved: the README links it (§2.19)
 
 [tool.frappe-nix.test-utils]
 track-overrides = false                      # true → the test_utils track_overrides hook (needs HASH:/REPO: annotations)
@@ -1541,7 +1544,7 @@ rules:
 
 ### 2.19 README generated blocks (N5; `blocks`, only when `discover.has_listing`)
 
-Module `readme` (needs `listing`; off in `recommended`). Profile values: `org.license`, `org.copyright-holder`, `org.email`, `org.support-url`, `org.dev-docs-url`, `org.repo-url`, `org.readme.badges`, `org.readme.links`, `readme.install-ref`. Each block template is overridable by an org profile (§8.1). A block that needs an empty org value is exit 2 naming the key (S37), except `org.email` and `org.support-url`, of which the `support` block needs one.
+Module `readme` (needs `listing`; off in `recommended`). Profile values: `org.license`, `org.copyright-holder`, `org.email`, `org.support-url`, `org.dev-docs-url`, `org.repo-url`, `org.readme.badges`, `org.readme.links`, `readme.install-ref`, `listing.approved`. Each block template is overridable by an org profile (§8.1). A block that needs an empty org value is exit 2 naming the key (S37), except `org.email` and `org.support-url`, of which the `support` block needs one.
 
 Blocks are delimited by `<!-- frappe-nix:begin <name> -->` and `<!-- frappe-nix:end <name> -->`. They are rendered by `frappe-listing readme --write`, which sync calls (§3.5), from `frappe_nix_tools/data/readme/<name>.md.j2` or the profile's override. The required blocks, in this order, are `header`, `compatibility`, `installation`, `support`, `development` and `license`, plus the hand-written sections in between, as D15 sets out. Missing markers are an error: `frappe-listing readme --check` exits 2 and names the missing block.
 
@@ -1551,7 +1554,7 @@ Blocks are delimited by `<!-- frappe-nix:begin <name> -->` and `<!-- frappe-nix:
   - badges: CI (`actions/workflows/ci.yml/badge.svg?branch=<branches.integration>`, when `ci` is on), latest release (shields `github/v/release`, when `releases` is on and the repo is on GitHub), licence (`org.license`), and `Frappe v<major>`; then each `org.readme.badges` entry `{label, image, link}` in order;
   - a hero `<picture>` with a dark `<source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/<hero>-dark.webp">` and `<img src="docs/screenshots/<hero>-light.webp" alt="<alt>">`. `<hero>` is the shot with `readme: "hero"`. The `<picture>` is omitted when there are no shots or `screenshots` is off.
 - `compatibility`: a table with `Frappe <major> → <branches.release or branches.integration>` and each required app with its range.
-- `installation`: Frappe Cloud marketplace text (only when `listing.publish` is on) plus
+- `installation`: the line `On Frappe Cloud, install <title> from the [Frappe marketplace](https://cloud.frappe.io/marketplace/apps/<app>).`, only when the app sets `listing.approved` (its listing is approved and live; `listing.publish` alone, which opens registry pull requests, never adds it), plus
   ```
   bench get-app <repo URL> --branch <ref>
   bench --site <site> install-app <app>
@@ -3494,7 +3497,7 @@ header = "none"                             # for whole: the §3.6 header kind
 
 An override gets the same context (§2.3) and the same `StrictUndefined` rules. Everything else (tool configs, merged keys, caller workflows) is a contract with a reusable workflow or a check, so it changes through parameters, never through an override; an override of any other path is exit 2. A managed file rendered from an override keeps frappe-nix's header.
 
-**App-only and profile-only keys.** The app keys of §2.1 (top-level `[tool.frappe-nix]` keys and the `[[…]]` lists) and the app-only module parameters (`typescript.browser`, `browser-include`, `web-include`, `paths`, `exclude`, `spa`; `tests.setup`, `devguard-disable`; `releases.bootstrap-sha`; `js.oxlint.ignore`, `globals`, `overrides`; `js.oxfmt.ignore`; `stylelint.globs`) are refused in a profile (exit 2). `schema`, `name`, `description`, `extends`, `requires-frappe-nix`, `retire`, `replace-apps` and `extra-files` are refused in `[tool.frappe-nix]`; a single app that needs them uses an in-repo profile (§8.3). `[known-apps]` is allowed in both: the app's `[tool.frappe-nix.known-apps]` is the last layer, so an app without an org profile can describe a sibling that doesn't follow the Frappe convention.
+**App-only and profile-only keys.** The app keys of §2.1 (top-level `[tool.frappe-nix]` keys and the `[[…]]` lists) and the app-only module parameters (`typescript.browser`, `browser-include`, `web-include`, `paths`, `exclude`, `spa`; `tests.setup`, `devguard-disable`; `releases.bootstrap-sha`; `listing.approved`; `js.oxlint.ignore`, `globals`, `overrides`; `js.oxfmt.ignore`; `stylelint.globs`) are refused in a profile (exit 2). `schema`, `name`, `description`, `extends`, `requires-frappe-nix`, `retire`, `replace-apps` and `extra-files` are refused in `[tool.frappe-nix]`; a single app that needs them uses an in-repo profile (§8.3). `[known-apps]` is allowed in both: the app's `[tool.frappe-nix.known-apps]` is the last layer, so an app without an org profile can describe a sibling that doesn't follow the Frappe convention.
 
 ### 8.2 Modules
 
@@ -3524,7 +3527,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `repo-policy` | rulesets and repo settings applied by `frappe-nix repo apply`; audit A1, A3 (§4.8, §4.9) | `required-approvals` (int, 1); `require-code-owner-review` (bool, false); `required-checks` ("gates" or a list of gate names, "gates"); `release-bypass` ("github-actions" or "user:<id>", "github-actions"); `secret-scanning` (bool, true); `merge-methods` (list of "squash"\|"merge"\|"rebase", ["squash"]); `require-thread-resolution` (bool, true); `delete-branch-on-merge` (bool, true); `manage-default-branch` (bool, true); `manage-features` (bool, true) | — | off | off | on (`required-approvals = 0`) |
 | `vite-register` | `scripts/vite-register.mjs` and C8, when Vite exists (§5.11) | none | — | off | on | on |
 | `pilot-assets` | `assets.yml` and its dispatch | none | `ci`, `releases` | off | off | off (apps turn it on) |
-| `listing` | registry readiness: marketplace files, `ci / marketplace`, L1–L12, R3; and registry publishing when `publish` is on (§2.21, §5.2). An app that isn't listed keeps it on with `publish = false` and no `listing.toml` | `publish` (bool, false); `registry-upstream` (string, "frappe/marketplace"); `registry-fork` (string, ""; required when `publish`); `getapp-check` (bool, true) | `metadata` | off | off | on (`publish = true`, fork "Avunu/marketplace") |
+| `listing` | registry readiness: marketplace files, `ci / marketplace`, L1–L12, R3; and registry publishing when `publish` is on (§2.21, §5.2); the README's marketplace link when `approved` is on (§2.19). An app that isn't listed keeps it on with `publish = false` and no `listing.toml` | `publish` (bool, false); app-only `approved` (bool, false; true once the app's marketplace listing is approved); `registry-upstream` (string, "frappe/marketplace"); `registry-fork` (string, ""; required when `publish`); `getapp-check` (bool, true) | `metadata` | off | off | on (`publish = true`, fork "Avunu/marketplace") |
 | `readme` | README generated blocks (§2.19) | `install-ref` (string, "" = automatic) | `listing` | off | off | on |
 | `icons` | icon checks, desktop-icon fixture (§5.3) | none (`org.brand`) | — | off | off | on |
 | `screenshots` | `marketplace/shots.d.ts`, frappe-shots, nightly `shots` (§5.5) | `timezone` (string, "America/New_York"); `locale` (string, "en-US") | `demo` | off | off | on |
@@ -4119,6 +4122,7 @@ siblings = ["erpnext"]
 plus its app keys, and per-app switches where the fleet differs:
 
 - **An app that isn't listed** (`list: false` in P's `fleet.json`) sets `[tool.frappe-nix.listing] publish = false` and has no `marketplace/listing.toml`. It keeps `listing` on, so, as in 1.1, it still has the `ci / marketplace` gate and its required check, L3–L7 and L9, the semgrep baseline, and R3. Without `listing.toml`, L1, L2, L8, L10, L12, the README blocks and the nightly `links` job have nothing to check, and `release.yml` publishes nothing.
+- **An app whose marketplace listing is approved** sets `[tool.frappe-nix.listing] approved = true`, and its README's `installation` block links the listing (§2.19). Until then no README names the marketplace, whatever `publish` says. The key is app-only: approval is a fact about one app, so a profile cannot claim it for the fleet.
 - **An app with prebuilt assets** sets `[tool.frappe-nix.pilot-assets] enable = true`.
 
 **Another organisation** copies this file, changes `[org]` and the switches, publishes it as `github:<owner>/<repo>`, and points its apps at it. A team that wants no org profile writes `profile = "recommended"` and sets a few `[tool.frappe-nix.org]` values in each app.
