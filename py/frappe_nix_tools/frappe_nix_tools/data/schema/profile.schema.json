@@ -1543,6 +1543,12 @@
             "type": "boolean",
             "default": false
           },
+          "approved": {
+            "type": "boolean",
+            "default": false,
+            "description": "The app's Frappe marketplace listing is approved and live: the README installation block links it. Independent of publish.",
+            "x-app-only": true
+          },
           "registry-upstream": {
             "type": "string",
             "minLength": 1,
@@ -1558,7 +1564,7 @@
             "default": true
           }
         },
-        "description": "Registry readiness: marketplace files, ci / marketplace, L1\u2013L12, R3; registry publishing when publish is on (\u00a72.21, \u00a75.2). Needs metadata."
+        "description": "Registry readiness: marketplace files, ci / marketplace, L1\u2013L12, R3; registry publishing when publish is on; the README marketplace link when approved is on (\u00a72.19, \u00a72.21, \u00a75.2). Needs metadata."
       },
       "readme": {
         "type": "object",

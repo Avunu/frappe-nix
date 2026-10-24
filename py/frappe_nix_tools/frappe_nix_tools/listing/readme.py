@@ -231,7 +231,8 @@ def values(root: Path, ctx: context.NS) -> dict[str, Any]:
 		"hero": hero(root, ctx),
 		"install_ref": install_ref,
 		"release_markers": main_tags and not cfg["readme"]["install-ref"],
-		"marketplace": bool(cfg["listing"]["publish"]),
+		# Only an approved listing is linked: publishing opens registry PRs, it lists nothing.
+		"marketplace": bool(cfg["listing"]["approved"]),
 		"branch": ctx.branches.release or ctx.branches.integration,
 		"required": [s for s in ctx.siblings if s.required],
 		"branch_table": table(

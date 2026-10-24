@@ -779,6 +779,38 @@ class TestReadme(ListingCase):
 		code, out, err = self.fn("listing", "readme", "--check")
 		self.assertEqual(code, 0, out + err)
 
+	def test_publish_alone_names_no_marketplace(self):
+		# The fixture profile publishes, but nothing says the listing is approved.
+		text = self.read("README.md")
+		self.assertNotIn("marketplace", text.lower())
+		self.assertNotIn("cloud.frappe.io", text)
+
+	def test_an_approved_listing_is_linked(self):
+		self.assertNotIn("[tool.frappe-nix.listing]", self.read("pyproject.toml"))
+		self.write(
+			"pyproject.toml", self.read("pyproject.toml") + "\n[tool.frappe-nix.listing]\napproved = true\n"
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn(
+			"On Frappe Cloud, install Demo App from the"
+			" [Frappe marketplace](https://cloud.frappe.io/marketplace/apps/demo_app).",
+			self.read("README.md"),
+		)
+		code, out, err = self.fn("listing", "readme", "--check")
+		self.assertEqual(code, 0, out + err)
+
+	def test_a_profile_cannot_claim_approval(self):
+		self.write(
+			".standards-profile/profile.toml",
+			PRODUCT_PROFILE.replace("publish = true\n", "publish = true\napproved = true\n"),
+		)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("approved", out)
+
 	def test_dev_docs_and_copyright_holder(self):
 		self.write(
 			".standards-profile/profile.toml",
