@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/Avunu/frappe-nix/compare/v1.4.0...v1.4.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **standards:** link the marketplace in the README only when the app sets listing.approved ([#189](https://github.com/Avunu/frappe-nix/issues/189)) ([6942d45](https://github.com/Avunu/frappe-nix/commit/6942d45186f80d082a673ed070ef1067c483a62d))
+
 ## [1.4.0](https://github.com/Avunu/frappe-nix/compare/v1.3.0...v1.4.0) (2026-10-23)
 
 

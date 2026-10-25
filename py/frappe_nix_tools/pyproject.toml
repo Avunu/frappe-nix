@@ -14,7 +14,7 @@ build-backend = "flit_core.buildapi"
 [project]
 name = "frappe-nix-tools"
 # release-please moves this, version.txt and frappe_nix_tools/__init__.py together.
-version = "1.4.0"
+version = "1.4.1"
 description = "frappe-nix's app standards tools: managed files, profiles, CI gates and release checks for Frappe apps"
 readme = "README.md"
 requires-python = ">=3.12"
