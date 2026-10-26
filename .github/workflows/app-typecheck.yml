@@ -51,14 +51,19 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.app-root }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP, and its own cleanup leaves what an earlier
-      # job made read-only (copies out of the Nix store): clear it, keeping the runner's _* files.
+      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
+      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
+      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
+      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
       - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir
+        name: Clear what an earlier job left in the runner's temp dir and workspace
         working-directory: ${{ runner.temp }}
         run: |
           find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
           find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
+          fi
 
       - name: Dispatch guard (a dispatched run must be on the PR head)
         if: github.event_name == 'workflow_dispatch'
