@@ -8,6 +8,6 @@ tagline = {{ tagline | json_string }}
 type = "{{ app_type }}"
 category = "{{ 'Applications' if app_type == 'application' else 'Integrations' if app_type == 'integration' else 'Utilities' if app_type == 'utility' else 'Extensions' }}"
 categories = []
-website = {{ org['website-url'].replace('{app_hyphen}', app_hyphen).replace('{app}', app) | json_string }}
-documentation = {{ org['docs-url'].replace('{app_hyphen}', app_hyphen).replace('{app}', app) | json_string }}
+website = {{ org['website-url'] | org_url | json_string }}
+documentation = {{ org['docs-url'] | org_url | json_string }}
 apps_screen = false
