@@ -38,6 +38,7 @@
 				"org.copyright-holder",
 				"org.email?",
 				"org.support-url?",
+				"org.docs-url?",
 				"org.dev-docs-url",
 				"org.repo-url",
 				"org.readme.badges?",

@@ -21,7 +21,8 @@
 #                            writes the same bytes twice; a stroke fails it (exit 1); an
 #                            empty org.brand.tile-color is exit 2 naming it
 #   standards-readme         on the same fixture: sync renders the README blocks, with
-#                            example-org's support override; `frappe-listing readme --check`
+#                            example-org's support override and its org.docs-url as the
+#                            header's documentation badge; `frappe-listing readme --check`
 #                            passes; a removed marker is exit 2 naming its block
 #   standards-listing-mysqlclient
 #                            the frappe-listing wrapper exports MYSQLCLIENT_CFLAGS and
@@ -203,6 +204,8 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       fail "example-org's support override is not used: $(cat README.md)"
     grep -q 'bench get-app https://github.com/example-org/standards_fixture --branch version-16' README.md ||
       fail "the installation block is not rendered"
+    grep -qF '[![Documentation](https://img.shields.io/badge/docs-standards--fixture.docs.example.org-blue)](https://standards-fixture.docs.example.org/)' README.md ||
+      fail "the header has no documentation badge for org.docs-url: $(cat README.md)"
     frappe-listing readme --check || fail "frappe-listing readme --check fails right after sync"
     frappe-nix sync --check > /dev/null || fail "--check after sync is not clean"
     echo "ok   sync renders the README blocks (with example-org's override), and readme --check passes"

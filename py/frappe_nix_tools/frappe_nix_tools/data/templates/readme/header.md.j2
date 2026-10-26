@@ -19,6 +19,9 @@
 {% endif %}
 [![License: {{ readme.license }}]({{ readme.license_badge }})](license.txt)
 [![Frappe v{{ frappe.major }}]({{ readme.frappe_badge }})](https://github.com/frappe/frappe/tree/{{ frappe.branch }})
+{% if readme.docs_url %}
+[![Documentation]({{ readme.docs_badge }})]({{ readme.docs_url }})
+{% endif %}
 {% for badge in readme.badges %}
 [![{{ badge.label }}]({{ badge.image }})]({{ badge.link }})
 {% endfor %}

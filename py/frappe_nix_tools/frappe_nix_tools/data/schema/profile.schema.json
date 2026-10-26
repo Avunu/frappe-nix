@@ -328,7 +328,7 @@
         },
         "docs-url": {
           "type": "string",
-          "description": "Template with {app}, {app_hyphen}: listing documentation and L12.",
+          "description": "Template with {app}, {app_hyphen}: listing documentation, L12 and the README documentation badge and support link.",
           "default": ""
         },
         "dev-docs-url": {

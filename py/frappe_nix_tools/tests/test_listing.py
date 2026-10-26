@@ -723,6 +723,46 @@ class TestReadme(ListingCase):
 		code, out, err = self.fn("listing", "readme", "--check")
 		self.assertEqual(code, 0, out + err)
 
+	def test_the_docs_site_is_linked(self):
+		# org.docs-url, filled in the way the listing seed and L12 fill it.
+		text = self.read("README.md")
+		self.assertIn(
+			"[![Frappe v16](https://img.shields.io/badge/Frappe-v16-blue)]"
+			"(https://github.com/frappe/frappe/tree/version-16)\n"
+			"[![Documentation](https://img.shields.io/badge/docs-demo--app.docs.example.org-blue)]"
+			"(https://demo-app.docs.example.org/)\n",
+			text,
+		)
+		support = text[text.index("## Support") :]
+		self.assertTrue(
+			support.startswith(
+				"## Support\n\n- Documentation: [demo-app.docs.example.org/](https://demo-app.docs.example.org/)\n"
+				"- Bug reports and questions: [GitHub issues]"
+			),
+			support,
+		)
+		self.assertEqual(
+			readme.url_template(
+				"https://example.org/{app}/{app_hyphen}/", readme.context.NS(app="a_b", app_hyphen="a-b")
+			),
+			"https://example.org/a_b/a-b/",
+		)
+
+	def test_no_docs_url_links_no_docs_site(self):
+		self.write(
+			".standards-profile/profile.toml",
+			PRODUCT_PROFILE.replace('docs-url = "https://{app_hyphen}.docs.example.org/"\n', ""),
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		text = self.read("README.md")
+		self.assertNotIn("Documentation", text)
+		self.assertNotIn("badge/docs-", text)
+		self.assertIn("## Support\n\n- Bug reports and questions: [GitHub issues]", text)
+		code, out, err = self.fn("listing", "readme", "--check")
+		self.assertEqual(code, 0, out + err)
+
 	def test_a_missing_marker_is_exit_2(self):
 		self.write("README.md", self.read("README.md").replace("<!-- frappe-nix:end support -->\n", ""))
 		self.commit()
