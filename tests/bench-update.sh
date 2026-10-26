@@ -539,7 +539,8 @@ TIP_PY="$(up "frappe gains a dependency")"
 run_update pull-py --pull
 check_eq "--pull exits 0" 0 "$RC"
 check_eq "the app moved" "$TIP_PY" "$(git -C apps/frappe rev-parse HEAD)"
-check "uv lock ran in the bench root" grep -qx 'uv lock' "$STEPS"
+check "uv lock ran in the bench root, refreshing frappe-runtime's git pin" \
+  grep -qx 'uv lock --upgrade-package frappe-runtime' "$STEPS"
 check "…naming the app whose pyproject.toml moved" \
   grep -q 'Re-locking the Python workspace (pyproject.toml changed: frappe)' "$ROOT/pull-py.log"
 check "…and says to commit uv.lock" grep -q 'commit uv.lock (and pyproject.toml)' "$ROOT/pull-py.log"
