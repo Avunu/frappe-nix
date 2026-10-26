@@ -187,16 +187,21 @@ def _patch_frappecloud(module):
 
 
 def _rebind_frappe_providers(module):
-	"""The package re-exports the migrator, and ``migrate_to`` reads it there.
+	"""``bench migrate-to`` calls ``migrate_to`` here, so it is blocked here.
 
-	Patching the leaf module alone would be inert — same shape as Frappe's
-	``from frappe import are_emails_muted`` re-exports.
+	Before Frappe 16.53 the package also imported the migrator eagerly, and
+	``migrate_to`` read that copy: patching the leaf module alone was inert —
+	same shape as Frappe's ``from frappe import are_emails_muted`` re-exports.
+	16.53 imports it from the leaf inside ``migrate_to`` instead, which
+	``_patch_frappecloud`` already covers, so there is no re-export to rebind.
+	This package is imported on every boot (``frappe.boot`` reaches
+	``cloud_settings`` through it), so requiring the re-export failed them all.
 	"""
-	require(module, "frappecloud_migrator")
 	require(module, "migrate_to")
-
-	module.frappecloud_migrator = _blocked("frappe_providers.frappecloud_migrator")
 	module.migrate_to = _blocked("frappe_providers.migrate_to")
+
+	if hasattr(module, "frappecloud_migrator"):
+		module.frappecloud_migrator = _blocked("frappe_providers.frappecloud_migrator")
 
 
 def install():
