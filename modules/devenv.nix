@@ -455,9 +455,10 @@ in
               uv.lock.
 
               Caveat: only the *source* is overridden. Dependency metadata still
-              comes from uv.lock, so a frappe-runtime release that adds a new
-              dependency does need `nix run .#relock -- --upgrade-package
-              frappe-runtime` in the bench.
+              comes from uv.lock, so a frappe-runtime release that changes its
+              dependencies does need `nix run .#relock -- --upgrade-package
+              frappe-runtime` in the bench. `bench update` and `update-deps`
+              pass that flag whenever they re-lock.
             '';
           };
         };

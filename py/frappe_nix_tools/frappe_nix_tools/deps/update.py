@@ -29,6 +29,14 @@ if TYPE_CHECKING:
 #: Regenerable lockfile basenames: the one place to add one.
 REGEN_LOCKS = ("yarn.lock", "package-lock.json")
 
+#: The re-lock both updates run. A plain `uv lock` keeps a git source at the
+#: revision it already resolved, and frappe-runtime is one: its code is built
+#: from this repository's runtime/, but its dependency ranges still come from
+#: uv.lock, frozen at whatever revision the bench first locked. An app bump past
+#: those ranges then fails to resolve against a runtime that already accepts it.
+#: uv ignores the flag in a bench without frappe-runtime.
+UV_LOCK = ("uv", "lock", "--upgrade-package", "frappe-runtime")
+
 BENCH_HELP = """\
 Usage: bench-update [--pull | --migrate | --build | --node-locks [<app>[/<subdir>]…]]
 
@@ -456,7 +464,7 @@ def pull(config: "CliConfig") -> list[str]:
 	moved = [Path(p).parent.name for p, h in after.items() if before.get(p, "none") != h]
 	if moved:
 		say(f"── Re-locking the Python workspace (pyproject.toml changed: {' '.join(moved)}) ──")
-		if proc.attempt(["uv", "lock"]) != 0:
+		if proc.attempt(UV_LOCK) != 0:
 			fail(
 				"  ⚠  uv lock failed — the dev shell will not evaluate until this resolves.",
 				"     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;",

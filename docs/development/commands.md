@@ -80,7 +80,7 @@ These back the wrapper and are also callable directly.
 - It clears the one kind of local change that is only tool output: an uncommitted `yarn.lock` or `package-lock.json` that the pull would overwrite (its `package.json` unedited), or an untracked one that upstream adds. It says which. Every other edit is carried across.
 - When git still refuses, it skips only that app, shows git's reason and lists the apps not updated when it finishes. The rest of the pull, the registry, migrate and build still run.
 - It checks out a registered submodule that has no checkout (a fresh clone's, a deinitialized one's) before pulling it with the rest, and skips local apps and reports stray repos.
-- It then regenerates `sites/apps.json` for the new pins, the fallback locks in `node-locks/` for the apps without a `yarn.lock` whose `package.json` moved, and re-locks the workspace (`uv lock`) when a `pyproject.toml` did.
+- It then regenerates `sites/apps.json` for the new pins, the fallback locks in `node-locks/` for the apps without a `yarn.lock` whose `package.json` moved, and re-locks the workspace (`uv lock --upgrade-package frappe-runtime`) when a `pyproject.toml` did. The flag re-reads the runtime's dependency ranges, which plain `uv lock` leaves at the revision first locked.
 - `--node-locks [<TARGET>…]` regenerates `node-locks/` for every app and nested frontend without a `yarn.lock` of its own. A named target gets a lock forced over the `yarn.lock` it ships.
 
 In [app mode](../scaffolding/app-mode.md) only `--migrate` and `--build` are available.
@@ -122,6 +122,6 @@ It does not touch a site. The dev site still records the old name, so it ends by
 
 ### update-deps
 
-`update-deps` re-locks and reinstalls: `uv lock` and the managed build-dependency block, `uv sync`, `yarn install` in every app with a `package.json`, then the fallback locks. A failed `uv lock` stops it. A failed `uv sync` or `yarn install` does not stop the other apps, but the command exits 1 and names what failed. To re-lock without reinstalling, run `relock`.
+`update-deps` re-locks and reinstalls: `uv lock --upgrade-package frappe-runtime` and the managed build-dependency block, `uv sync`, `yarn install` in every app with a `package.json`, then the fallback locks. A failed `uv lock` stops it. A failed `uv sync` or `yarn install` does not stop the other apps, but the command exits 1 and names what failed. To re-lock without reinstalling, run `relock`.
 
 In a bench the Node step is `yarn install --pure-lockfile`. It installs from `package.json` but never rewrites an app's own `yarn.lock`, which belongs to the app's repository. To update one on purpose, run `yarn install` in that app. An app's postinstall can still rewrite a nested frontend's lock here, which `bench-update --pull` discards when the pull would overwrite it. In app mode the lock is yours and is written as before.

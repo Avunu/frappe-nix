@@ -33,7 +33,7 @@ In app mode: yarn install only; the locks are `nix run .#relock`'s."""
 
 
 def update_deps(config: "CliConfig") -> int:
-	from frappe_nix_tools.deps.update import build_deps_sync, node_locks_soft
+	from frappe_nix_tools.deps.update import UV_LOCK, build_deps_sync, node_locks_soft
 
 	deps = config.deps
 	failed: list[str] = []
@@ -45,7 +45,7 @@ def update_deps(config: "CliConfig") -> int:
 		)
 	else:
 		say("Updating Python dependencies...")
-		status = proc.attempt(["uv", "lock"])
+		status = proc.attempt(UV_LOCK)
 		if status != 0:
 			return status
 		build_deps_sync(config)
