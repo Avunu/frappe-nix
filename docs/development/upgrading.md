@@ -110,7 +110,7 @@ The ports a bench's shell evaluates are now the ports it *prefers*. `devenv up` 
 The unified runtime's source is the `runtime/` directory of this repository, so a bump of frappe-nix is also a bump of the runtime, with no relock in any bench. The one exception is a runtime release that changes its dependencies. That needs one relock:
 
 ```bash
-nix run .#relock -- --upgrade-package frappe-runtime
+nix run .#relock
 ```
 
-Note the flag: a plain `uv lock` keeps an already resolved git revision and reports success without changing anything. `bench update`, when it re-locks, and `update-deps` pass it themselves. See [The unified runtime](../production/runtime.md#how-a-bench-gets-it).
+Use that and not a plain `uv lock`, which keeps an already resolved git revision and reports success without changing anything. `relock`, `bench update` (when it re-locks) and `update-deps` all run `uv lock --upgrade-package frappe-runtime`. See [The unified runtime](../production/runtime.md#how-a-bench-gets-it).

@@ -365,6 +365,8 @@ class TestRelock(unittest.TestCase):
 			"buildDepsSync": None,
 			"workspace": "/nix/store/w",
 			"lockDir": "nix",
+			"workspaceTool": None,
+			"template": None,
 		}
 		cfg = load_dataclass(RelockConfig, data, "relock")
 		self.assertEqual((cfg.workspace, cfg.node_nested_frontend_excludes), ("/nix/store/w", ["a/b"]))

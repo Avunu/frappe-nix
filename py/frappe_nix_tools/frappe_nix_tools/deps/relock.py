@@ -6,8 +6,9 @@ tests/relock.sh is its acceptance suite.
 
     relock [--uv-only | --node-locks [<app>[/<subdir>]…]] [uv lock flags…]
 
-In a bench, from its root: ``uv lock`` there and the managed build-dependency
-block after it, then node-locks/ for the apps without a yarn.lock of their own.
+In a bench, from its root: ``ensure-root`` over its pyproject.toml (what the
+shell-entry root sync reconciles), ``uv lock`` there and the managed
+build-dependency block after it, then node-locks/ for the apps without a yarn.lock of their own.
 In app mode: <lockDir>/uv.lock from a writable copy of the workspace the flake
 assembles, and <lockDir>/node-locks/ for the pins without a yarn.lock, both
 written back into the repository and staged, since a flake's source tree is
@@ -30,6 +31,7 @@ from pathlib import Path
 from frappe_nix_tools.apps import proc
 from frappe_nix_tools.apps.proc import fail, say, warn
 from frappe_nix_tools.deps.config import RelockConfig
+from frappe_nix_tools.deps.update import UV_LOCK
 
 NAME = "frappe-nix-relock"
 COMMAND = "nix run .#relock -- --node-locks"
@@ -38,8 +40,9 @@ COMMAND = "nix run .#relock -- --node-locks"
 def help_text(lock_dir: str | None) -> str:
 	if lock_dir is None:
 		files = """\
-  uv.lock        the resolved Python workspace, and the managed
-                 [tool.uv.extra-build-dependencies] block in pyproject.toml
+  uv.lock        the resolved Python workspace, after pyproject.toml is
+                 reconciled with what this frappe-nix expects of it, and
+                 the managed [tool.uv.extra-build-dependencies] block
   node-locks/    a fallback yarn.lock for each app and nested frontend that
                  ships none of its own (the ones that do build from it, and
                  nothing is written for them)."""
@@ -127,8 +130,22 @@ def bench_mode(config: RelockConfig, args: Args) -> int:
 	if not Path("pyproject.toml").is_file() or not Path("apps").is_dir():
 		fail(f"{NAME}: run this from the bench root (pyproject.toml + apps/)")
 	if args.uv:
+		# What frappe-nix asks of the root first, as the shell-entry root sync
+		# does (frappe_nix_tools.apps.root_sync): the command run when the shell
+		# will not open has to be the one that fixes what keeps it shut.
+		if config.workspace_tool and config.template:
+			proc.run(
+				[
+					config.workspace_tool,
+					"ensure-root",
+					"--pyproject",
+					"pyproject.toml",
+					"--template",
+					config.template,
+				]
+			)
 		say(f"Re-locking the Python workspace with {uv_version()}…")
-		proc.run(["uv", "lock", *args.uv_args])
+		proc.run([*UV_LOCK, *args.uv_args])
 		if config.build_deps_sync:
 			proc.run([config.build_deps_sync])
 	if args.locks:
@@ -192,7 +209,7 @@ def app_mode(config: RelockConfig, args: Args) -> int:
 			cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.environ.get("HOME", ""), ".cache")
 			os.environ.setdefault("UV_CACHE_DIR", os.path.join(cache, "uv"))
 			say(f"Re-locking the Python workspace with {uv_version()}…")
-			proc.run(["uv", "lock", *args.uv_args], cwd=work)
+			proc.run([*UV_LOCK, *args.uv_args], cwd=work)
 			fresh = os.path.join(work, "uv.lock")
 			if os.path.isfile(lock) and _same(fresh, lock):
 				say(f"  {lock_rel} already current")
