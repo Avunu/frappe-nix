@@ -1140,7 +1140,7 @@ in
                 sockets, loopback and the mail catcher always pass, so
                 MariaDB, Redis, Socket.IO and Mailpit are unaffected.
 
-                Python only: subprocesses (git, mc, chromium, wkhtmltopdf,
+                Python only: subprocesses (git, rclone, chromium, wkhtmltopdf,
                 node) are outside it. `FRAPPE_DEVGUARD_DISABLE=egress` turns it
                 off for a single command.
               '';

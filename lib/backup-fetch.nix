@@ -10,9 +10,11 @@
 # `fetch` prints a JSON manifest and touches no database, which is what lets a
 # production host reuse it with its own restore half.
 #
-# The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_MC and FRAPPE_NIX_BACKUP_CACHE
+# The overrides are FRAPPE_NIX_BACKUP_SOURCE, FRAPPE_NIX_RCLONE and FRAPPE_NIX_BACKUP_CACHE
 # (python-devops-nix docs/conventions.md, Tool-owned variables). The names frappe-nix used
-# before are read too, with a warning, through 1.x, until frappe-nix 2.0.0.
+# before are read too, with a warning, through 1.x, until frappe-nix 2.0.0 -- except
+# FRAPPE_BACKUP_MC, which named the minio-client binary: the base reads the store with
+# rclone now, and refuses it (and FRAPPE_NIX_MC) with what replaced them.
 { pkgs, python-devops-nix }:
 
 python-devops-nix.lib.backups.fetch {
@@ -22,6 +24,7 @@ python-devops-nix.lib.backups.fetch {
   layout = ../py/frappe_nix_tools/frappe_nix_tools/restore/backup_layout.py;
   legacyEnv = {
     BACKUP_SOURCE = "FRAPPE_BACKUP_SOURCE";
+    # Refused by the base, naming FRAPPE_NIX_RCLONE (minio-client is gone).
     MC = "FRAPPE_BACKUP_MC";
     BACKUP_CACHE = "FRAPPE_BACKUP_CACHE";
   };
