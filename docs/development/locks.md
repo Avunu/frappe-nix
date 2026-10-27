@@ -51,11 +51,17 @@ nix run .#relock -- --node-locks hrms/frontend   # force a fallback over the yar
 nix run .#relock -- --upgrade-package frappe     # any other flag goes to `uv lock`
 ```
 
-In a bench, `nix run .#relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`). In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
+In a bench, `nix run .#relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`). Before it locks, it reconciles `pyproject.toml` with what this frappe-nix expects of a bench root, as the shell does on entry: it adds what is missing and changes nothing already there. Every lock frappe-nix runs (`relock`, `bench-update --pull`, `update-deps` and the shell-entry reconcile) is `uv lock --upgrade-package frappe-runtime`, so the runtime's dependency ranges never stay at the revision the bench first locked. In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
 
 The other commands that re-lock do a part of this. `bench-update --pull` re-locks what a pull moved, `bench-update --node-locks` is `relock --node-locks`, and `update-deps` is `relock --uv-only` followed by `uv sync`, `yarn install` in every app, and the fallback locks.
 
 In app mode the cause is `nix flake update` and not a submodule bump, and the fix is `nix run .#relock` and not `uv lock`. The workspace root there is generated into the store, so there is no bench root of yours to run `uv` in. The audit says that instead. `relock` is also how the first lock is produced: a repository with no `nix/uv.lock` cannot evaluate the dev shell either, and the error names the command.
+
+### Corrected upstream metadata
+
+When a published package declares requirements that cannot be met alongside Frappe, the bench template carries a `[[tool.uv.dependency-metadata]]` entry that corrects them, and the reconcile adds it to existing benches by package name. If a bench has its own entry for the same package, that entry wins. App mode renders its root from the same template.
+
+There is one entry today, for `pypika-stubs`. It is reached through frappe's `dev` extra, which uv locks for every workspace member. Its only release caps `pypika<0.49`, and Frappe 16.53 moved its PyPika fork to 0.51.1. The entry drops the cap and keeps the package, which holds only type hints. Without it, `uv lock` fails with "frappe[dev] depends on pypika>=0.48.9,<0.49.0".
 
 ### Build dependencies
 

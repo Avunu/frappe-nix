@@ -43,6 +43,17 @@ package = false
 # requirement, then re-run `uv lock`.
 override-dependencies = "@OVERRIDES@"
 
+# Corrected metadata for a published package whose own is wrong, so the
+# workspace still resolves. Reconciled into an existing bench by name, and a
+# bench's own entry for the same package wins.
+#
+# pypika-stubs, through frappe's `dev` extra (which uv locks for every member):
+# its one release caps pypika<0.49, and Frappe 16.53 moved its PyPika fork to
+# 0.51. The stubs are type hints only, so the cap goes and the package stays.
+[[tool.uv.dependency-metadata]]
+name = "pypika-stubs"
+requires-dist = ["pypika"]
+
 # Build dependencies for the packages uv.lock has no wheel for, which uv2nix
 # builds from their sdist in the sandbox: setuptools for each (an old sdist often
 # declares no backend), plus frappe-nix's own entries (frappe-runtime's
@@ -66,8 +77,8 @@ members = []
 # A placeholder for uv's resolver, not a version pin: frappe-nix overrides the
 # source it builds with its own runtime/ directory (frappe-nix.runtime.src), so a
 # frappe-runtime bump is `nix flake update frappe-nix`, never an edit here. A
-# plain `uv lock` keeps an already-resolved git revision; if frappe-runtime ever
-# adds a dependency, `nix run .#relock -- --upgrade-package frappe-runtime`.
+# plain `uv lock` keeps an already-resolved git revision, so if frappe-runtime
+# ever adds a dependency, re-lock with `nix run .#relock` (which refreshes it).
 frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
 
 [build-system]

@@ -54,10 +54,10 @@ The declaration exists for uv's resolver and is a placeholder, not a version pin
 The seam is that only the _source_ is overridden. Dependency metadata still comes from `uv.lock`. A frappe-runtime release that changes its dependencies does need one relock:
 
 ```bash
-nix run .#relock -- --upgrade-package frappe-runtime
+nix run .#relock
 ```
 
-Note the flag. A plain `uv lock` keeps an already resolved git revision and reports success without changing anything. `bench update`, when it re-locks, and `update-deps` pass it themselves.
+Use that and not a plain `uv lock`, which keeps an already resolved git revision and reports success without changing anything. `relock`, `bench update` (when it re-locks) and `update-deps` all run `uv lock --upgrade-package frappe-runtime`.
 
 Set `runtime.src = null` to hand version control back to `uv.lock`.
 

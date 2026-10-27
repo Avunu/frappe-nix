@@ -1,7 +1,7 @@
 # `nix run .#relock` (and `relock` in the dev shell): regenerates what a
 # repository commits on frappe-nix's behalf — frappe-nix's one consumer-facing
-# relock. In a bench, from its root: uv.lock (and the managed build-dependency
-# block), then node-locks/. In app mode: <lockDir>/uv.lock from a writable copy
+# relock. In a bench, from its root: pyproject.toml reconciled with frappe-nix,
+# uv.lock (and the managed build-dependency block), then node-locks/. In app mode: <lockDir>/uv.lock from a writable copy
 # of the workspace the flake assembles, and <lockDir>/node-locks/, both staged.
 #
 # The logic is Python, py/frappe_nix_tools/frappe_nix_tools/deps/relock.py
@@ -37,6 +37,7 @@
 
 let
   python = pkgs.python314.withPackages (_: [ frappeNixTools ]);
+  workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
   # What relock.py reads (frappe_nix_tools/deps/config.py, RelockConfig).
   config = pkgs.writeText "frappe-nix-relock.json" (
     builtins.toJSON {
@@ -44,6 +45,11 @@ let
       nodeLocks = lib.getExe' nodeLocksTool "frappe-nix-node-locks";
       buildDepsSync = buildDepsSyncBin;
       workspace = if appMode then "${workspace}" else null;
+      # A bench reconciles its root before the lock, as the shell-entry root
+      # sync does (lib/root-sync.nix): unrendered, since ensure-root reads only
+      # the template's token-free tables.
+      workspaceTool = if appMode then null else "${workspaceTool}/bin/frappe-nix-workspace";
+      template = if appMode then null else "${../templates/bench/pyproject.toml}";
     }
   );
 in
