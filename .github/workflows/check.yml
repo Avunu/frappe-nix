@@ -162,7 +162,7 @@ jobs:
             | tee -a "$RUNNER_TEMP/nix.log"
 
       - if: failure()
-        uses: Avunu/python-devops-nix/.github/actions/nix-failures@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@9092f7d6dc77bad77697d84c89ec53a2b4698344 # python-devops-nix main, #26 (no release yet)
         with:
           log: ${{ runner.temp }}/nix.log
           title: flake
@@ -210,7 +210,7 @@ jobs:
         run: nix build ".#checks.x86_64-linux.$TEST" -L --show-trace 2>&1 | tee "$RUNNER_TEMP/nix.log"
 
       - if: failure()
-        uses: Avunu/python-devops-nix/.github/actions/nix-failures@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@9092f7d6dc77bad77697d84c89ec53a2b4698344 # python-devops-nix main, #26 (no release yet)
         with:
           log: ${{ runner.temp }}/nix.log
           title: vm-tests (${{ matrix.test }})
@@ -236,6 +236,6 @@ jobs:
     permissions:
       pull-requests: write # the comment
     steps:
-      - uses: Avunu/python-devops-nix/.github/actions/check-report@65cb6eafb7ffe79bce77e91782674ae02b2bd72b # python-devops-nix#26 (no release yet)
+      - uses: Avunu/python-devops-nix/.github/actions/check-report@9092f7d6dc77bad77697d84c89ec53a2b4698344 # python-devops-nix main, #26 (no release yet)
         with:
           needs: ${{ toJSON(needs) }}
