@@ -14,16 +14,9 @@ import sys
 KEEP_DASHES = frozenset({"restore", "update", "update-deps", "setup-requirements", "provision"})
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_cli():
+	"""The click group. Also what `frappe ui`'s Commands tab lists (lib.tui.commands)."""
 	import click
-
-	words = list(sys.argv[1:] if argv is None else argv)
-	# click drops a `--` that comes straight after the command name, and with it
-	# the meaning `bench restore -- <args for Frappe's restore>` has. A second
-	# one is what it drops instead. The same for the commands whose own parser
-	# refuses a `--` rather than running every step without it.
-	if len(words) >= 2 and words[0] in KEEP_DASHES and words[1] == "--":
-		words.insert(1, "--")
 
 	@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 	def cli() -> None:
@@ -102,7 +95,18 @@ def main(argv: list[str] | None = None) -> None:
 		"Verify and repair what the apps need installed (bench setup requirements --help).",
 	)
 
-	cli.main(args=words, prog_name="frappe-nix-bench")
+	return cli
+
+
+def main(argv: list[str] | None = None) -> None:
+	words = list(sys.argv[1:] if argv is None else argv)
+	# click drops a `--` that comes straight after the command name, and with it
+	# the meaning `bench restore -- <args for Frappe's restore>` has. A second
+	# one is what it drops instead. The same for the commands whose own parser
+	# refuses a `--` rather than running every step without it.
+	if len(words) >= 2 and words[0] in KEEP_DASHES and words[1] == "--":
+		words.insert(1, "--")
+	build_cli().main(args=words, prog_name="frappe-nix-bench")
 
 
 if __name__ == "__main__":

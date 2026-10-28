@@ -172,6 +172,13 @@ in
           description = "Renamed options in use, each warned about (lib.warn) when the shell's config is evaluated.";
         };
 
+        tui = mkOption {
+          type = types.nullOr types.package;
+          default = null;
+          internal = true;
+          description = "The program `frappe ui` runs (python-devops-nix's lib.tui.script), for the checks.";
+        };
+
         name = mkOption {
           type = types.str;
           default =
@@ -2503,6 +2510,7 @@ in
           # app mode's assembles the workspace, which the shell has no reason
           # to build, and its docs and messages already say `nix run .#relock`.
           relockBin = if appMode then null else "${relockTool}/bin/frappe-nix-relock";
+          tui = lib.getExe tuiRun;
         };
 
         # reconcile-apps, with the renames and replacements around it (the
@@ -2591,6 +2599,14 @@ in
             {
               command = "devenv up";
               description = "start all services";
+            }
+            {
+              command = "frappe ui";
+              description =
+                if appMode then
+                  "the menu: stack and commands (or just: frappe)"
+                else
+                  "the menu: stack, commands, app store (or just: frappe)";
             }
           ]
           ++ lib.optional (cfg.defaultSite != "") {
@@ -2719,6 +2735,146 @@ in
         # while the bench runs, else the preferred one.
         mailpitUi = "Mailpit (http://${mp.host}:@mailUi@)";
 
+        # The menu (`frappe ui`, and a bare `frappe` at a terminal):
+        # python-devops-nix's lib.tui. It runs on its own interpreter (textual,
+        # on the bench's Python), isolated from the bench's environment, and
+        # changes nothing itself: every action is a `frappe …` (that is,
+        # `bench …`) command line it shows first. The store, lib/tui's
+        # frappe_nix_tui, is a bench's: an app's siblings are flake inputs.
+        tuiBase = inputs.python-devops-nix.lib.tui;
+        tuiCommand = tuiBase.command {
+          inherit pkgs;
+          inherit (cfg) python;
+          name = "frappe-nix-tui";
+          plugins = lib.optional (!appMode) {
+            name = "frappe_nix_tui";
+            path = ../lib/tui/frappe_nix_tui;
+          };
+        };
+
+        # The Commands tab: frappe-nix's own commands (bench_cli.py), built
+        # here, and Frappe's, whose list takes the bench's apps to import: a
+        # probe in the bench's environment, cached per environment.
+        tuiOwnCommands = tuiBase.commands {
+          inherit pkgs;
+          name = "frappe-nix-commands";
+          python = pkgs.python314.withPackages (_: [ standardsOutputs.frappeNixTools ]);
+          target = "frappe_nix_tools.bench_cli:build_cli";
+          cli = "frappe";
+          source = "frappe-nix";
+        };
+        tuiFrappeProbe = tuiBase.probe {
+          interpreter = "${pythonEnvs.devPythonEnv}/bin/python";
+          target = "frappe.utils.bench_helper:get_app_groups";
+          cli = "frappe";
+          source = "frappe";
+          interactive = [
+            "console"
+            "mariadb"
+            "db-console"
+            "jupyter"
+            "serve"
+            "watch"
+          ];
+        };
+
+        tuiRun = tuiBase.script {
+          inherit pkgs;
+          tui = tuiCommand;
+          name = "frappe-nix-ui";
+          spec = {
+            product = "frappe-nix";
+            cli = "frappe";
+            root = "@benchRoot@";
+            banner = bannerSpec;
+            site = {
+              label = "Site";
+              url = "http://127.0.0.1:@port@";
+              process = if runtimeActive then "runtime" else "web";
+            };
+            stack.actions = [
+              {
+                label = "Migrate";
+                argv = [
+                  "frappe"
+                  "migrate"
+                ];
+                help = "bench migrate: the site's patches and schema";
+              }
+              {
+                label = "Build assets";
+                argv = [
+                  "frappe"
+                  "build"
+                ];
+              }
+              {
+                label = "Clear cache";
+                argv = [
+                  "frappe"
+                  "clear-cache"
+                ];
+              }
+            ];
+            actions = [
+              {
+                label = "Migrate";
+                argv = [
+                  "frappe"
+                  "migrate"
+                ];
+              }
+              {
+                label = "Build assets";
+                argv = [
+                  "frappe"
+                  "build"
+                ];
+              }
+              {
+                label = "Console";
+                argv = [
+                  "frappe"
+                  "console"
+                ];
+                interactive = true;
+              }
+            ]
+            ++ lib.optional (!appMode) {
+              label = "Update the bench";
+              argv = [
+                "frappe"
+                "update"
+              ];
+              help = "bench update: pull the apps, refresh the locks, migrate and build";
+              after = "rebuild";
+            };
+            commands = [
+              { file = "${tuiOwnCommands}"; }
+              {
+                probe = tuiFrappeProbe;
+                cache = "@state@/frappe-nix/tui";
+                cwd = "@benchRoot@/sites";
+              }
+            ];
+          }
+          // lib.optionalAttrs (!appMode) {
+            plugin = {
+              module = "frappe_nix_tui";
+              config.catalog = "${../py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json}";
+            };
+          };
+          # As the banner's (enterShell), read when the menu starts and again
+          # whenever the stack does: the ports are leased at `devenv up`.
+          vars = {
+            port = "$(p=\"$(frappe-nix-ports web 2>/dev/null)\"; echo \"\${p:-${toString webBase}}\")";
+            mailUi = "$(p=\"$(frappe-nix-ports mailpit_ui 2>/dev/null)\"; echo \"\${p:-${toString mailpitHttpBase}}\")";
+            benchRoot = "$FRAPPE_BENCH_ROOT";
+            runtime = "$DEVENV_RUNTIME";
+            state = "$DEVENV_STATE";
+          };
+        };
+
         nodeLocksTool = import ../lib/node-locks.nix {
           inherit pkgs;
           inherit (standardsOutputs) frappeNixTools;
@@ -2823,6 +2979,7 @@ in
         # What `ide.enable` links to ./pyrightconfig.json, for an editor that
         # wants it somewhere else (`nix build .#pyrightConfig`).
         packages.pyrightConfig = pyrightConfigFile;
+        frappe-nix.tui = tuiRun;
         # Unbuilt /bench tree — used by containers.nix and as input to builtBench.
         packages.benchRoot = benchInfra.benchRoot;
         # Production-ready bench with compiled assets + passthru interpreters.

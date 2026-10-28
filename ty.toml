@@ -18,7 +18,10 @@ extra-paths = [
 ]
 
 [src]
-exclude = ["tests/fixtures"]
+# lib/tui and its test run on the menu's own interpreter (textual, and
+# python-devops-nix's devtui), which the dev env does not have; tests/tui.nix
+# runs them there.
+exclude = ["tests/fixtures", "lib/tui", "tests/test_tui.py"]
 
 # The suites stand Frappe, bench, botocore and socketio up as hand-built stub
 # modules and fakes, so the shapes ty infers for those are the stubs', not the

@@ -83,6 +83,10 @@
   # lib/scripts.d/README.md. A parameter so tests can point it at a fixture;
   # null merges none.
   scriptsDir ? ./scripts.d,
+  # The dev shell's TUI (python-devops-nix's lib.tui.script), as an absolute
+  # path: `frappe ui`, and a bare `frappe` at a terminal. null leaves `frappe`
+  # the umbrella for `bench` alone.
+  tui ? null,
 }@args:
 
 let
@@ -388,6 +392,34 @@ let
 in
 secretScripts
 // {
+  # `frappe`: frappe-nix's umbrella (python-devops-nix docs/conventions.md,
+  # Command layout). Everything `bench` takes, and `frappe ui`, the menu, which
+  # a bare `frappe` at a terminal opens too. `bench` stays: it is what Frappe's
+  # own documentation, and everyone's hands, type.
+  frappe = {
+    exec = ''
+      case "''${1:-}" in
+        ui)
+          shift
+          ${
+            if tui == null then
+              ''echo "frappe ui: this shell has no menu." >&2; exit 1''
+            else
+              ''exec ${tui} "$@"''
+          }
+          ;;
+        "")
+          ${lib.optionalString (tui != null) ''
+            if [ -t 0 ] && [ -t 1 ]; then exec ${tui}; fi
+          ''}
+          exec bench
+          ;;
+        *) exec bench "$@" ;;
+      esac
+    '';
+    description = "frappe-nix's umbrella: every bench command, and `frappe ui`, the menu.";
+  };
+
   # Umbrella wrapper: shadows devPythonEnv/bin/bench (devenv wraps scripts with
   # hiPrioSet, so this wins on PATH) and transparently redirects the subcommands
   # that need frappe-nix handling, passing everything else through to the real

@@ -6,7 +6,7 @@ tags: [bench, scripts, cli]
 updated: 2026-10-21
 ---
 
-The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules.
+The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules. `frappe` is the same umbrella under the framework's name (`frappe migrate` is `bench migrate`), and `frappe ui` opens the [menu](menu.md).
 
 ## What the wrapper redirects
 
