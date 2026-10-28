@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -51,7 +51,7 @@ nix run .#relock -- --node-locks hrms/frontend   # force a fallback over the yar
 nix run .#relock -- --upgrade-package frappe     # any other flag goes to `uv lock`
 ```
 
-In a bench, `nix run .#relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`). Before it locks, it reconciles `pyproject.toml` with what this frappe-nix expects of a bench root, as the shell does on entry: it adds what is missing and changes nothing already there. Every lock frappe-nix runs (`relock`, `bench-update --pull`, `update-deps` and the shell-entry reconcile) is `uv lock --upgrade-package frappe-runtime`, so the runtime's dependency ranges never stay at the revision the bench first locked. In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
+In a bench, `nix run .#relock` must run from the bench root (it checks for `pyproject.toml` and `apps/`). Before it locks, it reconciles `pyproject.toml` with what this frappe-nix expects of a bench root, as the shell does on entry: it adds what is missing and changes nothing already there. Every lock frappe-nix runs (`relock`, `bench-update --pull`, `update-deps` and the shell-entry reconcile) is `uv lock --upgrade-package frappe-runtime`, so the runtime's dependency ranges never stay at the revision the bench first locked. The refresh lands on the frappe-nix revision `flake.lock` pins, not on the head of frappe-nix's branch: for that one lock the runtime's git source gets that `rev`, and it is taken back out of `pyproject.toml` and `uv.lock` afterwards. Locking the same `flake.lock` twice gives the same `uv.lock`, and the runtime's entry moves with `nix flake update frappe-nix`. Without a GitHub `frappe-nix` input in `flake.lock` (a `path:` override, a fork) the lock takes the branch head, as before. In app mode it assembles the workspace itself, writes `nix/uv.lock` and the fallback locks back into the repository, and stages them.
 
 The other commands that re-lock do a part of this. `bench-update --pull` re-locks what a pull moved, `bench-update --node-locks` is `relock --node-locks`, and `update-deps` is `relock --uv-only` followed by `uv sync`, `yarn install` in every app, and the fallback locks.
 
