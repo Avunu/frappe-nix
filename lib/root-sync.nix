@@ -16,7 +16,7 @@
   # [tool.uv.extra-build-dependencies] block in step with it. Null skips it.
   buildDepsSync ? null,
   # frappe-nix-tools (lib/standards/outputs.nix).
-  frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,
+  frappeNixTools,
 }:
 
 let

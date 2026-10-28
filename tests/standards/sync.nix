@@ -43,16 +43,24 @@
 {
   pkgs,
   checks,
+  inputs,
   frappeNixTools,
   ...
 }:
 
 let
-  frappeNix = (import ../../lib/standards/outputs.nix { inherit pkgs; }).tools.frappe-nix;
+  frappeNix =
+    (import ../../lib/standards/outputs.nix {
+      inherit pkgs;
+      base = inputs.python-devops-nix.lib;
+    }).tools.frappe-nix;
   python = pkgs.python314.withPackages (_: [ frappeNixTools ]);
   fixture = ../fixtures/standards-app;
   exampleOrg = ../fixtures/profiles/example-org;
-  frappeInit = import ../../lib/init.nix { inherit pkgs; };
+  frappeInit = import ../../lib/init.nix {
+    inherit pkgs;
+    inherit (inputs) python-devops-nix;
+  };
   tools = [
     pkgs.git
     pkgs.diffutils

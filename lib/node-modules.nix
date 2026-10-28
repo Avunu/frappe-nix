@@ -9,7 +9,8 @@
 # yarn via `frappe-nix.nodejs`.
 {
   pkgs,
-  frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,
+  # frappe-nix-tools (lib/standards/outputs.nix).
+  frappeNixTools,
 }:
 
 import ./py-tool.nix {

@@ -7,14 +7,19 @@
 # bench-rename-app is a shim that execs the Python command (frappe-nix-bench
 # rename-app, py/frappe_nix_tools/frappe_nix_tools/apps/rename_app.py) with
 # the configuration lib/scripts.nix generates.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   scripts = import ../lib/scripts.nix {
-    inherit lib pkgs;
+    inherit lib pkgs base;
     appsWithNode = [ ];
     benchBin = "bench";
     benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };

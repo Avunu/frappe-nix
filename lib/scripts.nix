@@ -6,6 +6,9 @@
 {
   lib,
   pkgs,
+  # python-devops-nix's lib, for the drop-ins that build frappe-nix-tools
+  # (lib/standards/outputs.nix).
+  base,
   appsWithNode,
   # Absolute path to the real bench CLI (devPythonEnv/bin/bench). The umbrella
   # `bench` wrapper and the re-entrancy guard use it to reach the unwrapped bench.
@@ -280,6 +283,7 @@ let
     inherit
       lib
       pkgs
+      base
       appsWithNode
       benchBin
       secrets

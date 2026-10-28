@@ -6,16 +6,26 @@
 #
 # Rendered here for the same reason as bench-restore: devenv never shellchecks
 # a `scripts.<n>.exec` body.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   render =
     appMode:
     (import ../lib/scripts.nix {
-      inherit lib pkgs appMode;
+      inherit
+        lib
+        pkgs
+        appMode
+        base
+        ;
       # node-verify and node-modules are stubs on PATH in the test.
       appsWithNode = [ "frappe" ];
       benchBin = "bench";

@@ -32,7 +32,7 @@
   workspace ? null,
   lockDir ? "nix",
   # frappe-nix-tools (lib/standards/outputs.nix).
-  frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,
+  frappeNixTools,
 }:
 
 let
