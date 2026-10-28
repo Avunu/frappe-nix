@@ -276,8 +276,8 @@
         # take it, not the store paths named after prefix.
         #
         # The images run as frappe, uid and gid 1000, the ones frappe_docker
-        # uses, unless containers.nonRoot is false (the default since 2.0.0,
-        # opt-in through 1.x); root then.
+        # uses: containers.nonRoot defaults to true since 2.0.0 (opt-in
+        # through 1.x), and false runs them as root.
         #
         # The labels' revision is frappe-nix's own commit when the bench's
         # flake has it as the `frappe-nix` input, as the scaffold does.
