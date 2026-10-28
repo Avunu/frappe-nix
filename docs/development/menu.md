@@ -1,6 +1,6 @@
 ---
 title: The menu
-description: frappe ui, the dev shell's interactive menu: the stack and its logs, every bench and Frappe command as a form, and a store for Frappe apps.
+description: "frappe ui, the dev shell's interactive menu: the stack and its logs, every bench and Frappe command as a form, and a store for Frappe apps."
 order: 2
 tags: [cli, apps, tui]
 updated: 2026-10-27
