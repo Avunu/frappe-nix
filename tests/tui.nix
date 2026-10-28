@@ -27,7 +27,7 @@ let
   });
   run = config.frappe-nix.tui;
   umbrella = config.devenv.shells.default.scripts.bench.exec;
-  # Not lib.hasInfix: builtins.match overflows on a long script (tests/renames.nix).
+  # Not lib.hasInfix: builtins.match overflows on a long script (tests/removed.nix).
   contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
 in
 {

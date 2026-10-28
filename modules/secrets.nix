@@ -26,9 +26,9 @@
       # `self.inputs // consumerInputs` merge makes a consumer's copy resolve to
       # the same path.
       inherit (inputs) agenix-shell;
-      # flake.lib.secrets, the name both products share; frappeSecrets for the
-      # deprecation window (python-devops-nix docs/conventions.md, Secrets).
-      libAliases = [ "frappeSecrets" ];
+      # flake.lib.secrets, the name both products share (python-devops-nix
+      # docs/conventions.md, Secrets). flake.lib.frappeSecrets, its 1.x alias,
+      # went in 2.0.0.
 
       groups.sites = {
         description = ''

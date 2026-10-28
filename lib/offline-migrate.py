@@ -50,14 +50,6 @@ ENV_ENABLED = "FRAPPE_NIX_OFFLINE_MIGRATE"
 ENV_THRESHOLD = "FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD"
 #: Absolute path of pt-online-schema-change, where it is not on PATH.
 ENV_PT_OSC = "FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC"
-#: Each variable's name before the FRAPPE_NIX_* rule (python-devops-nix
-#: docs/conventions.md, Tool-owned variables), still read, with a warning, through 1.x,
-#: until frappe-nix 2.0.0.
-RENAMED = {
-	ENV_ENABLED: "FRAPPE_OFFLINE_MIGRATE",
-	ENV_THRESHOLD: "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD",
-	ENV_PT_OSC: "FRAPPE_OFFLINE_MIGRATE_PT_OSC",
-}
 
 DEFAULT_THRESHOLD = 100_000
 PT_OSC = "pt-online-schema-change"
@@ -378,21 +370,8 @@ def large_tables(threshold):
 # ── doing it ─────────────────────────────────────────────────────────────────
 
 
-def getenv(name):
-	"""``name`` from the environment, else its old name (RENAMED), with a warning."""
-	value = os.environ.get(name)
-	old = RENAMED.get(name)
-	if value is None and old is not None and old in os.environ:
-		print(
-			f"offline-migrate: {old} is deprecated; set {name} instead (the old name goes in frappe-nix 2.0.0)",
-			file=sys.stderr,
-		)
-		value = os.environ[old]
-	return value
-
-
 def find_pt_osc():
-	return getenv(ENV_PT_OSC) or shutil.which(PT_OSC)
+	return os.environ.get(ENV_PT_OSC) or shutil.which(PT_OSC)
 
 
 def run_online(plan, pt_osc, db, dry_run, extra):
@@ -418,7 +397,7 @@ def run_online(plan, pt_osc, db, dry_run, extra):
 def resolve_threshold(flag):
 	"""The flag, else the environment (which the bench scripts default from the
 	Nix option), else the built-in default."""
-	for value in (flag, getenv(ENV_THRESHOLD)):
+	for value in (flag, os.environ.get(ENV_THRESHOLD)):
 		rows = parse_threshold(value)
 		if rows is not None:
 			return rows
@@ -454,7 +433,7 @@ def parse_args(argv):
 def main(argv=None):
 	args = parse_args(sys.argv[1:] if argv is None else argv)
 
-	enabled = getenv(ENV_ENABLED)
+	enabled = os.environ.get(ENV_ENABLED)
 	if enabled is not None and enabled.strip().lower() in OFF:
 		say(f"offline-migrate: skipped ({ENV_ENABLED}={enabled}); bench migrate alters every table itself")
 		return 0

@@ -165,23 +165,14 @@ def truthy(value: Any) -> bool:
 	return value is not None and value is not False
 
 
-#: The Administrator password the tools give a site, and its name before the
-#: FRAPPE_NIX_* rule (python-devops-nix docs/conventions.md, Tool-owned
-#: variables), still read with a warning through 1.x, until frappe-nix 2.0.0.
+#: The Administrator password the tools give a site. FRAPPE_TEST_ADMIN_PASSWORD,
+#: its name before the FRAPPE_NIX_* rule (python-devops-nix docs/conventions.md,
+#: Tool-owned variables), is not read since frappe-nix 2.0.0.
 ENV_ADMIN_PASSWORD = "FRAPPE_NIX_TEST_ADMIN_PASSWORD"
-OLD_ENV_ADMIN_PASSWORD = "FRAPPE_TEST_ADMIN_PASSWORD"
 
 
 def admin_password() -> str:
-	value = os.environ.get(ENV_ADMIN_PASSWORD)
-	if value is None and OLD_ENV_ADMIN_PASSWORD in os.environ:
-		print(
-			f"{OLD_ENV_ADMIN_PASSWORD} is deprecated; set {ENV_ADMIN_PASSWORD} instead"
-			" (the old name goes in frappe-nix 2.0.0)",
-			file=sys.stderr,
-		)
-		value = os.environ[OLD_ENV_ADMIN_PASSWORD]
-	return value or "admin"
+	return os.environ.get(ENV_ADMIN_PASSWORD) or "admin"
 
 
 def repo_root() -> str | None:

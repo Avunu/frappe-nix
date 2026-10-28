@@ -3,7 +3,7 @@ title: Scaffolder
 description: The flags and exit codes of frappe-init, the program behind nix run github:Avunu/frappe-nix that creates, migrates and sets up benches and app repositories.
 order: 4
 tags: [reference, frappe-init, cli, scaffolding]
-updated: 2026-10-16
+updated: 2026-10-28
 ---
 
 `nix run github:Avunu/frappe-nix` runs `frappe-init`, the scaffolder. The flags below follow `frappe-init --help`. Pass them after `--`:
@@ -47,7 +47,7 @@ New benches default to the site `frappe.localhost`. App mode defaults to `<BENCH
 
 ### Renamed flags
 
-`--version` was `--frappe-version`, and `--default-site` was `--site`, before frappe-nix and odoo-nix agreed on one set of scaffolder flags. The old names still work, with a warning, through 1.x, until frappe-nix 2.0.0. Under `--sync` and `--check` they reach `frappe-nix sync` as its own `--frappe-version` and `--site`, which keep their names.
+`--version` was `--frappe-version`, and `--default-site` was `--site`, before frappe-nix and odoo-nix agreed on one set of scaffolder flags. The old names worked, with a warning, through 1.x. Since frappe-nix 2.0.0 each is a usage error that names the new flag. Under `--sync` and `--check` the new flags reach `frappe-nix sync` as its own `--frappe-version` and `--site`, which keep their names.
 
 ## App standards
 

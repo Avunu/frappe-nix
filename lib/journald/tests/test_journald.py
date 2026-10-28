@@ -20,7 +20,6 @@ first argument, or run from the repository and it is found relative to here.
 Run directly (``python test_journald.py``) or via ``nix flake check``.
 """
 
-import contextlib
 import importlib
 import io
 import logging
@@ -223,13 +222,7 @@ check("the wrapper still identifies itself", getattr(mod.get_logger, "__journald
 
 clear_env()
 os.environ["FRAPPE_LOG_LEVEL"] = "info"
-old_err = io.StringIO()
-with contextlib.redirect_stderr(old_err):
-	old_level = _format.env_level()
-check("the old FRAPPE_LOG_LEVEL is still read", old_level == logging.INFO)
-check("…with a warning naming FRAPPE_NIX_LOG_LEVEL", "set FRAPPE_NIX_LOG_LEVEL" in old_err.getvalue())
-os.environ["FRAPPE_NIX_LOG_LEVEL"] = "error"
-check("the new name wins over the old", _format.env_level() == logging.ERROR)
+check("the old FRAPPE_LOG_LEVEL is not read (frappe-nix 2.0.0)", _format.env_level() is None)
 clear_env()
 
 os.environ["FRAPPE_NIX_LOG_LEVEL"] = "nonsense"

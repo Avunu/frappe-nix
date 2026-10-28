@@ -3,11 +3,11 @@
 # with one, a trailing slash on the registry not doubled. odoo-nix applies the
 # same rule (its tests/containers-eval.nix).
 #
-# The packages are container-<role>, and the names they had before
-# (runtime, nginx, bench-cli, …) are aliases of them unless
-# containers.aliases = false. Each image config (passthru.imageConfig) has
-# the OCI labels and, where it serves HTTP, a healthcheck; it runs as root
-# unless containers.nonRoot, then as 1000:1000 with HOME set.
+# The packages are container-<role>; the names they had before (runtime,
+# nginx, bench-cli, …), aliases through 1.x, are gone since 2.0.0. Each image
+# config (passthru.imageConfig) has the OCI labels and, where it serves HTTP, a
+# healthcheck; it runs as 1000:1000 with HOME set (containers.nonRoot, the
+# default since 2.0.0), and as root with containers.nonRoot = false.
 #
 # Pure evaluation: a consumer's flake goes through lib.mkFlake and only each
 # image's imageName and config are read, so nothing is built and the
@@ -26,8 +26,7 @@ let
     {
       registry ? "",
       runtime ? true,
-      aliases ? true,
-      nonRoot ? false,
+      nonRoot ? true,
     }:
     (self.lib.mkFlake
       {
@@ -45,7 +44,7 @@ let
           runtime.enable = runtime;
           containers = {
             enable = true;
-            inherit registry aliases nonRoot;
+            inherit registry nonRoot;
           };
         };
       }
@@ -84,44 +83,26 @@ let
     runtime = false;
   };
 
-  # The old names, read through the alias: the same image.
-  withAliases = packagesFor { };
-  aliased = toString (
-    map (old: withAliases.${old}.imageName) [
+  # The names before container-<role>, in either image set: none is a package.
+  oldNames = toString (
+    lib.filter (lib.flip lib.hasAttr (packagesFor { })) [
       "runtime"
       "nginx"
       "bench-cli"
     ]
-  );
-  splitAliased =
-    let
-      packages = packagesFor { runtime = false; };
-    in
-    toString (
-      map (old: packages.${old}.imageName) [
-        "web"
-        "scheduler"
-        "worker-default"
-        "worker-short"
-        "worker-long"
-        "socketio"
-      ]
-    );
-  withoutAliases = toString (
-    lib.filter
-      (
-        n:
-        lib.elem n [
-          "runtime"
-          "nginx"
-          "bench-cli"
+    ++
+      lib.filter
+        (lib.flip lib.hasAttr (packagesFor {
+          runtime = false;
+        }))
+        [
+          "web"
+          "scheduler"
+          "worker-default"
+          "worker-short"
+          "worker-long"
+          "socketio"
         ]
-      )
-      (
-        lib.attrNames (packagesFor {
-          aliases = false;
-        })
-      )
   );
 
   # "<role>=<User>,<healthcheck>" for the unified set, then nginx's Env (the
@@ -167,18 +148,16 @@ in
       "ghcr.io/avunu/acme/runtime ghcr.io/avunu/acme/nginx ghcr.io/avunu/acme/bench" ${lib.escapeShellArg slash}
     eq "the split image set takes it too" \
       "ghcr.io/avunu/acme/web ghcr.io/avunu/acme/scheduler ghcr.io/avunu/acme/worker-default ghcr.io/avunu/acme/socketio ghcr.io/avunu/acme/nginx ghcr.io/avunu/acme/bench" ${lib.escapeShellArg split}
-    eq "the old package names alias container-<role>" \
-      "acme/runtime acme/nginx acme/bench" ${lib.escapeShellArg aliased}
-    eq "the split set's old names alias it too" \
-      "acme/web acme/scheduler acme/worker-default acme/worker-short acme/worker-long acme/socketio" ${lib.escapeShellArg splitAliased}
-    eq "containers.aliases = false drops them" \
-      "" ${lib.escapeShellArg withoutAliases}
-    eq "by default the images run as root, as before" \
-      "runtime=0:0,true nginx=0:0,true bench=0:0,false env:" ${lib.escapeShellArg (conventions { })}
-    eq "containers.nonRoot runs them as 1000:1000 with HOME" \
+    eq "the 1.x package names are gone" \
+      "" ${lib.escapeShellArg oldNames}
+    eq "by default the images run as 1000:1000 with HOME" \
       "runtime=1000:1000,true nginx=1000:1000,true bench=1000:1000,false env:HOME=/home/frappe" ${
+        lib.escapeShellArg (conventions { })
+      }
+    eq "containers.nonRoot = false runs them as root" \
+      "runtime=0:0,true nginx=0:0,true bench=0:0,false env:" ${
         lib.escapeShellArg (conventions {
-          nonRoot = true;
+          nonRoot = false;
         })
       }
     eq "in the split set, only the HTTP roles have a healthcheck" \

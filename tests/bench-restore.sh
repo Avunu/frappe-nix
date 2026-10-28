@@ -12,7 +12,7 @@
 # need one are skipped without it):
 #   UNGUARDED_SCRIPT  devguard.enable = false
 #   NOFETCH_SCRIPT    restore.enable = false
-#   ALLFILES_SCRIPT   both file archives by default (restore.withFiles = "all")
+#   ALLFILES_SCRIPT   both file archives by default (restore.files = "all")
 set -euo pipefail
 
 SCRIPT="$1"
@@ -257,15 +257,15 @@ else
   no "--list shows the available backups" "rc=$RC out=$OUT"
 fi
 
-# ── 13. the old variable names still work, and say so ────────────────────
+# ── 13. the old variable names are not read ──────────────────────────────
 # FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (python-devops-nix docs/conventions.md,
-# Tool-owned variables); the old name is read, with a warning, through 1.x, until frappe-nix 2.0.0.
+# Tool-owned variables); the old name was read, with a warning, through 1.x, and is not since
+# frappe-nix 2.0.0.
 FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
-  printf '%s' "$OUT" | grep -q 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
-  ok "FRAPPE_BACKUP_SOURCE is still read, with a deprecation warning"
+if ! printf '%s' "$OUT" | grep -q 20260202_020202 && ! printf '%s' "$OUT" | grep -q 'deprecated'; then
+  ok "FRAPPE_BACKUP_SOURCE is not read"
 else
-  no "the legacy FRAPPE_BACKUP_SOURCE still works" "rc=$RC out=$OUT"
+  no "the 1.x FRAPPE_BACKUP_SOURCE is not read" "rc=$RC out=$OUT"
 fi
 
 # ── 14. --help ───────────────────────────────────────────────────────────
@@ -406,12 +406,12 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
   fi
 
   # The name it had before (python-devops-nix docs/conventions.md, Tool-owned
-  # variables), read with a warning through 1.x, until frappe-nix 2.0.0.
+  # variables), read with a warning through 1.x and not since frappe-nix 2.0.0.
   FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
-  if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
-    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"
+  if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then
+    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 is not read: it still refuses"
   else
-    no "the legacy unguarded override still works" "rc=$RC out=$OUT"
+    no "the 1.x unguarded override is not read" "rc=$RC out=$OUT"
   fi
 
   # Unguarded always refuses now (python-devops-nix docs/conventions.md,

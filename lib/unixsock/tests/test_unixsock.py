@@ -9,8 +9,6 @@ the only property that matters.
 Run directly (``python test_unixsock.py``) or via ``nix flake check``.
 """
 
-import contextlib
-import io
 import os
 import sys
 import types
@@ -83,21 +81,11 @@ check(
 )
 os.environ.pop("FRAPPE_UNIXSOCK_ENABLED")
 
-# The names before FRAPPE_NIX_* are still read, with one warning each.
+# The names before FRAPPE_NIX_*, read with a warning through 1.x, are not read
+# since frappe-nix 2.0.0.
 clear_env()
 os.environ["FRAPPE_WEB_SOCKET"] = SOCK
-old_err = io.StringIO()
-with contextlib.redirect_stderr(old_err):
-	old_path = _settings.socket_path("FRAPPE_NIX_WEB_SOCKET")
-	_settings.socket_path("FRAPPE_NIX_WEB_SOCKET")
-check("the old FRAPPE_WEB_SOCKET still resolves", old_path == SOCK)
-check(
-	"…with one warning naming the new name",
-	old_err.getvalue().count("FRAPPE_WEB_SOCKET is deprecated; set FRAPPE_NIX_WEB_SOCKET") == 1,
-	old_err.getvalue(),
-)
-os.environ["FRAPPE_NIX_WEB_SOCKET"] = "/run/new.sock"
-check("the new name wins over the old", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") == "/run/new.sock")
+check("the old FRAPPE_WEB_SOCKET is not read", _settings.socket_path("FRAPPE_NIX_WEB_SOCKET") is None)
 clear_env()
 os.environ["FRAPPE_NIX_WEB_SOCKET"] = SOCK
 

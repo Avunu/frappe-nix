@@ -11,10 +11,10 @@
 #   /secrets/     — mount secret files (db_password, encryption_key, *.json)
 #
 # Every image carries the OCI labels, the ones that serve HTTP have a
-# HEALTHCHECK, and with containers.nonRoot they run as frappe (uid/gid 1000)
-# (python-devops-nix docs/conventions.md,
+# HEALTHCHECK, and they run as frappe (uid/gid 1000) unless
+# containers.nonRoot is false (python-devops-nix docs/conventions.md,
 # Containers). The outputs are container-<role>; the role-named outputs they
-# replaced stay as aliases until 2.0.0.
+# replaced went in 2.0.0.
 { inputs, ... }:
 
 {
@@ -265,8 +265,8 @@
 
         prefix = cfg.name;
 
-        # The user the images run as with containers.nonRoot (opt-in through
-        # 1.x, the default in 2.0.0); root otherwise, as before. Fixed, so a
+        # The user the images run as with containers.nonRoot (the default
+        # since 2.0.0, opt-in through 1.x); root otherwise. Fixed, so a
         # volume or a bind mount can be owned to match before the first start;
         # 1000 is the uid a desktop user usually has, and the one
         # frappe_docker uses.
@@ -297,9 +297,9 @@
         # `bench` runs it: frappe-bench's frappe_cmd execs
         # `python -m frappe.utils.bench_helper frappe <args>` from sites/,
         # which is the images' default WorkingDir. Not `bench` itself: it
-        # refuses to run as root, which the images are unless
-        # containers.nonRoot, so the split set's scheduler and workers exited
-        # at start.
+        # refuses to run as root, which the images are with
+        # containers.nonRoot = false, so the split set's scheduler and workers
+        # exited at start.
         frappeCmd =
           args:
           [
@@ -690,38 +690,13 @@
             };
           };
 
-        # The outputs before python-devops-nix's container-<role> convention:
-        # the role itself, and bench-cli for the bench image. Kept, warning
-        # when used, until frappe-nix 2.0.0. The warning sits on what a build
-        # or a reference reads (drvPath, outPath), not on the attribute, so
-        # `nix flake show` stays quiet; `nix flake check` evaluates every
-        # package, so a bench that uses none of them sets
-        # containers.aliases = false.
-        alias =
-          old: role:
-          let
-            image = images.${role};
-            warn = lib.warn "frappe-nix: the package `${old}' has been renamed `container-${role}'. The old name works through frappe-nix 1.x and goes in 2.0.0; set frappe-nix.containers.aliases = false once nothing uses it.";
-          in
-          image
-          // {
-            drvPath = warn image.drvPath;
-            outPath = warn image.outPath;
-          };
-        oldName = role: if role == "bench" then "bench-cli" else role;
-        aliases = lib.mapAttrs' (
-          role: _: lib.nameValuePair (oldName role) (alias (oldName role) role)
-        ) images;
-
       in
       lib.mkIf (cfg.enable && cfg.containers.enable) {
         # Whole attrsets, not lib.mkIf per package: `packages` is an attrsOf,
         # and mkIf false keeps the attribute *name* while removing its
         # definition. `nix flake show` enumerates those names and dies with
         # "option ... was accessed but has no value defined".
-        packages =
-          lib.mapAttrs' (role: image: lib.nameValuePair "container-${role}" image) images
-          // lib.optionalAttrs cfg.containers.aliases aliases;
+        packages = lib.mapAttrs' (role: image: lib.nameValuePair "container-${role}" image) images;
       };
   };
 }

@@ -11,8 +11,8 @@ Reusable Nix infrastructure for [Frappe](https://frappeframework.com/) bench pro
 -   reproducible **node\_modules** for every app and nested frontend, straight from each one's own `yarn.lock`
 -   a `benchRoot` derivation that assembles the whole `/bench` tree
 -   a **`builtBench`** package that runs `bench build` at build time (immutable assets) — the production-ready deployable consumed by both the NixOS module and OCI containers
--   **OCI container images** — `container-runtime`, `container-nginx`, `container-bench`, or the eight-image split set (`container-web`, `-scheduler`, three `-worker-*`, `-socketio`, `-nginx`, `-bench`) with `runtime.enable = false`; with OCI labels and healthchecks, and non-root with `containers.nonRoot`
--   a multi-tenant **NixOS module** (`services.frappe-nix`) with per-site systemd units
+-   **OCI container images** — `container-runtime`, `container-nginx`, `container-bench`, or the eight-image split set (`container-web`, `-scheduler`, three `-worker-*`, `-socketio`, `-nginx`, `-bench`) with `runtime.enable = false`; with OCI labels and healthchecks, running as the non-root `frappe` user
+-   a multi-tenant **NixOS module** (`services.frappe-nix`) with per-site systemd units, sandboxed by default
 -   a set of portable **bench scripts** (`bench provision`, `bench-update`, `bench-get-app`, …)
 
 It is consumed as a [flake-parts](https://flake.parts/) module, from a bench repository or — see [Develop a single app](docs/scaffolding/app-mode.md) — from one Frappe app's own repository, where the bench around it is generated from flake inputs instead of committed.

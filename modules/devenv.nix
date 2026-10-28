@@ -21,29 +21,26 @@ let
     ;
   inherit (flake-parts-lib) mkPerSystemOption;
 
-  # frappe-nix.<from> renamed to frappe-nix.<to>. Not lib.mkRenamedOptionModule:
-  # it reports through a `warnings` option, which perSystem has none of, so the
-  # rename went unannounced (odoo-nix#54 found the same). doRename does the
-  # aliasing, priorities kept; the warning goes on `deprecations`, which the
-  # config below folds into lib.warn. Removed in frappe-nix 2.0.0, never within 1.x.
-  renamed =
-    fromPath: toPath:
+  # A removed option, frappe-nix.<path>. Not lib.mkRemovedOptionModule: it
+  # reports through `assertions`, which perSystem has none of. Defining one
+  # puts its message on `removals`, and the config below fails the shell's
+  # evaluation with all of them. The names 1.x renamed and kept as aliases
+  # went in 2.0.0; each is refused naming its replacement
+  # (docs/development/upgrading.md, "1.x to 2.0").
+  removed =
+    path: instead:
     { options, ... }:
     let
-      from = [ "frappe-nix" ] ++ fromPath;
-      to = [ "frappe-nix" ] ++ toPath;
-      fromOpt = lib.getAttrFromPath from options;
+      full = [ "frappe-nix" ] ++ path;
+      opt = lib.getAttrFromPath full options;
     in
     {
-      imports = [
-        (lib.doRename {
-          inherit from to;
-          visible = false;
-          warn = false;
-          use = lib.id;
-        })
-      ];
-      config.frappe-nix.deprecations = lib.optional fromOpt.isDefined "The option `${lib.showOption from}' defined in ${lib.showFiles fromOpt.files} has been renamed to `${lib.showOption to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
+      options = lib.setAttrByPath full (mkOption {
+        type = types.anything;
+        visible = false;
+        description = "Removed: ${instead}";
+      });
+      config.frappe-nix.removals = lib.optional opt.isDefined "The option `${lib.showOption full}' defined in ${lib.showFiles opt.files} has been removed. ${instead}";
     };
 
   # renamedApps/replacedApps: OLD = NEW, both app names. attrsOf checks only
@@ -134,42 +131,42 @@ in
       ...
     }:
     {
-      # Renames, each kept through 1.x, until frappe-nix 2.0.0 (python-devops-nix
-      # docs/library.md, design rule 2; docs/conventions.md, Identity options,
-      # Restore, devguard and the development shell option tree). Old path = new
-      # path.
-      imports =
-        lib.mapAttrsToList (from: to: renamed (lib.splitString "." from) (lib.splitString "." to))
-          {
-            "benchName" = "name";
-            "siteName" = "defaultSite";
-            "restore.withFiles" = "restore.files";
-            "devguard.scheduler.enable" = "devguard.jobs.enable";
-            "devguard.scheduler.blockServerScripts" = "devguard.jobs.blockServerScripts";
-            "devguard.scheduler.extraBlockedJobs" = "devguard.jobs.extraBlocked";
-            # The development shell option tree: what the shell does on a change
-            # is `watch`, the catcher is `mailpit`, and `devguard` is policy only.
-            "runtime.dev" = "watch.python";
-            "assets.reassert.hooks" = "watch.reassert.hooks";
-            "assets.reassert.debounceMs" = "watch.reassert.debounceMs";
-            "devguard.mail.host" = "mailpit.host";
-            "devguard.mail.port" = "mailpit.port";
-            "devguard.mail.smtpPort" = "mailpit.port";
-            "devguard.mail.httpPort" = "mailpit.httpPort";
-            "devguard.mail.pop3.enable" = "mailpit.pop3.enable";
-            "devguard.mail.pop3.port" = "mailpit.pop3.port";
-            "devguard.mail.pop3.user" = "mailpit.pop3.user";
-            "devguard.mail.pop3.password" = "mailpit.pop3.password";
-          };
+      # The names 1.x renamed (python-devops-nix docs/conventions.md, Identity
+      # options, Restore, devguard and the development shell option tree),
+      # kept as aliases until 2.0.0 and refused since.
+      imports = [
+        (removed [ "benchName" ] "The project's identity is `name`.")
+        (removed [ "siteName" ] "The default site is `defaultSite`.")
+        (removed [ "restore" "withFiles" ] "It is restore.files.")
+        (removed [ "devguard" "scheduler" ]
+          "The job denylist is devguard.jobs.{enable,blockServerScripts,extraBlocked} (extraBlockedJobs is extraBlocked)."
+        )
+        # The development shell option tree: what the shell does on a change
+        # is `watch`, the catcher is `mailpit`, and `devguard` is policy only.
+        (removed [ "runtime" "dev" ] "It is watch.python.")
+        (removed [ "assets" ] "assets.reassert.{hooks,debounceMs} is watch.reassert.{hooks,debounceMs}.")
+        (removed [ "devguard" "mail" "smtpPort" ] "It is mailpit.port.")
+        (removed [ "devguard" "mail" "pop3" ] "It is mailpit.pop3.{enable,port,user,password}.")
+        # The container packages' old names (runtime, nginx, bench-cli, …)
+        # went with the switch that kept them.
+        (removed [ "containers" "aliases" ]
+          "The packages are container-<role> only (container-runtime, container-nginx, container-bench, …); remove the option."
+        )
+      ]
+      ++ map (name: removed [ "devguard" "mail" name ] "It is mailpit.${name}.") [
+        "host"
+        "port"
+        "httpPort"
+      ];
 
       options.frappe-nix = {
         enable = mkEnableOption "Frappe bench devenv shell";
 
-        deprecations = mkOption {
+        removals = mkOption {
           type = types.listOf types.str;
           default = [ ];
           internal = true;
-          description = "Renamed options in use, each warned about (lib.warn) when the shell's config is evaluated.";
+          description = "Removed options in use: evaluating the shell's config fails with all of them.";
         };
 
         tui = mkOption {
@@ -1800,13 +1797,8 @@ in
           };
           nonRoot = mkOption {
             type = types.bool;
-            default = false;
-            description = "Run every image as frappe (uid/gid 1000) instead of root, with the paths it writes (/bench/sites, /bench/logs, /bench/config, nginx's log, cache and temp directories) owned by it. Opt-in through 1.x; the default becomes true in 2.0.0. A sites volume a root image wrote is owned by root and needs a one-time chown first: see Running as non-root in docs/production/images.md.";
-          };
-          aliases = mkOption {
-            type = types.bool;
             default = true;
-            description = "Keep the packages' old names (runtime, nginx, bench-cli, web, …) as aliases of container-<role>, each warning when used. `nix flake check` evaluates every package, so set false once nothing uses them. The aliases go in frappe-nix 2.0.0.";
+            description = "Run every image as frappe (uid/gid 1000) instead of root, with the paths it writes (/bench/sites, /bench/logs, /bench/config, nginx's log, cache and temp directories) owned by it. The default since 2.0.0 (opt-in through 1.x). A sites volume a 1.x root image wrote is owned by root and needs a one-time chown first: see Running as non-root in docs/production/images.md. false runs the images as root.";
           };
         };
       };
@@ -1822,9 +1814,15 @@ in
         ...
       }:
       let
-        # Every read of cfg goes through the rename warnings first (perSystem
-        # has no `warnings` option to collect them).
-        cfg = lib.foldr lib.warn config.frappe-nix config.frappe-nix.deprecations;
+        # Every read of cfg goes through the removed options' error first
+        # (perSystem has no `assertions` option to collect them).
+        cfg =
+          if config.frappe-nix.removals != [ ] then
+            throw ''
+              frappe-nix: ${lib.concatStringsSep "\n" config.frappe-nix.removals}
+              See frappe-nix's docs/development/upgrading.md, "1.x to 2.0".''
+          else
+            config.frappe-nix;
 
         appMode = cfg.app.enable;
 

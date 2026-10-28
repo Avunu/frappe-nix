@@ -6,9 +6,9 @@
 #   * a host's `settings.<key>` replaces a computed (mkDefault) key without
 #     mkForce, and nested attribute sets from several definitions merge key by
 #     key instead of the last one replacing the rest;
-#   * a db_name other than database.name, or a db_type other than mariadb,
-#     still evaluates (1.x) but warns, naming what breaks; an equal value is
-#     silent;
+#   * db_name and db_type are the module's (2.0.0; 1.x only warned): a
+#     different plain value is a conflict, one forced past it fails an
+#     assertion naming what breaks, and an equal value is fine;
 #   * a value JSON cannot hold (a function) is refused;
 #   * the declared host_name is null and left out of the file when unset.
 #
@@ -69,15 +69,18 @@ let
 
   settingsOf = extra: (eval { } extra).services.frappe-nix.sites.${site}.settings;
 
-  # The module's settings warnings for a configuration, as the words that
-  # matter: which key, and that it names the snapshot and 2.0.0.
-  settingsWarnings =
+  # The module's failed settings assertions for a configuration, as the words
+  # that matter: which key, and that it names the snapshot.
+  settingsAssertions =
     extra:
-    map (w: {
-      key = builtins.head (builtins.match ".*settings\\.(db_[a-z]+) is.*" w);
-      namesSnapshot = lib.hasInfix "snapshot" w;
-      namesTwo = lib.hasInfix "error in frappe-nix 2.0.0" w;
-    }) (lib.filter (lib.hasInfix ".settings.db_") (eval { } extra).warnings);
+    map
+      (a: {
+        key = builtins.head (builtins.match ".*settings\\.(db_[a-z]+) is.*" a.message);
+        namesSnapshot = lib.hasInfix "snapshot" a.message;
+      })
+      (
+        lib.filter (a: !a.assertion && lib.hasInfix ".settings.db_" a.message) (eval { } extra).assertions
+      );
 
   # Whether evaluating the whole of `settings` succeeds: false for a type error
   # or a conflict.
@@ -102,9 +105,6 @@ let
       settings.workers.long.timeout = 1500;
     }
   ];
-
-  # The rename alias still lands in the same block.
-  aliased = settingsOf [ { extraConfig.host_name = "https://${site}"; } ];
 
   # The realtime socket key, under the split units and the unified runtime.
   udsUnder =
@@ -143,33 +143,31 @@ in
         };
         long.timeout = 1500;
       };
-      aliasedHostName = "https://${site}";
       socketioUds = {
         split = "/run/frappe-erp/socketio.sock";
         runtime = null;
       };
       evaluates = {
-        otherDbName = true;
+        sameDbName = true;
+        otherDbName = false;
+        otherDbType = false;
         function = false;
         nestedFunction = false;
       };
-      otherDbNameValue = "other";
-      warnings = {
+      assertions = {
         defaults = [ ];
         sameDbName = [ ];
         sameDbType = [ ];
-        otherDbName = [
+        forcedDbName = [
           {
             key = "db_name";
             namesSnapshot = true;
-            namesTwo = true;
           }
         ];
-        otherDbType = [
+        forcedDbType = [
           {
             key = "db_type";
             namesSnapshot = true;
-            namesTwo = true;
           }
         ];
       };
@@ -185,23 +183,23 @@ in
           ;
       };
       nested = nested.workers;
-      aliasedHostName = aliased.host_name;
       socketioUds = {
         split = udsUnder false;
         runtime = udsUnder true;
       };
       evaluates = {
+        sameDbName = evaluates [ { settings.db_name = "erp_example_com"; } ];
         otherDbName = evaluates [ { settings.db_name = "other"; } ];
+        otherDbType = evaluates [ { settings.db_type = "postgres"; } ];
         function = evaluates [ { settings.hook = x: x; } ];
         nestedFunction = evaluates [ { settings.workers.custom.timeout = _: 1; } ];
       };
-      otherDbNameValue = (settingsOf [ { settings.db_name = "other"; } ]).db_name;
-      warnings = {
-        defaults = settingsWarnings [ ];
-        sameDbName = settingsWarnings [ { settings.db_name = "erp_example_com"; } ];
-        sameDbType = settingsWarnings [ { settings.db_type = "mariadb"; } ];
-        otherDbName = settingsWarnings [ { settings.db_name = "other"; } ];
-        otherDbType = settingsWarnings [ { settings.db_type = "postgres"; } ];
+      assertions = {
+        defaults = settingsAssertions [ ];
+        sameDbName = settingsAssertions [ { settings.db_name = "erp_example_com"; } ];
+        sameDbType = settingsAssertions [ { settings.db_type = "mariadb"; } ];
+        forcedDbName = settingsAssertions [ { settings.db_name = lib.mkForce "other"; } ];
+        forcedDbType = settingsAssertions [ { settings.db_type = lib.mkForce "postgres"; } ];
       };
     };
   };

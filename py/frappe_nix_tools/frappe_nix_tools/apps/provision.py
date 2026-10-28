@@ -1,6 +1,6 @@
 """``bench provision``: create $FRAPPE_SITE and install every app sites/apps.txt
-names. Was ``provision-site``, bash in lib/scripts.nix,
-which stays as an alias; tests/provision.sh is its acceptance suite.
+names. Was ``provision-site``, bash in lib/scripts.nix, kept as an alias
+until frappe-nix 2.0.0; tests/provision.sh is its acceptance suite.
 
 One-shot: ``bench new-site --force`` drops the site's database, so it is not
 the way to pick up an app pinned after the site exists. That is
@@ -27,9 +27,7 @@ Usage: bench provision [ADMIN_PASSWORD]
 Creates $FRAPPE_SITE (bench new-site --force: an existing site's database is
 dropped) and installs every app sites/apps.txt names, in that order.
 Administrator's password is ADMIN_PASSWORD, or admin. To install apps added
-to a site that exists, run reconcile-apps instead.
-
-provision-site is the same command, kept as an alias until frappe-nix 2.0.0."""
+to a site that exists, run reconcile-apps instead."""
 
 #: The port the URL names when neither the lease nor the config has one.
 DEFAULT_PORT = "8000"

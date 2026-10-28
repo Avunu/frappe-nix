@@ -97,7 +97,7 @@ in
         FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD=9 FRAPPE_NIX_OFFLINE_MIGRATE_PT_OSC=/mine/pt run "$toolOnPath"
         log_is "the caller's environment beats what Nix baked" "$(printf 'python %s\nPTOSC=/mine/pt THRESHOLD=9' "${../lib/offline-migrate.py}")"
         FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD=9 run "$toolOnPath"
-        log_is "so does the old name, which the tool reads itself (nothing baked over it)" "$(printf 'python %s\nPTOSC=/stub/pt-osc THRESHOLD=' "${../lib/offline-migrate.py}")"
+        log_is "the 1.x name changes nothing (frappe-nix 2.0.0): Nix's value is baked" "$(printf 'python %s\nPTOSC=/stub/pt-osc THRESHOLD=123456' "${../lib/offline-migrate.py}")"
         run "$toolOffPath" --plan
         log_is "with the feature off it still plans, with nothing baked but the threshold" "$(printf 'python %s --plan\nPTOSC= THRESHOLD=123456' "${../lib/offline-migrate.py}")"
 

@@ -509,9 +509,9 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
-        # The renames shared with odoo-nix: each old option name still reaches
-        # the new one, and is listed for its deprecation warning.
-        // import ./tests/renames.nix { inherit self pkgs inputs; }
+        # The names 1.x renamed, shared with odoo-nix: each old option name is
+        # refused, naming the new one; and the development shell option tree.
+        // import ./tests/removed.nix { inherit self pkgs inputs; }
         // import ./tests/ide.nix { inherit self pkgs inputs; }
         # `bench ui`: the menu's spec, the store's plugin and the TUI headless.
         // import ./tests/tui.nix { inherit self pkgs inputs; }
@@ -537,7 +537,7 @@
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
         // import ./tests/reconcile-apps.nix { inherit pkgs checks; }
-        # `bench provision` and its alias provision-site: the site and its apps, over stubs.
+        # `bench provision`: the site and its apps, over stubs.
         // import ./tests/provision.nix { inherit pkgs checks; }
         # The asset-shadow reassert check (issue #32, part 2): the
         # assets.json invariant and its reassert hooks, standalone.

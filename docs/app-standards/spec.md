@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-24
+updated: 2026-10-28
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -1706,7 +1706,7 @@ frappe-init --app   [--standards <profile>] …                      (the existi
 - **Bootstrap** (an app with no flake, or one that locks frappe-nix `main`), from outside any dev shell:
 
   ```
-  nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --frappe-version version-16
+  nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --version version-16
   ```
 
   with `--standards <profile>` added the first time. This is the single documented entry point for an adoption PR (Avunu fleet: PR A). It needs only `nix` and `git`. `release-1` exists from `v1.0.0` on, so migrations start after N6 tags it (S32).
@@ -2110,7 +2110,7 @@ The nightly script (N4, `py/frappe_nix_tools/frappe_nix_tools/data/ci/nightly.sh
 ```bash
 set -uo pipefail
 rc=0
-export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-${FRAPPE_TEST_ADMIN_PASSWORD:-admin}}"
+export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-admin}"
 export FRAPPE_NIX_ARTIFACT_DIR="$PWD/.dev-dist/nightly"; mkdir -p "$FRAPPE_NIX_ARTIFACT_DIR"
 frappe-test --ci --keep-up || rc=$?
 bench build || rc=1
@@ -2566,7 +2566,7 @@ frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
 
 - `FRAPPE_NIX_CI`;
 - `GITHUB_STEP_SUMMARY`;
-- `FRAPPE_NIX_TEST_ADMIN_PASSWORD` (default `admin`; `FRAPPE_TEST_ADMIN_PASSWORD`, its name before, is read with a warning through 1.x).
+- `FRAPPE_NIX_TEST_ADMIN_PASSWORD` (default `admin`; `FRAPPE_TEST_ADMIN_PASSWORD`, its name before, was read with a warning through 1.x and is not read since 2.0.0).
 
 **Defaults.**
 
@@ -3300,7 +3300,7 @@ Each PR's own CI MUST prove these. A "nix check" is under `tests/standards/` and
 **N3: scaffold**
 - **[1.2] Default app mode unchanged without opt-in** (nix check `standards-optin`):
   - `templates/app/` is byte-identical to frappe-nix `main` at 9e63c96 (`flake.nix`, `.envrc`, `.gitignore`);
-  - `frappe-init --app --frappe-version version-16` in a fixture app without `[tool.frappe-nix]` writes exactly `flake.nix`, `.envrc` and `.gitignore`, byte-identical to what `main`'s `frappe-init` writes for the same app, and leaves `pyproject.toml` untouched;
+  - `frappe-init --app --version version-16` in a fixture app without `[tool.frappe-nix]` writes exactly `flake.nix`, `.envrc` and `.gitignore`, byte-identical to what `main`'s `frappe-init` writes for the same app, and leaves `pyproject.toml` untouched;
   - `frappe-init --sync` and `--check` on that app exit 2 with the opt-in hint and write nothing (`git status --porcelain` empty).
 - **[1.2] `minimal` renders nothing extra:** `frappe-init --sync --standards minimal` on the same app (offline, Appendix I) changes exactly `flake.nix`, `.envrc`, the `.gitignore` block and `pyproject.toml` (the new `[tool.frappe-nix]` table, two keys plus `schema`; no other key of `pyproject.toml` changes), plus `flake.lock`; `--check` then exits 0. The manifest's live entries for `minimal` are exactly the three `dev-shell` paths (plus node-lock seeds when siblings exist).
 - **[1.2] Toggling a module off removes its files** (nix check `standards-toggle`), on a fixture synced with `recommended`:
@@ -3358,7 +3358,7 @@ Each PR's own CI MUST prove these. A "nix check" is under `tests/standards/` and
   - `tsc --build` passes against the published `frappe-types` 16.5.0 (on npm since 2026-10-07);
   - `nix flake lock && nix eval .#packages.x86_64-linux.default.drvPath` succeeds;
   - `frappe-init --check` on a read-only clone of carbon_frappe (which has no `[tool.frappe-nix]` at its pinned commit) exits 2 with the opt-in hint and no crash; with `--standards` given through a temporary copy that adds `[tool.frappe-nix] profile = "recommended"`, it reports drift and no crash.
-  - **Bootstrap:** on a copy of the fixture with no `flake.nix` and no `flake.lock` (the postgrid and jwt_auth shape), and on one whose lock pins frappe-nix `main` (the carbon, taskview and timeclock shape), one `frappe-init --sync --standards recommended --frappe-version version-16` run with `FRAPPE_NIX_URL_OVERRIDE=path:$GITHUB_WORKSPACE FRAPPE_NIX_ALLOW_SKEW=1` and **without yarn or uv on PATH** leaves a tree on which `--check` exits 0 immediately: phase A locked, phase B re-entered the dev shell, `yarn.lock` and `tools/uv.lock` exist.
+  - **Bootstrap:** on a copy of the fixture with no `flake.nix` and no `flake.lock` (the postgrid and jwt_auth shape), and on one whose lock pins frappe-nix `main` (the carbon, taskview and timeclock shape), one `frappe-init --sync --standards recommended --version version-16` run with `FRAPPE_NIX_URL_OVERRIDE=path:$GITHUB_WORKSPACE FRAPPE_NIX_ALLOW_SKEW=1` and **without yarn or uv on PATH** leaves a tree on which `--check` exits 0 immediately: phase A locked, phase B re-entered the dev shell, `yarn.lock` and `tools/uv.lock` exist.
   - **No-Nix install:** `uv tool install "frappe-nix-tools @ git+file://…#subdirectory=py/frappe_nix_tools"` in a job without the frappe-nix checkout on disk, then `frappe-nix sync --check` on the rendered fixture, exits 0 (`FRAPPE_NIX_ALLOW_SKEW=1`).
 - **Nix check:** with the erpnext and hrms siblings, node-lock seeding writes `nix/node-locks/{frappe/ui,erpnext/banking,hrms/frontend,hrms/roster}` into an empty fixture and leaves existing ones alone.
 
@@ -4283,7 +4283,7 @@ The implementing PRs record their deviations from the spec here, one row each, a
 | N3 | §2.6 | The opted-in `.gitignore` block also ignores `/result-*`. | `nix build` of several outputs leaves `result-1`, `result-2`, …. |
 | N3 | §3.7 | `--check` compares the running frappe-nix-tools with the lock through `--expect-rev` and the caller workflows' `# v<version>` comments only. | A package built from a source tree does not know its commit, and `--check` runs no `nix` to read the locked `version.txt`. |
 | N3 | §3.1 | A manifest entry may also carry `handler`, `command`, `phase` and `header_note`; `module` may be a list (any of them); a fragment may carry `floors` by kind (`npm-js`, `npm-ts`, `npm-frappe-types`, `npm-scss`, `uv`). A retire rule is `{paths, rule, module, with?, when?, contains?, except?, unmanaged?, only_section?, deps_in_project?}`, `contains` being regular expressions as in a profile's `[[retire]]`. | The merge and block strategies need per-file rules; the floors are per module; a retire rule needs its function's module and the ones it acts with. |
-| N3 | §3.3 step 3, S32 | Before `release-1` exists, a sync that would lock it (the default URL, not a `dev-shell.frappe-nix-url`) refuses up front (exit 3, nothing written). Hidden `frappe-nix sync --write --phase preflight`, which `frappe-init --app` runs on an app that opts in or has opted in (under `--dry-run` too) before it writes anything, builds phase A's plan with the same flags and refuses what phase A would: an invalid table, a `--standards` or `--frappe-version` the table contradicts (exit 2; `--frappe-version` is otherwise ignored once the table exists, so it is refused rather than shown in the plan and dropped), an unknown profile, and the missing release branch of the URL phase A would lock (so a `dev-shell.frappe-nix-url` passes). Without `--frappe-version`, `frappe-init --app` on an app that opted in takes `frappe-major` from its table instead of asking. | Otherwise `nix flake lock` fails halfway with a GitHub 422 and a half-staged tree, and an invalid configuration left templates/app's files written and staged. |
+| N3 | §3.3 step 3, S32 | Before `release-1` exists, a sync that would lock it (the default URL, not a `dev-shell.frappe-nix-url`) refuses up front (exit 3, nothing written). Hidden `frappe-nix sync --write --phase preflight`, which `frappe-init --app` runs on an app that opts in or has opted in (under `--dry-run` too) before it writes anything, builds phase A's plan with the same flags and refuses what phase A would: an invalid table, a `--standards` or `--frappe-version` the table contradicts (exit 2; `--frappe-version` is otherwise ignored once the table exists, so it is refused rather than shown in the plan and dropped), an unknown profile, and the missing release branch of the URL phase A would lock (so a `dev-shell.frappe-nix-url` passes). Without `--version`, `frappe-init --app` on an app that opted in takes `frappe-major` from its table instead of asking. | Otherwise `nix flake lock` fails halfway with a GitHub 422 and a half-staged tree, and an invalid configuration left templates/app's files written and staged. |
 | N3 | §3.3 step 5 | "Turns a module on" means on now and off in `HEAD`'s committed configuration (or no table there): the `run frappe-nix repo doctor` notice is printed once, on that run, like the notices of step 6. It is printed before N4 ships `repo doctor`. | The configuration is what `HEAD` committed and what is being written; a sync run after the change is committed has nothing to compare with, as for the retraction notices. |
 | N3 | §3.3 step 1 | `frappe-nix sync --site <name>` sets `[tool.frappe-nix] site` when `--standards` creates the table; `frappe-init --app --site` passes it through, and only a `--site` the user gave: without one, an existing flake's `defaultSite` is kept, as under `--sync`. | The old template substituted the site; the managed flake renders `site`. |
 | N3 | §2.12, §2.14 | `[tool.test_utils.static-analysis] whitelist` (module `test-utils`) must contain `frappe.*` and each sibling's `<name>.*` (merged: app entries are kept). | prek runs outside a bench, so static_analysis has no frappe sources. |

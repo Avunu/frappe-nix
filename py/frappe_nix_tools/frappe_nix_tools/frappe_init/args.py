@@ -13,7 +13,8 @@ documented ones (docs/reference/scaffolder.md) and neither parser can say them:
 
 ``--frappe-version`` and ``--site`` are the names ``--version`` and
 ``--default-site`` had before python-devops-nix docs/conventions.md (Scaffolder: version flag;
-Identity options). They are still read, with a warning, through 1.x, until frappe-nix 2.0.0, and are not in the help.
+Identity options). Read, with a warning, through 1.x, they are usage errors that name the
+new flag since frappe-nix 2.0.0.
 """
 
 from dataclasses import dataclass, field
@@ -73,18 +74,16 @@ With a terminal and no flags you are prompted for what is missing.
 
 DEFAULT_COMMIT_MSG = "chore: migrate bench to frappe-nix"
 
-#: The old name of a flag → its name now (python-devops-nix docs/conventions.md,
-#: Scaffolder).
-RENAMED = {"--frappe-version": "--version", "--site": "--default-site"}
+#: A flag removed in frappe-nix 2.0.0 → its name now (python-devops-nix
+#: docs/conventions.md, Scaffolder).
+REMOVED = {"--frappe-version": "--version", "--site": "--default-site"}
 
 #: Flags that take a value, as `--flag <v>` or `--flag=<v>`, and the field each sets.
 VALUED = {
 	"--version": "version",
-	"--frappe-version": "version",
 	"--apps": "apps_csv",
 	"--name": "name",
 	"--default-site": "site",
-	"--site": "site",
 	"--vendor": "force_vendor",
 	"--legacy-apps": "legacy_apps",
 	"--standards": "standards",
@@ -152,8 +151,6 @@ class InitArgs:
 	# The first app standards flag on the line, for refusing it outside app mode.
 	app_flag: str = ""
 	help: bool = False
-	# Old flag names that were used, for the warning (RENAMED).
-	renamed: list[str] = field(default_factory=list)
 
 
 def parse_args(argv: list[str]) -> InitArgs:
@@ -171,6 +168,10 @@ def parse_args(argv: list[str]) -> InitArgs:
 		# A value flag at the end of the line is a usage error.
 		if not eq and (word in VALUED or word in SYNC_VALUED) and not words:
 			raise UsageError(f"{word} needs a value", usage_code, show_usage=False)
+		if flag in REMOVED:
+			raise UsageError(
+				f"{flag} was removed in frappe-nix 2.0.0: use {REMOVED[flag]}", usage_code, show_usage=False
+			)
 		if flag in CHECK_ONLY and not has_action:
 			raise UsageError(f"unknown flag: {word}", 1)
 		if flag in APP_FLAGS and not args.app_flag:
@@ -178,8 +179,6 @@ def parse_args(argv: list[str]) -> InitArgs:
 		if flag in VALUED:
 			value = inline if eq else words.pop(0)
 			setattr(args, VALUED[flag], value)
-			if flag in RENAMED and flag not in args.renamed:
-				args.renamed.append(flag)
 		elif flag in SYNC_VALUED:
 			args.sync_args.extend([word] if eq else [word, words.pop(0)])
 		elif word == "--init-listing":

@@ -15,8 +15,9 @@ name: release
 #                   inputs: `lint` and `flake`, no VM tests), pr-policy.yml and docs.yml (the
 #                   main ruleset's required `build / Check`) on the release PR, each only
 #                   while its check is absent on the PR's head;
-#   fast-forward    moves release-<major> (release-1 for every v1.* tag) to the new tag by a
-#                   REST PATCH with force=false, or creates it on a major's first release, and
+#   fast-forward    moves release-<major> (release-1 for v1.* tags, release-2 for v2.*) to the
+#                   new tag by a REST PATCH with force=false, or creates it on a major's first
+#                   release, which leaves the previous major's branch at its last release, and
 #                   fails unless it then equals the tag. The release-* ruleset
 #                   (repo-policy/self/rulesets/release.json) lets only GitHub Actions move it.
 #

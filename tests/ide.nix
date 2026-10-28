@@ -66,7 +66,7 @@ let
   # import-from-derivation, which `nix flake check --no-build` refuses.
   pyrightOf = config: config.packages.pyrightConfig.value;
   # Not lib.hasInfix: that is builtins.match ".*X.*", which overflows the C
-  # stack on a long enterShell (tests/renames.nix).
+  # stack on a long enterShell (tests/removed.nix).
   contains = needle: haystack: builtins.replaceStrings [ needle ] [ "" ] haystack != haystack;
   benchRoot = (shell bench).env.FRAPPE_BENCH_ROOT;
   hasServer = config: lib.elem pkgs.basedpyright (shell config).packages;

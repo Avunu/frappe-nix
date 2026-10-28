@@ -82,12 +82,18 @@ class TestArgs(unittest.TestCase):
 			(a.mode, a.assume_yes, a.version, a.name, a.site, a.target),
 			("migrate", True, "version-15", "acme", "a.local", "dir"),
 		)
-		self.assertEqual(a.renamed, [])
 
-	def test_renamed_flags_are_read_and_recorded(self):
-		a = parse_args(["--frappe-version=develop", "--site", "s.local", "--frappe-version", "version-16"])
-		self.assertEqual((a.version, a.site), ("version-16", "s.local"))
-		self.assertEqual(a.renamed, ["--frappe-version", "--site"])
+	def test_the_1x_flags_are_usage_errors_naming_the_new_ones(self):
+		for argv, new, code in (
+			(["--frappe-version=develop"], "--version", 1),
+			(["--site", "s.local"], "--default-site", 1),
+			(["--check", "--frappe-version", "version-16"], "--version", 2),
+		):
+			with self.subTest(argv=argv):
+				with self.assertRaises(fargs.UsageError) as caught:
+					parse_args(argv)
+				self.assertEqual(caught.exception.code, code)
+				self.assertIn(f"removed in frappe-nix 2.0.0: use {new}", str(caught.exception))
 
 	def test_commit_takes_its_message_only_after_an_equals_sign(self):
 		a = parse_args(["--commit", "dir"])
@@ -539,10 +545,9 @@ class TestMain(unittest.TestCase):
 		self.assertIn("missing key(s)", err)
 
 	def test_scaffold_dry_run_needs_no_writes(self):
-		code, out, err = self.run_main("--dry-run", "--frappe-version", "version-15", "new")
+		code, out, err = self.run_main("--dry-run", "--version", "version-15", "new")
 		self.assertEqual(code, 0, err)
 		self.assertIn("scaffold bench 'new' (version-15 → python 3.12 / node 20) in new", out)
-		self.assertIn("--frappe-version is now --version", err)
 
 
 if __name__ == "__main__":

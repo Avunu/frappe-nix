@@ -31,11 +31,10 @@ from frappe_nix_tools.restore.config import ConfigError, RestoreConfig, load
 
 PREFIX = "bench restore"
 
-#: The override for an unguarded restore, and the name it had before
-#: (python-devops-nix docs/conventions.md, Tool-owned variables), read with a
-#: warning through 1.x, until frappe-nix 2.0.0.
+#: The override for an unguarded restore. FRAPPE_RESTORE_ALLOW_UNGUARDED, its
+#: name before (python-devops-nix docs/conventions.md, Tool-owned variables), is
+#: not read since frappe-nix 2.0.0.
 ALLOW_UNGUARDED = "FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"
-ALLOW_UNGUARDED_LEGACY = "FRAPPE_RESTORE_ALLOW_UNGUARDED"
 
 #: What neutralising switches off in the restored database. The scheduler's
 #: own switch (System Settings, which `bench disable-scheduler` sets), and every
@@ -114,15 +113,7 @@ def site_flag(site: str) -> list[str]:
 
 
 def unguarded_allowed() -> bool:
-	if os.environ.get(ALLOW_UNGUARDED):
-		return os.environ[ALLOW_UNGUARDED] == "1"
-	if os.environ.get(ALLOW_UNGUARDED_LEGACY):
-		print(
-			f"frappe-nix: {ALLOW_UNGUARDED_LEGACY} is deprecated; set {ALLOW_UNGUARDED} instead.",
-			file=sys.stderr,
-		)
-		return os.environ[ALLOW_UNGUARDED_LEGACY] == "1"
-	return False
+	return os.environ.get(ALLOW_UNGUARDED) == "1"
 
 
 def require_devguard(cfg: RestoreConfig) -> None:
@@ -346,9 +337,7 @@ def restore_fetched(args: RestoreArgs, cfg: RestoreConfig, site: str) -> None:
 		fetch.append("--private-files")
 	if args.no_cache:
 		fetch.append("--no-cache")
-	if not env.get("FRAPPE_NIX_BACKUP_CACHE") and not env.get("FRAPPE_BACKUP_CACHE"):
-		# The legacy FRAPPE_BACKUP_CACHE is still honoured, by the fetch command
-		# itself, through 1.x, until frappe-nix 2.0.0.
+	if not env.get("FRAPPE_NIX_BACKUP_CACHE"):
 		env["FRAPPE_NIX_BACKUP_CACHE"] = os.path.join(
 			os.environ.get("DEVENV_STATE", ".devenv/state"), "frappe-nix", "restore"
 		)
