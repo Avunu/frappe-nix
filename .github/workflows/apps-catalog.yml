@@ -1,0 +1,83 @@
+name: apps-catalog
+
+# The weekly refresh of py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json, the apps
+# `frappe ui`'s store offers (frappe_nix_tools.apps_catalog): the marketplace registry's
+# listings and releases, the frappe organisation's unlisted apps, and every app's release
+# branches. A change is a pull request on standards/apps-catalog, with check.yml and
+# pr-policy.yml dispatched on it (a pull request opened with the workflow token starts no
+# workflow of its own).
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  sync:
+    runs-on: ${{ fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 30
+    permissions:
+      contents: write # push standards/apps-catalog
+      pull-requests: write # open its PR
+      actions: write # dispatch check.yml and pr-policy.yml on it
+    steps:
+      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
+      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
+      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
+      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir and workspace
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+      - name: Install frappe-nix-tools from this checkout
+        run: uv tool install --python 3.14 "$GITHUB_WORKSPACE/py/frappe_nix_tools"
+
+      - name: Sync the catalog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: frappe-nix apps-catalog sync --out py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json
+
+      - name: Commit, push and open the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The date line alone is no change.
+          if git diff --quiet -I '"generated":' -- py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json; then
+            echo "The catalog is current."
+            exit 0
+          fi
+          branch=standards/apps-catalog
+          git switch -c "$branch"
+          git add py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "chore(apps): refresh the apps catalog"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
+          url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+          if [ -z "$url" ]; then
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
+              --title "chore(apps): refresh the apps catalog" \
+              --body "The weekly \`frappe-nix apps-catalog sync\`: the apps \`frappe ui\`'s store offers, and their release branches."
+          fi
+          gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
