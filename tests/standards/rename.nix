@@ -31,6 +31,7 @@
   checks,
   lib,
   self,
+  inputs,
   frappeNixTools,
   ...
 }:
@@ -160,6 +161,7 @@ let
     (import ../../lib/scripts.nix (
       {
         inherit lib pkgs;
+        base = inputs.python-devops-nix.lib;
         appsWithNode = [ ];
         pythonBin = "${stubEnv}/bin/python";
         benchBin = "${stubEnv}/bin/bench";

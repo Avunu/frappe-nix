@@ -14,7 +14,8 @@
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
   shellTools = import ../lib/shell-tools.nix {
     inherit pkgs;
     base = python-devops-nix.lib;
@@ -22,7 +23,7 @@ let
 
   rendered =
     (import ../lib/scripts.nix {
-      inherit lib pkgs;
+      inherit lib pkgs base;
       appsWithNode = [ ];
       benchBin = "bench";
       benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };

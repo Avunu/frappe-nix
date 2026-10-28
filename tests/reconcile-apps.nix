@@ -5,15 +5,20 @@
 # inspection is the point: devenv never shellchecks a `scripts.<n>.exec`
 # body, so without this it would ship unlinted and unexercised, same as
 # tests/bench-restore.nix.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   render =
     (import ../lib/scripts.nix {
-      inherit lib pkgs;
+      inherit lib pkgs base;
       appsWithNode = [ ];
       benchBin = "bench";
       # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).

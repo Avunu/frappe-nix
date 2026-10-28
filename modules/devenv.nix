@@ -881,6 +881,7 @@ in
                   config.frappe-nix.app.enable
                   && (import ../lib/standards/shell.nix {
                     inherit pkgs;
+                    inherit (inputs) python-devops-nix;
                     pyproject = config.frappe-nix.app.src + "/pyproject.toml";
                   }).optedIn;
                 saltApplies = config.frappe-nix.app.enable;
@@ -2453,6 +2454,7 @@ in
 
         scripts = import ../lib/scripts.nix {
           inherit lib pkgs;
+          base = inputs.python-devops-nix.lib;
           inherit (benchInfra) appsWithNode;
           benchBin = "${pythonEnvs.devPythonEnv}/bin/bench";
           secrets = secretsTools;
@@ -2520,7 +2522,10 @@ in
 
         # The app standards outputs; here for frappe-nix-tools, the package the
         # Python bench commands ship in.
-        standardsOutputs = import ../lib/standards/outputs.nix { inherit pkgs; };
+        standardsOutputs = import ../lib/standards/outputs.nix {
+          inherit pkgs;
+          base = inputs.python-devops-nix.lib;
+        };
 
         # The object-store half of `bench restore`: python-devops-nix's backup
         # fetch layer with frappe-nix's layout. See lib/backup-fetch.nix.

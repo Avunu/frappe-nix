@@ -8,14 +8,19 @@
 # py/frappe_nix_tools/frappe_nix_tools/apps/provision.py) with the
 # configuration lib/scripts.nix generates: `bench provision` from the umbrella
 # wrapper's dispatch, provision-site from a shim that says it is deprecated.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   scripts = import ../lib/scripts.nix {
-    inherit lib pkgs;
+    inherit lib pkgs base;
     appsWithNode = [ ];
     benchBin = "bench";
     benchCli = import ../lib/bench-cli.nix { inherit pkgs frappeNixTools; };

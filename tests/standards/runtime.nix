@@ -495,6 +495,7 @@ let
   frappeTest =
     (import ../../lib/scripts.d/frappe-test.nix {
       inherit lib pkgs;
+      base = inputs.python-devops-nix.lib;
       appMode = true;
     }).frappe-test.exec;
 in

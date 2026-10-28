@@ -5,7 +5,11 @@
 # Rendered rather than read, as tests/bench-restore.nix does: devenv never
 # shellchecks a `scripts.<n>.exec` body, so without this the step in front of
 # every migrate would ship unlinted and unexercised.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
@@ -14,6 +18,7 @@ let
     offlineMigrate:
     import ../lib/scripts.nix {
       inherit lib pkgs offlineMigrate;
+      base = python-devops-nix.lib;
       appsWithNode = [ ];
       benchBin = "bench";
       pythonBin = "python-stub";

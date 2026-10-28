@@ -9,15 +9,17 @@
 # Python package's bin/, see tools/frappe-nix.nix); adding a tool is adding a
 # file, and neither flake.nix nor this loader changes. `toolsDir` is a parameter
 # only so that tests/standards/hookpoints.nix can point it at a fixture directory.
+# `base` is python-devops-nix's lib, for the package's rich (./package.nix).
 {
   pkgs,
+  base,
   toolsDir ? ./tools,
 }:
 
 let
   inherit (pkgs) lib;
 
-  frappeNixTools = pkgs.python314Packages.callPackage ./package.nix { };
+  frappeNixTools = pkgs.python314Packages.callPackage ./package.nix { inherit base; };
 
   toolFiles = lib.filterAttrs (name: type: type == "regular" && lib.hasSuffix ".nix" name) (
     builtins.readDir toolsDir
