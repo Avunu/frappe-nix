@@ -97,15 +97,13 @@ inputs.python-devops-nix.lib.checks.conventions (
       # frappe-runtime's own, as Frappe's are.
       "FRAPPE_SERVE_ASSETS"
       "FRAPPE_WEB_THREADS"
-      # The old names of FRAPPE_NIX_* variables, read with a warning until
-      # 2.0.0, which removes them (#182).
-      "FRAPPE_BACKUP_CACHE"
+      # 1.x names that 2.0.0 no longer reads (#212). The tests set them to
+      # show that nothing reads them, and backup-fetch reads
+      # FRAPPE_BACKUP_MC only to refuse it.
       "FRAPPE_BACKUP_MC"
       "FRAPPE_BACKUP_SOURCE"
       "FRAPPE_BENCH_UPDATE_FORCE"
       "FRAPPE_LOG_LEVEL"
-      "FRAPPE_OFFLINE_MIGRATE"
-      "FRAPPE_OFFLINE_MIGRATE_PT_OSC"
       "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD"
       "FRAPPE_REPLICA_DB_SOCKET"
       "FRAPPE_RESTORE_ALLOW_UNGUARDED"
@@ -114,12 +112,13 @@ inputs.python-devops-nix.lib.checks.conventions (
       # frappe-init's template keys (frappe_init/template.py), not variables.
       "FRAPPE_BRANCH"
       "FRAPPE_VERSION"
-      # frappe-nix's own names outside the rule, still to be renamed to
-      # FRAPPE_NIX_*, dropped or kept with a reason (each one then leaves
-      # this list): frappe_unixsock's off switch, two the modules set that
-      # Frappe 16 does not read, the dev shell's frappe checkout, two the
-      # nightly script exports to an app's suites, and selftest-assets'
-      # branch override.
+      # frappe-nix's own names outside the rule: frappe_unixsock's off
+      # switch, two the modules set that Frappe 16 does not read, the dev
+      # shell's and the typecheck gate's frappe checkout, two the nightly
+      # script exports to an app's suites, and selftest-assets' branch
+      # override. Sorting them is a follow-up: each is renamed to
+      # FRAPPE_NIX_*, dropped or kept with a reason, and then leaves this
+      # list.
       "FRAPPE_UNIXSOCK_ENABLED"
       "FRAPPE_ENV_TYPE"
       "FRAPPE_REDIS_SOCKETIO"
