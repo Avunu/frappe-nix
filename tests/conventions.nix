@@ -114,10 +114,11 @@ inputs.python-devops-nix.lib.checks.conventions (
       "FRAPPE_BRANCH"
       "FRAPPE_VERSION"
       # frappe-nix's own names outside the rule, still to be renamed to
-      # FRAPPE_NIX_* or kept with a reason (a follow-up of python-devops-nix#19):
-      # frappe_unixsock's off switch, two the modules set that Frappe 16 does
-      # not read, the dev shell's frappe checkout, two the nightly script
-      # exports to an app's suites, and selftest-assets' branch override.
+      # FRAPPE_NIX_*, dropped or kept with a reason (each one then leaves
+      # this list): frappe_unixsock's off switch, two the modules set that
+      # Frappe 16 does not read, the dev shell's frappe checkout, two the
+      # nightly script exports to an app's suites, and selftest-assets'
+      # branch override.
       "FRAPPE_UNIXSOCK_ENABLED"
       "FRAPPE_ENV_TYPE"
       "FRAPPE_REDIS_SOCKETIO"

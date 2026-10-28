@@ -108,7 +108,7 @@ TOML
 git -C "$BENCH/apps/erpnext" init -q -b version-16
 git -C "$BENCH/apps/erpnext" add -A
 git -C "$BENCH/apps/erpnext" commit -q -m init
-ERPNEXT_SHA="$(git -C "$BENCH/apps/erpnext" rev-parse HEAD)"
+erpnext_sha="$(git -C "$BENCH/apps/erpnext" rev-parse HEAD)"
 # hrms: detached HEAD, branch only known to .gitmodules.
 git -C "$BENCH/apps/hrms" init -q -b main
 git -C "$BENCH/apps/hrms" add -A
@@ -182,7 +182,7 @@ check_eq "unparsable hooks.py is []" '[]' "$(jqv -c '.brokenhooks.required')"
 check "the unparsable hooks.py is warned about" grep -q 'brokenhooks.*could not be parsed' "$ROOT/run1.err"
 
 echo "── provenance from disk ────────────────────────────────────────"
-check_eq "live checkout: commit is HEAD" "$ERPNEXT_SHA" "$(jqv '.erpnext.resolution.commit_hash')"
+check_eq "live checkout: commit is HEAD" "$erpnext_sha" "$(jqv '.erpnext.resolution.commit_hash')"
 check_eq "live checkout: branch from symbolic-ref" "version-16" "$(jqv '.erpnext.resolution.branch')"
 check_eq "live checkout: is_repo" "true" "$(jqv '.erpnext.is_repo')"
 check_eq "detached HEAD: commit still known" "$HRMS_SHA" "$(jqv '.hrms.resolution.commit_hash')"
@@ -238,7 +238,7 @@ EOF4
 run --seed "$ROOT/seed.json" > /dev/null 2>&1
 check_eq "seed fills what nothing else knows" '{"commit_hash":"0123456","branch":"seeded"}' "$(jqv -c '.legacy.resolution')"
 check_eq "seed makes it a repo" "true" "$(jqv '.legacy.is_repo')"
-check_eq "seed never outranks the live checkout" "$ERPNEXT_SHA" "$(jqv '.erpnext.resolution.commit_hash')"
+check_eq "seed never outranks the live checkout" "$erpnext_sha" "$(jqv '.erpnext.resolution.commit_hash')"
 check_eq "seed's version and idx are recomputed, not copied" "0.9.1 5" "$(jqv '.legacy | "\(.version) \(.idx)"')"
 check_eq "a string resolution in the seed is ignored" '{"commit_hash":null,"branch":null}' "$(jqv -c '.print_designer.resolution')"
 check_eq "a seed key for an unregistered app is dropped" "null" "$(jqv '.unregistered')"

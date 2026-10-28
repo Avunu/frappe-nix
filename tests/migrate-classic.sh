@@ -43,7 +43,7 @@ cp -a "$ROOT/fx/bench" "$ROOT/dry"
 
 cd "$ROOT/fx/bench"
 frappe_sha="$(git -C apps/frappe rev-parse HEAD)"
-ERPNEXT_SHA="$(git -C apps/erpnext rev-parse HEAD)"
+erpnext_sha="$(git -C apps/erpnext rev-parse HEAD)"
 
 echo "── migrating ────────────────────────────────────────────────"
 "$frappe_init" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run1.log" 2>&1 ||
@@ -60,7 +60,7 @@ check "flake.nix is a frappe-nix wrapper" grep -q 'frappe-nix.flakeModules.defau
 check_eq "apps/frappe gitlink == its HEAD" \
   "160000 $frappe_sha 0	apps/frappe" "$(git ls-files -s apps/frappe)"
 check_eq "apps/erpnext gitlink == its HEAD (was detached)" \
-  "160000 $ERPNEXT_SHA 0	apps/erpnext" "$(git ls-files -s apps/erpnext)"
+  "160000 $erpnext_sha 0	apps/erpnext" "$(git ls-files -s apps/erpnext)"
 
 # lib/scripts.nix's `bench-update --pull` skips any submodule with no branch.
 check_eq "apps/frappe records a branch" version-15 \
@@ -262,7 +262,7 @@ check_eq "apps.json versions come from the sources" \
   "15.42.0 15.30.0 15.10.0 0.0.1 1.0.0 0.1.0" "$(aj -r '[.[].version] | join(" ")')"
 check_eq "apps/frappe: commit is its HEAD" "$frappe_sha" "$(aj '.frappe.resolution.commit_hash')"
 check_eq "apps/frappe: branch" version-15 "$(aj '.frappe.resolution.branch')"
-check_eq "apps/erpnext: commit despite detached HEAD" "$ERPNEXT_SHA" "$(aj '.erpnext.resolution.commit_hash')"
+check_eq "apps/erpnext: commit despite detached HEAD" "$erpnext_sha" "$(aj '.erpnext.resolution.commit_hash')"
 check_eq "apps/erpnext: branch from the repaired .gitmodules" version-15 "$(aj '.erpnext.resolution.branch')"
 check_eq "apps/hrms: branch is the corrected one, not the stale one" version-15 "$(aj '.hrms.resolution.branch')"
 check_eq "apps/hrms: required_apps from hooks.py" '["frappe/erpnext"]' "$(aj -c '.hrms.required')"
