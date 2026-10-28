@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Offline integration test for the `bench restore` script.
 #
-# A directory tree stands in for the bucket (mc reads local paths identically)
+# A directory tree stands in for the bucket (the fetch layer reads a directory as it would the bucket)
 # and a stub `bench` records the arguments it was handed. Between them, the
 # whole flow is exercised — site bootstrap, key carrying, flag assembly,
 # post-restore checks — with no database, no Frappe and no network.
