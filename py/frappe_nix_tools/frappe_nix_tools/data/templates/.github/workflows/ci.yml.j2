@@ -38,7 +38,8 @@ jobs:
     name: ci
     permissions:
       contents: read
-      pull-requests: read
+{# test's own test-report job comments the frappe-test report on the pull request. #}
+      pull-requests: {{ "write" if gate == "test" else "read" }}
     uses: {{ uses("app-" ~ gate ~ ".yml") }}
     with:
       app: {{ app }}

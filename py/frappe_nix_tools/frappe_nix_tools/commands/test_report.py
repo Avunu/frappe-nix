@@ -51,6 +51,9 @@ VERDICTS = ("ok", "failed", "skipped", "error")
 # profiles (§8.5). frappe-test passes the resolved values.
 RATCHET_TARGET = 80.0
 RATCHET_MARGIN = 2.0
+# How many failed tests summary.md shows, and how many lines of each one's traceback.
+FAILURES_SHOWN = 20
+FAILURE_LINES = 40
 
 
 def fail_under(pyproject: Path) -> float | None:
@@ -207,6 +210,29 @@ def junit_counts(path: Path) -> tuple[dict | None, list[ET.Element]]:
 	return counts, suites
 
 
+def junit_failures(suites: list[ET.Element]) -> list[dict]:
+	"""Every test case that failed or errored: ``{test, kind, message, text}``, in file order."""
+	failed = []
+	for suite in suites:
+		for case in suite.iter("testcase"):
+			for kind in ("failure", "error"):
+				node = case.find(kind)
+				if node is None:
+					continue
+				name = case.get("name", "?")
+				classname = case.get("classname")
+				failed.append(
+					{
+						"test": f"{classname}.{name}" if classname else name,
+						"kind": kind,
+						"message": (node.get("message") or "").strip(),
+						"text": (node.text or "").strip(),
+					}
+				)
+				break
+	return failed
+
+
 def merge_junit(path: Path, suites: list[ET.Element]) -> None:
 	"""Rewrite a multi-document JUnit file as one ``<testsuites>`` document."""
 	root = ET.Element("testsuites")
@@ -303,9 +329,11 @@ def build_report(args: argparse.Namespace) -> tuple[dict, dict]:
 		}
 
 	tests = None
+	failures = []
 	if args.junit:
 		junit = Path(args.junit)
 		tests, suites = junit_counts(junit)
+		failures = junit_failures(suites)
 		if suites and junit.read_text().count("<?xml") > 1:
 			merge_junit(junit, suites)
 
@@ -329,7 +357,39 @@ def build_report(args: argparse.Namespace) -> tuple[dict, dict]:
 		"stages": stages,
 		"exit": code,
 	}
-	return report, {"testmap": testmap, "composition": composition}
+	return report, {"testmap": testmap, "composition": composition, "failures": failures}
+
+
+def _fence(text: str) -> str:
+	"""A code fence one backtick longer than the longest run of backticks in ``text``."""
+	longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+	return "`" * max(3, longest + 1)
+
+
+def failures_markdown(failures: list[dict]) -> str:
+	"""The failed tests, each with its message and the end of its traceback.
+
+	Bounded (FAILURES_SHOWN tests, FAILURE_LINES lines each), because summary.md is also
+	the body of the pull request comment, which GitHub caps at 65536 characters.
+	"""
+	lines = ["### Failed tests", ""]
+	for f in failures[:FAILURES_SHOWN]:
+		message = f["message"].splitlines()[0] if f["message"] else f["kind"]
+		if len(message) > 200:
+			message = message[:199] + "…"
+		message = message.replace("<", "&lt;").replace(">", "&gt;")
+		lines += [f"<details><summary><code>{f['test']}</code>: {message}</summary>", ""]
+		if f["text"]:
+			text = "\n".join(f["text"].splitlines()[-FAILURE_LINES:])
+			fence = _fence(text)
+			lines += [f"{fence}text", text, fence, ""]
+		lines += ["</details>", ""]
+	if len(failures) > FAILURES_SHOWN:
+		lines += [
+			f"And {len(failures) - FAILURES_SHOWN} more, in the JUnit file of the `test-report` artifact.",
+			"",
+		]
+	return "\n".join(lines)
 
 
 def summary_markdown(report: dict, raw: dict, shell_checks_log: Path | None) -> str:
@@ -345,6 +405,8 @@ def summary_markdown(report: dict, raw: dict, shell_checks_log: Path | None) -> 
 			f"Tests: {t['ran']} ran, {t['failures']} failure(s), {t['errors']} error(s), {t['skipped']} skipped.",
 			"",
 		]
+	if raw.get("failures"):
+		lines.append(failures_markdown(raw["failures"]))
 	cov = report["coverage"]
 	if cov:
 		lines += [
@@ -352,11 +414,13 @@ def summary_markdown(report: dict, raw: dict, shell_checks_log: Path | None) -> 
 			"",
 			f"Total **{cov['percent']}%**, `fail_under` {cov['fail_under'] if cov['fail_under'] is not None else 'unset'}.",
 			"",
+			"<details><summary>Per module</summary>",
+			"",
 			"| Module | Coverage |",
 			"|---|---|",
 		]
 		lines += [f"| `{path}` | {pct}% |" for path, pct in cov["modules"].items()]
-		lines.append("")
+		lines += ["", "</details>", ""]
 	if raw["testmap"]:
 		lines.append(testmap_markdown(raw["testmap"]))
 	if raw["composition"]:

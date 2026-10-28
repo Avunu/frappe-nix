@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-19
+updated: 2026-10-23
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -25,6 +25,8 @@ Each gate is one required check with a fixed name. The caller job that runs it i
 `pr-policy` has a caller of its own so that retitling a PR re-runs only that check. If `ci.yml` re-ran on `edited` and skipped `test`, the skipped run would replace an earlier failure, and GitHub counts a skipped check as passing.
 
 The shipped form is one reusable workflow per gate, each called from a job named `ci`. `selftest-ci.yml` asserts on every run that GitHub reports these jobs as `ci / lint`, `ci / typecheck` and `ci / marketplace`.
+
+`app-test.yml` also comments its report on the pull request, from a job of its own, `ci / test-report`, which is not a gate and is never required: one comment per app, edited on every run, holding frappe-test's `summary.md`. That is the verdict, the stage table, each failed test with the end of its traceback, and the coverage, total and per module. It is the only job in the gates with `pull-requests: write`, so the caller grants `test` that and every other gate `read`. A fork's pull request gets no comment, because its token is read-only.
 
 The required checks a ruleset lists are computed from the same set of gates (see [GitHub settings](github.md)), so a gate that is off is never required, and turning one on never renames another.
 

@@ -94,6 +94,10 @@ The `check` workflow runs on every pull request and every push to `main`. Its `f
 
 The `vm-tests` job then builds each NixOS VM test (a check with a `driver`) as its own matrix entry, on every pull request and push. A manual **Run workflow** runs them only with `vm-tests` ticked.
 
+When a job fails, the `report` job comments every job's result on the pull request, with each failed check and the end of its build log, and edits that comment once the checks pass.
+
+The `autofix` workflow runs `nix fmt` and the prek hooks over a pull request's branch and pushes what they rewrite as a `style:` commit, so a clone without `prek install` still gets a passing `lint`. A push made with the workflow's token starts no workflow, so it then dispatches `check` (with the VM tests), `pr-policy` and `Docs` on the branch. Pull before you push again. A fork's branch is not the workflow's to push to, so there the `lint` log has the diff.
+
 Dependabot keeps the flake inputs and the GitHub Actions current, and its pull requests merge automatically once the required checks pass. See `.github/dependabot.yml`.
 
 ## Building these pages
