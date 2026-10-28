@@ -16,14 +16,13 @@ actually matters here — a restore from a production dump, which carries
 Its settings are the shared ``jobs`` tree (python-devops-nix's docs/conventions.md,
 Job denylist): ``devguard.jobs.*``, ``FRAPPE_DEVGUARD_JOBS_*`` and
 ``FRAPPE_DEVGUARD_DISABLE=jobs``. Its log lines keep Frappe's word,
-``frappe_devguard[scheduler]``.
+``frappe_devguard[scheduler]``. The 1.x names (``FRAPPE_DEVGUARD_SCHEDULER_*``,
+``FRAPPE_DEVGUARD_DISABLE=scheduler``) are not read since frappe-nix 2.0.0.
 """
-
-import os
 
 from .._hook import on_import
 from .._patch import announce, require, warn
-from .._settings import env_name, settings
+from .._settings import settings
 
 #: The settings key, and the name FRAPPE_DEVGUARD_DISABLE takes.
 NAME = "jobs"
@@ -31,38 +30,11 @@ NAME = "jobs"
 #: What its log lines say: frappe_devguard[scheduler].
 LOG = "scheduler"
 
-#: FRAPPE_DEVGUARD_SCHEDULER_<old> -> FRAPPE_DEVGUARD_JOBS_<new>. Read, with a
-#: warning, through 1.x, until frappe-nix 2.0.0.
-_RENAMED = {
-	"enable": "enable",
-	"block_server_scripts": "block_server_scripts",
-	"blocked_jobs": "blocked_jobs",
-	"extra_blocked_jobs": "extra_blocked",
-}
-
 _INSTALLED = False
 
 
 def enabled():
 	return settings().guard_enabled(NAME)
-
-
-def _adopt_renamed():
-	"""Carry the pre-rename variables over to the jobs tree, with a warning.
-
-	Returns False if FRAPPE_DEVGUARD_DISABLE still names the guard ``scheduler``.
-	"""
-	for old_key, new_key in _RENAMED.items():
-		old, new = env_name(LOG, old_key), env_name(NAME, new_key)
-		value = os.environ.get(old)
-		if value is None:
-			continue
-		warn(LOG, f"{old} is deprecated; use {new}")
-		os.environ.setdefault(new, value)
-	if LOG in settings().disabled_guards:
-		warn(LOG, f"{env_name('disable')}={LOG} is deprecated; use {env_name('disable')}={NAME}")
-		return False
-	return True
 
 
 def blocked_jobs():
@@ -126,7 +98,5 @@ def install():
 	if _INSTALLED:
 		return
 	_INSTALLED = True
-	if not _adopt_renamed():
-		return
 
 	on_import("frappe.core.doctype.scheduled_job_type.scheduled_job_type", _patch_scheduled_job_type)

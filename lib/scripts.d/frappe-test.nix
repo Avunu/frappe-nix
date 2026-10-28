@@ -16,11 +16,12 @@
 {
   lib,
   pkgs,
+  base,
   appMode,
   ...
 }:
 let
-  inherit (import ../standards/outputs.nix { inherit pkgs; }) tools frappeNixTools;
+  inherit (import ../standards/outputs.nix { inherit pkgs base; }) tools frappeNixTools;
   python = frappeNixTools.pythonModule.withPackages (_: [ frappeNixTools ]);
   frappeTest = pkgs.writeShellApplication {
     name = "frappe-test";

@@ -48,30 +48,8 @@ def enabled():
 	return True
 
 
-#: The variables' names before the FRAPPE_NIX_* rule (python-devops-nix
-#: docs/conventions.md, Tool-owned variables), still read, with a warning, through 1.x,
-#: until frappe-nix 2.0.0.
-RENAMED = {
-	"FRAPPE_NIX_WEB_SOCKET": "FRAPPE_WEB_SOCKET",
-	"FRAPPE_NIX_REPLICA_DB_SOCKET": "FRAPPE_REPLICA_DB_SOCKET",
-}
-_warned = set()
-
-
 def warn(message):
 	sys.stderr.write(f"WARNING frappe_unixsock {message}\n")
-
-
-def getenv(name):
-	"""``name`` from the environment, else its old name (RENAMED) with a warning once."""
-	value = os.environ.get(name)
-	old = RENAMED.get(name)
-	if value is None and old is not None and old in os.environ:
-		if old not in _warned:
-			_warned.add(old)
-			warn(f"{old} is deprecated; set {name} instead (the old name goes in frappe-nix 2.0.0)")
-		value = os.environ[old]
-	return value
 
 
 def socket_path(name):
@@ -82,7 +60,7 @@ def socket_path(name):
 	"""
 	if not enabled():
 		return None
-	path = (getenv(name) or "").strip()
+	path = (os.environ.get(name) or "").strip()
 	if not path:
 		return None
 	if not path.startswith("/"):

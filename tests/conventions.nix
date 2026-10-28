@@ -26,12 +26,13 @@
 let
   inherit (pkgs) lib;
   inherit (pkgs.stdenv.hostPlatform) system;
+  base = inputs.python-devops-nix.lib;
 
   # The Python command `bench restore` execs (lib/scripts.nix, bench-restore),
   # without the shell's configuration, which `--help` does not read.
   benchCli = import ../lib/bench-cli.nix {
     inherit pkgs;
-    inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+    inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
   };
 
   # The perSystem options of a bench built with the flakeModule

@@ -236,13 +236,12 @@ class TestUnguarded(unittest.TestCase):
 		cfg = restore_config(devguard=False)
 		with mock.patch.dict(os.environ, {command.ALLOW_UNGUARDED: "1"}, clear=True):
 			command.require_devguard(cfg)
-		err = io.StringIO()
+		# The 1.x name is not read since frappe-nix 2.0.0.
 		with (
-			mock.patch.dict(os.environ, {command.ALLOW_UNGUARDED_LEGACY: "1"}, clear=True),
-			contextlib.redirect_stderr(err),
+			mock.patch.dict(os.environ, {"FRAPPE_RESTORE_ALLOW_UNGUARDED": "1"}, clear=True),
+			self.assertRaises(command.Abort),
 		):
 			command.require_devguard(cfg)
-		self.assertIn("deprecated", err.getvalue())
 		with (
 			mock.patch.dict(os.environ, {command.ALLOW_UNGUARDED: "0"}, clear=True),
 			self.assertRaises(command.Abort),

@@ -18,8 +18,10 @@ allowed_types = [
 	"deprecate",
 ]
 # A scope is optional; when there is one it names a part of the product. One list for
-# frappe-nix and odoo-nix (python-devops-nix docs/conventions.md, Commits): every scope
-# either repository has used, so a scope the other one coins is not refused here.
+# frappe-nix and odoo-nix, owned by python-devops-nix's committed.toml (docs/conventions.md,
+# Commits). Its shared-config check wants every scope that list has; frappe-nix may add
+# scopes only it uses. A scope both products use goes into python-devops-nix's list
+# first, and this list then adds it.
 # `deps` is Dependabot's and `main` is release-please's (`chore(main): release X.Y.Z`).
 # committed compares the text between the parentheses whole, so a commit that names two
 # areas (`fix(nixos,runtime): ...`) needs that pair listed as written.
@@ -41,6 +43,7 @@ allowed_scopes = [
 	"ci",
 	"cli",
 	"containers",
+	"conventions",
 	"deps",
 	"dev",
 	"dev_mailcatch",
@@ -79,11 +82,13 @@ allowed_scopes = [
 	"scripts",
 	"secrets",
 	"shell",
+	"sources",
 	"standards",
 	"submodules",
 	"sync",
 	"tests",
 	"tooling",
+	"tui",
 	"update",
 ]
 subject_length = 100

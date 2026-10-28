@@ -36,7 +36,13 @@ let
       inherit pkgs;
       product = "frappe-nix";
     };
-    inherit (import ../../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+    inherit
+      (import ../../lib/standards/outputs.nix {
+        inherit pkgs;
+        base = inputs.python-devops-nix.lib;
+      })
+      frappeNixTools
+      ;
   };
 
   areas = builtins.attrNames (

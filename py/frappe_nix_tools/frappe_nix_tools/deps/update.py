@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from frappe_nix_tools.apps import proc
 from frappe_nix_tools.apps.proc import Abort, fail, say, warn
+from frappe_nix_tools.deps.runtime_pin import runtime_at_pin
 
 if TYPE_CHECKING:
 	from frappe_nix_tools.bench_config import CliConfig
@@ -34,7 +35,9 @@ REGEN_LOCKS = ("yarn.lock", "package-lock.json")
 #: from this repository's runtime/, but its dependency ranges still come from
 #: uv.lock, frozen at whatever revision the bench first locked. An app bump past
 #: those ranges then fails to resolve against a runtime that already accepts it.
-#: uv ignores the flag in a bench without frappe-runtime.
+#: uv ignores the flag in a bench without frappe-runtime. Each caller runs it
+#: inside ``runtime_pin.runtime_at_pin``, so the refresh lands on the revision
+#: flake.lock pins rather than on frappe-nix's branch head.
 UV_LOCK = ("uv", "lock", "--upgrade-package", "frappe-runtime")
 
 BENCH_HELP = """\
@@ -212,17 +215,9 @@ def clear_lock_obstacles(cwd: str) -> None:
 
 
 def _force() -> bool:
-	"""FRAPPE_NIX_BENCH_UPDATE_FORCE, or its old name with a warning (until
-	frappe-nix 2.0.0)."""
-	if os.environ.get("FRAPPE_NIX_BENCH_UPDATE_FORCE"):
-		return True
-	if os.environ.get("FRAPPE_BENCH_UPDATE_FORCE"):
-		warn(
-			"     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE"
-			" instead (the old name goes in frappe-nix 2.0.0)"
-		)
-		return True
-	return False
+	"""FRAPPE_NIX_BENCH_UPDATE_FORCE (FRAPPE_BENCH_UPDATE_FORCE, its 1.x name, is not
+	read since frappe-nix 2.0.0)."""
+	return bool(os.environ.get("FRAPPE_NIX_BENCH_UPDATE_FORCE"))
 
 
 def _combined(cmd: Sequence[str], *, cwd: str) -> tuple[int, str]:
@@ -464,7 +459,9 @@ def pull(config: "CliConfig") -> list[str]:
 	moved = [Path(p).parent.name for p, h in after.items() if before.get(p, "none") != h]
 	if moved:
 		say(f"── Re-locking the Python workspace (pyproject.toml changed: {' '.join(moved)}) ──")
-		if proc.attempt(UV_LOCK) != 0:
+		with runtime_at_pin():
+			status = proc.attempt(UV_LOCK)
+		if status != 0:
 			fail(
 				"  ⚠  uv lock failed — the dev shell will not evaluate until this resolves.",
 				"     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;",

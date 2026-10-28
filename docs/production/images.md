@@ -3,7 +3,7 @@ title: Build production images
 description: How frappe-nix turns a bench into an immutable build, which OCI images come out of it, and how to build, load, push and run them.
 order: 1
 tags: [oci, containers, builtbench, docker]
-updated: 2026-10-21
+updated: 2026-10-28
 ---
 
 This page explains how frappe-nix turns a Frappe bench into an immutable build, which container images come out of it, and how to build and run them. Use it when you want a Frappe deployment where nothing is installed or compiled at container start.
@@ -42,7 +42,7 @@ A lock that does not resolve offline, and the two ways around it, are covered in
 
 ### Compiling assets
 
-`builtBench` copies the unbuilt bench tree into the build directory and runs `bench build --production` inside the Nix sandbox. It sets `ESBUILD_TARGET` from the `esbuildTarget` option, which defaults to `es2022`, and `NODE_OPTIONS=--max-old-space-size=4096`. The finished tree, including nested frontend output and rewritten asset links, becomes the package.
+`builtBench` copies the unbuilt bench tree into the build directory and runs `bench build --production --force` inside the Nix sandbox. The build sets `ESBUILD_TARGET` from the `esbuildTarget` option, which defaults to `es2022`, and `NODE_OPTIONS=--max-old-space-size=4096`. `--force` builds frappe's own assets too, instead of first trying to download frappe's prebuilt ones: the sandbox has no network, and the download would find its release tag with git in `apps/frappe`, which is not a repository there. The finished tree, including nested frontend output and rewritten asset links, becomes the package.
 
 In a bench, the build also copies the bench root's `config/` directory into the package when it exists. That is how an nginx configuration reaches the nginx image, see below. [Asset builds](../development/assets.md) explains the esbuild preload that applies here too.
 
@@ -68,7 +68,7 @@ Each image is built with `dockerTools.buildLayeredImage`, tagged `latest`, and n
 | `container-nginx`   | `<BENCH_NAME>/nginx:latest`   | nginx plus the built bench. Listens on 80.                                                   |
 | `container-bench`   | `<BENCH_NAME>/bench:latest`   | The `bench` command for migrations and one-off tasks.                                        |
 
-Every image carries [OCI labels](#labels), the ones that serve HTTP have a [healthcheck](#healthchecks), and with `containers.nonRoot` they [run as a non-root user](#running-as-non-root).
+Every image carries [OCI labels](#labels), the ones that serve HTTP have a [healthcheck](#healthchecks), and they [run as a non-root user](#running-as-non-root).
 
 ### The split image set
 
@@ -90,13 +90,7 @@ Set `runtime.enable = false` and frappe-nix builds the classic split instead. Yo
 
 ### The old package names
 
-Before 1.2.0 the packages were named by role alone (`runtime`, `nginx`, `web`, …), and `container-bench` was `bench-cli`. The image names have not changed. The old package names still build the same images and print a warning:
-
-```text
-evaluation warning: frappe-nix: the package `runtime' has been renamed `container-runtime'. …
-```
-
-Move scripts and CI to `container-<role>`. The old names go in 2.0.0. `nix flake check` evaluates every package, so it prints the warning for each old name even when nothing uses it; set `containers.aliases = false` to drop them once you have moved.
+Before 1.2.0 the packages were named by role alone (`runtime`, `nginx`, `web`, …), and `container-bench` was `bench-cli`. The image names have not changed. Through 1.x the old package names built the same images with a warning, and `containers.aliases = false` dropped them. Both went in 2.0.0: build `container-<role>`, and remove `containers.aliases` from the flake, which is refused now. See [1.x to 2.0](../development/upgrading.md#1x-to-20).
 
 ## Building, loading and pushing
 
@@ -154,10 +148,10 @@ Every image except `nginx` and `socketio` starts through the same entrypoint. It
 
 ### Running as non-root
 
-The images run as root by default in 1.x, as they always have. Set `containers.nonRoot = true` and every image runs as `frappe`, uid 1000 and gid 1000, instead. That becomes the default in 2.0.0.
+Every image runs as `frappe`, uid 1000 and gid 1000 (`containers.nonRoot`, `true` by default since 2.0.0). Through 1.x the images ran as root unless you set it. To keep running as root for now:
 
 ```nix
-frappe-nix.containers.nonRoot = true;
+frappe-nix.containers.nonRoot = false;
 ```
 
 With it on, the image owns what that user writes: `/bench/sites`, `/bench/logs`, `/bench/config` (where the scheduler takes its lock) and the home directory `/home/frappe`, and in the nginx image also `/var/log/nginx`, `/var/cache/nginx` and `/tmp/nginx`. `/tmp` is writable by everyone.
@@ -167,7 +161,7 @@ With it on, the image owns what that user writes: `/bench/sites`, `/bench/logs`,
 - Secret files in `/secrets` must be readable by uid 1000.
 
 > [!IMPORTANT]
-> A sites volume that a root image wrote is owned by root, so a non-root image cannot write to it, and the entrypoint fails on `site_config.json`. Before you turn `nonRoot` on for an existing deployment, change the volume's owner once, with the image's own `chown`:
+> A sites volume that a root image wrote (a 1.x image, or one built with `nonRoot = false`) is owned by root, so a non-root image cannot write to it, and the entrypoint fails on `site_config.json`. Before the first start of a non-root image on an existing deployment, change the volume's owner once, with the image's own `chown`:
 >
 > ```bash
 > docker run --rm --user 0 --entrypoint chown \
@@ -193,7 +187,7 @@ The images that serve HTTP have a `HEALTHCHECK`. Docker and Podman run it every 
 
 Mount two paths:
 
-- `/bench/sites` is a persistent volume for site state (writable by uid 1000 with `containers.nonRoot`).
+- `/bench/sites` is a persistent volume for site state (writable by uid 1000, unless `containers.nonRoot = false`).
 - `/secrets` holds secret files, mounted read-only.
 
 At every start the entrypoint links `apps.txt`, `apps.json` and the compiled `assets` from the image into `/bench/sites`, so a new image always brings its own app registry and assets. `common_site_config.json` is yours, apart from the three Redis keys described under [Environment variables](#environment-variables).
@@ -273,7 +267,7 @@ docker run --rm \
   <BENCH_NAME>/bench:latest bench --site site1.example.com migrate
 ```
 
-frappe-bench's `bench` refuses to run as root, so this needs [`containers.nonRoot`](#running-as-non-root). Without it, call Frappe's own command line, which `bench` hands these commands to anyway: `python -m frappe.utils.bench_helper frappe --site site1.example.com migrate`. This is only about commands you run yourself: the split set's `scheduler` and `worker-*` images start that command line directly, so they run as root or not.
+frappe-bench's `bench` refuses to run as root, so this needs [`containers.nonRoot`](#running-as-non-root), the default. With `nonRoot = false`, call Frappe's own command line, which `bench` hands these commands to anyway: `python -m frappe.utils.bench_helper frappe --site site1.example.com migrate`. This is only about commands you run yourself: the split set's `scheduler` and `worker-*` images start that command line directly, so they run as root or not.
 
 ### The nginx image
 

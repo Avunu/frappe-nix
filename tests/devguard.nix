@@ -19,10 +19,11 @@
 #                        interpreters start with every .pth graft importing
 #                        cleanly (a graft built without its _hook.py fails
 #                        each interpreter start with "Error processing line").
-#   devguard-renames     the shared renames (devguard.mail.smtpPort, now mailpit.port; the
-#                        devguard.scheduler tree): the old names still set the
-#                        new options and the baked settings, and are listed for
-#                        the evaluation warning. At evaluation; nothing is built.
+#   devguard-removed     the names 1.x renamed and kept until 2.0.0
+#                        (devguard.mail.smtpPort, now mailpit.port; the
+#                        devguard.scheduler tree, now devguard.jobs): each is
+#                        refused, naming its replacement, and the shell does not
+#                        evaluate. At evaluation; nothing is built.
 #   devguard-test-relax  [tool.frappe-nix.tests] devguard-disable (profile.schema.json)
 #                        accepts every guard the devenv module's devguard tree has
 #                        except egress, and nothing else, so a guard added to the
@@ -102,7 +103,7 @@ let
         // extra;
       });
   bench = benchWith { };
-  renamed = benchWith {
+  removed = benchWith {
     devguard.mail.smtpPort = 2999;
     devguard.scheduler = {
       enable = false;
@@ -161,30 +162,29 @@ in
     done
   '';
 
-  devguard-renames = checks.eval "devguard-renames" {
+  devguard-removed = checks.eval "devguard-removed" {
     expected = {
-      port = 2999;
-      jobs = {
-        enable = false;
-        blockServerScripts = false;
-        extraBlocked = [ "myapp.tasks.push" ];
-      };
-      deprecated = [
-        "frappe-nix.devguard.mail.smtpPort"
-        "frappe-nix.devguard.scheduler.blockServerScripts"
-        "frappe-nix.devguard.scheduler.enable"
-        "frappe-nix.devguard.scheduler.extraBlockedJobs"
+      removed = [
+        {
+          option = "frappe-nix.devguard.mail.smtpPort";
+          namesReplacement = true;
+        }
+        {
+          option = "frappe-nix.devguard.scheduler";
+          namesReplacement = true;
+        }
       ];
+      evaluates = false;
       shellVariable = "1";
     };
     actual = {
-      inherit (renamed.frappe-nix.mailpit) port;
-      inherit (renamed.frappe-nix.devguard) jobs;
-      deprecated = lib.sort builtins.lessThan (
-        map (
-          message: builtins.head (builtins.match "The option `([^']*)'.*" message)
-        ) renamed.frappe-nix.deprecations
+      removed = lib.sort (a: b: a.option < b.option) (
+        map (message: {
+          option = builtins.head (builtins.match "The option `([^']*)'.*" message);
+          namesReplacement = lib.hasInfix "mailpit.port" message || lib.hasInfix "devguard.jobs." message;
+        }) removed.frappe-nix.removals
       );
+      evaluates = (builtins.tryEval removed.devenv.shells.default.env.FRAPPE_NIX_DEVGUARD).success;
       shellVariable = bench.devenv.shells.default.env.FRAPPE_NIX_DEVGUARD;
     };
   };
@@ -193,11 +193,11 @@ in
     let
       schema = lib.importJSON ../py/frappe_nix_tools/frappe_nix_tools/data/schema/profile.schema.json;
       relaxable = schema."$defs".modules.tests.properties.devguard-disable.items.enum;
-      # Every guard in the tree, less the switch for all of them and the alias
-      # tree the shared rename keeps until 2.0.0 (devguard.scheduler, now jobs).
+      # Every guard in the tree, less the switch for all of them and the
+      # removed 1.x tree (devguard.scheduler, now jobs), which has no value.
       guards = lib.attrNames (
         lib.filterAttrs (
-          name: value: builtins.isAttrs value && value ? enable && name != "scheduler"
+          name: value: name != "scheduler" && builtins.isAttrs value && value ? enable
         ) bench.frappe-nix.devguard
       );
     in

@@ -10,7 +10,8 @@
 # is resolved by the yarn that will install it.
 {
   pkgs,
-  frappeNixTools ? (import ./standards/outputs.nix { inherit pkgs; }).frappeNixTools,
+  # frappe-nix-tools (lib/standards/outputs.nix).
+  frappeNixTools,
 }:
 
 import ./py-tool.nix {

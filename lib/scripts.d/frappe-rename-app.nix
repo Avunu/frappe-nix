@@ -17,12 +17,13 @@
 {
   lib,
   pkgs,
+  base,
   pythonBin,
   ...
 }:
 let
   tool = ../rename/frappe_rename_app.py;
-  inherit (import ../standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  inherit (import ../standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
   # The interpreter frappe-nix-tools is built for, with it importable.
   codePython = frappeNixTools.pythonModule.withPackages (_: [ frappeNixTools ]);
 in

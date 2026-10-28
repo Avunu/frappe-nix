@@ -1,13 +1,13 @@
 # What services.frappe-nix takes from python-devops-nix's production pieces,
 # checked at evaluation:
 #
-#   * by default (hardening.enable = false, through 1.x) no unit carries any
-#     of the sandbox;
-#   * with hardening.enable, every unit the module defines runs under lib.nixos.hardening, writes only
+#   * by default (hardening.enable = true since 2.0.0) every unit the module
+#     defines runs under lib.nixos.hardening, writes only
 #     its site directory, and names the profile for what it runs: the Python
 #     units and migrate `jit` (Frappe starts Node for a Website Theme), plus
 #     `chromium` / `wkhtmltopdf` when those are on; socket.io `jit`; the
 #     scheduler and init none; init and the password sync only unix sockets;
+#   * with hardening.enable = false no unit carries any of the sandbox;
 #   * no unit it defines has a UMask (frappe-nix#83);
 #   * a host can relax one key on one unit without a conflict;
 #   * environmentFiles reaches the units that run Frappe code, and the root
@@ -58,8 +58,7 @@ let
           boot.isContainer = true;
           services.frappe-nix = lib.recursiveUpdate {
             enable = true;
-            # Opt-in through 1.x; `default` below leaves it off.
-            hardening.enable = true;
+            # hardening.enable is left to its default, true; `off` below turns it off.
             package = stubBench;
             redis.createLocally = true;
             sites.${site} = {
@@ -98,8 +97,8 @@ let
     };
   };
 
-  # The default: hardening.enable is false, and no unit carries any of it.
-  default = eval { hardening.enable = false; } { };
+  # hardening.enable = false: no unit carries any of it.
+  off = eval { hardening.enable = false; } { };
   hardeningKeys = lib.attrNames self.inputs.python-devops-nix.lib.nixos.hardening.baseline ++ [
     "RestrictAddressFamilies"
     "ReadWritePaths"
@@ -136,9 +135,9 @@ let
   cases = [
     # [ label expected actual ]
     [
-      "by default (hardening.enable = false) no frappe-* unit has a sandbox key"
+      "with hardening.enable = false no frappe-* unit has a sandbox key"
       ""
-      (withHardening default)
+      (withHardening off)
     ]
     [
       "every frappe-* unit is sandboxed (runtime topology)"

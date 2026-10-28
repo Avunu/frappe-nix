@@ -3,7 +3,7 @@ title: Getting started
 description: Scaffold a new Frappe bench with frappe-nix, start the development shell and create your first site.
 order: 2
 tags: [quick-start, devenv, bench]
-updated: 2026-10-21
+updated: 2026-10-28
 ---
 
 This page takes you from an empty directory to a running Frappe site. It uses the new-bench path. If you already have a bench or a single app, pick the matching mode in [Choose a mode](scaffolding/README.md) and come back for the shell steps.
@@ -69,7 +69,7 @@ bench provision
 bench provision '<ADMIN_PASSWORD>'
 ```
 
-`provision-site`, its name before frappe-nix 1.2, still works and says it is deprecated. It goes in frappe-nix 2.0.0.
+`provision-site` was its name before frappe-nix 1.2, and an alias through 1.x. It went in frappe-nix 2.0.0.
 
 If the command prompts for a MariaDB root password, leave it blank and press Enter, because the development MariaDB root has none.
 

@@ -31,6 +31,7 @@ from pathlib import Path
 from frappe_nix_tools.apps import proc
 from frappe_nix_tools.apps.proc import fail, say, warn
 from frappe_nix_tools.deps.config import RelockConfig
+from frappe_nix_tools.deps.runtime_pin import runtime_at_pin
 from frappe_nix_tools.deps.update import UV_LOCK
 
 NAME = "frappe-nix-relock"
@@ -145,7 +146,8 @@ def bench_mode(config: RelockConfig, args: Args) -> int:
 				]
 			)
 		say(f"Re-locking the Python workspace with {uv_version()}…")
-		proc.run([*UV_LOCK, *args.uv_args])
+		with runtime_at_pin():
+			proc.run([*UV_LOCK, *args.uv_args])
 		if config.build_deps_sync:
 			proc.run([config.build_deps_sync])
 	if args.locks:
@@ -209,7 +211,9 @@ def app_mode(config: RelockConfig, args: Args) -> int:
 			cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.environ.get("HOME", ""), ".cache")
 			os.environ.setdefault("UV_CACHE_DIR", os.path.join(cache, "uv"))
 			say(f"Re-locking the Python workspace with {uv_version()}…")
-			proc.run([*UV_LOCK, *args.uv_args], cwd=work)
+			# frappe-runtime at the frappe-nix revision this repository's flake.lock pins.
+			with runtime_at_pin(work, root):
+				proc.run([*UV_LOCK, *args.uv_args], cwd=work)
 			fresh = os.path.join(work, "uv.lock")
 			if os.path.isfile(lock) and _same(fresh, lock):
 				say(f"  {lock_rel} already current")

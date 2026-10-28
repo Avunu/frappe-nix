@@ -38,8 +38,9 @@
       inputs.flake-parts.follows = "flake-parts";
     };
 
-    # The pieces frappe-nix shares with odoo-nix: the secrets toolkit, the
-    # backup fetch layer and the repository checks
+    # The pieces frappe-nix shares with odoo-nix, as its lib: the dev shell's
+    # tools, the NixOS module's production pieces, the container image parts,
+    # the secrets toolkit, the backup fetch layer and the repository checks
     # (https://github.com/Avunu/python-devops-nix). Its own inputs are nixpkgs
     # and flake-parts, both followed, so it adds one node to the lock.
     python-devops-nix = {
@@ -101,7 +102,12 @@
         };
       # The app standards tools: packages.frappe-nix-tools, and one package and
       # app per lib/standards/tools/*.nix (`frappe-nix`, …).
-      standards = pkgs: import ./lib/standards/outputs.nix { inherit pkgs; };
+      standards =
+        pkgs:
+        import ./lib/standards/outputs.nix {
+          inherit pkgs;
+          base = inputs.python-devops-nix.lib;
+        };
       # python-devops-nix's development shell pieces, as the dev shell has
       # them (lib/shell-tools.nix).
       shellTools =
@@ -209,6 +215,7 @@
           # python-devops-nix's development shell pieces, as the dev shell has
           # them (lib/shell-tools.nix).
           tools = shellTools pkgs;
+          inherit (standards pkgs) frappeNixTools;
           grafts = import ./lib/grafts.nix {
             inherit pkgs;
             inherit (inputs) python-devops-nix;
@@ -278,7 +285,7 @@
           # leaves in the bench root's patches.txt.
           bench-patches = checks.script "bench-patches" { tools = [ pkgs.findutils ]; } ''
             bash ${./tests/bench-patches.sh} \
-              ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
+              ${import ./lib/bench-patches.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-bench-patches \
               2>&1 | tee "$out"
           '';
 
@@ -433,7 +440,7 @@
           # have outgrown its node_modules.
           node-modules = checks.script "node-modules" { tools = [ pkgs.findutils ]; } ''
             bash ${./tests/node-modules.sh} \
-              ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
+              ${import ./lib/node-modules.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-node-modules \
               2>&1 | tee "$out"
           '';
 
@@ -443,7 +450,7 @@
           # failed lock leaves both files exactly as they were.
           root-sync = checks.script "root-sync" { tools = [ pkgs.python3 ]; } ''
             bash ${./tests/root-sync.sh} \
-              ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
+              ${import ./lib/root-sync.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-root-sync \
               ${./templates/bench/pyproject.toml} \
               2>&1 | tee "$out"
           '';
@@ -463,7 +470,7 @@
               ''
                 export HOME="$PWD"
                 bash ${./tests/node-locks.sh} \
-                  ${import ./lib/node-locks.nix { inherit pkgs; }}/bin/frappe-nix-node-locks \
+                  ${import ./lib/node-locks.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-node-locks \
                   ${./tests/fixtures/node-targets/apps} \
                   2>&1 | tee "$out"
               '';
@@ -509,9 +516,9 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
-        # The renames shared with odoo-nix: each old option name still reaches
-        # the new one, and is listed for its deprecation warning.
-        // import ./tests/renames.nix { inherit self pkgs inputs; }
+        # The names 1.x renamed, shared with odoo-nix: each old option name is
+        # refused, naming the new one; and the development shell option tree.
+        // import ./tests/removed.nix { inherit self pkgs inputs; }
         // import ./tests/ide.nix { inherit self pkgs inputs; }
         # `bench ui`: the menu's spec, the store's plugin and the TUI headless.
         // import ./tests/tui.nix { inherit self pkgs inputs; }
@@ -521,7 +528,10 @@
         # The dev shell's runtime port leases: twenty benches at once on one
         # preferred port, kill -9, strict, and a port held outside frappe-nix.
         // import ./tests/port-lease.nix { inherit pkgs checks; }
-        // import ./tests/setup-requirements.nix { inherit pkgs checks; }
+        // import ./tests/setup-requirements.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The real mariadbd, started through the dev shell's wrapper the way
         # devenv starts it: argument order, and where its temp files go.
         // import ./tests/mariadbd-wrapper.nix { inherit pkgs checks; }
@@ -533,22 +543,40 @@
         }
         # `bench-migrate` and `bench-offline-migrate`: the step in front of the
         # migrate, over stubs.
-        // import ./tests/offline-migrate-scripts.nix { inherit pkgs checks; }
+        // import ./tests/offline-migrate-scripts.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
-        // import ./tests/reconcile-apps.nix { inherit pkgs checks; }
-        # `bench provision` and its alias provision-site: the site and its apps, over stubs.
-        // import ./tests/provision.nix { inherit pkgs checks; }
+        // import ./tests/reconcile-apps.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
+        # `bench provision`: the site and its apps, over stubs.
+        // import ./tests/provision.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The asset-shadow reassert check (issue #32, part 2): the
         # assets.json invariant and its reassert hooks, standalone.
         // import ./tests/assets-reassert.nix { inherit pkgs checks; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
-        // import ./tests/bench-update.nix { inherit pkgs checks; }
+        // import ./tests/bench-update.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `update-deps`: how it calls yarn in a bench (never writing a lock the
         # app's repository owns) and in app mode.
-        // import ./tests/update-deps.nix { inherit pkgs checks; }
+        // import ./tests/update-deps.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `nix run .#relock`, in a bench and in app mode, over stubs.
-        // import ./tests/relock.nix { inherit pkgs checks; }
+        // import ./tests/relock.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix {
           inherit pkgs checks;
@@ -556,12 +584,21 @@
         }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
         # .gitmodules too — and what it refuses to touch.
-        // import ./tests/bench-remove-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-remove-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-rename-app`: the bench's half of renaming an app — the checkout
         # and its clone moved, not downloaded again — and what it refuses first.
-        // import ./tests/bench-rename-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-rename-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-new-app` over a stub upstream scaffolder: what it registers.
-        // import ./tests/bench-new-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-new-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix {
           inherit pkgs checks;
@@ -629,8 +666,9 @@
         # The repository checks frappe-nix shares with odoo-nix
         # (python-devops-nix docs/conventions.md, Formatter and Repository files):
         # nixfmt-rs, statix and deadnix over the tree with statix.toml compared
-        # to the shared copy, and .editorconfig, .pre-commit-config.yaml and
-        # ruff.toml carrying the shared settings.
+        # to the shared copy, and .editorconfig, .pre-commit-config.yaml,
+        # committed.toml and ruff.toml carrying the shared settings
+        # (committed.toml's allowed_scopes as a set).
         // {
           nix-lint = inputs.python-devops-nix.lib.checks.nixLint {
             inherit pkgs;

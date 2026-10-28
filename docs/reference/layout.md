@@ -3,7 +3,7 @@ title: Repository layout
 description: Where things live in the frappe-nix repository, the flake checks that CI runs, and how to build these documentation pages locally.
 order: 5
 tags: [reference, contributing, layout, tests]
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 This page is for people who read or change frappe-nix itself.
@@ -56,7 +56,7 @@ frappe-nix/
 │   ├── flake-module.nix      # imports devenv.flakeModule, secrets.nix, devenv.nix and containers.nix
 │   ├── devenv.nix            # perSystem.frappe-nix options, the dev shell and the packages
 │   ├── secrets.nix           # top-level frappe-nix.secrets
-│   ├── containers.nix        # OCI image builds
+│   ├── containers.nix        # OCI image builds, on python-devops-nix's lib.containers
 │   └── nixos.nix             # services.frappe-nix (the NixOS systemd module)
 ├── runtime/                  # frappe-runtime: the unified process (a hard fork, MIT)
 ├── tests/                    # flake checks (see `nix flake check`)
@@ -76,7 +76,7 @@ nix build -L .#checks.x86_64-linux.<NAME>                 # one check
 
 On `x86_64-linux` the checks are:
 
-`app-workspace`, `apps-registry`, `assets-reassert`, `bench-get-app`, `bench-new-app`, `bench-patches`, `bench-remove-app`, `bench-rename-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `bootstrap`, `bootstrap-lock`, `build-deps`, `check-names`, `ci-pins`, `command-flags`, `config-blocks`, `containers-registry`, `db-nocow`, `dependabot`, `dev-build-deps`, `devguard`, `devguard-core`, `devguard-production`, `devguard-renames`, `devguard-test-relax`, `editable-src`, `env-vars`, `frappe-upstream-config`, `grafts`, `ide-config`, `ide-resolve`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `nix-lint`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `option-paths`, `pdf-renderers`, `pdf-renderers-unit`, `port-lease`, `production-unit`, `provision`, `reconcile-apps`, `relock`, `renames-devenv`, `renames-nixos`, `renames-option-tree`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `scaffold-modes`, `secrets-module`, `settings-nixos`, `setup-requirements`, `shared-config`, `socket`, `socket-runtime`, `sources`, `tui`, `ty`, `unixsock`, `update-deps` and `yarn-lock`, plus the 34 app standards checks, `standards-<name>` (tests/standards/; `standards-all` builds them all).
+`app-workspace`, `apps-registry`, `assets-reassert`, `bench-get-app`, `bench-new-app`, `bench-patches`, `bench-remove-app`, `bench-rename-app`, `bench-restore`, `bench-update`, `bench-watch`, `benchcli`, `bootstrap`, `bootstrap-lock`, `build-deps`, `check-names`, `ci-pins`, `command-flags`, `config-blocks`, `containers-registry`, `db-nocow`, `dependabot`, `dev-build-deps`, `devguard`, `devguard-core`, `devguard-production`, `devguard-removed`, `devguard-test-relax`, `editable-src`, `env-vars`, `frappe-upstream-config`, `grafts`, `ide-config`, `ide-resolve`, `journald`, `lock-audit`, `logging-fields`, `mariadbd-wrapper`, `migrate-classic`, `migrate-rollback`, `migrate-versions`, `nested-frontend-scripts`, `nix-lint`, `node-locks`, `node-locks-precedence`, `node-modules`, `node-targets`, `node-verify`, `nodebuild`, `offline-migrate`, `offline-migrate-scripts`, `offline-migrate-unit`, `option-paths`, `option-tree`, `pdf-renderers`, `pdf-renderers-unit`, `port-lease`, `production-unit`, `provision`, `reconcile-apps`, `relock`, `removed-devenv`, `removed-nixos`, `requirements-check`, `root-sync`, `runtime`, `sass-embedded`, `scaffold-modes`, `secrets-module`, `settings-nixos`, `setup-requirements`, `shared-config`, `socket`, `socket-runtime`, `sources`, `tui`, `ty`, `unixsock`, `update-deps` and `yarn-lock`, plus the 34 app standards checks, `standards-<name>` (tests/standards/; `standards-all` builds them all).
 
 Each is registered through python-devops-nix's `lib.checks.mk`, so a build log names it `frappe-nix-<NAME>-check`, or `vm-test-run-frappe-nix-<NAME>` for a NixOS VM test. A new check takes `checks` (the helper) as an argument and is `checks.script "<NAME>" { tools = [ … ]; } ''…''`, `checks.eval`, or `checks.nixosTest`.
 

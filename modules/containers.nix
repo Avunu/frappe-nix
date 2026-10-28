@@ -11,10 +11,12 @@
 #   /secrets/     — mount secret files (db_password, encryption_key, *.json)
 #
 # Every image carries the OCI labels, the ones that serve HTTP have a
-# HEALTHCHECK, and with containers.nonRoot they run as frappe (uid/gid 1000)
-# (python-devops-nix docs/conventions.md,
-# Containers). The outputs are container-<role>; the role-named outputs they
-# replaced stay as aliases until 2.0.0.
+# HEALTHCHECK, and they run as frappe (uid/gid 1000) unless
+# containers.nonRoot is false (python-devops-nix docs/conventions.md, Images).
+# Those parts, with the image names, /etc/passwd and the writable
+# directories, are python-devops-nix's lib.containers; the entrypoints, the
+# probes and what each image holds are frappe-nix's. The outputs are
+# container-<role>; the role-named outputs they replaced went in 2.0.0.
 { inputs, ... }:
 
 {
@@ -265,41 +267,53 @@
 
         prefix = cfg.name;
 
-        # The user the images run as with containers.nonRoot (opt-in through
-        # 1.x, the default in 2.0.0); root otherwise, as before. Fixed, so a
-        # volume or a bind mount can be owned to match before the first start;
-        # 1000 is the uid a desktop user usually has, and the one
-        # frappe_docker uses.
-        inherit (cfg.containers) nonRoot;
-        uid = 1000;
-        gid = 1000;
+        # The image parts frappe-nix shares with odoo-nix (python-devops-nix's
+        # lib.containers).
+        #
+        # Images are <name>/<role>, and containers.registry prefixes that:
+        # "ghcr.io/avunu" (or "ghcr.io/avunu/") names them
+        # ghcr.io/avunu/<name>/<role>; "" leaves them bare. Only image names
+        # take it, not the store paths named after prefix.
+        #
+        # The images run as frappe, uid and gid 1000, the ones frappe_docker
+        # uses: containers.nonRoot defaults to true since 2.0.0 (opt-in
+        # through 1.x), and false runs them as root.
+        #
+        # The labels' revision is frappe-nix's own commit when the bench's
+        # flake has it as the `frappe-nix` input, as the scaffold does.
+        # containers.labels overrides any of them, for a bench that labels its
+        # images with its own repository and version.
         home = "/home/frappe";
-        user = if nonRoot then "${toString uid}:${toString gid}" else "0:0";
-        homeEnv = lib.optional nonRoot "HOME=${home}";
-
-        # /etc/passwd and /etc/group, so the uid has a name and a home: Python's
-        # getpass, Chromium and Node's os.userInfo() look it up.
-        containerUsers = pkgs.runCommand "frappe-nix-container-users" { } ''
-          mkdir -p $out/etc
-          cat > $out/etc/passwd <<'EOF'
-          root:x:0:0:root:/root:/bin/sh
-          frappe:x:${toString uid}:${toString gid}:frappe:${home}:/bin/sh
-          nobody:x:65534:65534:nobody:/var/empty:/bin/false
-          EOF
-          cat > $out/etc/group <<'EOF'
-          root:x:0:
-          frappe:x:${toString gid}:
-          nogroup:x:65534:
-          EOF
-        '';
+        containers = inputs.python-devops-nix.lib.containers.mk {
+          inherit pkgs home;
+          label = "frappe-nix";
+          inherit (cfg) name;
+          user = "frappe";
+          inherit (cfg.containers) nonRoot registry;
+          source = "https://github.com/Avunu/frappe-nix";
+          version = lib.trim (builtins.readFile ../version.txt);
+          licenses = "MIT";
+          revision = (inputs.frappe-nix or { }).rev or null;
+          labelOverrides = cfg.containers.labels;
+        };
+        inherit (containers)
+          imageName
+          labels
+          user
+          homeEnv
+          healthcheck
+          # buildLayeredImage, with the image config readable without a build
+          # (tests/containers-registry.nix).
+          buildImage
+          ;
 
         # A frappe command (`bench <args>` on a bench host), run the way
         # `bench` runs it: frappe-bench's frappe_cmd execs
         # `python -m frappe.utils.bench_helper frappe <args>` from sites/,
         # which is the images' default WorkingDir. Not `bench` itself: it
-        # refuses to run as root, which the images are unless
-        # containers.nonRoot, so the split set's scheduler and workers exited
-        # at start.
+        # refuses to run as root, which the images are with
+        # containers.nonRoot = false, so the split set's scheduler and workers
+        # exited at start.
         frappeCmd =
           args:
           [
@@ -309,50 +323,6 @@
             "frappe"
           ]
           ++ args;
-
-        # buildLayeredImage, with the image config readable without a build
-        # (tests/containers-registry.nix).
-        buildImage =
-          args: pkgs.dockerTools.buildLayeredImage (args // { passthru.imageConfig = args.config; });
-
-        # Directories the user writes, created and (with nonRoot) owned at
-        # build time. A fresh named volume mounted over one of them takes that
-        # ownership. -h: the links into the store are re-owned themselves,
-        # never followed.
-        ownWritable = dirs: ''
-          mkdir -p ${toString dirs}
-          ${lib.optionalString nonRoot "chown -Rh ${user} ${toString dirs}"}
-        '';
-
-        # org.opencontainers.image.* labels. revision is frappe-nix's own commit
-        # when the bench's flake has it as the `frappe-nix` input, as the
-        # scaffold does. containers.labels overrides any of them, for a bench
-        # that labels its images with its own repository and version.
-        version = lib.trim (builtins.readFile ../version.txt);
-        revision = (inputs.frappe-nix or { }).rev or null;
-        labels =
-          role:
-          {
-            "org.opencontainers.image.title" = imageName role;
-            "org.opencontainers.image.source" = "https://github.com/Avunu/frappe-nix";
-            "org.opencontainers.image.version" = version;
-            "org.opencontainers.image.licenses" = "MIT";
-          }
-          // lib.optionalAttrs (revision != null) {
-            "org.opencontainers.image.revision" = revision;
-          }
-          // cfg.containers.labels;
-
-        # HEALTHCHECK, with the durations in nanoseconds as the image config has
-        # them. A failure inside StartPeriod (the first imports) does not count.
-        second = 1000000000;
-        healthcheck = test: {
-          Test = [ "CMD" ] ++ test;
-          Interval = 30 * second;
-          Timeout = 10 * second;
-          StartPeriod = 120 * second;
-          Retries = 3;
-        };
 
         # Frappe's readiness endpoint, asked for the container's site: Frappe
         # picks the site from the Host header. The image has no curl; its
@@ -372,19 +342,6 @@
               print(f"frappe-healthcheck: {error}", file=sys.stderr)
               sys.exit(1)
         '';
-
-        # Images are <name>/<role>, and containers.registry prefixes that:
-        # "ghcr.io/avunu" (or "ghcr.io/avunu/") names them
-        # ghcr.io/avunu/<name>/<role>; "" leaves them bare. The same rule
-        # as odoo-nix's modules/containers.nix. Only image names take it, not
-        # the store paths named after prefix.
-        registry = lib.removeSuffix "/" cfg.containers.registry;
-        imageName =
-          name:
-          let
-            image = "${prefix}/${name}";
-          in
-          if registry == "" then image else "${registry}/${image}";
 
         mkFrappeContainer =
           {
@@ -411,22 +368,21 @@
                   "/etc"
                 ];
               })
-              containerUsers
+              containers.users
               builtBench
             ];
             enableFakechroot = true;
-            fakeRootCommands = ''
-              mkdir -p /tmp /secrets
-              chmod 1777 /tmp
-              ${ownWritable [
+            fakeRootCommands = containers.fakeRootCommands {
+              dirs = [ "/secrets" ];
+              writable = [
                 "/bench/logs"
                 # frappe's scheduler takes its lock in config/ (scheduler_process).
                 "/bench/config"
                 "/bench/config/pids"
                 "/bench/sites"
                 home
-              ]}
-            '';
+              ];
+            };
             config = {
               User = user;
               Entrypoint = [ "${containerEntrypoint}" ];
@@ -582,18 +538,16 @@
                         "/etc"
                       ];
                     })
-                    containerUsers
+                    containers.users
                     builtBench
                   ];
                   enableFakechroot = true;
-                  fakeRootCommands = ''
-                    mkdir -p /tmp
-                    chmod 1777 /tmp
-                    ${ownWritable [
+                  fakeRootCommands = containers.fakeRootCommands {
+                    writable = [
                       "/bench/sites"
                       home
-                    ]}
-                  '';
+                    ];
+                  };
                   config = {
                     User = user;
                     Labels = labels "socketio";
@@ -642,23 +596,21 @@
                     "/etc"
                   ];
                 })
-                containerUsers
+                containers.users
                 builtBench
               ];
               enableFakechroot = true;
               # nixpkgs' nginx keeps its pid file in /var/log/nginx and its temp
               # files in /tmp.
-              fakeRootCommands = ''
-                mkdir -p /tmp
-                chmod 1777 /tmp
-                ${ownWritable [
+              fakeRootCommands = containers.fakeRootCommands {
+                writable = [
                   "/tmp/nginx"
                   "/var/log/nginx"
                   "/var/cache/nginx"
                   "/bench/sites"
                   home
-                ]}
-              '';
+                ];
+              };
               config = {
                 User = user;
                 Labels = labels "nginx";
@@ -690,38 +642,13 @@
             };
           };
 
-        # The outputs before python-devops-nix's container-<role> convention:
-        # the role itself, and bench-cli for the bench image. Kept, warning
-        # when used, until frappe-nix 2.0.0. The warning sits on what a build
-        # or a reference reads (drvPath, outPath), not on the attribute, so
-        # `nix flake show` stays quiet; `nix flake check` evaluates every
-        # package, so a bench that uses none of them sets
-        # containers.aliases = false.
-        alias =
-          old: role:
-          let
-            image = images.${role};
-            warn = lib.warn "frappe-nix: the package `${old}' has been renamed `container-${role}'. The old name works through frappe-nix 1.x and goes in 2.0.0; set frappe-nix.containers.aliases = false once nothing uses it.";
-          in
-          image
-          // {
-            drvPath = warn image.drvPath;
-            outPath = warn image.outPath;
-          };
-        oldName = role: if role == "bench" then "bench-cli" else role;
-        aliases = lib.mapAttrs' (
-          role: _: lib.nameValuePair (oldName role) (alias (oldName role) role)
-        ) images;
-
       in
       lib.mkIf (cfg.enable && cfg.containers.enable) {
         # Whole attrsets, not lib.mkIf per package: `packages` is an attrsOf,
         # and mkIf false keeps the attribute *name* while removing its
         # definition. `nix flake show` enumerates those names and dies with
         # "option ... was accessed but has no value defined".
-        packages =
-          lib.mapAttrs' (role: image: lib.nameValuePair "container-${role}" image) images
-          // lib.optionalAttrs cfg.containers.aliases aliases;
+        packages = lib.mapAttrs' (role: image: lib.nameValuePair "container-${role}" image) images;
       };
   };
 }

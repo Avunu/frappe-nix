@@ -5,6 +5,7 @@
 {% set eco = cfg.dependabot.ecosystems %}
 {% set overrides = cfg.dependabot["cadence-overrides"] %}
 {% set cooldown = cfg.dependabot["cooldown-days"] %}
+{% set ignores = cfg.dependabot.ignore %}
 {% set docs_actions = cfg["docs-site"]["action-patterns"] if modules["docs-site"] else [] %}
 {% set docs_cooldown_exclude = cfg["docs-site"]["cooldown-exclude-actions"] if modules["docs-site"] else [] %}
 {% set docs_packages = cfg["docs-site"]["package-names"] if modules["docs-site"] else [] %}
@@ -12,6 +13,24 @@
 {% set test_utils = modules["test-utils"] and cfg["test-utils"].hooks %}
 {% set remote_hooks = precommit_live and (modules.hygiene or modules.ssort or test_utils) %}
 {% macro cadence(name) %}{{ overrides[name] if name in overrides else cfg.dependabot.cadence }}{% endmacro %}
+{# dependabot.ignore's entries for one managed entry: its ecosystem's, then its directory's.
+   The lists are block sequences, which oxfmt keeps at any length. #}
+{% macro ignore_items(name, directory) %}
+{% for i in ignores.get(name, []) + ignores.get(name ~ ":" ~ directory, []) %}
+      - dependency-name: {{ i["dependency-name"] | json_string }}
+{% for key in ("versions", "update-types") if i.get(key) %}
+        {{ key }}:
+{% for v in i[key] %}
+          - {{ v | json_string }}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+{% endmacro %}
+{% macro ignore(name, directory) %}
+{% if ignores.get(name) or ignores.get(name ~ ":" ~ directory) %}
+    ignore:
+{{ ignore_items(name, directory) }}{% endif %}
+{% endmacro %}
 {% macro schedule(name) %}
 {% if cadence(name) == "weekly" %}
     schedule:
@@ -42,7 +61,7 @@ updates:
     # frappe-nix's reusable workflows move only through `frappe-nix repo rollout` and `frappe-init --sync`.
     ignore:
       - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
-    groups:
+{{ ignore_items("github-actions", "/") }}    groups:
 {% if docs_actions %}
       # needs-review: a merge publishes the docs site with the new workflow code
       docs-actions:
@@ -69,7 +88,7 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-    groups:
+{{ ignore("npm", "/") }}    groups:
       toolchain:
         patterns: [oxlint, oxfmt, typescript, frappe-types, "@types/node", "stylelint*"]
         update-types: [minor, patch]
@@ -88,7 +107,7 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-    groups:
+{{ ignore("npm", "/" ~ d) }}    groups:
       {{ d }}:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -110,7 +129,7 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-    groups:
+{{ ignore("npm", "/docs-site") }}    groups:
       docs-site-packages:
         patterns: ["*"]
 {% endif %}
@@ -125,7 +144,7 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-    groups:
+{{ ignore("uv", "/tools") }}    groups:
       tools:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -140,7 +159,7 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-    groups:
+{{ ignore("pre-commit", "/") }}    groups:
       hooks:
         patterns: ["*"]
 {% if test_utils %}
@@ -167,7 +186,7 @@ updates:
 {% if profile_input %}
       - dependency-name: standards-profile
 {% endif %}
-    groups:
+{{ ignore_items("nix", "/") }}    groups:
       flake-inputs:
         patterns: ["*"]
 {% endif %}
@@ -181,6 +200,6 @@ updates:
       prefix: chore
       include: scope
     labels: [dependencies]
-{% endif %}
+{{ ignore("gitsubmodule", "/") }}{% endif %}
   # frappe-nix:local-begin updates
   # frappe-nix:local-end updates

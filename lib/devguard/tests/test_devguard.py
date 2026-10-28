@@ -482,27 +482,15 @@ os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
 
 check("the guard's settings key is jobs", scheduler.NAME == "jobs")
 
-# The pre-rename variables are carried over, with a warning, through 1.x, until frappe-nix 2.0.0.
+# The pre-rename variables, carried over with a warning through 1.x, are not
+# read since frappe-nix 2.0.0.
 os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.legacy"
-_log, _ = stderr_of(scheduler._adopt_renamed)
 check(
-	"FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS still adds a job",
-	"myapp.tasks.legacy" in blocked_jobs(),
-)
-check(
-	"with a warning naming its replacement, under frappe_devguard[scheduler]",
-	"WARNING frappe_devguard[scheduler] FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS is deprecated; "
-	"use FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED" in _log,
-	_log,
+	"FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS adds nothing",
+	"myapp.tasks.legacy" not in blocked_jobs(),
 )
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
-os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
-os.environ["FRAPPE_DEVGUARD_DISABLE"] = "scheduler"
-_log, _adopted = stderr_of(
-	lambda: check("DISABLE=scheduler still turns the guard off", not scheduler._adopt_renamed())
-)
-check("with a warning", "FRAPPE_DEVGUARD_DISABLE=jobs" in _log, _log)
-os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+check("nothing is left to adopt them", not hasattr(scheduler, "_adopt_renamed"))
 
 
 # What a skipped job logs: frappe_devguard[scheduler], the framework's word.
@@ -982,6 +970,53 @@ check(
 	not _frappe_stub.get_site_config()["cloud_storage_settings"].get("use_local"),
 )
 os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
+
+# From Frappe 16 get_site_config lives in frappe.config, and frappe re-exports
+# it. 17 (develop) makes the re-export lazy, through a module __getattr__, and
+# frappe.init imports it from frappe.config at call time, past frappe's name.
+# On 15, frappe.config is an unrelated package without it.
+
+
+def frappe_and_config(*, lazy):
+	config = types.ModuleType("frappe.config")
+	config.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
+	frappe = types.ModuleType("frappe")
+	if lazy:
+
+		def __getattr__(name):
+			if name != "get_site_config":
+				raise AttributeError(name)
+			sys.modules["frappe.config"] = config
+			frappe.get_site_config = config.get_site_config
+			return config.get_site_config
+
+		frappe.__getattr__ = __getattr__
+	else:
+		sys.modules["frappe.config"] = config
+		frappe.get_site_config = config.get_site_config
+	return frappe, config
+
+
+for _lazy, _label in ((False, "16's eager re-export"), (True, "17's lazy re-export")):
+	_frappe, _config = frappe_and_config(lazy=_lazy)
+	objectstore._patch_get_site_config(_frappe)
+	check(
+		f"{_label}: frappe.get_site_config forces local disk",
+		_frappe.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+	)
+	check(
+		f"{_label}: so does frappe.config's" + (", which 17's frappe.init calls" if _lazy else ""),
+		_config.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+	)
+	del sys.modules["frappe.config"]
+
+_unrelated = types.ModuleType("frappe.config")
+sys.modules["frappe.config"] = _unrelated
+_frappe_stub = types.ModuleType("frappe")
+_frappe_stub.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
+objectstore._patch_get_site_config(_frappe_stub)
+check("15's frappe.config package is left alone", not hasattr(_unrelated, "get_site_config"))
+del sys.modules["frappe.config"]
 
 
 del sys.modules["frappe"]

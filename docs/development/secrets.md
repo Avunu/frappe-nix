@@ -3,7 +3,7 @@ title: Secrets
 description: Keep a bench's credentials as age-encrypted files in the repository, decrypt them into the dev shell, verify who can read them and reuse the same ciphertext on the server.
 order: 3
 tags: [secrets, age, agenix, security]
-updated: 2026-10-06
+updated: 2026-10-28
 ---
 
 A bench's credentials, meaning the site encryption key, the database password and the object-store keys, live in `.age` files encrypted with [age](https://github.com/FiloSottile/age). They are committed to the repository and decrypted into the dev shell by [agenix-shell](https://github.com/aciceri/agenix-shell). frappe-nix imports agenix-shell itself, so a consuming flake declares only this:
@@ -102,7 +102,7 @@ Once backup access exists, see [Restore a production backup](restore-from-produc
 
 ## Use the same secrets on the server
 
-A bench that declares secrets exposes them as `lib.secrets` (also as `lib.frappeSecrets`, its old name, through 1.x, until frappe-nix 2.0.0), so a deployment reads the same ciphertext instead of keeping a second copy in the server repository that has to be rotated in lockstep and silently drifts when it is not. It carries:
+A bench that declares secrets exposes them as `lib.secrets` (`lib.frappeSecrets`, its old name, went in frappe-nix 2.0.0), so a deployment reads the same ciphertext instead of keeping a second copy in the server repository that has to be rotated in lockstep and silently drifts when it is not. It carries:
 
 - `recipients`: every developer and host key, labelled;
 - `sites.<SITE>`: the paths of that site's `encryptionKey`, `databasePassword` and `extraConfig` files;

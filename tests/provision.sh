@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Checks for `bench provision` (and `provision-site`, its alias): create
+# Checks for `bench provision`: create
 # $FRAPPE_SITE and install every app sites/apps.txt names, against a stub bench
 # and a stub frappe-nix-ports. No database, no Frappe, no network.
 #
-# Usage: provision.sh <rendered-provision-site> <rendered-bench-dispatch>
+# Usage: provision.sh <rendered-bench-dispatch>
 set -euo pipefail
 
-SCRIPT="$1"
-DISPATCH="$2"
+DISPATCH="$1"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -66,7 +65,7 @@ printf 'frappe\nerpnext\n\nhrms\n' > "$B/sites/apps.txt"
 echo '{"webserver_port": 8042}' > "$B/sites/common_site_config.json"
 calls() { cut -d' ' -f2- "$CALLS" | tr '\n' '|'; }
 # provision <log> [args…]: `bench provision`, run from somewhere other than
-# the bench; its status in $rc. alias <log> [args…]: the same, as provision-site.
+# the bench; its status in $rc.
 run_it() { # <log> <script> [args…]
   local log=$1 script=$2
   shift 2
@@ -80,11 +79,6 @@ provision() {
   local log=$1
   shift
   run_it "$log" "$DISPATCH" provision "$@"
-}
-alias_() {
-  local log=$1
-  shift
-  run_it "$log" "$SCRIPT" "$@"
 }
 NEW_SITE="new-site mysite.localhost --db-type mariadb --db-socket $FRAPPE_DB_SOCKET --db-root-username root"
 
@@ -139,18 +133,6 @@ provision extra pw extra
 check_eq "a second argument: exit 2" 2 "$rc"
 check "…naming it" grep -qF "unexpected argument 'extra'" "$ROOT/extra.err"
 check_eq "…and runs nothing" "" "$(calls)"
-
-echo "── provision-site, the alias ───────────────────────────────────"
-alias_ alias 's3cret'
-check_eq "exits 0" 0 "$rc"
-check_eq "the same calls" \
-  "$NEW_SITE --admin-password s3cret --set-default --force|--site mysite.localhost install-app erpnext|--site mysite.localhost install-app hrms|" \
-  "$(calls)"
-check "the same stdout" grep -qxF "✅ Site mysite.localhost provisioned!" "$ROOT/alias.out"
-check_eq "one line on stderr: it is deprecated" \
-  "provision-site is deprecated: run \`bench provision\` (the alias goes in frappe-nix 2.0.0)" "$(cat "$ROOT/alias.err")"
-STUB_FAIL=erpnext alias_ aliasfail
-check_eq "a failure: the same status" 3 "$rc"
 
 echo "── the URL's port ──────────────────────────────────────────────"
 STUB_PORTS_FAIL=1 provision noports

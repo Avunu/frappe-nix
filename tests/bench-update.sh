@@ -568,10 +568,14 @@ git -C apps/frappe add FORCED
 git -C apps/frappe commit -q -m "local work, again"
 printf 'x\n' > "$SEED/FORCE_UP"
 TIP_F2="$(up "upstream moves again")"
+LOCAL_F2="$(git -C apps/frappe rev-parse HEAD)"
 FRAPPE_BENCH_UPDATE_FORCE=1 run_update force-old --pull
-check "the old name still works, with a deprecation warning" \
-  grep -q 'FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE instead' "$ROOT/force-old.log"
-check_eq "…and discards" "$TIP_F2" "$(git -C apps/frappe rev-parse HEAD)"
+check "the 1.x name is not read (frappe-nix 2.0.0): the app is skipped" \
+  grep -q 'Push them, or re-run with FRAPPE_NIX_BENCH_UPDATE_FORCE=1' "$ROOT/force-old.log"
+check_eq "…and its local commit kept" "$LOCAL_F2" "$(git -C apps/frappe rev-parse HEAD)"
+check_not "…not at the tip" test "$TIP_F2" = "$(git -C apps/frappe rev-parse HEAD)"
+FRAPPE_NIX_BENCH_UPDATE_FORCE=1 run_update force-again --pull
+check_eq "the new name then discards it" "$TIP_F2" "$(git -C apps/frappe rev-parse HEAD)"
 
 echo "── a submodule with no remote at all ────────────────────────────"
 for r in $(git -C apps/zeta remote); do git -C apps/zeta remote remove "$r"; done

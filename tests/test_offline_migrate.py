@@ -328,21 +328,11 @@ check("a flag of 0 is a flag", om.resolve_threshold("0") == 0)
 del os.environ[om.ENV_THRESHOLD]
 
 # ── the names before FRAPPE_NIX_* ────────────────────────────────────────────
+# Read, with a warning, through 1.x; not read since frappe-nix 2.0.0.
 
 os.environ["FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD"] = "8000"
-err = io.StringIO()
-with contextlib.redirect_stderr(err):
-	threshold = om.resolve_threshold(None)
-check("the old threshold name is still read", threshold == 8000)
-check("…with a warning naming the new one", "set FRAPPE_NIX_OFFLINE_MIGRATE_ROW_THRESHOLD" in err.getvalue())
-os.environ[om.ENV_THRESHOLD] = "9000"
-check("the new name wins over the old", om.resolve_threshold(None) == 9000)
-del os.environ[om.ENV_THRESHOLD], os.environ["FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD"]
-os.environ["FRAPPE_OFFLINE_MIGRATE"] = "0"
-with contextlib.redirect_stderr(io.StringIO()):
-	rc, out = says(om.main, ["--site", "a.example"])
-del os.environ["FRAPPE_OFFLINE_MIGRATE"]
-check("FRAPPE_OFFLINE_MIGRATE=0 still skips", rc == 0 and "skipped" in out, out)
+check("the old threshold name is not read", om.resolve_threshold(None) == om.DEFAULT_THRESHOLD)
+del os.environ["FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD"]
 
 if FAILURES:
 	print(f"\n{len(FAILURES)} failed")

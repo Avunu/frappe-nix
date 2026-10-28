@@ -196,11 +196,14 @@ def sync(config: dict[str, str | None]) -> int:
 			_warn(f"{NAME}: uv is not on PATH; pyproject.toml restored")
 			return 1
 		# The same lock bench update and relock run, refreshing frappe-runtime's
-		# git pin (frappe_nix_tools.deps.update.UV_LOCK); imported only now,
-		# when a lock is needed.
+		# git pin (frappe_nix_tools.deps.update.UV_LOCK) to the revision
+		# flake.lock pins; imported only now, when a lock is needed.
+		from frappe_nix_tools.deps.runtime_pin import runtime_at_pin
 		from frappe_nix_tools.deps.update import UV_LOCK
 
-		if _run(UV_LOCK) != 0:
+		with runtime_at_pin():
+			status = _run(UV_LOCK)
+		if status != 0:
 			_warn(
 				"",
 				f"{NAME}: uv lock failed — pyproject.toml and uv.lock restored, so the",

@@ -14,7 +14,7 @@
 # python-devops-nix's systemd sandboxing baseline (lib.nixos.hardening;
 # docs/conventions.md, Unit hardening): a read-only system but for the site's
 # directory, no capabilities, a syscall filter, no W+X memory unless a unit
-# names a profile for it. See `harden` below. Off by default through 1.x.
+# names a profile for it. See `harden` below. On by default since 2.0.0.
 #
 # Example:
 #   services.frappe-nix = {
@@ -189,11 +189,6 @@ let
       # Read by frappe_journald as Frappe's default logger level. Frappe's own
       # production default is ERROR, which drops every frappe.logger().warning().
       FRAPPE_NIX_LOG_LEVEL = lib.toUpper cfg.logging.level;
-      # Its name before (python-devops-nix docs/conventions.md, Tool-owned
-      # variables), for a bench package built from an older frappe-nix than this
-      # module, whose graft reads only that. The graft prefers the new name.
-      # Removed with the aliases in frappe-nix 2.0.0.
-      FRAPPE_LOG_LEVEL = lib.toUpper cfg.logging.level;
       # A block-buffered stdout holds print() output back until the buffer fills
       # or the process exits, so a crash loses exactly the lines that explain it,
       # and what does arrive is out of order with stderr.
@@ -221,8 +216,6 @@ let
       # not need it, but a `bench serve` run by hand on this host would
       # otherwise open a surprise port on 0.0.0.0.
       FRAPPE_NIX_WEB_SOCKET = siteCfg.web.socketPath;
-      # The old name too, as FRAPPE_LOG_LEVEL above.
-      FRAPPE_WEB_SOCKET = siteCfg.web.socketPath;
     }
     // optionalAttrs (siteCfg.database.socket != "") {
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
@@ -258,8 +251,9 @@ let
   # tree (config/, logs/), sites/ and the snapshots all live under it. A host
   # whose siteDir holds a link to somewhere else adds that path itself.
   #
-  # Opt-in through 1.x (services.frappe-nix.hardening.enable): off, a unit gets
-  # none of these keys at all.
+  # On by default since 2.0.0, opt-in through 1.x
+  # (services.frappe-nix.hardening.enable): off, a unit gets none of these keys
+  # at all.
   harden = args: optionalAttrs cfg.hardening.enable (base.nixos.hardening args);
 
   # The profiles of a unit that runs Frappe code (the runtime, gunicorn, a
@@ -1496,29 +1490,25 @@ let
       };
     };
 
-  # sites.<name>.<from> renamed to <to>, inside the site submodule. Not
-  # lib.mkRenamedOptionModule: a submodule has no `warnings` to report through,
-  # so doRename does the aliasing and the warning goes on the site's
-  # `deprecations`, which the module's top level turns into `warnings`.
-  # Removed in frappe-nix 2.0.0, never within 1.x.
-  renamedSiteOption =
+  # sites.<name>.<from>, removed, inside the site submodule. Not
+  # lib.mkRemovedOptionModule: a submodule has no `assertions` to report
+  # through, so the message goes on the site's `removals`, which the module's
+  # top level turns into assertions. extraConfig and extraConfigFiles were 1.x's
+  # aliases of settings and settingsFiles, refused since 2.0.0.
+  removedSiteOption =
     from: to:
     { name, options, ... }:
     {
-      imports = [
-        (lib.doRename {
-          from = [ from ];
-          to = [ to ];
-          visible = false;
-          warn = false;
-          use = lib.id;
-        })
-      ];
-      config.deprecations =
+      options.${from} = mkOption {
+        type = types.anything;
+        visible = false;
+        description = "Removed: it is `${to}`.";
+      };
+      config.removals =
         lib.optional options.${from}.isDefined
           "The option `services.frappe-nix.sites.\"${name}\".${from}' defined in ${
             lib.showFiles options.${from}.files
-          } has been renamed to `services.frappe-nix.sites.\"${name}\".${to}'. The old name works through frappe-nix 1.x and goes in 2.0.0.";
+          } has been removed. It is `services.frappe-nix.sites.\"${name}\".${to}'.";
     };
 
   # A site's socket paths, for lib.nixos.unixSocket. nginx *creates* its listen
@@ -1567,26 +1557,34 @@ let
   };
 
   # A site's settings.db_name or db_type that the rest of the module does not
-  # follow. Warnings through 1.x; both keys become the module's in 2.0.0.
-  settingsWarnings =
+  # follow. The module sets both at normal priority (config.settings, below), so
+  # a different plain value is already a conflict; these name what breaks when
+  # one is forced past that.
+  settingsAssertions =
     name: siteCfg:
     let
       site = "services.frappe-nix.sites.\"${name}\"";
       inherit (siteCfg.settings) db_name db_type;
     in
-    lib.optional (db_name != siteCfg.database.name) (
-      "${site}.settings.db_name is ${builtins.toJSON db_name} but database.name is"
-      + " \"${siteCfg.database.name}\": the pre-migrate snapshot and its rollback,"
-      + " database.createLocally and the database grants all use database.name, so a"
-      + " failed migrate would not restore the database the site uses. Set"
-      + " database.name instead. This becomes an error in frappe-nix 2.0.0."
-    )
-    ++ lib.optional (db_type != "mariadb") (
-      "${site}.settings.db_type is ${builtins.toJSON db_type}: this module provisions,"
-      + " snapshots and restores MariaDB only (the units set FRAPPE_DB_TYPE=mariadb),"
-      + " so migrate's snapshot and rollback and database.createLocally would not"
-      + " work. Remove it. This becomes an error in frappe-nix 2.0.0."
-    );
+    [
+      {
+        assertion = db_name == siteCfg.database.name;
+        message =
+          "${site}.settings.db_name is ${builtins.toJSON db_name} but database.name is"
+          + " \"${siteCfg.database.name}\": the pre-migrate snapshot and its rollback,"
+          + " database.createLocally and the database grants all use database.name, so a"
+          + " failed migrate would not restore the database the site uses. Set"
+          + " database.name instead, and remove settings.db_name.";
+      }
+      {
+        assertion = db_type == "mariadb";
+        message =
+          "${site}.settings.db_type is ${builtins.toJSON db_type}: this module provisions,"
+          + " snapshots and restores MariaDB only (the units set FRAPPE_DB_TYPE=mariadb),"
+          + " so migrate's snapshot and rollback and database.createLocally would not"
+          + " work. Remove it.";
+      }
+    ];
 
   # Site submodule option definition.
   siteModule = types.submodule (
@@ -1594,8 +1592,8 @@ let
     {
       # python-devops-nix docs/conventions.md, Framework config blocks.
       imports = [
-        (renamedSiteOption "extraConfig" "settings")
-        (renamedSiteOption "extraConfigFiles" "settingsFiles")
+        (removedSiteOption "extraConfig" "settings")
+        (removedSiteOption "extraConfigFiles" "settingsFiles")
       ];
 
       options = {
@@ -1746,9 +1744,9 @@ let
             file as written, before the secrets in `settingsFiles`,
             `database.passwordFile` and `encryptionKeyFile` are merged in. A
             key set here wins over a computed one, and attribute sets merge
-            key by key. Set `database.name` rather than `db_name`: a
-            `db_name` other than it, or a `db_type` other than `mariadb`,
-            warns, and is an error from frappe-nix 2.0.0.
+            key by key. `db_name` and `db_type` are the module's:
+            `db_name` is `database.name` and `db_type` is `mariadb`, and a
+            different value is an error. Set `database.name` instead.
           '';
         };
 
@@ -1762,11 +1760,11 @@ let
           '';
         };
 
-        deprecations = mkOption {
+        removals = mkOption {
           type = types.listOf types.str;
           default = [ ];
           internal = true;
-          description = "Renamed options this site sets, each a warning at the top level.";
+          description = "Removed options this site sets, each a failed assertion at the top level.";
         };
 
         renamedApps = mkOption {
@@ -1838,16 +1836,15 @@ let
         redis_socketio = lib.mkDefault config.redis.socketioUrl;
         socketio_port = lib.mkDefault config.socketio.port;
 
-        # mkDefault through 1.x, so a config that set them still evaluates, but
-        # a different value warns (settingsWarnings): only MariaDB is
+        # The module's, at normal priority, so a different value is a conflict
+        # (and one forced past it fails settingsAssertions): only MariaDB is
         # provisioned, dumped and restored here (FRAPPE_DB_TYPE says so too),
         # and the pre-migrate snapshot and its rollback, the local database and
-        # its grants all name database.name. A db_name that differs leaves the
-        # database the site uses out of the snapshot a failed migrate rolls
-        # back to. They become the module's (normal priority, a different value
-        # an error) in 2.0.0.
-        db_type = lib.mkDefault "mariadb";
-        db_name = lib.mkDefault config.database.name;
+        # its grants all name database.name. A db_name that differs would leave
+        # the database the site uses out of the snapshot a failed migrate rolls
+        # back to. mkDefault through 1.x, with a warning.
+        db_type = "mariadb";
+        db_name = config.database.name;
 
         # Belt and braces with FRAPPE_SOCKETIO_UDS in the unit env: node_utils.js
         # merges this file too, so the realtime server still finds the socket if
@@ -1868,28 +1865,16 @@ in
 {
   # The module was services.frappe. It matches the devenv and flake-parts roots
   # (frappe-nix.*) now, and cannot collide with a future nixpkgs module
-  # (python-devops-nix docs/conventions.md, NixOS module path). The whole tree
-  # is aliased, with NixOS's own warning, through 1.x, until frappe-nix 2.0.0.
-  #
-  # lib.mkRenamedOptionModule, but withPriority = false: its priority wrapper
-  # puts a whole tree's definitions under one mkOverride, which leaves a nested
-  # mkIf (`runtime.webThreads = mkIf …`) undischarged at the leaf. Without it
-  # each leaf keeps its own priority and properties.
+  # (python-devops-nix docs/conventions.md, NixOS module path). The old name
+  # was an alias through 1.x, and is refused since 2.0.0.
   imports = [
-    (lib.doRename {
-      from = [
+    (lib.mkRemovedOptionModule
+      [
         "services"
         "frappe"
-      ];
-      to = [
-        "services"
-        "frappe-nix"
-      ];
-      visible = false;
-      warn = true;
-      use = lib.trace "Obsolete option `services.frappe' is used. It was renamed to `services.frappe-nix', and the old name goes in frappe-nix 2.0.0.";
-      withPriority = false;
-    })
+      ]
+      "It is services.frappe-nix, with the same options (see frappe-nix's docs/development/upgrading.md, \"1.x to 2.0\")."
+    )
   ];
 
   options.services.frappe-nix = {
@@ -2195,7 +2180,7 @@ in
 
     hardening.enable = mkOption {
       type = types.bool;
-      default = false;
+      default = true;
       description = ''
         Sandbox every frappe-* unit with python-devops-nix's
         lib.nixos.hardening: the file system read-only except the site's
@@ -2203,10 +2188,11 @@ in
         writable-and-executable memory except for the units that run Node or a
         PDF renderer. Off, the units get none of it.
 
-        The default flips to true in frappe-nix 2.0.0. Enable it per
-        deployment after watching one start, especially inside NixOS
-        containers (systemd-nspawn), where a namespace the sandbox needs can
-        fail the unit with status 226/NAMESPACE.
+        On by default since frappe-nix 2.0.0 (opt-in through 1.x). Watch a
+        deployment's first start with it, especially inside NixOS containers
+        (systemd-nspawn), where a namespace the sandbox needs can fail the
+        unit with status 226/NAMESPACE. Each key is a `mkDefault`, so
+        `systemd.services.<unit>.serviceConfig.<key>` relaxes one.
       '';
     };
 
@@ -2278,31 +2264,35 @@ in
               message = "services.frappe-nix.sites.\"${name}\".nginx.socketPath requires nginx.enable.";
             }
           ) enabledSites
-        );
+        )
+        ++ lib.concatLists (mapAttrsToList settingsAssertions enabledSites)
+        # The site options 1.x renamed (removedSiteOption), on any site, enabled
+        # or not.
+        ++ map (message: {
+          assertion = false;
+          inherit message;
+        }) (lib.concatMap (siteCfg: siteCfg.removals) (lib.attrValues cfg.sites));
 
       # The unified runtime has no separate realtime process and no gunicorn, so
       # these configure nothing. Say so rather than letting a set value quietly
       # do nothing.
-      warnings =
-        lib.concatMap (siteCfg: siteCfg.deprecations) (lib.attrValues cfg.sites)
-        ++ lib.concatLists (mapAttrsToList settingsWarnings enabledSites)
-        ++ lib.optionals cfg.runtime.enable (
-          lib.concatLists (
-            mapAttrsToList (
-              name: siteCfg:
-              lib.optional (siteCfg.socketio.socketPath != "") (
-                "services.frappe-nix.sites.\"${name}\".socketio.socketPath is ignored when"
-                + " services.frappe-nix.runtime.enable is true: the runtime serves /socket.io"
-                + " on web.socketPath. Remove it, or set runtime.enable = false."
-              )
-            ) enabledSites
-          )
-          ++ lib.optional (cfg.web.workers != 4) (
-            "services.frappe-nix.web.workers is ignored when services.frappe-nix.runtime.enable"
-            + " is true: the runtime sizes web concurrency with"
-            + " services.frappe-nix.runtime.webThreads instead."
-          )
-        );
+      warnings = lib.optionals cfg.runtime.enable (
+        lib.concatLists (
+          mapAttrsToList (
+            name: siteCfg:
+            lib.optional (siteCfg.socketio.socketPath != "") (
+              "services.frappe-nix.sites.\"${name}\".socketio.socketPath is ignored when"
+              + " services.frappe-nix.runtime.enable is true: the runtime serves /socket.io"
+              + " on web.socketPath. Remove it, or set runtime.enable = false."
+            )
+          ) enabledSites
+        )
+        ++ lib.optional (cfg.web.workers != 4) (
+          "services.frappe-nix.web.workers is ignored when services.frappe-nix.runtime.enable"
+          + " is true: the runtime sizes web concurrency with"
+          + " services.frappe-nix.runtime.webThreads instead."
+        )
+      );
 
       environment.systemPackages = [
         benchCli

@@ -2,7 +2,9 @@
 # the other app standards PRs build on.
 #
 #   standards-cli       the package builds against the locked nixpkgs with its
-#                       unittest suites and pythonRuntimeDepsCheck; `--version`,
+#                       unittest suites and pythonRuntimeDepsCheck, and its
+#                       rich is python-devops-nix's lib.python.rich, not
+#                       nixpkgs' (evaluated); `--version`,
 #                       the unknown-command exit, `data-path` and `config`
 #                       behave, and `config` reads the opt-in fixtures as
 #                       standards-optin does or refuses them (exit 2).
@@ -58,6 +60,8 @@
 
 let
   inherit (pkgs.stdenv.hostPlatform) system;
+  inherit (inputs) python-devops-nix;
+  base = python-devops-nix.lib;
 
   version = lib.removeSuffix "\n" (builtins.readFile ../../version.txt);
 
@@ -69,6 +73,7 @@ let
       inherit
         lib
         pkgs
+        base
         appMode
         scriptsDir
         ;
@@ -81,6 +86,7 @@ let
   missingDropInArgs = lib.subtractLists (lib.splitString " " appScripts.standards-fixture-args.exec) [
     "lib"
     "pkgs"
+    "base"
     "appsWithNode"
     "benchBin"
     "secrets"
@@ -112,15 +118,15 @@ let
   ];
 
   fixtureTools = import ../../lib/standards/outputs.nix {
-    inherit pkgs;
+    inherit pkgs base;
     toolsDir = ./fixtures/tools;
   };
-  realTools = import ../../lib/standards/outputs.nix { inherit pkgs; };
+  realTools = import ../../lib/standards/outputs.nix { inherit pkgs base; };
   # A tool named like an output frappe-nix already has (frappe-init) is refused.
   toolClash = builtins.tryEval (
     builtins.attrNames
       (import ../../lib/standards/outputs.nix {
-        inherit pkgs;
+        inherit pkgs base;
         toolsDir = ./fixtures/tools-clash;
       }).packages
   );
@@ -207,7 +213,7 @@ let
   fixtureApps = fixtureOutputs.apps.${system};
 
   shellFragment = import ../../lib/standards/shell.nix {
-    inherit pkgs;
+    inherit pkgs python-devops-nix;
     pyproject = fixtureDir + "/pyproject.toml";
   };
   shellPrograms = map lib.getExe shellFragment.packages;
@@ -263,7 +269,7 @@ let
         config = perSystem.devenv.shells.default;
         inherit lib pkgs;
       };
-      key = (import ../../lib/standards/shell.nix { inherit pkgs; }).devenvModule.key;
+      key = (import ../../lib/standards/shell.nix { inherit pkgs python-devops-nix; }).devenvModule.key;
       modules = builtins.filter (m: (m.key or null) == key) (shell.imports or [ ]);
       module = lib.head modules;
       names = map (p: p.name) module.packages;
@@ -363,6 +369,11 @@ let
     crlf = builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable;
     lone-cr = builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable;
   };
+  # The rich frappe-nix-tools propagates, and the base's for its interpreter.
+  packageRich = map (p: p.drvPath) (
+    builtins.filter (p: (p.pname or null) == "rich") frappeNixTools.propagatedBuildInputs
+  );
+  baseRich = (base.python.rich { python = frappeNixTools.pythonModule; }).rich.drvPath;
   # `<name>=<file>` words for the standards-cli loops, which first write the
   # line-ending cases to ./endings.
   optinCases = lib.concatMapStringsSep " " (
@@ -375,6 +386,9 @@ let
 in
 {
   standards-cli =
+    assert lib.assertMsg (
+      packageRich == [ baseRich ]
+    ) "tools: frappe-nix-tools is not built on python-devops-nix's lib.python.rich";
     checks.script "standards-cli"
       {
         tools = [
@@ -548,7 +562,7 @@ in
       shellFor =
         name:
         import ../../lib/standards/shell.nix {
-          inherit pkgs;
+          inherit pkgs python-devops-nix;
           pyproject = ./fixtures/optin + "/${name}/pyproject.toml";
         };
       expected = {
@@ -583,7 +597,7 @@ in
       on = shellFor "with-table";
       offPrograms = map lib.getExe off.packages;
       onPrograms = map lib.getExe on.packages;
-      none = import ../../lib/standards/shell.nix { inherit pkgs; };
+      none = import ../../lib/standards/shell.nix { inherit pkgs python-devops-nix; };
       facts =
         assert lib.assertMsg (wrong == { }) "opt-in: wrong verdict for ${builtins.toJSON wrong}";
         assert lib.assertMsg (

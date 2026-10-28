@@ -12,7 +12,7 @@
 # need one are skipped without it):
 #   UNGUARDED_SCRIPT  devguard.enable = false
 #   NOFETCH_SCRIPT    restore.enable = false
-#   ALLFILES_SCRIPT   both file archives by default (restore.withFiles = "all")
+#   ALLFILES_SCRIPT   both file archives by default (restore.files = "all")
 set -euo pipefail
 
 SCRIPT="$1"
@@ -121,7 +121,11 @@ run_with() {
   export BENCH_LOG="$WORK/bench.log"
   OUT="$(bash "$script" "$@" 2>&1)" && RC=0 || RC=$?
 }
-said() { printf '%s' "$OUT" | grep -qF -- "$1"; }
+# A here-string, never `printf '%s' "$OUT" | grep -q`: printf writes $OUT a line
+# at a time, grep -q exits at the first match, and a line written after that
+# kills printf with SIGPIPE. Under pipefail the match then fails, now and then
+# (issue #180).
+said() { grep -qF -- "$1" <<< "$OUT"; }
 logged() { grep -qF -- "$1" "$WORK/bench.log"; }
 
 # ── 1. a fresh clone bootstraps the site ─────────────────────────────────
@@ -198,7 +202,7 @@ if logged "migrate"; then no "--no-migrate skips it" "migrate still ran"; else o
 # the restored database and take `bench migrate` down with ModuleNotFoundError.
 printf '{"erp.example.com":["frappe","erpnext","hrms","payments"]}' >"$LIST_APPS_JSON"
 run
-if printf '%s' "$OUT" | grep -q "hrms" && printf '%s' "$OUT" | grep -q "bench get-app" && ! logged "migrate"; then
+if said "hrms" && said "bench get-app" && ! logged "migrate"; then
   ok "an app the bench does not have is named, and migrate is held back"
 else
   no "a missing app is named and migrate held back" "$(printf '%s' "$OUT" | tail -3)"
@@ -251,21 +255,25 @@ fi
 
 # ── 12. --list ───────────────────────────────────────────────────────────
 run --list
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202; then
+if [ "$RC" -eq 0 ] && said 20260202_020202; then
   ok "--list shows the available backups"
 else
   no "--list shows the available backups" "rc=$RC out=$OUT"
 fi
 
-# ── 13. the old variable names still work, and say so ────────────────────
+# ── 13. the old variable names are not read ──────────────────────────────
 # FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (python-devops-nix docs/conventions.md,
-# Tool-owned variables); the old name is read, with a warning, through 1.x, until frappe-nix 2.0.0.
-FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
-  printf '%s' "$OUT" | grep -q 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
-  ok "FRAPPE_BACKUP_SOURCE is still read, with a deprecation warning"
+# Tool-owned variables); the old name was read, with a warning, through 1.x, and is not since
+# frappe-nix 2.0.0.
+# With the new name empty and no BACKUPS_* credentials, the run must fail the way
+# it does with no source at all, naming the new variable: a run that failed for
+# any other reason would not list the backups either.
+FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" BACKUPS_URL="" run --list
+if [ "$RC" -ne 0 ] && said "BACKUPS_URL" && said "FRAPPE_NIX_BACKUP_SOURCE=/path/to/backups" &&
+  ! said 20260202_020202 && ! said 'deprecated'; then
+  ok "FRAPPE_BACKUP_SOURCE is not read"
 else
-  no "the legacy FRAPPE_BACKUP_SOURCE still works" "rc=$RC out=$OUT"
+  no "the 1.x FRAPPE_BACKUP_SOURCE is not read" "rc=$RC out=$OUT"
 fi
 
 # ── 14. --help ───────────────────────────────────────────────────────────
@@ -298,8 +306,8 @@ run --at 20260101_010101
 cached_rc=$RC
 cached_out="$OUT"
 run --at 20260101_010101 --no-cache
-if [ "$cached_rc" -eq 0 ] && printf '%s' "$cached_out" | grep -q 'cached .*-database.sql.gz' &&
-  [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'fetch .*-database.sql.gz'; then
+if [ "$cached_rc" -eq 0 ] && grep -q 'cached .*-database.sql.gz' <<< "$cached_out" &&
+  [ "$RC" -eq 0 ] && grep -q 'fetch .*-database.sql.gz' <<< "$OUT"; then
   ok "a repeat restore is served from cache, and --no-cache downloads again"
 else
   no "the cache, and --no-cache" "first: $cached_out | --no-cache: $OUT"
@@ -406,12 +414,12 @@ if [ -n "$UNGUARDED_SCRIPT" ]; then
   fi
 
   # The name it had before (python-devops-nix docs/conventions.md, Tool-owned
-  # variables), read with a warning through 1.x, until frappe-nix 2.0.0.
+  # variables), read with a warning through 1.x and not since frappe-nix 2.0.0.
   FRAPPE_RESTORE_ALLOW_UNGUARDED=1 run_with "$UNGUARDED_SCRIPT" --at 20260101_010101
-  if [ "$RC" -eq 0 ] && said "FRAPPE_RESTORE_ALLOW_UNGUARDED is deprecated; set FRAPPE_NIX_RESTORE_ALLOW_UNGUARDED"; then
-    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 still works, with a deprecation warning"
+  if [ "$RC" -eq 1 ] && said "refusing" && ! logged " restore "; then
+    ok "FRAPPE_RESTORE_ALLOW_UNGUARDED=1 is not read: it still refuses"
   else
-    no "the legacy unguarded override still works" "rc=$RC out=$OUT"
+    no "the 1.x unguarded override is not read" "rc=$RC out=$OUT"
   fi
 
   # Unguarded always refuses now (python-devops-nix docs/conventions.md,

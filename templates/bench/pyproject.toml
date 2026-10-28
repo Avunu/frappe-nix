@@ -78,7 +78,8 @@ members = []
 # source it builds with its own runtime/ directory (frappe-nix.runtime.src), so a
 # frappe-runtime bump is `nix flake update frappe-nix`, never an edit here. A
 # plain `uv lock` keeps an already-resolved git revision, so if frappe-runtime
-# ever adds a dependency, re-lock with `nix run .#relock` (which refreshes it).
+# ever adds a dependency, re-lock with `nix run .#relock` (which refreshes it to the frappe-nix revision
+# flake.lock pins).
 frappe-runtime = { git = "https://github.com/Avunu/frappe-nix", subdirectory = "runtime" }
 
 [build-system]
