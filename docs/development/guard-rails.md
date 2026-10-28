@@ -130,7 +130,7 @@ Two guards are **transport-level**: `egress`, which refuses connections at `sock
 
 Both cover the bench's Python and nothing else. Outside them are:
 
-- subprocesses: `git`, `mc`, `curl`, Chromium, wkhtmltopdf and Node open their own connections;
+- subprocesses: `git`, `rclone`, `curl`, Chromium, wkhtmltopdf and Node open their own connections;
 - C extensions that connect without Python's socket module, such as `mysqlclient`'s libmariadb or gRPC;
 - UDP sent with `sendto` rather than through a connected socket;
 - the browser, whose scripts reach whatever the page tells them to.
