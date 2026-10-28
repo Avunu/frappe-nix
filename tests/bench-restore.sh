@@ -265,8 +265,12 @@ fi
 # FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (python-devops-nix docs/conventions.md,
 # Tool-owned variables); the old name was read, with a warning, through 1.x, and is not since
 # frappe-nix 2.0.0.
-FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
-if ! said 20260202_020202 && ! said 'deprecated'; then
+# With the new name empty and no BACKUPS_* credentials, the run must fail the way
+# it does with no source at all, naming the new variable: a run that failed for
+# any other reason would not list the backups either.
+FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" BACKUPS_URL="" run --list
+if [ "$RC" -ne 0 ] && said "BACKUPS_URL" && said "FRAPPE_NIX_BACKUP_SOURCE=/path/to/backups" &&
+  ! said 20260202_020202 && ! said 'deprecated'; then
   ok "FRAPPE_BACKUP_SOURCE is not read"
 else
   no "the 1.x FRAPPE_BACKUP_SOURCE is not read" "rc=$RC out=$OUT"
