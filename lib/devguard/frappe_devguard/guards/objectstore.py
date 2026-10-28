@@ -69,6 +69,7 @@ from dev.
 """
 
 import contextlib
+import sys
 from urllib.parse import urlsplit
 
 from .._hook import on_import
@@ -154,9 +155,20 @@ def _patch_get_site_config(module):
 				)
 		return config
 
-	# frappe.init does `local.conf = _dict(get_site_config())`, resolving this
-	# name from the frappe module at call time, so the wrapper is picked up.
+	# Up to Frappe 16, frappe.init resolves this name from the frappe module at
+	# call time (`local.conf = get_site_config(...)`), so the wrapper is picked
+	# up there.
 	module.get_site_config = mark(get_site_config, "frappe.get_site_config")
+
+	# From 16 on the function lives in frappe.config, and frappe re-exports it.
+	# Frappe 17 (develop) makes the re-export lazy and has frappe.init run
+	# `from frappe.config import get_site_config` at call time, which would
+	# miss the wrapper above: patch the original's home too. require() above
+	# has already imported it there. On 15, frappe.config is an unrelated
+	# package without this function, so it is left alone.
+	config = sys.modules.get("frappe.config")
+	if config is not None and getattr(config, "get_site_config", None) is original:
+		config.get_site_config = module.get_site_config  # ty: ignore[unresolved-attribute]
 
 
 # --------------------------------------------------------------------------
