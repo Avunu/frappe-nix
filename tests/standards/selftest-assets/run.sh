@@ -227,6 +227,12 @@ cmd_builtbench() {
   [ -f "$assets" ] || fail "the builtBench has no sites/assets/assets.json"
   expect_bundles "$assets" "$out/bench/apps/spa_app/spa_app/public"
   ok "the spa-app builtBench maps spa.bundle.js and spa.bundle.css to the hashed files"
+  # The sandbox has no network and apps/frappe no .git, so frappe's prebuilt
+  # assets are never tried (lib/bench.nix, frappe-nix#181).
+  if grep -q 'releases/download\|assets\.frappeframework\.com' "$WORK/builtbench.log"; then
+    fail "the Nix build tried to download frappe's prebuilt assets"
+  fi
+  ok "the Nix build did not try to download frappe's prebuilt assets"
 
   # The Q7 path: an app-mode app that has not opted in has no registration
   # step of its own, so the preload (lib/js/esbuild-preload.js, from the store,
