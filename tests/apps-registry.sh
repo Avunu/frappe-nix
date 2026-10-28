@@ -119,7 +119,7 @@ git -C "$BENCH/apps/hrms" checkout -q --detach
 git -C "$BENCH/apps/frappe" init -q -b feature-x
 git -C "$BENCH/apps/frappe" add -A
 git -C "$BENCH/apps/frappe" commit -q -m init
-FRAPPE_SHA="$(git -C "$BENCH/apps/frappe" rev-parse HEAD)"
+frappe_sha="$(git -C "$BENCH/apps/frappe" rev-parse HEAD)"
 
 cat > "$BENCH/.gitmodules" <<'EOF2'
 [submodule "apps/frappe"]
@@ -224,7 +224,7 @@ check_eq "--provenance outranks the live checkout" "deadbeef" "$(jqv '.erpnext.r
 check_eq "--provenance branch outranks the live branch" "develop" "$(jqv '.erpnext.resolution.branch')"
 check_eq "is_repo can be asserted with no resolution" "true" "$(jqv '.legacy.is_repo')"
 check_eq "a provenance entry for an unregistered app is ignored" "null" "$(jqv '.unregistered')"
-check_eq "apps without an entry are unaffected" "$FRAPPE_SHA" "$(jqv '.frappe.resolution.commit_hash')"
+check_eq "apps without an entry are unaffected" "$frappe_sha" "$(jqv '.frappe.resolution.commit_hash')"
 
 echo "── --seed ──────────────────────────────────────────────────────"
 cat > "$ROOT/seed.json" <<'EOF4'

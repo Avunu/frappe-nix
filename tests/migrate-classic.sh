@@ -7,7 +7,7 @@
 # migrator runs with --skip-lock, so this works inside the Nix build sandbox.
 set -euo pipefail
 
-FRAPPE_INIT="$1"
+frappe_init="$1"
 MAKE_BENCH="$2"
 
 ROOT="$(mktemp -d)"
@@ -42,11 +42,11 @@ bash "$MAKE_BENCH" "$ROOT/fx" > /dev/null 2>&1
 cp -a "$ROOT/fx/bench" "$ROOT/dry"
 
 cd "$ROOT/fx/bench"
-FRAPPE_SHA="$(git -C apps/frappe rev-parse HEAD)"
+frappe_sha="$(git -C apps/frappe rev-parse HEAD)"
 ERPNEXT_SHA="$(git -C apps/erpnext rev-parse HEAD)"
 
 echo "── migrating ────────────────────────────────────────────────"
-"$FRAPPE_INIT" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run1.log" 2>&1 ||
+"$frappe_init" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run1.log" 2>&1 ||
   { cat "$ROOT/run1.log"; echo "migration failed"; exit 1; }
 
 echo "── assertions ───────────────────────────────────────────────"
@@ -58,7 +58,7 @@ check "flake.nix is a frappe-nix wrapper" grep -q 'frappe-nix.flakeModules.defau
 
 # Submodules are pinned at the app's own HEAD, not moved to a branch tip.
 check_eq "apps/frappe gitlink == its HEAD" \
-  "160000 $FRAPPE_SHA 0	apps/frappe" "$(git ls-files -s apps/frappe)"
+  "160000 $frappe_sha 0	apps/frappe" "$(git ls-files -s apps/frappe)"
 check_eq "apps/erpnext gitlink == its HEAD (was detached)" \
   "160000 $ERPNEXT_SHA 0	apps/erpnext" "$(git ls-files -s apps/erpnext)"
 
@@ -260,7 +260,7 @@ check_eq "apps.json follows apps.txt order" \
 check_eq "apps.json idx is 1-based in that order" "[1,2,3,4,5,6]" "$(aj -c '[.[].idx]')"
 check_eq "apps.json versions come from the sources" \
   "15.42.0 15.30.0 15.10.0 0.0.1 1.0.0 0.1.0" "$(aj -r '[.[].version] | join(" ")')"
-check_eq "apps/frappe: commit is its HEAD" "$FRAPPE_SHA" "$(aj '.frappe.resolution.commit_hash')"
+check_eq "apps/frappe: commit is its HEAD" "$frappe_sha" "$(aj '.frappe.resolution.commit_hash')"
 check_eq "apps/frappe: branch" version-15 "$(aj '.frappe.resolution.branch')"
 check_eq "apps/erpnext: commit despite detached HEAD" "$ERPNEXT_SHA" "$(aj '.erpnext.resolution.commit_hash')"
 check_eq "apps/erpnext: branch from the repaired .gitmodules" version-15 "$(aj '.erpnext.resolution.branch')"
@@ -274,7 +274,7 @@ echo "── idempotency ──────────────────�
 git status --porcelain > "$ROOT/status.1"
 md5sum .gitignore .gitmodules pyproject.toml sites/apps.txt sites/apps.json sites/common_site_config.json \
   > "$ROOT/sums.1"
-"$FRAPPE_INIT" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run2.log" 2>&1 ||
+"$frappe_init" --migrate --yes --skip-lock --allow-file-remotes . > "$ROOT/run2.log" 2>&1 ||
   { cat "$ROOT/run2.log"; echo "second run failed"; exit 1; }
 git status --porcelain > "$ROOT/status.2"
 check "a second run changes no tracked content" md5sum -c "$ROOT/sums.1"
@@ -284,7 +284,7 @@ echo "── --dry-run ───────────────────
 cd "$ROOT/dry"
 (find . -not -path '*/.git/*' -not -name .git | sort) > "$ROOT/tree.1"
 git status --porcelain > "$ROOT/drystatus.1"
-"$FRAPPE_INIT" --migrate --dry-run --allow-file-remotes . > "$ROOT/dry.log" 2>&1
+"$frappe_init" --migrate --dry-run --allow-file-remotes . > "$ROOT/dry.log" 2>&1
 (find . -not -path '*/.git/*' -not -name .git | sort) > "$ROOT/tree.2"
 git status --porcelain > "$ROOT/drystatus.2"
 check "--dry-run leaves the tree untouched" diff -q "$ROOT/tree.1" "$ROOT/tree.2"
@@ -297,13 +297,13 @@ check "--dry-run does not renumber the ports" \
 
 echo "── guard rails ──────────────────────────────────────────────"
 mkdir -p "$ROOT/junk" && echo x > "$ROOT/junk/a"
-if "$FRAPPE_INIT" --migrate --yes "$ROOT/junk" > /dev/null 2>&1; then
+if "$frappe_init" --migrate --yes "$ROOT/junk" > /dev/null 2>&1; then
   no "a non-bench directory is refused"
 else
   ok "a non-bench directory is refused"
 fi
 cd "$ROOT/dry"
-if "$FRAPPE_INIT" --migrate --skip-lock --allow-file-remotes . > /dev/null 2>&1; then
+if "$frappe_init" --migrate --skip-lock --allow-file-remotes . > /dev/null 2>&1; then
   no "migrating without --yes in a non-TTY is refused"
 else
   ok "migrating without --yes in a non-TTY is refused"
@@ -311,12 +311,12 @@ fi
 # Without --allow-file-remotes an app whose remote is a filesystem path is not
 # refused — it is vendored, because recording that URL in .gitmodules would
 # produce a bench that only clones on this machine.
-if "$FRAPPE_INIT" --migrate --yes --skip-lock --no-vendor . > /dev/null 2>&1; then
+if "$frappe_init" --migrate --yes --skip-lock --no-vendor . > /dev/null 2>&1; then
   no "--no-vendor refuses an app with an unusable remote"
 else
   ok "--no-vendor refuses an app with an unusable remote"
 fi
-if "$FRAPPE_INIT" --migrate --yes --skip-lock . > "$ROOT/novendorflag.log" 2>&1; then
+if "$frappe_init" --migrate --yes --skip-lock . > "$ROOT/novendorflag.log" 2>&1; then
   # frappe/erpnext have filesystem remotes → vendored (source tracked, and no
   # unusable URL written to .gitmodules). hrms was already a submodule with a
   # file:// URL, so it stays one.
@@ -343,7 +343,7 @@ printf 'app_name = "frappe"\n' > "$ROOT/foo/apps/frappe/frappe/hooks.py"
 printf '[project]\nname = "frappe"\nversion = "15.42.0"\n' > "$ROOT/foo/apps/frappe/pyproject.toml"
 printf 'frappe\nfoo\n' > "$ROOT/foo/sites/apps.txt"
 printf '{"default_site":"t.localhost"}\n' > "$ROOT/foo/sites/common_site_config.json"
-"$FRAPPE_INIT" --migrate --yes --skip-lock "$ROOT/foo" > "$ROOT/foo.log" 2>&1 ||
+"$frappe_init" --migrate --yes --skip-lock "$ROOT/foo" > "$ROOT/foo.log" 2>&1 ||
   { cat "$ROOT/foo.log"; no "migrating a bench named after its app"; }
 if grep -q '^name = "foo-bench"' "$ROOT/foo/pyproject.toml"; then
   ok "the workspace root is renamed away from the colliding app"
@@ -364,7 +364,7 @@ for app in frappe hrms; do
 done
 # A branch the scaffold must not fetch: the clone follows version-15 alone.
 git -C "$ROOT/fx/remotes/frappe.git" branch develop version-15
-"$FRAPPE_INIT" --init --skip-lock --allow-file-remotes --version version-15 --apps frappe/hrms "$ROOT/new" > "$ROOT/init.log" 2>&1 ||
+"$frappe_init" --init --skip-lock --allow-file-remotes --version version-15 --apps frappe/hrms "$ROOT/new" > "$ROOT/init.log" 2>&1 ||
   { cat "$ROOT/init.log"; no "scaffolding a bench"; }
 for app in frappe hrms; do
   check_eq "apps/$app is not shallow" false "$(git -C "$ROOT/new/apps/$app" rev-parse --is-shallow-repository)"

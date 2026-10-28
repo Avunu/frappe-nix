@@ -7,7 +7,7 @@
 # Runs --dry-run only, so it needs no remotes and no network.
 set -euo pipefail
 
-FRAPPE_INIT="$1"
+frappe_init="$1"
 
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
@@ -52,7 +52,7 @@ make_bench() {
 
 expect_preset() { # <label> <dir> <expected preset>
   local out
-  if out="$("$FRAPPE_INIT" --migrate --dry-run "$2" 2>&1)"; then
+  if out="$("$frappe_init" --migrate --dry-run "$2" 2>&1)"; then
     if printf '%s' "$out" | grep -q "frappe version : $3 "; then
       ok "$1 → $3"
     else
@@ -65,7 +65,7 @@ expect_preset() { # <label> <dir> <expected preset>
 
 expect_failure() { # <label> <dir> <expected message fragment>
   local out rc=0
-  out="$("$FRAPPE_INIT" --migrate --dry-run "$2" 2>&1)" || rc=$?
+  out="$("$frappe_init" --migrate --dry-run "$2" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then
     no "$1 should have failed"
   elif printf '%s' "$out" | grep -qF "$3"; then
@@ -98,7 +98,7 @@ expect_failure "nothing detectable in a non-TTY" \
 
 echo "── explicit override ────────────────────────────────────────"
 d="$(make_bench b8 - 15.1.0 -)"
-out="$("$FRAPPE_INIT" --migrate --dry-run --version version-16 "$d" 2>&1)"
+out="$("$frappe_init" --migrate --dry-run --version version-16 "$d" 2>&1)"
 if printf '%s' "$out" | grep -q 'python 3.14'; then
   ok "--version overrides detection"
 else

@@ -5,8 +5,13 @@
 # the very checks that evaluate it.
 #
 #   import ./fixtures/bench-flake.nix { inherit self pkgs; } perSystemModule
-#   → the perSystem `config` for this system
-{ self, pkgs }:
+#   → the perSystem `config` for this system, or with `part = "options"` its
+#     option declarations (tests/conventions.nix)
+{
+  self,
+  pkgs,
+  part ? "config",
+}:
 perSystem:
 let
   inherit (pkgs.stdenv.hostPlatform) system;
@@ -30,4 +35,4 @@ let
     sourceInfo.outPath = root;
   };
 in
-outputs.allSystems.${system}.config
+outputs.allSystems.${system}.${part}

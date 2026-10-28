@@ -34,12 +34,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FN="$(git -C "$HERE" rev-parse --show-toplevel)"
 WORK="${WORK:-${RUNNER_TEMP:-/tmp}/standards-n2}"
 FIXTURE="$FN/tests/fixtures/spa-app"
-FRAPPE_REV="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
-[ -n "$FRAPPE_REV" ] || {
+frappe_rev="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
+[ -n "$frappe_rev" ] || {
   echo "::error::no frappe revision in dev/pyproject.toml" >&2
   exit 1
 }
-FRAPPE_REF="${FRAPPE_REF:-$FRAPPE_REV}"
+FRAPPE_REF="${FRAPPE_REF:-$frappe_rev}"
 
 fail() {
   echo "::error::$*" >&2
@@ -210,7 +210,7 @@ cmd_builtbench() {
 
   group "lock the spa-app fixture against this checkout"
   prepare "$app"
-  (cd "$app" && nix flake lock --override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$FRAPPE_REV")
+  (cd "$app" && nix flake lock --override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$frappe_rev")
   (cd "$app" && nix run "${nixflags[@]}" .#relock)
   # frappe's ui/ frontend ships a yarn.lock that does not cover its own
   # package.json at this revision (an offline install misses dompurify); a

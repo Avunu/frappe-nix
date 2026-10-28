@@ -174,11 +174,11 @@ cmd_listing() {
 
 # frappe at the revision frappe-nix's own dev env pins, and erpnext at the matching release,
 # as selftest-runtime does (a branch tip can break the resolution).
-FRAPPE_REV="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
+frappe_rev="$(sed -n 's|.*frappe/archive/\([0-9a-f]\{40\}\)\.tar\.gz.*|\1|p' "$FN/dev/pyproject.toml")"
 ERPNEXT_REV=7474d9e786277383de1242ab882f16856d17a9c9 # v16.50.0, beside frappe's
 
 lock() {
-  local dir="$1" pins=(--override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$FRAPPE_REV")
+  local dir="$1" pins=(--override-input frappe-nix "path:$FN" --override-input frappe "github:frappe/frappe/$frappe_rev")
   if grep -q 'erpnext = {' "$dir/flake.nix"; then
     pins+=(--override-input erpnext "github:frappe/erpnext/$ERPNEXT_REV")
   fi
