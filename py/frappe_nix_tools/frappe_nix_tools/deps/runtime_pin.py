@@ -21,7 +21,7 @@ Standard library only: the shell-entry root sync imports it.
 
 import re
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -99,7 +99,7 @@ def unpin_lock(lock: Path, url: str, rev: str) -> None:
 
 
 @contextmanager
-def runtime_at_pin(workspace: str | Path = ".", flake_dir: str | Path | None = None) -> Iterator[str | None]:
+def runtime_at_pin(workspace: str | Path = ".", flake_dir: str | Path | None = None) -> Generator[str | None]:
 	"""For one ``uv lock`` in ``workspace``: frappe-runtime's source at the revision
 	``flake_dir``'s flake.lock (default: ``workspace``'s) pins. Yields that revision,
 	or ``None`` when nothing was pinned."""
