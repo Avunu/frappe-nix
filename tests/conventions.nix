@@ -105,7 +105,6 @@ inputs.python-devops-nix.lib.checks.conventions (
       "FRAPPE_BENCH_UPDATE_FORCE"
       "FRAPPE_LOG_LEVEL"
       "FRAPPE_OFFLINE_MIGRATE_ROW_THRESHOLD"
-      "FRAPPE_REPLICA_DB_SOCKET"
       "FRAPPE_RESTORE_ALLOW_UNGUARDED"
       "FRAPPE_TEST_ADMIN_PASSWORD"
       "FRAPPE_WEB_SOCKET"
@@ -113,12 +112,13 @@ inputs.python-devops-nix.lib.checks.conventions (
       "FRAPPE_BRANCH"
       "FRAPPE_VERSION"
       # frappe-nix's own names outside the rule: frappe_unixsock's off
-      # switch, two the modules set that Frappe 16 does not read, the dev
-      # shell's and the typecheck gate's frappe checkout, two the nightly
-      # script exports to an app's suites, and selftest-assets' branch
-      # override. Sorting them is a follow-up: each is renamed to
-      # FRAPPE_NIX_*, dropped or kept with a reason, and then leaves this
-      # list.
+      # switch, two the modules set that Frappe 16 does not read (the
+      # container entrypoint reads FRAPPE_REDIS_SOCKETIO, so it needs a
+      # rename, not a drop), the dev shell's and the typecheck gate's
+      # frappe checkout, two the nightly script exports to an app's suites,
+      # and selftest-assets' branch override. Sorting them is a follow-up:
+      # each is renamed to FRAPPE_NIX_*, dropped or kept with a reason, and
+      # then leaves this list.
       "FRAPPE_UNIXSOCK_ENABLED"
       "FRAPPE_ENV_TYPE"
       "FRAPPE_REDIS_SOCKETIO"
