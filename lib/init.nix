@@ -13,12 +13,12 @@
 # PATH.
 {
   pkgs,
-  # For frappe-nix-build-deps-sync on PATH, which derives a new bench's
+  # For frappe-nix-tools' rich (lib/standards/outputs.nix),
+  # frappe-nix-build-deps-sync on PATH, which derives a new bench's
   # [tool.uv.extra-build-dependencies] block from the lock frappe-init writes
   # (lib/build-deps.nix), and frappe-nix-sources, whose `clone` is an app's
-  # first clone (lib/shell-tools.nix). Null leaves the template's entries as
-  # they are, and a frappe-init that cannot scaffold a bench.
-  python-devops-nix ? null,
+  # first clone (lib/shell-tools.nix).
+  python-devops-nix,
 }:
 
 let
@@ -29,7 +29,10 @@ let
   # frappe-nix-tools without its test suite, which frappe-nix's own checks run
   # (packages.frappe-nix-tools): a test that fails on one platform must not make
   # frappe-init unbuildable for users who never opt in (S35).
-  standards = import ./standards/outputs.nix { inherit pkgs; };
+  standards = import ./standards/outputs.nix {
+    inherit pkgs;
+    base = python-devops-nix.lib;
+  };
   frappeNixTools = standards.frappeNixTools.overridePythonAttrs { doCheck = false; };
   frappeNixTool = import ./standards/tools/frappe-nix.nix { inherit pkgs lib frappeNixTools; };
 
@@ -72,31 +75,24 @@ let
       template = "${../templates/bench}";
       appTemplate = "${../templates/app}";
       sources =
-        if python-devops-nix == null then
-          null
-        else
-          lib.getExe
-            (import ./shell-tools.nix {
-              inherit pkgs;
-              base = python-devops-nix.lib;
-              python = frappeNixTools.pythonModule;
-            }).sources;
+        lib.getExe
+          (import ./shell-tools.nix {
+            inherit pkgs;
+            base = python-devops-nix.lib;
+            python = frappeNixTools.pythonModule;
+          }).sources;
     }
   );
 in
 pkgs.writeShellApplication {
   name = "frappe-init";
-  runtimeInputs =
-    with pkgs;
-    [
-      git
-      uv
-      workspaceTool
-      frappeNix
-    ]
-    ++
-      lib.optional (python-devops-nix != null)
-        (import ./build-deps.nix { inherit pkgs python-devops-nix; }).sync;
+  runtimeInputs = with pkgs; [
+    git
+    uv
+    workspaceTool
+    frappeNix
+    (import ./build-deps.nix { inherit pkgs python-devops-nix; }).sync
+  ];
   text = ''
     FRAPPE_NIX_CLI_CONFIG=${config} exec ${python}/bin/python3 -I -m frappe_nix_tools.frappe_init "$@"
   '';

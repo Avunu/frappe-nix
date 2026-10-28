@@ -1,15 +1,20 @@
 # `bench-new-app`, rendered from lib/scripts.nix and driven against a stub
 # upstream scaffolder: what is registered in pyproject.toml and sites/, and
 # what it refuses.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   rendered =
     (import ../lib/scripts.nix {
-      inherit lib pkgs;
+      inherit lib pkgs base;
       appsWithNode = [ ];
       benchBin = "bench";
       # The Python command the shim execs (frappe-nix-bench, lib/bench-cli.nix).

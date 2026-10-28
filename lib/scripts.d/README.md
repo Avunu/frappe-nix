@@ -21,9 +21,10 @@ lib.optionalAttrs appMode {
 }
 ```
 
-The arguments: `lib`, `pkgs`, `appsWithNode`, `benchBin`, `secrets`,
-`secretScripts`, `benchCli`, `nodeModulesBin`, `nodeVerifyBin`, `pythonBin`, `nodeLocksBin`,
-`nodeNestedFrontendExcludes`, `restore`, `offlineMigrate`, `appMode`, `lockDir`,
+The arguments: `lib`, `pkgs`, `base` (python-devops-nix's lib), `appsWithNode`,
+`benchBin`, `secrets`, `secretScripts`, `benchCli`, `nodeModulesBin`, `nodeVerifyBin`,
+`pythonBin`, `nodeLocksBin`, `nodeNestedFrontendExcludes`, `restore`,
+`offlineMigrate`, `appMode`, `lockDir`,
 and the snippets `atBench` (cd to the bench root), `atRepo` (cd to the
 repository), `siteFlag` (sets `$SITE_FLAG`), `offlineMigrateEnv`,
 `workspaceBin`, `registerWorkspaceMember`, `refreshNodeModules`,

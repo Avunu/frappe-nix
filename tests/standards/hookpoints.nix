@@ -58,6 +58,8 @@
 
 let
   inherit (pkgs.stdenv.hostPlatform) system;
+  inherit (inputs) python-devops-nix;
+  base = python-devops-nix.lib;
 
   version = lib.removeSuffix "\n" (builtins.readFile ../../version.txt);
 
@@ -69,6 +71,7 @@ let
       inherit
         lib
         pkgs
+        base
         appMode
         scriptsDir
         ;
@@ -81,6 +84,7 @@ let
   missingDropInArgs = lib.subtractLists (lib.splitString " " appScripts.standards-fixture-args.exec) [
     "lib"
     "pkgs"
+    "base"
     "appsWithNode"
     "benchBin"
     "secrets"
@@ -112,15 +116,15 @@ let
   ];
 
   fixtureTools = import ../../lib/standards/outputs.nix {
-    inherit pkgs;
+    inherit pkgs base;
     toolsDir = ./fixtures/tools;
   };
-  realTools = import ../../lib/standards/outputs.nix { inherit pkgs; };
+  realTools = import ../../lib/standards/outputs.nix { inherit pkgs base; };
   # A tool named like an output frappe-nix already has (frappe-init) is refused.
   toolClash = builtins.tryEval (
     builtins.attrNames
       (import ../../lib/standards/outputs.nix {
-        inherit pkgs;
+        inherit pkgs base;
         toolsDir = ./fixtures/tools-clash;
       }).packages
   );
@@ -207,7 +211,7 @@ let
   fixtureApps = fixtureOutputs.apps.${system};
 
   shellFragment = import ../../lib/standards/shell.nix {
-    inherit pkgs;
+    inherit pkgs python-devops-nix;
     pyproject = fixtureDir + "/pyproject.toml";
   };
   shellPrograms = map lib.getExe shellFragment.packages;
@@ -263,7 +267,7 @@ let
         config = perSystem.devenv.shells.default;
         inherit lib pkgs;
       };
-      key = (import ../../lib/standards/shell.nix { inherit pkgs; }).devenvModule.key;
+      key = (import ../../lib/standards/shell.nix { inherit pkgs python-devops-nix; }).devenvModule.key;
       modules = builtins.filter (m: (m.key or null) == key) (shell.imports or [ ]);
       module = lib.head modules;
       names = map (p: p.name) module.packages;
@@ -548,7 +552,7 @@ in
       shellFor =
         name:
         import ../../lib/standards/shell.nix {
-          inherit pkgs;
+          inherit pkgs python-devops-nix;
           pyproject = ./fixtures/optin + "/${name}/pyproject.toml";
         };
       expected = {
@@ -583,7 +587,7 @@ in
       on = shellFor "with-table";
       offPrograms = map lib.getExe off.packages;
       onPrograms = map lib.getExe on.packages;
-      none = import ../../lib/standards/shell.nix { inherit pkgs; };
+      none = import ../../lib/standards/shell.nix { inherit pkgs python-devops-nix; };
       facts =
         assert lib.assertMsg (wrong == { }) "opt-in: wrong verdict for ${builtins.toJSON wrong}";
         assert lib.assertMsg (

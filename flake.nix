@@ -101,7 +101,12 @@
         };
       # The app standards tools: packages.frappe-nix-tools, and one package and
       # app per lib/standards/tools/*.nix (`frappe-nix`, …).
-      standards = pkgs: import ./lib/standards/outputs.nix { inherit pkgs; };
+      standards =
+        pkgs:
+        import ./lib/standards/outputs.nix {
+          inherit pkgs;
+          base = inputs.python-devops-nix.lib;
+        };
       # python-devops-nix's development shell pieces, as the dev shell has
       # them (lib/shell-tools.nix).
       shellTools =
@@ -209,6 +214,7 @@
           # python-devops-nix's development shell pieces, as the dev shell has
           # them (lib/shell-tools.nix).
           tools = shellTools pkgs;
+          inherit (standards pkgs) frappeNixTools;
           grafts = import ./lib/grafts.nix {
             inherit pkgs;
             inherit (inputs) python-devops-nix;
@@ -278,7 +284,7 @@
           # leaves in the bench root's patches.txt.
           bench-patches = checks.script "bench-patches" { tools = [ pkgs.findutils ]; } ''
             bash ${./tests/bench-patches.sh} \
-              ${import ./lib/bench-patches.nix { inherit pkgs; }}/bin/frappe-nix-bench-patches \
+              ${import ./lib/bench-patches.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-bench-patches \
               2>&1 | tee "$out"
           '';
 
@@ -433,7 +439,7 @@
           # have outgrown its node_modules.
           node-modules = checks.script "node-modules" { tools = [ pkgs.findutils ]; } ''
             bash ${./tests/node-modules.sh} \
-              ${import ./lib/node-modules.nix { inherit pkgs; }}/bin/frappe-nix-node-modules \
+              ${import ./lib/node-modules.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-node-modules \
               2>&1 | tee "$out"
           '';
 
@@ -443,7 +449,7 @@
           # failed lock leaves both files exactly as they were.
           root-sync = checks.script "root-sync" { tools = [ pkgs.python3 ]; } ''
             bash ${./tests/root-sync.sh} \
-              ${import ./lib/root-sync.nix { inherit pkgs; }}/bin/frappe-nix-root-sync \
+              ${import ./lib/root-sync.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-root-sync \
               ${./templates/bench/pyproject.toml} \
               2>&1 | tee "$out"
           '';
@@ -463,7 +469,7 @@
               ''
                 export HOME="$PWD"
                 bash ${./tests/node-locks.sh} \
-                  ${import ./lib/node-locks.nix { inherit pkgs; }}/bin/frappe-nix-node-locks \
+                  ${import ./lib/node-locks.nix { inherit pkgs frappeNixTools; }}/bin/frappe-nix-node-locks \
                   ${./tests/fixtures/node-targets/apps} \
                   2>&1 | tee "$out"
               '';
@@ -521,7 +527,10 @@
         # The dev shell's runtime port leases: twenty benches at once on one
         # preferred port, kill -9, strict, and a port held outside frappe-nix.
         // import ./tests/port-lease.nix { inherit pkgs checks; }
-        // import ./tests/setup-requirements.nix { inherit pkgs checks; }
+        // import ./tests/setup-requirements.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The real mariadbd, started through the dev shell's wrapper the way
         # devenv starts it: argument order, and where its temp files go.
         // import ./tests/mariadbd-wrapper.nix { inherit pkgs checks; }
@@ -533,22 +542,40 @@
         }
         # `bench-migrate` and `bench-offline-migrate`: the step in front of the
         # migrate, over stubs.
-        // import ./tests/offline-migrate-scripts.nix { inherit pkgs checks; }
+        // import ./tests/offline-migrate-scripts.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The `reconcile-apps` script (issue #32, part 1): sites/apps.txt vs.
         # a site's actually-installed apps, driven against a stub bench.
-        // import ./tests/reconcile-apps.nix { inherit pkgs checks; }
+        // import ./tests/reconcile-apps.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench provision` and its alias provision-site: the site and its apps, over stubs.
-        // import ./tests/provision.nix { inherit pkgs checks; }
+        // import ./tests/provision.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The asset-shadow reassert check (issue #32, part 2): the
         # assets.json invariant and its reassert hooks, standalone.
         // import ./tests/assets-reassert.nix { inherit pkgs checks; }
         # `bench-update --pull` over a submodule, a local app and a stray repo.
-        // import ./tests/bench-update.nix { inherit pkgs checks; }
+        // import ./tests/bench-update.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `update-deps`: how it calls yarn in a bench (never writing a lock the
         # app's repository owns) and in app mode.
-        // import ./tests/update-deps.nix { inherit pkgs checks; }
+        // import ./tests/update-deps.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `nix run .#relock`, in a bench and in app mode, over stubs.
-        // import ./tests/relock.nix { inherit pkgs checks; }
+        // import ./tests/relock.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-get-app` against file:// remotes: what it records.
         // import ./tests/bench-get-app.nix {
           inherit pkgs checks;
@@ -556,12 +583,21 @@
         }
         # `bench-remove-app`, its inverse: what it tears out — with a dirty
         # .gitmodules too — and what it refuses to touch.
-        // import ./tests/bench-remove-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-remove-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-rename-app`: the bench's half of renaming an app — the checkout
         # and its clone moved, not downloaded again — and what it refuses first.
-        // import ./tests/bench-rename-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-rename-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # `bench-new-app` over a stub upstream scaffolder: what it registers.
-        // import ./tests/bench-new-app.nix { inherit pkgs checks; }
+        // import ./tests/bench-new-app.nix {
+          inherit pkgs checks;
+          inherit (inputs) python-devops-nix;
+        }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix {
           inherit pkgs checks;

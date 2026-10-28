@@ -1,7 +1,13 @@
 # frappe-nix-tools, the Python package behind the `frappe-nix` command
 # (py/frappe_nix_tools, docs/app-standards/spec.md S10), built against the locked
 # nixpkgs' python314 — the interpreter frappe-nix's version-16 benches use.
-# Called from ./outputs.nix with python314Packages.callPackage.
+# Called from ./outputs.nix with python314Packages.callPackage and `base`,
+# python-devops-nix's lib.
+#
+# rich is the base's (lib.python.rich, python-devops-nix docs/conventions.md, Tool
+# interpreter with rich): nixpkgs' rich with markdown-it-py's checks off and its
+# racy test_brokenpipeerror skipped, the one every interpreter that holds this
+# package then gets.
 #
 # pythonRuntimeDepsCheck stays on: it fails the build when nixpkgs' jinja2,
 # tomlkit, packaging, pyyaml, click or rich no longer satisfy py/frappe_nix_tools/pyproject.toml,
@@ -9,6 +15,8 @@
 # unittest suites in py/frappe_nix_tools/tests run as the check phase.
 {
   lib,
+  base,
+  python,
   buildPythonPackage,
   flit-core,
   jinja2,
@@ -16,13 +24,13 @@
   packaging,
   pyyaml,
   click,
-  rich,
   unittestCheckHook,
   git,
 }:
 
 let
   src = ../../py/frappe_nix_tools;
+  inherit (base.python.rich { inherit python; }) rich;
 in
 buildPythonPackage {
   pname = "frappe-nix-tools";

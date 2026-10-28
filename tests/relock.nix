@@ -1,9 +1,20 @@
 # `nix run .#relock` (lib/relock.nix), built once for a bench and once for app
 # mode, and driven against stub uv, lock-generator and build-deps commands: what
 # it locks where, with which arguments, what it writes back and stages.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
+  inherit
+    (import ../lib/standards/outputs.nix {
+      inherit pkgs;
+      base = python-devops-nix.lib;
+    })
+    frappeNixTools
+    ;
   # One line per call: "<tool> <cwd> <args>", to $CALLS.
   stub =
     name: body:
@@ -40,6 +51,7 @@ let
     appMode:
     import ../lib/relock.nix {
       inherit pkgs appMode uv;
+      inherit frappeNixTools;
       nodeLocksTool = nodeLocks;
       nodeNestedFrontendExcludes = [ "alpha/desk" ];
       buildDepsSyncBin = "${buildDeps}/bin/build-deps-sync";

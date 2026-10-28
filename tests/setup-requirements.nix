@@ -1,11 +1,16 @@
 # `bench setup requirements`: the script and the wrapper's dispatch to it,
 # rendered from lib/scripts.nix, linted, and driven with stubs for the tools
 # they call (devenv never shellchecks a `scripts.<n>.exec` body).
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
   render =
     {
       appMode ? false,
@@ -19,6 +24,7 @@ let
         lib
         pkgs
         appMode
+        base
         appsWithNode
         ;
       benchBin = "real-bench";

@@ -5,16 +5,26 @@
 # repositories and a rewritten yarn.lock is a modified file their next
 # `git checkout` refuses over. Rendered here for the same reason as
 # bench-update: devenv never shellchecks a `scripts.<n>.exec` body.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  python-devops-nix,
+}:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../lib/standards/outputs.nix { inherit pkgs; }) frappeNixTools;
+  base = python-devops-nix.lib;
+  inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
 
   render =
     appMode:
     (import ../lib/scripts.nix {
-      inherit lib pkgs appMode;
+      inherit
+        lib
+        pkgs
+        appMode
+        base
+        ;
       appsWithNode = [
         "alpha"
         "beta"

@@ -43,6 +43,7 @@
   lib,
   self,
   inputs,
+  frappeNixTools,
   ...
 }:
 
@@ -50,7 +51,11 @@ let
   inherit (pkgs.stdenv.hostPlatform) system;
 
   jsDir = ../../lib/js;
-  frappeNix = (import ../../lib/standards/outputs.nix { inherit pkgs; }).tools.frappe-nix;
+  frappeNix =
+    (import ../../lib/standards/outputs.nix {
+      inherit pkgs;
+      base = inputs.python-devops-nix.lib;
+    }).tools.frappe-nix;
   spaApp = ../fixtures/spa-app;
   template = ../../py/frappe_nix_tools/frappe_nix_tools/data/templates/scripts/vite-register.mjs;
 
@@ -80,7 +85,7 @@ let
         }
       )
     );
-  nodeLocks = import ../../lib/node-locks.nix { inherit pkgs; };
+  nodeLocks = import ../../lib/node-locks.nix { inherit pkgs frappeNixTools; };
 
   # The spa-app fixture's flake against this checkout, as
   # tests/standards/hookpoints.nix evaluates the standards fixture's: the

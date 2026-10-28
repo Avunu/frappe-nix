@@ -33,13 +33,20 @@
 {
   pkgs,
   checks,
+  inputs,
   frappeNixTools,
   ...
 }:
 
 let
   inherit (pkgs) lib;
-  inherit (import ../../lib/standards/outputs.nix { inherit pkgs; }) tools;
+  inherit
+    (import ../../lib/standards/outputs.nix {
+      inherit pkgs;
+      base = inputs.python-devops-nix.lib;
+    })
+    tools
+    ;
   fixture = ../fixtures/standards-app;
   exampleOrg = ../fixtures/profiles/example-org;
 
