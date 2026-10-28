@@ -26,7 +26,8 @@ let
     {
       registry ? "",
       runtime ? true,
-      nonRoot ? true,
+      # null leaves containers.nonRoot to the module's own default.
+      nonRoot ? null,
     }:
     (self.lib.mkFlake
       {
@@ -44,8 +45,9 @@ let
           runtime.enable = runtime;
           containers = {
             enable = true;
-            inherit registry nonRoot;
-          };
+            inherit registry;
+          }
+          // lib.optionalAttrs (nonRoot != null) { inherit nonRoot; };
         };
       }
     ).packages.${system};
