@@ -2,7 +2,9 @@
 # the other app standards PRs build on.
 #
 #   standards-cli       the package builds against the locked nixpkgs with its
-#                       unittest suites and pythonRuntimeDepsCheck; `--version`,
+#                       unittest suites and pythonRuntimeDepsCheck, and its
+#                       rich is python-devops-nix's lib.python.rich, not
+#                       nixpkgs' (evaluated); `--version`,
 #                       the unknown-command exit, `data-path` and `config`
 #                       behave, and `config` reads the opt-in fixtures as
 #                       standards-optin does or refuses them (exit 2).
@@ -367,6 +369,11 @@ let
     crlf = builtins.replaceStrings [ "\n" ] [ "\r\n" ] optinWithTable;
     lone-cr = builtins.replaceStrings [ "\n" ] [ "\r" ] optinWithTable;
   };
+  # The rich frappe-nix-tools propagates, and the base's for its interpreter.
+  packageRich = map (p: p.drvPath) (
+    builtins.filter (p: (p.pname or null) == "rich") frappeNixTools.propagatedBuildInputs
+  );
+  baseRich = (base.python.rich { python = frappeNixTools.pythonModule; }).rich.drvPath;
   # `<name>=<file>` words for the standards-cli loops, which first write the
   # line-ending cases to ./endings.
   optinCases = lib.concatMapStringsSep " " (
@@ -379,6 +386,9 @@ let
 in
 {
   standards-cli =
+    assert lib.assertMsg (
+      packageRich == [ baseRich ]
+    ) "tools: frappe-nix-tools is not built on python-devops-nix's lib.python.rich";
     checks.script "standards-cli"
       {
         tools = [

@@ -7,7 +7,9 @@
 # rich is the base's (lib.python.rich, python-devops-nix docs/conventions.md, Tool
 # interpreter with rich): nixpkgs' rich with markdown-it-py's checks off and its
 # racy test_brokenpipeerror skipped, the one every interpreter that holds this
-# package then gets.
+# package then gets. That rich is never a cache hit, so its suite runs on every
+# cold build; `checkRich = false` (with .override) builds it without, as
+# frappe-init does (lib/init.nix).
 #
 # pythonRuntimeDepsCheck stays on: it fails the build when nixpkgs' jinja2,
 # tomlkit, packaging, pyyaml, click or rich no longer satisfy py/frappe_nix_tools/pyproject.toml,
@@ -26,11 +28,13 @@
   click,
   unittestCheckHook,
   git,
+  checkRich ? true,
 }:
 
 let
   src = ../../py/frappe_nix_tools;
-  inherit (base.python.rich { inherit python; }) rich;
+  baseRich = (base.python.rich { inherit python; }).rich;
+  rich = if checkRich then baseRich else baseRich.overridePythonAttrs { doCheck = false; };
 in
 buildPythonPackage {
   pname = "frappe-nix-tools";

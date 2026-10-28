@@ -27,13 +27,17 @@ let
   workspaceTool = import ./workspace-tool.nix { inherit pkgs; };
 
   # frappe-nix-tools without its test suite, which frappe-nix's own checks run
-  # (packages.frappe-nix-tools): a test that fails on one platform must not make
-  # frappe-init unbuildable for users who never opt in (S35).
+  # (packages.frappe-nix-tools), and without rich's: the base's rich is never a
+  # cache hit, so its suite would run on every user's first `nix run`. A test
+  # that fails on one platform must not make frappe-init unbuildable for users
+  # who never opt in (S35).
   standards = import ./standards/outputs.nix {
     inherit pkgs;
     base = python-devops-nix.lib;
   };
-  frappeNixTools = standards.frappeNixTools.overridePythonAttrs { doCheck = false; };
+  frappeNixTools = (standards.frappeNixTools.override { checkRich = false; }).overridePythonAttrs {
+    doCheck = false;
+  };
   frappeNixTool = import ./standards/tools/frappe-nix.nix { inherit pkgs lib frappeNixTools; };
 
   # `frappe-nix` (the bin/ wrapper, which propagates nothing), for `--sync`,
