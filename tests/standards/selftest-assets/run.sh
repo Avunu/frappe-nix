@@ -97,6 +97,18 @@ expect_bundles() {
   ok "spa.bundle.js -> $js, spa.bundle.css -> $css, rtl_spa.bundle.css -> $rtl"
 }
 
+# <log of nix build -L .#builtBench>: the build did not try frappe's prebuilt
+# assets. builtBench passes --force, so it never should (lib/bench.nix,
+# frappe-nix#181). A builtBench already in the store logs nothing, so the log
+# must show the build ran before its silence counts.
+expect_no_download() {
+  grep -q '^built-bench> Running phase: buildPhase' "$1" || fail "no build log in $1: was the builtBench already in the store?"
+  if grep -q 'frappe/frappe/releases/download\|assets\.frappeframework\.com' "$1"; then
+    fail "the Nix build tried to download frappe's prebuilt assets ($1)"
+  fi
+  ok "the Nix build did not try to download frappe's prebuilt assets"
+}
+
 # <bench>: frappe's own include_style() resolves spa.bundle.css to its hashed
 # file in a left-to-right and a right-to-left session alike.
 expect_include_style() {
@@ -227,6 +239,7 @@ cmd_builtbench() {
   [ -f "$assets" ] || fail "the builtBench has no sites/assets/assets.json"
   expect_bundles "$assets" "$out/bench/apps/spa_app/spa_app/public"
   ok "the spa-app builtBench maps spa.bundle.js and spa.bundle.css to the hashed files"
+  expect_no_download "$WORK/builtbench.log"
 
   # The Q7 path: an app-mode app that has not opted in has no registration
   # step of its own, so the preload (lib/js/esbuild-preload.js, from the store,
@@ -249,6 +262,7 @@ cmd_builtbench() {
   expect_bundles "$assets" "$out-alone/bench/apps/spa_app/spa_app/public"
   grep -q 'vite-register: spa_app: spa.bundle.js -> ' "$WORK/builtbench-alone.log" || fail "the preload did not log its registration in the Nix build"
   ok "with no step of the app's own, the preload registers them inside the Nix build"
+  expect_no_download "$WORK/builtbench-alone.log"
 }
 
 case "${1:-}" in

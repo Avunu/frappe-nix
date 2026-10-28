@@ -17,7 +17,7 @@ Nothing is installed or compiled at deploy time or at container start. The envir
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Python environment | `uv.lock`, through uv2nix. Nothing runs `uv sync` at build or start time.                                                                       |
 | `node_modules`     | Each node target's own `yarn.lock`, or a `node-locks/` fallback. See [Dependencies and locks](../development/locks.md#node-each-apps-yarnlock). |
-| Compiled assets    | `bench build --production`, run inside the Nix sandbox. See [Build production images](images.md#how-the-immutable-bench-is-built).              |
+| Compiled assets    | `bench build --production --force`, run inside the Nix sandbox. See [Build production images](images.md#how-the-immutable-bench-is-built).      |
 | App registry       | `sites/apps.txt` and `sites/apps.json`, regenerated from the workspace members. See [Apps in a bench](../development/apps.md#the-app-registry). |
 
 The package exposes `passthru.{pythonEnv, nodejs, appsPath, appNames}`, so the NixOS module and the containers discover interpreters from the package itself. There is no separate `pythonEnv` or `nodejs` option on the server side. The `extraPackages` option installs extra packages in both the dev shell and any production deployment of this package: the NixOS module reads them off the package's `passthru.extraPackages`, so no server-side configuration is needed.
