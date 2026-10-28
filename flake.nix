@@ -701,6 +701,10 @@
         # The app standards checks, one file per area, and `standards-all`
         # that builds them all. See tests/standards/default.nix.
         // import ./tests/standards { inherit self pkgs inputs; }
+        # python-devops-nix's conformance checks: ci-pins, dependabot,
+        # check-names, env-vars, option-paths, config-blocks and command-flags
+        # (its docs/conventions.md, Tests).
+        // import ./tests/conventions.nix { inherit self pkgs inputs; }
       );
 
       # frappe-nix's own dev shell: what a bench gets, pointed back at this

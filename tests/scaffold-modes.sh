@@ -11,7 +11,7 @@
 # remotes (url.<base>.insteadOf), and every run passes --skip-lock.
 set -euo pipefail
 
-FRAPPE_INIT="$1"
+frappe_init="$1"
 MAKE_BENCH="$2"
 
 ROOT="$(mktemp -d)"
@@ -44,7 +44,7 @@ check_eq() { # <description> <expected> <actual>
 OUT="$ROOT/out"
 run() {
   local rc=0
-  "$FRAPPE_INIT" "$@" < /dev/null > "$OUT" 2>&1 || rc=$?
+  "$frappe_init" "$@" < /dev/null > "$OUT" 2>&1 || rc=$?
   echo "$rc"
 }
 # <description> <expected exit code> <message fragment> <frappe-init args…>

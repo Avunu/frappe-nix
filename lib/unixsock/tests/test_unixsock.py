@@ -55,7 +55,6 @@ def clear_env():
 		"FRAPPE_NIX_WEB_SOCKET",
 		"FRAPPE_NIX_REPLICA_DB_SOCKET",
 		"FRAPPE_WEB_SOCKET",
-		"FRAPPE_REPLICA_DB_SOCKET",
 		"FRAPPE_UNIXSOCK_ENABLED",
 	):
 		os.environ.pop(name, None)
