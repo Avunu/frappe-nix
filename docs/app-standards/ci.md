@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-23
+updated: 2026-10-28
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -105,6 +105,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | nix | after the relock lands, or when there was nothing to relock | a move of `frappe-nix` or `standards-profile` is closed instead |
   | git submodules | always | |
 
+- **Ignores.** A managed `.github/dependabot.yml` entry takes Dependabot `ignore` conditions from `dependabot.ignore`, keyed by ecosystem (every managed entry of it) or by `<ecosystem>:<directory>` (one entry). Sync gives a notice when an app's `npm:/<dir>` key names no managed entry. A major cap the app holds on purpose goes there, because the `updates` region can't redefine a managed entry: `ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }`.
 - **The sweep** re-dispatches `ci.yml` and `pr-policy.yml` on bot PRs that have no `ci / *` run on their head, which covers dispatches a Dependabot-triggered job could not make.
 - **The weekly relock** runs `nix run .#relock -- --upgrade` and opens `chore(deps): relock python` on `standards/relock-python`.
 

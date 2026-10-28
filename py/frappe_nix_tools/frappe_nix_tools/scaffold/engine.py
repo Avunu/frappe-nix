@@ -774,6 +774,25 @@ def check_frappe_nix_url(cfg: dict, modules: dict) -> None:
 		)
 
 
+def dependabot_ignore_notices(app: context.App, ctx: context.NS) -> list[str]:
+	"""§2.17: an app's ``"npm:/<dir>"`` ignore key renders nothing when no managed npm entry has
+	that directory. The schema pins every other directory; this catches a typo of one."""
+	table = app.pyproject.get("tool", {}).get("frappe-nix", {}).get("dependabot", {})
+	keys = table.get("ignore", {}) if isinstance(table, dict) else {}
+	if not ctx.modules.get("dependabot") or not ctx.cfg["dependabot"]["ecosystems"].get("npm"):
+		return []
+	dirs = {f"/{d}" for d in ctx.discover["nested_frontends"]}
+	if ctx.package_json_live:
+		dirs.add("/")
+	if ctx.discover["docs_site"] and ctx.modules.get("docs-site"):
+		dirs.add("/docs-site")
+	return [
+		f"dependabot.ignore {key!r} matches no managed npm entry, so it renders nothing"
+		for key in keys
+		if key.startswith("npm:") and key[len("npm:") :] not in dirs
+	]
+
+
 def check_preset(app: context.App, cfg: dict, modules: dict) -> None:
 	"""``typescript.preset = "inline"`` has no Frappe declarations, which check-js,
 	audit-consumer and the gen-registry freshness step need (§2.9)."""
@@ -1488,6 +1507,8 @@ def build(
 	ctx["previous"] = previous(root, profile_dir)
 	ctx["history"] = history(root, profile_dir)
 	plan = Plan(root, app, resolved, ctx, created_config=created, notices=list(resolved.notices))
+	if "b" in phases:
+		plan.notices += dependabot_ignore_notices(app, ctx)
 	try:
 		package = load_package(root)
 	except ConfigError:

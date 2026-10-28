@@ -85,6 +85,7 @@
 				"dependabot.cadence",
 				"dependabot.cadence-overrides",
 				"dependabot.cooldown-days",
+				"dependabot.ignore",
 				"docs-site.action-patterns",
 				"docs-site.cooldown-exclude-actions",
 				"docs-site.package-names",
