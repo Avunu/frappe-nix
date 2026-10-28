@@ -14,16 +14,12 @@
 # set overlay (final: prev: { ... }).
 let
   # pycups, python-ldap, pyvips and cairocffi were frappe-nix's to apply; the
-  # base's set now applies them to every bench, so a bench that still lists one
-  # in its pythonOverrides gets a no-op and a warning rather than the fix twice
-  # (the dlopen patches would fail the second time: the bare name is gone).
-  # Kept for all of 1.x, removed in 2.0.0.
-  applied =
-    name:
-    { pkgs, ... }:
-    pkgs.lib.warn
-      "frappe-nix: lib.overrides.${name} is applied to every bench already (python-devops-nix's lib.python.overrides); remove it from pythonOverrides (the alias is kept for all of 1.x, removed in 2.0.0)."
-      (_final: _prev: { });
+  # base's set now applies them to every bench. 1.x kept their names as no-ops
+  # that warned; since 2.0.0 a bench that still lists one in its
+  # pythonOverrides is refused, naming the fix.
+  removed =
+    name: _:
+    throw "frappe-nix: lib.overrides.${name} was removed in 2.0.0. python-devops-nix's lib.python.overrides applies it to every bench already; remove it from pythonOverrides.";
 in
 {
   # mysqlclient needs MariaDB/MySQL headers and client libraries.
@@ -46,8 +42,8 @@ in
       });
     };
 
-  pycups = applied "pycups";
-  python-ldap = applied "python-ldap";
-  pyvips = applied "pyvips";
-  cairocffi = applied "cairocffi";
+  pycups = removed "pycups";
+  python-ldap = removed "python-ldap";
+  pyvips = removed "pyvips";
+  cairocffi = removed "cairocffi";
 }

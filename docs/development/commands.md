@@ -3,7 +3,7 @@ title: Everyday commands
 description: The bench wrapper that redirects the commands needing frappe-nix handling, and the scripts behind it, from bench provision to bench-update.
 order: 1
 tags: [bench, scripts, cli]
-updated: 2026-10-21
+updated: 2026-10-28
 ---
 
 The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules. `bench ui` opens the [menu](menu.md).
@@ -44,7 +44,6 @@ These back the wrapper and are also callable directly.
 
 | Script                                                                          | Description                                                                                                                                                                     |
 | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provision-site [ADMIN_PASSWORD]`                                               | `bench provision`'s name before frappe-nix 1.2, kept as an alias until 2.0.0. It says it is deprecated on stderr, then runs `bench provision`.                                  |
 | `reconcile-apps [SITE]`                                                         | Install whatever `sites/apps.txt` names that the site does not have installed yet. Idempotent. Also runs automatically; see [Installed-app drift](apps.md#installed-app-drift). |
 | `bench-update [--pull\|--migrate\|--build\|--node-locks]`                       | The submodule-aware replacement for `bench update`. See below.                                                                                                                  |
 | `bench-migrate`, `bench-build`, `bench-clear-cache`, `bench-console`            | Thin bench wrappers that honor `$FRAPPE_SITE`. With `offlineMigrate.enable`, `bench-migrate` runs `bench-offline-migrate` first and does not migrate if it fails.               |
@@ -70,7 +69,7 @@ These back the wrapper and are also callable directly.
 - It stops at the first `bench new-site` or `install-app` that fails, with that command's exit status. A missing `FRAPPE_SITE` or `FRAPPE_DB_SOCKET` is exit 1, and a second argument is exit 2, before anything runs.
 - It ends with the site's URL, on the port the running bench leased, or on `webserver_port` from `sites/common_site_config.json` when the bench is down.
 
-`provision-site` was its name before frappe-nix 1.2. It still works, and says on stderr that it is deprecated. It goes in frappe-nix 2.0.0.
+`provision-site` was its name before frappe-nix 1.2, and an alias through 1.x. It went in frappe-nix 2.0.0.
 
 ### bench-update
 

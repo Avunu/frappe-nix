@@ -98,8 +98,7 @@ in
       environment.systemPackages = [ pkgs.jq ];
 
       services.frappe-nix = {
-        # The sandbox is opt-in through 1.x; the VM tests run under it.
-        hardening.enable = true;
+        # Under the module's sandbox: hardening.enable defaults to true.
         enable = true;
         package = stubBench;
         # The default, stated for the reader.

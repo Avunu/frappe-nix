@@ -27,8 +27,8 @@
 #                       with the opt-in hint and write nothing. `frappe-init
 #                       --app --standards recommended` writes templates/app's
 #                       files and then what `frappe-nix sync --write` renders,
-#                       nothing else; --site reaches the table, and so does
-#                       --profile-path; without --site an existing flake's
+#                       nothing else; --default-site reaches the table, and so does
+#                       --profile-path; without it an existing flake's
 #                       defaultSite is kept, as under --sync; a usage error under `frappe-init --check`
 #                       is exit 2 or 3, never 1; without --sync/--check the new
 #                       flags are refused where nothing reads them, as main
@@ -36,7 +36,7 @@
 #                       an app that opted in, `frappe-init --app` leaves the
 #                       .gitignore block to sync: --only package.json and a
 #                       failing sync both leave it as committed. What sync
-#                       would refuse (a contradicted --frappe-version or
+#                       would refuse (a contradicted --version or
 #                       --standards, an unknown profile) is refused before
 #                       --app writes anything; an opted-in app's major is its
 #                       table's.
@@ -198,7 +198,7 @@ in
         cp -r . ../orgflags
         cp -r . ../legacy
 
-        frappe-init --app --frappe-version version-16 --skip-lock
+        frappe-init --app --version version-16 --skip-lock
         have="$(git status --porcelain | sort)"
         [ "$have" = "$(printf 'A  .envrc\nA  .gitignore\nA  flake.nix')" ] || fail "frappe-init --app changed $have"
         sed -e 's|@APP_NAME@|bare_app|g' -e 's|@FRAPPE_BRANCH@|version-16|g' \
@@ -223,7 +223,7 @@ in
 
         # --standards: templates/app's three files, then exactly what sync renders.
         cd ../again
-        frappe-init --app --standards recommended --frappe-version version-16 --skip-lock > /dev/null
+        frappe-init --app --standards recommended --version version-16 --skip-lock > /dev/null
         mkdir ../plain && cp -r ../sited/. ../plain
         (cd ../plain && frappe-nix sync --write --standards recommended --frappe-version version-16 > /dev/null 2>&1)
         want="$(cd ../plain && git ls-files -co --exclude-standard | sort)"
@@ -235,14 +235,14 @@ in
         grep -qx 'profile = "recommended"' pyproject.toml || fail "--standards did not create the table"
         echo "ok   frappe-init --app --standards recommended writes what frappe-nix sync renders, nothing else"
 
-        # --site reaches sync: [tool.frappe-nix] site and the flake's defaultSite.
+        # --default-site reaches sync (as --site): [tool.frappe-nix] site and the flake's defaultSite.
         cd ../sited
-        frappe-init --app --standards minimal --frappe-version version-16 --site custom.localhost --skip-lock > /dev/null
-        grep -qx 'site = "custom.localhost"' pyproject.toml || fail "--site is not [tool.frappe-nix] site"
-        grep -q 'defaultSite = "custom.localhost";' flake.nix || fail "--site is not the flake's defaultSite"
-        echo "ok   frappe-init --app --standards --site X renders site X"
+        frappe-init --app --standards minimal --version version-16 --default-site custom.localhost --skip-lock > /dev/null
+        grep -qx 'site = "custom.localhost"' pyproject.toml || fail "--default-site is not [tool.frappe-nix] site"
+        grep -q 'defaultSite = "custom.localhost";' flake.nix || fail "--default-site is not the flake's defaultSite"
+        echo "ok   frappe-init --app --standards --default-site X renders site X"
 
-        # An existing app flake's defaultSite survives --app --standards without --site, as it
+        # An existing app flake's defaultSite survives --app --standards without --default-site, as it
         # does under --sync: a defaulted name would orphan every developer's dev site.
         cd ../legacy
         sed -e 's|@APP_NAME@|bare_app|g' -e 's|@FRAPPE_BRANCH@|version-16|g' \
@@ -252,7 +252,7 @@ in
         git add -A
         git -c user.name=t -c user.email=t@t commit -qm flake
         mkdir ../legacy-sync && cp -r . ../legacy-sync
-        frappe-init --app --standards recommended --frappe-version version-16 --skip-lock > /dev/null
+        frappe-init --app --standards recommended --version version-16 --skip-lock > /dev/null
         grep -qx 'site = "legacy.localhost"' pyproject.toml || fail "--app --standards dropped the flake's site"
         grep -q 'defaultSite = "legacy.localhost";' flake.nix || fail "--app --standards renamed the flake's defaultSite"
         (cd ../legacy-sync && frappe-nix sync --write --standards recommended --frappe-version version-16 > /dev/null 2>&1)
@@ -279,10 +279,10 @@ in
         # the --check flags and a stray flag are unknown (exit 1, before --help), and the app
         # standards flags are refused where nothing would read them; nothing is written.
         cd ../flags
-        for argv in "--app --frappe-version version-16 --skip-lock --only flake.nix" \
+        for argv in "--app --version version-16 --skip-lock --only flake.nix" \
           "--app --format json --dry-run" "--app --expect-rev x --skip-lock" "--app --bogus --help" \
-          "--app --frappe-version version-16 --skip-lock --profile-path ." \
-          "--app --frappe-version version-16 --skip-lock --init-listing"; do
+          "--app --version version-16 --skip-lock --profile-path ." \
+          "--app --version version-16 --skip-lock --init-listing"; do
           # shellcheck disable=SC2086 # word-split on purpose
           code="$(code_of frappe-init $argv)"
           [ "$code" = 1 ] || fail "frappe-init $argv exited $code, not 1"
@@ -299,7 +299,7 @@ in
         cp -r ${exampleOrg} ../org-profile
         chmod -R u+w ../org-profile
         frappe-init --app --standards github:example/profile --profile-path ../org-profile \
-          --frappe-version version-16 --skip-lock > /dev/null 2>&1 || fail "frappe-init --app --profile-path failed"
+          --version version-16 --skip-lock > /dev/null 2>&1 || fail "frappe-init --app --profile-path failed"
         grep -q '"author": "Example Org"' package.json || fail "--profile-path did not reach frappe-nix sync"
         echo "ok   frappe-init --app --standards passes --profile-path to frappe-nix sync"
 
@@ -312,34 +312,34 @@ in
         git init -q
         git add -A
         git -c user.name=t -c user.email=t@t commit -qm fixture
-        frappe-init --app --frappe-version version-16 --only package.json --skip-lock > /dev/null 2>&1 ||
+        frappe-init --app --version version-16 --only package.json --skip-lock > /dev/null 2>&1 ||
           fail "frappe-init --app --only package.json failed on the opted-in fixture"
         git diff --quiet HEAD -- .gitignore || fail "frappe-init --app --only package.json rewrote .gitignore: $(git diff HEAD -- .gitignore)"
         frappe-nix sync --check > /dev/null || fail "--check after frappe-init --app --only package.json is not clean"
         sed -i 's/^\[tool\.frappe-nix\]$/&\nci.enable = "yes"/' pyproject.toml
         grep -qx 'ci.enable = "yes"' pyproject.toml || fail "the test could not break the table"
-        code="$(code_of frappe-init --app --frappe-version version-16 --skip-lock)"
+        code="$(code_of frappe-init --app --version version-16 --skip-lock)"
         [ "$code" = 2 ] || fail "frappe-init --app with an invalid table exited $code, not 2"
         git diff --quiet HEAD -- .gitignore || fail "a failed sync under frappe-init --app left .gitignore changed: $(git diff HEAD -- .gitignore)"
         echo "ok   frappe-init --app on an app that opted in leaves the .gitignore block to sync"
 
         # What sync would refuse is refused before --app writes anything (the preflight builds
-        # phase A's plan): a --frappe-version or --standards the table contradicts, an unknown
-        # profile. Without --frappe-version, an app that opted in takes its table's major.
+        # phase A's plan): a --version or --standards the table contradicts, an unknown
+        # profile. Without --version, an app that opted in takes its table's major.
         git checkout -q -- pyproject.toml
-        for argv in "--frappe-version version-15" "--standards minimal --frappe-version version-16" \
-          "--frappe-version version-15 --dry-run"; do
+        for argv in "--version version-15" "--standards minimal --version version-16" \
+          "--version version-15 --dry-run"; do
           # shellcheck disable=SC2086 # word-split on purpose
           code="$(code_of frappe-init --app $argv --skip-lock)"
           [ "$code" = 2 ] || fail "frappe-init --app $argv on the opted-in fixture exited $code, not 2"
           [ -z "$(git status --porcelain)" ] || fail "frappe-init --app $argv wrote $(git status --porcelain)"
         done
         frappe-init --app --only package.json --skip-lock < /dev/null > "$TMPDIR/out" 2>&1 ||
-          fail "frappe-init --app without --frappe-version did not take the table's: $(cat "$TMPDIR/out")"
+          fail "frappe-init --app without --version did not take the table's: $(cat "$TMPDIR/out")"
         grep -q 'frappe version : version-16' "$TMPDIR/out" || fail "frappe-init --app did not plan the table's major"
         grep -q "list it in \[tool.frappe-nix\] siblings" "$TMPDIR/out" || fail "frappe-init --app printed the plain next steps"
         cd ../flags
-        code="$(code_of frappe-init --app --standards ./nope --frappe-version version-16 --skip-lock)"
+        code="$(code_of frappe-init --app --standards ./nope --version version-16 --skip-lock)"
         [ "$code" = 2 ] || fail "frappe-init --app --standards ./nope exited $code, not 2"
         [ -z "$(git status --porcelain)" ] || fail "frappe-init --app --standards ./nope wrote $(git status --porcelain)"
         echo "ok   frappe-init --app refuses what sync would before writing, and takes an opted-in app's major"

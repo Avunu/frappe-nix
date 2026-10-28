@@ -15,7 +15,7 @@ import os
 import sys
 
 from frappe_nix_tools.frappe_init import ui
-from frappe_nix_tools.frappe_init.args import RENAMED, USAGE, UsageError, parse_args
+from frappe_nix_tools.frappe_init.args import USAGE, UsageError, parse_args
 from frappe_nix_tools.frappe_init.config import ConfigError
 from frappe_nix_tools.frappe_init.config import load as load_config
 from frappe_nix_tools.frappe_init.detect import (
@@ -101,8 +101,6 @@ def dispatch(st: Run) -> None:
 	from frappe_nix_tools.frappe_init.scaffold import cmd_init
 
 	a = st.args
-	for old in a.renamed:
-		st.warn(f"{old} is now {RENAMED[old]}; the old name works through 1.x and goes in frappe-nix 2.0.0")
 
 	# --sync / --check: the app in the current directory (or the target given),
 	# handed to `frappe-nix sync`, which checks that it is one.

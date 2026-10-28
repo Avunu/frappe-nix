@@ -5,16 +5,20 @@ Every CI run of the real thing sets ``FRAPPE_NIX_URL_OVERRIDE``, which takes the
 re-exec branches out of play, so these are where those branches run.
 """
 
+import argparse
 import json
 import os
 import shutil
 import sys
+import unittest
 from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
 import frappe_nix_tools
+from frappe_nix_tools.commands import sync
 from frappe_nix_tools.common.report import EnvError
+from frappe_nix_tools.frappe_init.args import parse_args
 from frappe_nix_tools.scaffold import bootstrap
 from scaffold_helpers import AppCase, _github, flake_lock, git
 
@@ -246,6 +250,39 @@ class TestReexec(FakeNix):
 		self.assertIn("builtins.getEnv", expr)
 		self.assertEqual(
 			json.loads(call["env"]["FRAPPE_NIX_LOCKED_REV"])["owner"], "Avunu${builtins.currentSystem}"
+		)
+
+
+class TestPassthrough(unittest.TestCase):
+	"""What a sync hands over is a command line the receiving command reads: frappe-init 2.x
+	refuses ``--frappe-version`` and ``--site``, so the re-exec names them as it does."""
+
+	def setUp(self) -> None:
+		parser = argparse.ArgumentParser()
+		sync.register(parser.add_subparsers())
+		self.parser = parser
+		self.args = parser.parse_args(
+			[
+				*("sync", "--write", "--frappe-version", "version-16", "--site", "dev.localhost"),
+				*("--standards", "recommended", "--skip-lock", "--force", "--only", "a,b"),
+			]
+		)
+
+	def test_the_reexec_reads_as_frappe_init(self):
+		with mock.patch.dict(os.environ):
+			os.environ.pop("FRAPPE_NIX_SYNC_REEXEC", None)
+			a = parse_args(["--sync", *sync._passthrough(self.args, frappe_init=True)])
+		self.assertEqual(
+			(a.app_action, a.version, a.site, a.standards, a.skip_lock, a.force),
+			("sync", "version-16", "dev.localhost", "recommended", True, True),
+		)
+		self.assertEqual(a.sync_args, ["--only", "a,b"])
+
+	def test_the_reentry_reads_as_frappe_nix_sync(self):
+		again = self.parser.parse_args(["sync", "--write", *sync._passthrough(self.args)])
+		self.assertEqual(
+			(again.frappe_version, again.site, again.standards, again.only),
+			("version-16", "dev.localhost", "recommended", ["a,b"]),
 		)
 
 

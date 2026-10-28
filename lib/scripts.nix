@@ -128,13 +128,11 @@ let
 
   # What lib/offline-migrate.py reads, defaulted rather than exported by the
   # shell so a caller's own FRAPPE_NIX_OFFLINE_MIGRATE_* — `=0` for one migrate
-  # that must run stock — still wins. So does one under its old name
-  # (FRAPPE_OFFLINE_MIGRATE_*), which the tool reads with a warning through 1.x,
-  # until frappe-nix 2.0.0.
+  # that must run stock — still wins.
   offlineMigrateEnv =
     let
       default = name: value: ''
-        if [ -z "''${FRAPPE_NIX_${name}+x}" ] && [ -z "''${FRAPPE_${name}+x}" ]; then
+        if [ -z "''${FRAPPE_NIX_${name}+x}" ]; then
           export FRAPPE_NIX_${name}=${lib.escapeShellArg value}
         fi
       '';
@@ -426,7 +424,7 @@ secretScripts
       restore)     shift; exec bench-restore "$@" ;;
       # The menu. Ours alone: a bare `bench` stays upstream's help.
       ui)          shift; ${menu} ;;
-      # Was the standalone provision-site, which stays as an alias below.
+      # Was the standalone provision-site, until frappe-nix 2.0.0.
       provision)   shift; FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@" ;;
       setup)
         # Only `setup requirements` is ours; the rest of `bench setup` (nginx,
@@ -545,16 +543,6 @@ secretScripts
   };
 }
 // {
-
-  # `bench provision`'s old name, kept as an alias until frappe-nix 2.0.0
-  # (python-devops-nix docs/conventions.md, Command layout). frappe-nix's own
-  # code calls `bench provision`, so the note reaches only a person or a script
-  # of the consumer's. py/frappe_nix_tools/frappe_nix_tools/apps/provision.py.
-  provision-site.exec = ''
-    echo "provision-site is deprecated: run \`bench provision\` (the alias goes in frappe-nix 2.0.0)" >&2
-    FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@"
-  '';
-
   # Diffs sites/apps.txt — the candidate list frappe-nix regenerates from the
   # flake's pinned apps — against a site's actually-installed apps
   # (frappe.get_installed_apps(), DB-backed, what `bench migrate` consults,

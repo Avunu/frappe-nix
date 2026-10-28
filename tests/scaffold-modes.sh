@@ -97,14 +97,15 @@ expect_exit "a value flag at the end of the line, under --check" 2 "--format nee
 
 echo "── renamed flags ────────────────────────────────────────────"
 # python-devops-nix docs/conventions.md, Scaffolder: --version and
-# --default-site; the old names are read, with a warning, through 1.x, until
-# frappe-nix 2.0.0.
-expect_exit "--frappe-version is still read" 0 "scaffold bench 'old' (version-16" \
+# --default-site. The old names were read, with a warning, through 1.x; since
+# frappe-nix 2.0.0 each is a usage error that names the new flag.
+expect_exit "--frappe-version is refused" 1 "--frappe-version was removed in frappe-nix 2.0.0: use --version" \
   --init --dry-run --frappe-version version-16 --name old "$ROOT/old"
-says "--frappe-version is now --version" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"
-expect_exit "--site is still read" 0 "default site   : old.local" \
+expect_exit "--site is refused" 1 "--site was removed in frappe-nix 2.0.0: use --default-site" \
   --init --dry-run --version version-16 --site old.local "$ROOT/old"
-says "--site is now --default-site" && ok "…with a warning" || no "…with a warning: $(cat "$OUT")"
+expect_exit "…as a usage error under --check too" 2 "use --version" --check --frappe-version version-16
+expect_exit "--default-site" 0 "default site   : new.local" \
+  --init --dry-run --version version-16 --default-site new.local "$ROOT/old"
 expect_exit "--version=<v>" 0 "(version-15 → python 3.12 / node 20)" --init --dry-run --version=version-15 "$ROOT/old"
 expect_exit "--version with no value" 1 "--version needs a value" --init --version
 expect_exit "--help names the new flags" 0 "--default-site <site>" --help

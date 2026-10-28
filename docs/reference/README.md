@@ -4,7 +4,7 @@ description: The flake outputs, library functions and option references of frapp
 nav_title: Reference
 order: 6
 tags: [reference, flake, outputs, library]
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 This section lists what frappe-nix exposes. For guides, start from the [overview](../README.md).
@@ -57,7 +57,7 @@ With `containers.enable = true` it additionally builds one package per image, `c
 - `container-runtime`, `container-nginx` and `container-bench`, or
 - with `runtime.enable = false`: `container-web`, `container-scheduler`, `container-worker-default`, `container-worker-short`, `container-worker-long`, `container-socketio`, `container-nginx` and `container-bench`.
 
-The names these packages had before 1.2.0, the role alone and `bench-cli` for `container-bench`, still work and warn when used. They go in 2.0.0, and `containers.aliases = false` drops them sooner.
+The names these packages had before 1.2.0, the role alone and `bench-cli` for `container-bench`, were aliases through 1.x and went in 2.0.0.
 
 See [Build production images](../production/images.md).
 
@@ -77,6 +77,6 @@ Every bench gets python-devops-nix's `lib.python.overrides`, the fixes frappe-ni
 
 `lib.overrides.mysqlclient` is frappe-nix's own, wired in automatically from `mariadb.package`. A bench's `pythonOverrides` layer on top of both.
 
-`lib.overrides.pycups`, `python-ldap`, `pyvips` and `cairocffi` are kept for benches that still list them: each is now a no-op with a warning, since the fix is already applied. Remove them from `pythonOverrides`: the aliases are kept for all of 1.x, removed in 2.0.0.
+`lib.overrides.pycups`, `python-ldap`, `pyvips` and `cairocffi` were no-ops with a warning through 1.x, since the fix is already applied. Since 2.0.0 a bench that still lists one in `pythonOverrides` fails to evaluate, naming it: remove it.
 
 Pure-Python build dependencies (setuptools and the like) belong in `pyproject.toml` under `[tool.uv.extra-build-dependencies]`, which frappe-nix derives from `uv.lock`; a bench adds its own with `pythonBuildDependencies`. See [Build dependencies](../development/locks.md#build-dependencies). The overlays are only for packages that need C headers or system libraries.

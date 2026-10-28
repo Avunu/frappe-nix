@@ -482,27 +482,15 @@ os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
 
 check("the guard's settings key is jobs", scheduler.NAME == "jobs")
 
-# The pre-rename variables are carried over, with a warning, through 1.x, until frappe-nix 2.0.0.
+# The pre-rename variables, carried over with a warning through 1.x, are not
+# read since frappe-nix 2.0.0.
 os.environ["FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS"] = "myapp.tasks.legacy"
-_log, _ = stderr_of(scheduler._adopt_renamed)
 check(
-	"FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS still adds a job",
-	"myapp.tasks.legacy" in blocked_jobs(),
-)
-check(
-	"with a warning naming its replacement, under frappe_devguard[scheduler]",
-	"WARNING frappe_devguard[scheduler] FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS is deprecated; "
-	"use FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED" in _log,
-	_log,
+	"FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS adds nothing",
+	"myapp.tasks.legacy" not in blocked_jobs(),
 )
 os.environ.pop("FRAPPE_DEVGUARD_SCHEDULER_EXTRA_BLOCKED_JOBS")
-os.environ.pop("FRAPPE_DEVGUARD_JOBS_EXTRA_BLOCKED")
-os.environ["FRAPPE_DEVGUARD_DISABLE"] = "scheduler"
-_log, _adopted = stderr_of(
-	lambda: check("DISABLE=scheduler still turns the guard off", not scheduler._adopt_renamed())
-)
-check("with a warning", "FRAPPE_DEVGUARD_DISABLE=jobs" in _log, _log)
-os.environ.pop("FRAPPE_DEVGUARD_DISABLE")
+check("nothing is left to adopt them", not hasattr(scheduler, "_adopt_renamed"))
 
 
 # What a skipped job logs: frappe_devguard[scheduler], the framework's word.

@@ -3,7 +3,7 @@ title: Dev shell options
 description: Every perSystem.frappe-nix option that configures the development shell, the production package and the container images, with types and defaults.
 order: 1
 tags: [options, reference, devenv]
-updated: 2026-10-21
+updated: 2026-10-28
 ---
 
 These options sit under `perSystem.frappe-nix` in your flake. The types and defaults were checked against the module by evaluating it. The prose describes what each option does. For a guided tour of the options you will touch most, see [Write the flake by hand](../scaffolding/write-the-flake.md). The options under `frappe-nix.secrets` sit at the top level and have [their own page](secrets-options.md), and the production module's options are under [`services.frappe-nix`](nixos-options.md).
@@ -225,5 +225,4 @@ See [Build production images](../production/images.md).
 | `containers.enable`   | bool | `false` | Build the OCI images.                                                                                                                                                                                                                             |
 | `containers.registry` | str  | `""`    | Registry prefix for the image names: `"ghcr.io/avunu"` names them `ghcr.io/avunu/<name>/<role>`. A trailing slash is dropped. frappe-nix does not push. See [Build production images](../production/images.md#building-loading-and-pushing). |
 | `containers.labels` | attrs of str | `{ }` | Image labels over the `org.opencontainers.image.*` ones every image gets, which describe frappe-nix. Set `source`, `version` and `revision` here to describe the bench. See [Labels](../production/images.md#labels). |
-| `containers.nonRoot` | bool | `false` | Run every image as `frappe` (uid/gid 1000) instead of root. Opt-in through 1.x; the default becomes `true` in 2.0.0. An existing sites volume needs a one-time chown first: see [Running as non-root](../production/images.md#running-as-non-root). |
-| `containers.aliases` | bool | `true` | Keep the packages' pre-1.2.0 names (`runtime`, `bench-cli`, …) as aliases of `container-<role>` that warn when used. `nix flake check` evaluates every package and so warns too; set `false` once nothing uses them. Removed in 2.0.0. |
+| `containers.nonRoot` | bool | `true` | Run every image as `frappe` (uid/gid 1000) instead of root; `false` runs them as root. The default since 2.0.0 (opt-in through 1.x). A sites volume a root image wrote needs a one-time chown first: see [Running as non-root](../production/images.md#running-as-non-root). |

@@ -5,7 +5,7 @@
 # script exits non-zero if any of them failed.
 set -uo pipefail
 rc=0
-export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-${FRAPPE_TEST_ADMIN_PASSWORD:-admin}}"
+export FRAPPE_ADMIN_PASSWORD="${FRAPPE_NIX_TEST_ADMIN_PASSWORD:-admin}"
 export FRAPPE_NIX_ARTIFACT_DIR="$PWD/.dev-dist/nightly"; mkdir -p "$FRAPPE_NIX_ARTIFACT_DIR"
 frappe-test --ci --keep-up || rc=$?
 bench build || rc=1

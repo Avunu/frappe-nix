@@ -516,9 +516,9 @@
         # grafts, python-devops-nix's core suite on the presets' interpreters,
         # and its absence from the production virtualenv (design rule 7).
         // import ./tests/devguard.nix { inherit self pkgs inputs; }
-        # The renames shared with odoo-nix: each old option name still reaches
-        # the new one, and is listed for its deprecation warning.
-        // import ./tests/renames.nix { inherit self pkgs inputs; }
+        # The names 1.x renamed, shared with odoo-nix: each old option name is
+        # refused, naming the new one; and the development shell option tree.
+        // import ./tests/removed.nix { inherit self pkgs inputs; }
         // import ./tests/ide.nix { inherit self pkgs inputs; }
         # `bench ui`: the menu's spec, the store's plugin and the TUI headless.
         // import ./tests/tui.nix { inherit self pkgs inputs; }
@@ -553,7 +553,7 @@
           inherit pkgs checks;
           inherit (inputs) python-devops-nix;
         }
-        # `bench provision` and its alias provision-site: the site and its apps, over stubs.
+        # `bench provision`: the site and its apps, over stubs.
         // import ./tests/provision.nix {
           inherit pkgs checks;
           inherit (inputs) python-devops-nix;

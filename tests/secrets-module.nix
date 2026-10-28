@@ -4,9 +4,10 @@
 # The toolkit itself (the schema, agecheck, the scripts, the module's option
 # tree) is python-devops-nix's and tested there. What is frappe-nix's is the
 # call: the option path, the `frappe_` variable names, `sites` as a group with
-# its three roles, host keys on every site secret, and flake.lib.secrets with
-# its frappeSecrets alias. Those are what a bench's .age paths, its shell
-# variables and its deployment's age.secrets depend on, so they are pinned here.
+# its three roles, host keys on every site secret, and flake.lib.secrets (and
+# not frappeSecrets, its 1.x alias). Those are what a bench's .age paths, its
+# shell variables and its deployment's age.secrets depend on, so they are
+# pinned here.
 { self, pkgs }:
 let
   inherit (pkgs) lib;
@@ -112,14 +113,14 @@ let
           "databasePassword"
           "encryptionKey"
         ];
-        alias = true;
+        alias = false;
       };
       actual = {
         keys = lib.attrNames flake.lib.secrets;
         sites = lib.mapAttrs (_: lib.attrNames) (
           lib.filterAttrs (n: _: n == "erp.example.com") flake.lib.secrets.sites
         );
-        alias = flake.lib.frappeSecrets == flake.lib.secrets;
+        alias = flake.lib ? frappeSecrets;
       };
     };
   };

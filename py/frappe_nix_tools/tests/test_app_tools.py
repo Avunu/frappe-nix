@@ -616,11 +616,9 @@ class TestAdminPassword(unittest.TestCase):
 		env = {"FRAPPE_NIX_TEST_ADMIN_PASSWORD": "new", "FRAPPE_TEST_ADMIN_PASSWORD": "old"}
 		with mock.patch.dict(os.environ, env, clear=True):
 			self.assertEqual(devshell.admin_password(), "new")
-		err = io.StringIO()
+		# The 1.x name is not read since frappe-nix 2.0.0.
 		with mock.patch.dict(os.environ, {"FRAPPE_TEST_ADMIN_PASSWORD": "old"}, clear=True):
-			with contextlib.redirect_stderr(err):
-				self.assertEqual(devshell.admin_password(), "old")
-		self.assertIn("set FRAPPE_NIX_TEST_ADMIN_PASSWORD", err.getvalue())
+			self.assertEqual(devshell.admin_password(), "admin")
 		with mock.patch.dict(os.environ, {}, clear=True):
 			self.assertEqual(devshell.admin_password(), "admin")
 

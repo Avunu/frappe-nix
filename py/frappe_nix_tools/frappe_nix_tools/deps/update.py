@@ -215,17 +215,9 @@ def clear_lock_obstacles(cwd: str) -> None:
 
 
 def _force() -> bool:
-	"""FRAPPE_NIX_BENCH_UPDATE_FORCE, or its old name with a warning (until
-	frappe-nix 2.0.0)."""
-	if os.environ.get("FRAPPE_NIX_BENCH_UPDATE_FORCE"):
-		return True
-	if os.environ.get("FRAPPE_BENCH_UPDATE_FORCE"):
-		warn(
-			"     ⚠  FRAPPE_BENCH_UPDATE_FORCE is deprecated; set FRAPPE_NIX_BENCH_UPDATE_FORCE"
-			" instead (the old name goes in frappe-nix 2.0.0)"
-		)
-		return True
-	return False
+	"""FRAPPE_NIX_BENCH_UPDATE_FORCE (FRAPPE_BENCH_UPDATE_FORCE, its 1.x name, is not
+	read since frappe-nix 2.0.0)."""
+	return bool(os.environ.get("FRAPPE_NIX_BENCH_UPDATE_FORCE"))
 
 
 def _combined(cmd: Sequence[str], *, cwd: str) -> tuple[int, str]:
