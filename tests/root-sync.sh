@@ -129,10 +129,12 @@ check_eq "…with the template's git source" runtime \
 check_eq "…and its build backend named for uv" "['hatchling']" \
   "$(toml_get "$BENCH/pyproject.toml" "d['tool']['uv']['extra-build-dependencies']['frappe-runtime']")"
 check_eq "the lock was regenerated, once" 1 "$(uv_calls)"
-check_eq "…from the bench root" "$BENCH lock" "$(cat "$UV_CALLS")"
+check_eq "…from the bench root, refreshing frappe-runtime's pin" "$BENCH lock --upgrade-package frappe-runtime" "$(cat "$UV_CALLS")"
 check "…and is the new lock" grep -q 'locked by the stub' "$BENCH/uv.lock"
 check "it says the shell was built from the old lock" grep -q 're-enter the shell' <<< "$out"
 check "it lists what it added" grep -q '+ \[project\].dependencies += frappe-runtime' <<< "$out"
+check_eq "pypika-stubs' corrected metadata is added (its pypika cap gone)" "[['pypika']]" \
+  "$(toml_get "$BENCH/pyproject.toml" "[e['requires-dist'] for e in d['tool']['uv']['dependency-metadata'] if e['name'] == 'pypika-stubs']")"
 
 echo "── nothing already correct is touched ──"
 check_eq "[project].name kept" old-bench "$(toml_get "$BENCH/pyproject.toml" "d['project']['name']")"
@@ -183,6 +185,19 @@ check "runs" "$TOOL" "$FORK"
 check "the dependency is added" has_dep "$FORK/pyproject.toml" frappe-runtime
 check_eq "the bench's own source wins over the template's" "https://example.com/me/frappe-nix" \
   "$(toml_get "$FORK/pyproject.toml" "d['tool']['uv']['sources']['frappe-runtime']['git']")"
+
+echo "── a bench with its own metadata for a package keeps it ──"
+OWNMETA="$ROOT/ownmeta"
+mkdir -p "$OWNMETA"
+{
+  cat "$ROOT/pyproject.before"
+  printf '\n[[tool.uv.dependency-metadata]]\nname = "pypika_stubs"\nversion = "0.48.0a1"\nrequires-dist = ["pypika>=0.48"]\n'
+  printf '\n[[tool.uv.dependency-metadata]]\nname = "other"\nrequires-dist = []\n'
+} > "$OWNMETA/pyproject.toml"
+check "runs" "$TOOL" "$OWNMETA"
+check_eq "its entry wins over the template's (by normalized name), and its others stay" \
+  "[('pypika_stubs', ['pypika>=0.48']), ('other', [])]" \
+  "$(toml_get "$OWNMETA/pyproject.toml" "[(e['name'], e['requires-dist']) for e in d['tool']['uv']['dependency-metadata']]")"
 
 echo "── a failed lock restores both files ──"
 FAIL="$ROOT/fail"

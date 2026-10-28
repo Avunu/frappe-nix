@@ -52,15 +52,18 @@ check_eq "outside a bench root it refuses" 1 "$RC"
 check "…saying where to run it" grep -q 'run this from the bench root (pyproject.toml + apps/)' "$ROOT/nobench.log"
 check_eq "…and runs nothing" "" "$(calls)"
 cd "$BENCH"
-printf '[project]\nname = "b"\n' > pyproject.toml
+printf '[project]\nname = "b"\nrequires-python = ">=3.14"\n' > pyproject.toml
 run bench "$BENCH_RELOCK" --upgrade-package frappe
 check_eq "it exits 0" 0 "$RC"
 check_eq "uv lock in the bench root, with the arguments, the build-deps sync, then node-locks/" \
-  "uv $BENCH lock --upgrade-package frappe|build-deps-sync $BENCH |frappe-nix-node-locks $BENCH --exclude=alpha/desk --command=nix run .#relock -- --node-locks . node-locks|" "$(calls)"
+  "uv $BENCH lock --upgrade-package frappe-runtime --upgrade-package frappe|build-deps-sync $BENCH |frappe-nix-node-locks $BENCH --exclude=alpha/desk --command=nix run .#relock -- --node-locks . node-locks|" "$(calls)"
 check "it names the uv" grep -q 'Re-locking the Python workspace with uv 0.0.0-stub' "$ROOT/bench.log"
+check "pyproject.toml is reconciled first (what the root sync would add)" \
+  grep -q '^name = "pypika-stubs"$' "$BENCH/pyproject.toml"
+check "…saying so" grep -q '+ \[\[tool.uv.dependency-metadata\]\] += pypika-stubs' "$ROOT/bench.log"
 check "and says what to commit" grep -q 'uv.lock and node-locks/ updated — commit them' "$ROOT/bench.log"
 run bench-uv "$BENCH_RELOCK" --uv-only
-check_eq "--uv-only: uv lock and the sync, as before" "uv $BENCH lock|build-deps-sync $BENCH |" "$(calls | sed 's/seed [^|]*|//')"
+check_eq "--uv-only: uv lock and the sync, as before" "uv $BENCH lock --upgrade-package frappe-runtime|build-deps-sync $BENCH |" "$(calls | sed 's/seed [^|]*|//')"
 check "…saying so" grep -q 'uv.lock updated — commit it' "$ROOT/bench-uv.log"
 run bench-locks "$BENCH_RELOCK" --node-locks beta
 check_eq "--node-locks: the generator only, with its targets" \
@@ -107,10 +110,10 @@ check_not "and nothing is staged again" grep -q staged "$ROOT/again.log"
 UV_LOCK="version = 2" run moved "$APP_RELOCK" --upgrade-package frappe
 check "the committed lock seeds the copy, so only what must move does" grep -qx 'seed version = 1' "$CALLS"
 check_eq "a moved lock is written" "version = 2" "$(cat "$APP/nix/uv.lock")"
-check "uv lock gets the arguments" grep -q '^uv .* lock --upgrade-package frappe$' "$CALLS"
+check "uv lock gets the arguments" grep -q '^uv .* lock --upgrade-package frappe-runtime --upgrade-package frappe$' "$CALLS"
 
 run uvonly "$APP_RELOCK" --uv-only
-check "--uv-only locks" grep -q '^uv .* lock$' "$CALLS"
+check "--uv-only locks" grep -q '^uv .* lock --upgrade-package frappe-runtime$' "$CALLS"
 check_not "…and leaves the fallbacks" grep -q frappe-nix-node-locks "$CALLS"
 
 run nodelocks "$APP_RELOCK" --node-locks beta alpha/desk

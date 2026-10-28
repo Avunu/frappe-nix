@@ -195,7 +195,12 @@ def sync(config: dict[str, str | None]) -> int:
 		if not _which("uv"):
 			_warn(f"{NAME}: uv is not on PATH; pyproject.toml restored")
 			return 1
-		if _run(["uv", "lock"]) != 0:
+		# The same lock bench update and relock run, refreshing frappe-runtime's
+		# git pin (frappe_nix_tools.deps.update.UV_LOCK); imported only now,
+		# when a lock is needed.
+		from frappe_nix_tools.deps.update import UV_LOCK
+
+		if _run(UV_LOCK) != 0:
 			_warn(
 				"",
 				f"{NAME}: uv lock failed — pyproject.toml and uv.lock restored, so the",

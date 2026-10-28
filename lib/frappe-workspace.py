@@ -314,6 +314,20 @@ def cmd_ensure_root(args):
 				existing[key] = value
 				changed.append(f"[tool.uv.sources].{key}")
 
+		# Corrected metadata for an upstream package (pypika-stubs' pypika cap).
+		# Keyed on the package name: a bench's own entry for it wins, whatever
+		# it says, and one it adds for another package is left alone.
+		have = {normalize(str(t.get("name", ""))) for t in uv.get("dependency-metadata", [])}
+		for entry in template_uv.get("dependency-metadata", []):
+			if normalize(str(entry["name"])) not in have:
+				# The values alone: the template's entry carries the comment that
+				# follows it there as its own trailing trivia.
+				fresh = tomlkit.table()
+				fresh.update(entry.unwrap())
+				fresh.add(tomlkit.nl())
+				uv.setdefault("dependency-metadata", tomlkit.aot()).append(fresh)
+				changed.append(f"[[tool.uv.dependency-metadata]] += {entry['name']}")
+
 	if "build-system" not in doc:
 		build = tomlkit.table()
 		build["requires"] = tomlkit.array('["hatchling"]')
@@ -834,8 +848,9 @@ def main():
 	p.add_argument("--requires-python", default="")
 	p.add_argument("--overrides", default="")
 	p.add_argument("--preset", default="")
-	# The rendered bench template: the source of the extra-build-dependencies
-	# and non-app [tool.uv.sources] entries an existing bench is reconciled to.
+	# The rendered bench template: the source of the extra-build-dependencies,
+	# non-app [tool.uv.sources] and [[tool.uv.dependency-metadata]] entries an
+	# existing bench is reconciled to.
 	p.add_argument("--template", default="")
 	# An opted-in app's tracked tools/pyproject.toml: drop from the dev group
 	# each of ruff, pre-commit and semgrep it pins a replacement for (APP_PINNED).

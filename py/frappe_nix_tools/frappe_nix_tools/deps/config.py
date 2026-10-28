@@ -48,3 +48,8 @@ class RelockConfig:
 	workspace: str | None
 	# App mode: where the repository keeps its locks (frappe-nix.app.lockDir).
 	lock_dir: str
+	# A bench: frappe-nix-workspace and templates/bench/pyproject.toml
+	# (unrendered), for the `ensure-root` that precedes the lock; null in app
+	# mode, whose root is rendered from the template already.
+	workspace_tool: str | None
+	template: str | None
