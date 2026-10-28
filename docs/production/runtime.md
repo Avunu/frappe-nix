@@ -3,7 +3,7 @@ title: The unified runtime
 description: One frappe-runtime process per bench serves the web app, realtime, background jobs and the scheduler, how a bench gets it, and how to go back to the split processes.
 order: 2
 tags: [runtime, realtime, socketio, asgi]
-updated: 2026-10-06
+updated: 2026-10-28
 ---
 
 By default each bench runs a single [`frappe-runtime`](https://github.com/Avunu/frappe-nix/tree/main/runtime) process, a hard fork maintained in this repository under `runtime/`. It serves the web app, realtime, the background jobs and the scheduler together, in place of gunicorn or `bench serve`, the Node `socket.io` server, one worker per queue and `bench schedule`.
@@ -57,7 +57,7 @@ The seam is that only the _source_ is overridden. Dependency metadata still come
 nix run .#relock
 ```
 
-Use that and not a plain `uv lock`, which keeps an already resolved git revision and reports success without changing anything. `relock`, `bench update` (when it re-locks) and `update-deps` all run `uv lock --upgrade-package frappe-runtime`.
+Use that and not a plain `uv lock`, which keeps an already resolved git revision and reports success without changing anything. `relock`, `bench update` (when it re-locks) and `update-deps` all run `uv lock --upgrade-package frappe-runtime`, at the frappe-nix revision `flake.lock` pins ([Locks](../development/locks.md)).
 
 Set `runtime.src = null` to hand version control back to `uv.lock`.
 
