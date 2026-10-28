@@ -1017,7 +1017,7 @@ for _lazy, _label in ((False, "16's eager re-export"), (True, "17's lazy re-expo
 		_frappe.get_site_config()["cloud_storage_settings"].get("use_local") is True,
 	)
 	check(
-		f"{_label}: so does frappe.config's, which 17's frappe.init calls",
+		f"{_label}: so does frappe.config's" + (", which 17's frappe.init calls" if _lazy else ""),
 		_config.get_site_config()["cloud_storage_settings"].get("use_local") is True,
 	)
 	del sys.modules["frappe.config"]
