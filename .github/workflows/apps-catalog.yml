@@ -1,7 +1,7 @@
 name: apps-catalog
 
 # The weekly refresh of py/frappe_nix_tools/frappe_nix_tools/data/frappe-apps.json, the apps
-# `frappe ui`'s store offers (frappe_nix_tools.apps_catalog): the marketplace registry's
+# `bench ui`'s store offers (frappe_nix_tools.apps_catalog): the marketplace registry's
 # listings and releases, the frappe organisation's unlisted apps, and every app's release
 # branches. A change is a pull request on standards/apps-catalog, with check.yml and
 # pr-policy.yml dispatched on it (a pull request opened with the workflow token starts no
@@ -77,7 +77,7 @@ jobs:
           if [ -z "$url" ]; then
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
               --title "chore(apps): refresh the apps catalog" \
-              --body "The weekly \`frappe-nix apps-catalog sync\`: the apps \`frappe ui\`'s store offers, and their release branches."
+              --body "The weekly \`frappe-nix apps-catalog sync\`: the apps \`bench ui\`'s store offers, and their release branches."
           fi
           gh workflow run check.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
           gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"

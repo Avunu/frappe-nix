@@ -1,4 +1,4 @@
-"""The `frappe ui` store: python-devops-nix's devtui plugin (devtui.plugin), in a
+"""The `bench ui` store: python-devops-nix's devtui plugin (devtui.plugin), in a
 bench (app mode has no apps of its own to add: siblings are flake inputs).
 
 The catalog is frappe_nix_tools/data/frappe-apps.json (frappe-nix apps-catalog sync): the
@@ -12,8 +12,8 @@ Frappe (apps/frappe's __version__) each app gets the branch `bench get-app --bra
 
 Anything else is listed but not offered, with why. "Installed" is sites/apps.txt.
 
-Nothing here changes the bench: an add is `frappe get-app` per app (what it needs first), a
-removal `frappe uninstall-app` then `frappe remove-app`, run by the TUI from the bench root.
+Nothing here changes the bench: an add is `bench get-app` per app (what it needs first), a
+removal `bench uninstall-app` then `bench remove-app`, run by the TUI from the bench root.
 After an add the stack restarts from a re-evaluated shell, and its apps-reconcile task
 installs the new apps on the site.
 

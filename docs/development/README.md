@@ -97,7 +97,7 @@ It always does the full scan, and lists lockfiles that differ from their commit:
 
 ## In this section
 
-- [The menu](menu.md): `frappe ui`
+- [The menu](menu.md): `bench ui`
 - [Everyday commands](commands.md): the `bench` wrapper and the scripts behind it.
 - [Development guard rails](guard-rails.md): what keeps a restored production database from reaching the outside world.
 - [Secrets](secrets.md) and [Restore a production backup](restore-from-production.md).

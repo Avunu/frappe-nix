@@ -513,7 +513,7 @@
         # the new one, and is listed for its deprecation warning.
         // import ./tests/renames.nix { inherit self pkgs inputs; }
         // import ./tests/ide.nix { inherit self pkgs inputs; }
-        # `frappe ui`: the menu's spec, the store's plugin and the TUI headless.
+        # `bench ui`: the menu's spec, the store's plugin and the TUI headless.
         // import ./tests/tui.nix { inherit self pkgs inputs; }
         # Finding and repairing what yarn cannot see is broken, and the Python
         # half of `bench setup requirements`.

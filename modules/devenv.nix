@@ -176,7 +176,7 @@ in
           type = types.nullOr types.package;
           default = null;
           internal = true;
-          description = "The program `frappe ui` runs (python-devops-nix's lib.tui.script), for the checks.";
+          description = "The program `bench ui` runs (python-devops-nix's lib.tui.script), for the checks.";
         };
 
         name = mkOption {
@@ -2601,12 +2601,9 @@ in
               description = "start all services";
             }
             {
-              command = "frappe ui";
+              command = "bench ui";
               description =
-                if appMode then
-                  "the menu: stack and commands (or just: frappe)"
-                else
-                  "the menu: stack, commands, app store (or just: frappe)";
+                if appMode then "the menu: stack and commands" else "the menu: stack, commands, app store";
             }
           ]
           ++ lib.optional (cfg.defaultSite != "") {
@@ -2735,11 +2732,10 @@ in
         # while the bench runs, else the preferred one.
         mailpitUi = "Mailpit (http://${mp.host}:@mailUi@)";
 
-        # The menu (`frappe ui`, and a bare `frappe` at a terminal):
-        # python-devops-nix's lib.tui. It runs on its own interpreter (textual,
-        # on the bench's Python), isolated from the bench's environment, and
-        # changes nothing itself: every action is a `frappe …` (that is,
-        # `bench …`) command line it shows first. The store, lib/tui's
+        # The menu (`bench ui`): python-devops-nix's lib.tui. It runs on its own
+        # interpreter (textual, on the bench's Python), isolated from the
+        # bench's environment, and changes nothing itself: every action is a
+        # `bench …` command line it shows first. The store, lib/tui's
         # frappe_nix_tui, is a bench's: an app's siblings are flake inputs.
         tuiBase = inputs.python-devops-nix.lib.tui;
         tuiCommand = tuiBase.command {
@@ -2760,13 +2756,13 @@ in
           name = "frappe-nix-commands";
           python = pkgs.python314.withPackages (_: [ standardsOutputs.frappeNixTools ]);
           target = "frappe_nix_tools.bench_cli:build_cli";
-          cli = "frappe";
+          cli = "bench";
           source = "frappe-nix";
         };
         tuiFrappeProbe = tuiBase.probe {
           interpreter = "${pythonEnvs.devPythonEnv}/bin/python";
           target = "frappe.utils.bench_helper:get_app_groups";
-          cli = "frappe";
+          cli = "bench";
           source = "frappe";
           interactive = [
             "console"
@@ -2784,7 +2780,7 @@ in
           name = "frappe-nix-ui";
           spec = {
             product = "frappe-nix";
-            cli = "frappe";
+            cli = "bench";
             root = "@benchRoot@";
             banner = bannerSpec;
             site = {
@@ -2796,7 +2792,7 @@ in
               {
                 label = "Migrate";
                 argv = [
-                  "frappe"
+                  "bench"
                   "migrate"
                 ];
                 help = "bench migrate: the site's patches and schema";
@@ -2804,14 +2800,14 @@ in
               {
                 label = "Build assets";
                 argv = [
-                  "frappe"
+                  "bench"
                   "build"
                 ];
               }
               {
                 label = "Clear cache";
                 argv = [
-                  "frappe"
+                  "bench"
                   "clear-cache"
                 ];
               }
@@ -2820,21 +2816,21 @@ in
               {
                 label = "Migrate";
                 argv = [
-                  "frappe"
+                  "bench"
                   "migrate"
                 ];
               }
               {
                 label = "Build assets";
                 argv = [
-                  "frappe"
+                  "bench"
                   "build"
                 ];
               }
               {
                 label = "Console";
                 argv = [
-                  "frappe"
+                  "bench"
                   "console"
                 ];
                 interactive = true;
@@ -2843,7 +2839,7 @@ in
             ++ lib.optional (!appMode) {
               label = "Update the bench";
               argv = [
-                "frappe"
+                "bench"
                 "update"
               ];
               help = "bench update: pull the apps, refresh the locks, migrate and build";

@@ -1,14 +1,14 @@
 ---
 title: The menu
-description: "frappe ui, the dev shell's interactive menu: the stack and its logs, every bench and Frappe command as a form, and a store for Frappe apps."
+description: "bench ui, the dev shell's interactive menu: the stack and its logs, every bench and Frappe command as a form, and a store for Frappe apps."
 order: 2
 tags: [cli, apps, tui]
-updated: 2026-10-27
+updated: 2026-10-28
 ---
 
-`frappe` is the dev shell's umbrella command: `frappe <command>` is `bench <command>`, through the same [wrapper](commands.md), and `bench` is unchanged. `frappe ui`, or a bare `frappe` typed at a terminal, opens the menu.
+`bench ui` opens the dev shell's menu. It is the [`bench` wrapper](commands.md)'s own subcommand; a bare `bench` is still bench's help.
 
-The menu changes nothing itself. Everything it does is a `frappe …` command line, shown before it runs and streamed while it does, so what the menu does and what you would type are the same thing. `c` in a confirmation copies the command line.
+The menu changes nothing itself. Everything it does is a `bench …` command line, shown before it runs and streamed while it does, so what the menu does and what you would type are the same thing. `c` in a confirmation copies the command line.
 
 | Key | Tab | What it shows |
 | --- | --- | --- |
@@ -28,7 +28,7 @@ For the bench's Frappe (`apps/frappe`'s version) each app gets a branch: its `ve
 - Type to search names, titles, publishers, categories and descriptions; the left column filters by publisher, the select by category (`Official` is the frappe organisation's).
 - `space` picks the highlighted app; an installed one (`✓`, in `sites/apps.txt`) is picked for removal.
 - The line at the bottom says which apps the picks need, which are added first.
-- `a` shows what will run: `frappe get-app --branch <branch> <app>` per app, and `frappe uninstall-app` then `frappe remove-app` per removal. Run it, and the menu offers **Rebuild & restart**: the stack restarts from a re-evaluated shell, and its apps-reconcile task installs the new apps on the site.
+- `a` shows what will run: `bench get-app --branch <branch> <app>` per app, and `bench uninstall-app` then `bench remove-app` per removal. Run it, and the menu offers **Rebuild & restart**: the stack restarts from a re-evaluated shell, and its apps-reconcile task installs the new apps on the site.
 - **Add from a Git URL** takes anything `bench get-app` does.
 
 The detail pane shows the app's listing and its README from GitHub when the network allows.

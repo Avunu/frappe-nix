@@ -1,5 +1,5 @@
 """The apps a bench can add (``frappe_nix_tools/data/frappe-apps.json``): the TUI's store
-(`frappe ui`, lib/tui/frappe_nix_tui) reads it, and ``frappe-nix apps-catalog sync`` writes it.
+(`bench ui`, lib/tui/frappe_nix_tui) reads it, and ``frappe-nix apps-catalog sync`` writes it.
 
 Two sources, merged by repository:
 

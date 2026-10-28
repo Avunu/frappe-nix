@@ -1,5 +1,5 @@
 """``frappe-nix apps-catalog sync``: refresh ``frappe_nix_tools/data/frappe-apps.json``, the
-apps `frappe ui`'s store offers (frappe_nix_tools.apps_catalog).
+apps `bench ui`'s store offers (frappe_nix_tools.apps_catalog).
 
 Exit codes: 0 written; 3 the registry, GitHub or git could not be read.
 """
@@ -29,8 +29,8 @@ def run_sync(args: argparse.Namespace) -> int:
 def register(subparsers: argparse._SubParsersAction) -> None:
 	p = subparsers.add_parser(
 		"apps-catalog",
-		help="the apps `frappe ui`'s store offers",
-		description="The apps `frappe ui`'s store offers: frappe_nix_tools/data/frappe-apps.json.",
+		help="the apps `bench ui`'s store offers",
+		description="The apps `bench ui`'s store offers: frappe_nix_tools/data/frappe-apps.json.",
 	)
 	sub = p.add_subparsers(dest="action", required=True)
 	s = sub.add_parser(

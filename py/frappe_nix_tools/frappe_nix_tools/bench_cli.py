@@ -15,7 +15,7 @@ KEEP_DASHES = frozenset({"restore", "update", "update-deps", "setup-requirements
 
 
 def build_cli():
-	"""The click group. Also what `frappe ui`'s Commands tab lists (lib.tui.commands)."""
+	"""The click group. Also what `bench ui`'s Commands tab lists (lib.tui.commands)."""
 	import click
 
 	@click.group(context_settings={"help_option_names": ["-h", "--help"]})

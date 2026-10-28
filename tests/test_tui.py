@@ -1,4 +1,4 @@
-"""`frappe ui`: the spec the dev shell writes, lib/tui/frappe_nix_tui (the store's plugin)
+"""`bench ui`: the spec the dev shell writes, lib/tui/frappe_nix_tui (the store's plugin)
 over a fixture catalog and the shipped one, the command catalog the shell builds, and the
 TUI itself driven headless (textual's run_test).
 
@@ -134,10 +134,10 @@ class StoreTest(unittest.TestCase):
 
 	def test_spec(self):
 		s = spec.load(SPEC, {"benchRoot": str(self.root), "port": "8023"})
-		self.assertEqual(s.cli, "frappe")
+		self.assertEqual(s.cli, "bench")
 		self.assertEqual(s.root, str(self.root))
 		self.assertEqual(s.site.url, "http://127.0.0.1:8023")
-		self.assertIn("frappe ui", [c.command for c in s.banner.commands])
+		self.assertIn("bench ui", [c.command for c in s.banner.commands])
 		self.assertEqual(s.commands[1].cwd, f"{self.root}/sites")
 
 	def test_branches(self):
@@ -168,9 +168,9 @@ class StoreTest(unittest.TestCase):
 		self.assertEqual(
 			steps,
 			[
-				("frappe", "get-app", "--branch", "develop", "telephony"),
-				("frappe", "get-app", "--branch", "main", "helpdesk"),
-				("frappe", "get-app", "--branch", "version-16", "resilient-tech/india-compliance"),
+				("bench", "get-app", "--branch", "develop", "telephony"),
+				("bench", "get-app", "--branch", "main", "helpdesk"),
+				("bench", "get-app", "--branch", "version-16", "resilient-tech/india-compliance"),
 			],
 		)
 		# Installed, or not in the catalog for this Frappe: never added.
@@ -181,15 +181,15 @@ class StoreTest(unittest.TestCase):
 	def test_remove(self):
 		self.assertEqual(
 			[s.argv for s in self.p.remove(["erpnext"])],
-			[("frappe", "uninstall-app", "erpnext", "--yes"), ("frappe", "remove-app", "erpnext")],
+			[("bench", "uninstall-app", "erpnext", "--yes"), ("bench", "remove-app", "erpnext")],
 		)
 
 	def test_form(self):
 		form = self.p.forms()[0]
-		self.assertEqual(form.build({"url": "owner/app"}), ["frappe", "get-app", "owner/app"])
+		self.assertEqual(form.build({"url": "owner/app"}), ["bench", "get-app", "owner/app"])
 		self.assertEqual(
 			form.build({"url": "owner/app", "branch": "version-16"}),
-			["frappe", "get-app", "--branch=version-16", "owner/app"],
+			["bench", "get-app", "--branch=version-16", "owner/app"],
 		)
 
 	def test_shipped_catalog(self):
@@ -203,12 +203,12 @@ class StoreTest(unittest.TestCase):
 
 	def test_command_catalog(self):
 		own = commands.load_file(spec.load(SPEC, {}).commands[0].file)
-		self.assertEqual((own.name, own.source), ("frappe", "frappe-nix"))
+		self.assertEqual((own.name, own.source), ("bench", "frappe-nix"))
 		get_app = next(c for c in own.walk() if c.path == ("get-app",))
 		self.assertTrue(get_app.raw)
 		self.assertEqual(
-			commands.argv("frappe", get_app, {"args": "--branch version-16 hrms"}),
-			["frappe", "get-app", "--branch", "version-16", "hrms"],
+			commands.argv("bench", get_app, {"args": "--branch version-16 hrms"}),
+			["bench", "get-app", "--branch", "version-16", "hrms"],
 		)
 
 
