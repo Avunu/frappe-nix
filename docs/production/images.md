@@ -42,7 +42,7 @@ A lock that does not resolve offline, and the two ways around it, are covered in
 
 ### Compiling assets
 
-`builtBench` copies the unbuilt bench tree into the build directory and runs `bench build --production --force` inside the Nix sandbox. `--force` builds frappe's own assets too, instead of first trying to download frappe's prebuilt ones: the sandbox has no network, and the download would find its release tag with git in `apps/frappe`, which is not a repository there. It sets `ESBUILD_TARGET` from the `esbuildTarget` option, which defaults to `es2022`, and `NODE_OPTIONS=--max-old-space-size=4096`. The finished tree, including nested frontend output and rewritten asset links, becomes the package.
+`builtBench` copies the unbuilt bench tree into the build directory and runs `bench build --production --force` inside the Nix sandbox. The build sets `ESBUILD_TARGET` from the `esbuildTarget` option, which defaults to `es2022`, and `NODE_OPTIONS=--max-old-space-size=4096`. `--force` builds frappe's own assets too, instead of first trying to download frappe's prebuilt ones: the sandbox has no network, and the download would find its release tag with git in `apps/frappe`, which is not a repository there. The finished tree, including nested frontend output and rewritten asset links, becomes the package.
 
 In a bench, the build also copies the bench root's `config/` directory into the package when it exists. That is how an nginx configuration reaches the nginx image, see below. [Asset builds](../development/assets.md) explains the esbuild preload that applies here too.
 
