@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.5.0](https://github.com/Avunu/frappe-nix/compare/v1.4.1...v1.5.0) (2026-10-28)
+
+
+### Features
+
+* **ci:** comment test reports and check failures on pull requests, and push pre-commit fixes ([#185](https://github.com/Avunu/frappe-nix/issues/185)) ([2ffd8a5](https://github.com/Avunu/frappe-nix/commit/2ffd8a5b119c8fdc18ed261eb5c62b6672e74929))
+* **cli:** bench ui, the dev shell's menu, with a store for Frappe apps ([#203](https://github.com/Avunu/frappe-nix/issues/203)) ([798eca7](https://github.com/Avunu/frappe-nix/commit/798eca73a7eb8388eccf72f8d1a3bf1bae2c5031))
+* **standards:** link the documentation site from the generated README ([#193](https://github.com/Avunu/frappe-nix/issues/193)) ([527a24d](https://github.com/Avunu/frappe-nix/commit/527a24da073ecae76e0e6eb7224d59e558d3d541))
+
+
+### Bug Fixes
+
+* build on current nixpkgs, where minio-client is refused as insecure ([#200](https://github.com/Avunu/frappe-nix/issues/200)) ([d0ea173](https://github.com/Avunu/frappe-nix/commit/d0ea17391dc6d3cb1a0117bb5af68549d8b08747))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#184](https://github.com/Avunu/frappe-nix/issues/184)) ([d928def](https://github.com/Avunu/frappe-nix/commit/d928defdaaeb53f87be527aad9bce0837f7f0674))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#192](https://github.com/Avunu/frappe-nix/issues/192)) ([758138d](https://github.com/Avunu/frappe-nix/commit/758138dc137071720259dd00e0d7c1d5a80acf03))
+* **deps:** bump the github-actions group across 1 directory with 3 updates ([#202](https://github.com/Avunu/frappe-nix/issues/202)) ([7199cd0](https://github.com/Avunu/frappe-nix/commit/7199cd067e6251e04d5699410c1b2d08f77f601f))
+* **devguard:** stop requiring frappe_providers' migrator re-export, gone in Frappe 16.53 ([#196](https://github.com/Avunu/frappe-nix/issues/196)) ([c883089](https://github.com/Avunu/frappe-nix/commit/c883089efec3963642e04b004593fc85c9b74aed))
+* **relock:** reconcile the root and refresh frappe-runtime's pin before locking; correct pypika-stubs' metadata ([#198](https://github.com/Avunu/frappe-nix/issues/198)) ([c13c662](https://github.com/Avunu/frappe-nix/commit/c13c662b420a42f59480b7f489a0743e0910de4d))
+* **standards:** make a self-hosted workspace writable before checkout ([#194](https://github.com/Avunu/frappe-nix/issues/194)) ([0bd778d](https://github.com/Avunu/frappe-nix/commit/0bd778d97a1b9fba4968a37777091692c1a74514))
+* **update:** refresh frappe-runtime's git pin whenever bench update or update-deps re-locks ([#195](https://github.com/Avunu/frappe-nix/issues/195)) ([9cbbfff](https://github.com/Avunu/frappe-nix/commit/9cbbfff4f3ac1ce6cbe0e0219617b610b057c73c))
+
 ## [1.4.1](https://github.com/Avunu/frappe-nix/compare/v1.4.0...v1.4.1) (2026-10-25)
 
 
