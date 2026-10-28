@@ -95,6 +95,12 @@ class TestArgs(unittest.TestCase):
 				self.assertEqual(caught.exception.code, code)
 				self.assertIn(f"removed in frappe-nix 2.0.0: use {new}", str(caught.exception))
 
+	def test_a_handover_from_a_1x_sync_reads_the_old_flags(self):
+		# 1.x `frappe-nix sync` re-runs the frappe-init a 2.x lock pins with the 1.x names.
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_SYNC_REEXEC": "1"}):
+			a = parse_args(["--sync", "--frappe-version", "version-16", "--site=dev.localhost"])
+		self.assertEqual((a.version, a.site), ("version-16", "dev.localhost"))
+
 	def test_commit_takes_its_message_only_after_an_equals_sign(self):
 		a = parse_args(["--commit", "dir"])
 		self.assertEqual((a.commit, a.commit_msg, a.target), (True, fargs.DEFAULT_COMMIT_MSG, "dir"))

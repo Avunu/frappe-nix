@@ -14,9 +14,12 @@ documented ones (docs/reference/scaffolder.md) and neither parser can say them:
 ``--frappe-version`` and ``--site`` are the names ``--version`` and
 ``--default-site`` had before python-devops-nix docs/conventions.md (Scaffolder: version flag;
 Identity options). Read, with a warning, through 1.x, they are usage errors that name the
-new flag since frappe-nix 2.0.0.
+new flag since frappe-nix 2.0.0. The one exception is a 1.x ``frappe-nix sync`` handing over
+to the ``frappe-init`` a 2.x lock pins (``FRAPPE_NIX_SYNC_REEXEC=1``): that line still has the
+old names, and they are read as the new ones, without a word.
 """
 
+import os
 from dataclasses import dataclass, field
 
 USAGE = """\
@@ -157,11 +160,16 @@ def parse_args(argv: list[str]) -> InitArgs:
 	args = InitArgs()
 	has_action = any(word in ("--sync", "--check") for word in argv)
 	usage_code = 2 if has_action else 1
+	# A sync handing over from another release (scaffold/bootstrap.py, maybe_reexec).
+	handover = os.environ.get("FRAPPE_NIX_SYNC_REEXEC") == "1"
 	unknown = ""
 	words = list(argv)
 	while words:
 		word = words.pop(0)
 		flag, eq, inline = word.partition("=")
+		if handover and flag in REMOVED:
+			flag = REMOVED[flag]
+			word = flag + eq + inline
 		if not word.startswith("-"):
 			args.target = word
 			continue

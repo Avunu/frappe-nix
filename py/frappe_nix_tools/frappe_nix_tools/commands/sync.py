@@ -71,8 +71,11 @@ def _profile_dir(args: argparse.Namespace) -> Path | None:
 	return path
 
 
-def _passthrough(args: argparse.Namespace) -> list[str]:
-	"""The flags a re-executed sync gets again (``frappe-init --sync`` or ``frappe-nix sync --write``)."""
+def _passthrough(args: argparse.Namespace, *, frappe_init: bool = False) -> list[str]:
+	"""The flags a re-executed sync gets again (``frappe-init --sync`` or ``frappe-nix sync --write``).
+
+	``frappe_init`` names the version and the site as ``frappe-init`` does: ``--version`` and
+	``--default-site``. Its 2.x refuses ``--frappe-version`` and ``--site``; 1.x reads both."""
 	out = []
 	if args.dry_run:
 		out.append("--dry-run")
@@ -85,9 +88,9 @@ def _passthrough(args: argparse.Namespace) -> list[str]:
 	if args.force:
 		out.append("--force")
 	if args.frappe_version:
-		out += ["--frappe-version", args.frappe_version]
+		out += ["--version" if frappe_init else "--frappe-version", args.frappe_version]
 	if args.site:
-		out += ["--site", args.site]
+		out += ["--default-site" if frappe_init else "--site", args.site]
 	if args.standards:
 		out += ["--standards", args.standards]
 	if args.profile_path:
@@ -311,7 +314,9 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 			)
 			if (root / "flake.lock").is_file():
 				_stage(root, ["flake.lock"], runner)
-		bootstrap.maybe_reexec(runner, _passthrough(args), changed or bootstrap.inherited_lock_change())
+		bootstrap.maybe_reexec(
+			runner, _passthrough(args, frappe_init=True), changed or bootstrap.inherited_lock_change()
+		)
 	elif flake_step and runner.dry_run:
 		print(
 			"would run: nix flake lock (when flake.lock is missing or stale, or frappe-nix is not locked from flake.nix's URL)"

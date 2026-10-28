@@ -114,6 +114,8 @@ Commands and other names:
 
 `frappe-nix sync` keeps its own `--frappe-version` and `--site`, which `frappe-init --sync` passes `--version` and `--default-site` on as.
 
+When `flake.lock` pins another frappe-nix release, `frappe-nix sync` re-runs the `frappe-init` the lock pins. A 1.x sync passes it the old names, and a 2.x `frappe-init` reads them there, so moving an app's lock to 2.x from 1.x tools works.
+
 ### 5. Check the dev shell
 
 ```bash
