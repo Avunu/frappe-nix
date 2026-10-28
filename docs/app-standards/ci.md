@@ -105,7 +105,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | nix | after the relock lands, or when there was nothing to relock | a move of `frappe-nix` or `standards-profile` is closed instead |
   | git submodules | always | |
 
-- **Ignores.** A managed `.github/dependabot.yml` entry takes Dependabot `ignore` conditions from `dependabot.ignore`, keyed by ecosystem (every managed entry of it) or by `<ecosystem>:<directory>` (one entry). A major cap the app holds on purpose goes there, because the `updates` region can't redefine a managed entry: `ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }`.
+- **Ignores.** A managed `.github/dependabot.yml` entry takes Dependabot `ignore` conditions from `dependabot.ignore`, keyed by ecosystem (every managed entry of it) or by `<ecosystem>:<directory>` (one entry). Sync gives a notice when an app's `npm:/<dir>` key names no managed entry. A major cap the app holds on purpose goes there, because the `updates` region can't redefine a managed entry: `ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }`.
 - **The sweep** re-dispatches `ci.yml` and `pr-policy.yml` on bot PRs that have no `ci / *` run on their head, which covers dispatches a Dependabot-triggered job could not make.
 - **The weekly relock** runs `nix run .#relock -- --upgrade` and opens `chore(deps): relock python` on `standards/relock-python`.
 

@@ -13,16 +13,17 @@
 {% set test_utils = modules["test-utils"] and cfg["test-utils"].hooks %}
 {% set remote_hooks = precommit_live and (modules.hygiene or modules.ssort or test_utils) %}
 {% macro cadence(name) %}{{ overrides[name] if name in overrides else cfg.dependabot.cadence }}{% endmacro %}
-{# dependabot.ignore's entries for one managed entry: its ecosystem's, then its directory's. #}
+{# dependabot.ignore's entries for one managed entry: its ecosystem's, then its directory's.
+   The lists are block sequences, which oxfmt keeps at any length. #}
 {% macro ignore_items(name, directory) %}
 {% for i in ignores.get(name, []) + ignores.get(name ~ ":" ~ directory, []) %}
       - dependency-name: {{ i["dependency-name"] | json_string }}
-{% if i.get("versions") %}
-        versions: {{ i.versions | json_string }}
-{% endif %}
-{% if i.get("update-types") %}
-        update-types: {{ i["update-types"] | json_string }}
-{% endif %}
+{% for key in ("versions", "update-types") if i.get(key) %}
+        {{ key }}:
+{% for v in i[key] %}
+          - {{ v | json_string }}
+{% endfor %}
+{% endfor %}
 {% endfor %}
 {% endmacro %}
 {% macro ignore(name, directory) %}

@@ -1312,9 +1312,9 @@
           "ignore": {
             "type": "object",
             "default": {},
-            "description": "Dependabot ignore conditions added to the managed entries (\u00a72.17): an ecosystem key reaches every managed entry of that ecosystem, an <ecosystem>:<directory> key (\"npm:/docs-site\") only that directory's.",
+            "description": "Dependabot ignore conditions added to the managed entries (\u00a72.17): an ecosystem key reaches every managed entry of that ecosystem, an <ecosystem>:<directory> key only that directory's. The directories are the ones the managed entries have: / for each ecosystem but uv, /tools for uv, and /<dir> for npm (\"npm:/docs-site\").",
             "propertyNames": {
-              "pattern": "^(github-actions|npm|uv|pre-commit|nix|gitsubmodule)(:/\\S*)?$"
+              "pattern": "^((github-actions|npm|uv|pre-commit|nix|gitsubmodule)|(github-actions|npm|pre-commit|nix|gitsubmodule):/|uv:/tools|npm:/[^/\\s]+)$"
             },
             "additionalProperties": {
               "type": "array",

@@ -279,7 +279,7 @@ class TestDependabot(CallerCase):
 			'"npm:/frontend" = [{ dependency-name = "@vitejs/*", update-types = ["version-update:semver-major"] }]\n'
 			'nix = [{ dependency-name = "nixpkgs" }]\n'
 			'"github-actions:/" = [{ dependency-name = "actions/checkout", versions = [">=5", "<7"] }]\n'
-			'"uv:/elsewhere" = [{ dependency-name = "ruff" }]\n'
+			'"npm:/docs-site" = [{ dependency-name = "vitepress" }]\n'
 		)
 		updates = files[".github/dependabot.yml"]["updates"]
 		entry = {(e["package-ecosystem"], e["directory"]): e for e in updates}
@@ -300,12 +300,51 @@ class TestDependabot(CallerCase):
 			],
 		)
 		# A directory with no managed entry renders nothing.
-		self.assertNotIn("ignore", entry["uv", "/tools"])
+		self.assertNotIn(("npm", "/docs-site"), entry)
+		self.assertNotIn("vitepress", self.read(".github/dependabot.yml"))
+
+	def test_ignore_lists_are_block_sequences(self) -> None:
+		"""oxfmt keeps a block sequence at any length; a long flow list would be rewrapped."""
+		self.render(
+			"[tool.frappe-nix.dependabot.ignore]\n"
+			'npm = [{ dependency-name = "tailwindcss", versions = [">=4"], update-types = ['
+			'"version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"] }]\n'
+		)
+		self.assertIn(
+			'      - dependency-name: "tailwindcss"\n'
+			"        versions:\n"
+			'          - ">=4"\n'
+			"        update-types:\n"
+			'          - "version-update:semver-major"\n'
+			'          - "version-update:semver-minor"\n'
+			'          - "version-update:semver-patch"\n',
+			self.read(".github/dependabot.yml"),
+		)
+
+	def test_an_npm_directory_with_no_entry_is_a_notice(self) -> None:
+		"""A typo in an app's "npm:/<dir>" key would drop the ignore silently: sync says so."""
+		self.write("frontend/package.json", json.dumps({"name": "frontend"}))
+		self.write(
+			"pyproject.toml",
+			self.base + "[tool.frappe-nix.dependabot.ignore]\n"
+			'"npm:/fronend" = [{ dependency-name = "x" }]\n'
+			'"npm:/frontend" = [{ dependency-name = "y" }]\n',
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn("dependabot.ignore 'npm:/fronend' matches no managed npm entry", err)
+		self.assertNotIn("'npm:/frontend'", err)
 
 	def test_ignore_is_validated(self) -> None:
 		for value, problem in (
 			('{ cargo = [{ dependency-name = "x" }] }', "does not match"),
 			('{ "npm:docs-site" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "npm:/frontend/" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "npm:/a/b" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "uv:/" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "nix:/x" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "github-actions:/foo" = [{ dependency-name = "x" }] }', "does not match"),
 			('{ npm = [{ versions = [">=4"] }] }', "dependency-name is required"),
 			('{ npm = [{ dependency-name = "x", version = ">=4" }] }', "unknown key"),
 			('{ npm = [{ dependency-name = "x", update-types = ["major"] }] }', "must be one of"),
