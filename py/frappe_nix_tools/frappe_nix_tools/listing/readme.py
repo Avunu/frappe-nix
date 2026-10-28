@@ -132,11 +132,7 @@ def shield(text: str) -> str:
 	return urllib.parse.quote(text.replace("-", "--").replace("_", "__"), safe="")
 
 
-def url_template(template: str, ctx: context.NS) -> str:
-	"""An org URL template with ``{app}``, ``{app_hyphen}`` and ``{repo}`` filled in."""
-	return (
-		template.replace("{app_hyphen}", ctx.app_hyphen).replace("{app}", ctx.app).replace("{repo}", ctx.repo)
-	)
+url_template = rendering.url_template
 
 
 def hero(root: Path, ctx: context.NS) -> dict | None:
@@ -206,6 +202,8 @@ def values(root: Path, ctx: context.NS) -> dict[str, Any]:
 		raise ConfigError(
 			"README.md: the licence line needs the first commit's year, and there is no commit yet"
 		)
+	docs_url = url_template(org["docs-url"], ctx) if org["docs-url"] else ""
+	docs = urllib.parse.urlsplit(docs_url)
 	links = [{"label": str(link["label"]), "url": str(link["url"])} for link in org["readme"]["links"]]
 	if not org["support-url"] and not org["email"] and not github:
 		# The support block's default is GitHub's issues page; off GitHub it needs one of the two.
@@ -221,6 +219,11 @@ def values(root: Path, ctx: context.NS) -> dict[str, Any]:
 		"email": org["email"],
 		"links": links,
 		"badges": [dict(b) for b in org["readme"]["badges"]],
+		# The app's documentation site (org.docs-url, the listing's documentation): a badge in
+		# the header and the support block's first line, or neither when the profile has none.
+		"docs_url": docs_url,
+		"docs_label": f"{docs.netloc}{docs.path}",
+		"docs_badge": f"https://img.shields.io/badge/docs-{shield(docs.netloc)}-blue" if docs_url else "",
 		# The CI badge names the managed caller (N4's ci.yml); without it there is no workflow to show.
 		"ci_badge": bool(modules.get("ci")) and github and manifest.ships(".github/workflows/ci.yml"),
 		"release_badge": bool(releases) and github,
@@ -231,7 +234,8 @@ def values(root: Path, ctx: context.NS) -> dict[str, Any]:
 		"hero": hero(root, ctx),
 		"install_ref": install_ref,
 		"release_markers": main_tags and not cfg["readme"]["install-ref"],
-		"marketplace": bool(cfg["listing"]["publish"]),
+		# Only an approved listing is linked: publishing opens registry PRs, it lists nothing.
+		"marketplace": bool(cfg["listing"]["approved"]),
 		"branch": ctx.branches.release or ctx.branches.integration,
 		"required": [s for s in ctx.siblings if s.required],
 		"branch_table": table(

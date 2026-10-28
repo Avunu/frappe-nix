@@ -1,6 +1,9 @@
-{# Where to get help (spec §2.19). #}
+{# Where to get help (spec §2.19): the documentation site first, when the profile has one. #}
 ## Support
 
+{% if readme.docs_url %}
+- Documentation: [{{ readme.docs_label }}]({{ readme.docs_url }})
+{% endif %}
 {% if readme.support_url %}
 - Help and bug reports: {{ readme.support_url }}
 {% elif readme.issues_url %}

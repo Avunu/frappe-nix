@@ -723,6 +723,46 @@ class TestReadme(ListingCase):
 		code, out, err = self.fn("listing", "readme", "--check")
 		self.assertEqual(code, 0, out + err)
 
+	def test_the_docs_site_is_linked(self):
+		# org.docs-url, filled in the way the listing seed and L12 fill it.
+		text = self.read("README.md")
+		self.assertIn(
+			"[![Frappe v16](https://img.shields.io/badge/Frappe-v16-blue)]"
+			"(https://github.com/frappe/frappe/tree/version-16)\n"
+			"[![Documentation](https://img.shields.io/badge/docs-demo--app.docs.example.org-blue)]"
+			"(https://demo-app.docs.example.org/)\n",
+			text,
+		)
+		support = text[text.index("## Support") :]
+		self.assertTrue(
+			support.startswith(
+				"## Support\n\n- Documentation: [demo-app.docs.example.org/](https://demo-app.docs.example.org/)\n"
+				"- Bug reports and questions: [GitHub issues]"
+			),
+			support,
+		)
+		self.assertEqual(
+			readme.url_template(
+				"https://example.org/{app}/{app_hyphen}/", readme.context.NS(app="a_b", app_hyphen="a-b")
+			),
+			"https://example.org/a_b/a-b/",
+		)
+
+	def test_no_docs_url_links_no_docs_site(self):
+		self.write(
+			".standards-profile/profile.toml",
+			PRODUCT_PROFILE.replace('docs-url = "https://{app_hyphen}.docs.example.org/"\n', ""),
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		text = self.read("README.md")
+		self.assertNotIn("Documentation", text)
+		self.assertNotIn("badge/docs-", text)
+		self.assertIn("## Support\n\n- Bug reports and questions: [GitHub issues]", text)
+		code, out, err = self.fn("listing", "readme", "--check")
+		self.assertEqual(code, 0, out + err)
+
 	def test_a_missing_marker_is_exit_2(self):
 		self.write("README.md", self.read("README.md").replace("<!-- frappe-nix:end support -->\n", ""))
 		self.commit()
@@ -778,6 +818,38 @@ class TestReadme(ListingCase):
 		self.write("README.md", self.read("README.md").replace("--branch v16.0.0", "--branch v16.1.0"))
 		code, out, err = self.fn("listing", "readme", "--check")
 		self.assertEqual(code, 0, out + err)
+
+	def test_publish_alone_names_no_marketplace(self):
+		# The fixture profile publishes, but nothing says the listing is approved.
+		text = self.read("README.md")
+		self.assertNotIn("marketplace", text.lower())
+		self.assertNotIn("cloud.frappe.io", text)
+
+	def test_an_approved_listing_is_linked(self):
+		self.assertNotIn("[tool.frappe-nix.listing]", self.read("pyproject.toml"))
+		self.write(
+			"pyproject.toml", self.read("pyproject.toml") + "\n[tool.frappe-nix.listing]\napproved = true\n"
+		)
+		self.commit()
+		code, _, err = self.fn("sync", "--write")
+		self.assertEqual(code, 0, err)
+		self.assertIn(
+			"On Frappe Cloud, install Demo App from the"
+			" [Frappe marketplace](https://cloud.frappe.io/marketplace/apps/demo_app).",
+			self.read("README.md"),
+		)
+		code, out, err = self.fn("listing", "readme", "--check")
+		self.assertEqual(code, 0, out + err)
+
+	def test_a_profile_cannot_claim_approval(self):
+		self.write(
+			".standards-profile/profile.toml",
+			PRODUCT_PROFILE.replace("publish = true\n", "publish = true\napproved = true\n"),
+		)
+		self.commit()
+		code, out = self.check()
+		self.assertEqual(code, 2, out)
+		self.assertIn("approved", out)
 
 	def test_dev_docs_and_copyright_holder(self):
 		self.write(

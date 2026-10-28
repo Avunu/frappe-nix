@@ -64,20 +64,20 @@ bash "$BENCH_SCRIPT" > "$ROOT/bench.log" 2>&1 \
 check "yarn runs in the app, without writing its lock" \
   grep -qxF "yarn $ALPHA install --pure-lockfile" "$CALLS"
 check_not "and never as a plain install" grep -qxF "yarn $ALPHA install" "$CALLS"
-check "Python is still re-locked and synced" bash -c "grep -q '^uv .* lock\$' '$CALLS' && grep -q '^uv .* sync\$' '$CALLS'"
+check "Python is still re-locked and synced" bash -c "grep -q '^uv .* lock --upgrade-package frappe-runtime\$' '$CALLS' && grep -q '^uv .* sync\$' '$CALLS'"
 check "the fallback locks are still refreshed" grep -q '^frappe-nix-node-locks ' "$CALLS"
 check "it says the apps' own locks were left alone" grep -q "own yarn.lock files were not rewritten" "$ROOT/bench.log"
 check_not "and no longer tells you to commit them" grep -q 'Commit uv.lock, the yarn.lock files' "$ROOT/bench.log"
 
 check_eq "in order: lock, sync, each app, then the fallbacks" \
-  "uv lock|uv sync|yarn install --pure-lockfile|yarn install --pure-lockfile|frappe-nix-node-locks . node-locks|" "$(calls)"
+  "uv lock --upgrade-package frappe-runtime|uv sync|yarn install --pure-lockfile|yarn install --pure-lockfile|frappe-nix-node-locks . node-locks|" "$(calls)"
 check "it says what to commit" grep -q 'Done! Commit uv.lock and node-locks/.' "$ROOT/bench.log"
 
 : > "$CALLS"
 rc=0
 STUB_FAIL="uv $FRAPPE_BENCH_ROOT" bash "$BENCH_SCRIPT" > "$ROOT/uvfail.log" 2>&1 || rc=$?
 check_eq "a failed uv lock stops it, with uv's status" 3 "$rc"
-check_eq "…before anything else" "uv lock|" "$(calls)"
+check_eq "…before anything else" "uv lock --upgrade-package frappe-runtime|" "$(calls)"
 
 : > "$CALLS"
 rc=0

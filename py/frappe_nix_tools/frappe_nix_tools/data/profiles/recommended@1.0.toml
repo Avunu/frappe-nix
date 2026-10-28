@@ -64,6 +64,7 @@ tool = "oxc"
 locked-rules = true
 format-width = 110
 format-tabs = true
+format-tab-width = 2
 
 [js.oxlint.categories]
 correctness = "error"

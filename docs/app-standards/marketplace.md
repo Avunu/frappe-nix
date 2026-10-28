@@ -3,7 +3,7 @@ title: Marketplace
 description: "The listing file, the registry checks an app must pass and how a release reaches the Frappe marketplace."
 order: 7
 tags: [app-standards, marketplace, registry]
-updated: 2026-10-07
+updated: 2026-10-24
 ---
 
 The marketplace tools make an app ready for the Frappe marketplace registry and keep it that way. They are off in the built-in profiles: an app or an organisation profile turns them on with the `listing` module (and `readme`, `icons`, `screenshots` and `demo` for the parts those name). Everything an organisation decides, such as the publisher, the e-mail, the licence, the URL patterns and the registry fork, comes from the profile's `[org]` and `[listing]` tables, never from frappe-nix.
@@ -15,9 +15,12 @@ enable = true
 publish = false          # true: frappe-listing registry may open registry pull requests
 registry-fork = ""       # "<owner>/marketplace", required when publish is on
 getapp-check = true      # L9, pilot's get-app validator
+approved = false         # app-only; true once the listing is approved: the README links it
 ```
 
 `listing` needs `metadata`. An app that is not listed keeps `listing` on with `publish = false` and no `listing.toml`: the registry-readiness rules still run on every pull request (`ci / marketplace`).
+
+`publish` and `approved` are separate. `publish` lets the tools open registry pull requests; it claims nothing in public. `approved` is what an app sets in its own `pyproject.toml` once Frappe has approved its listing, and only then does the README tell readers to install it from the Frappe marketplace. A profile cannot set it.
 
 ## The files
 
@@ -108,6 +111,6 @@ It needs `listing.publish` and `listing.registry-fork` (exit 2 otherwise), and n
 
 With `readme` on (it needs `listing`), sync renders six blocks into `README.md`, in this order: `header` (logo, title, tagline, badges, the hero screenshot), `compatibility`, `installation`, `support`, `development` and `license`. Your own sections go between them. A missing or out-of-order marker is exit 2, and `frappe-listing readme --check` (or `frappe-init --check`) reports an edited block as drift. The blocks are written in the form the markdown formatter leaves alone, so oxfmt and sync never fight over them.
 
-The values come from the profile: `org.license` and `org.copyright-holder` (required), `org.email`, `org.support-url`, `org.dev-docs-url`, `org.repo-url` (a template with `{repo}`, for an organisation off GitHub), `org.readme.badges` and `org.readme.links`, and `readme.install-ref`. Under `releases.branching = "main+tags"` the installation line names the released tag inside release-please's version markers, and `README.md` is a release-please extra file, so the release pull request moves it.
+The values come from the profile: `org.license` and `org.copyright-holder` (required), `org.email`, `org.support-url`, `org.docs-url`, `org.dev-docs-url`, `org.repo-url` (a template with `{repo}`, for an organisation off GitHub), `org.readme.badges` and `org.readme.links`, `readme.install-ref`, and the app's `listing.approved`. The installation block starts with "On Frappe Cloud, install it from the Frappe marketplace" and the listing's link only when `listing.approved` is true; otherwise it gives only the `bench get-app` commands. When `org.docs-url` is set, the header gets a documentation badge after the Frappe badge and the support block's first line links the documentation site, the same URL the listing's `documentation` names; with it empty, as in `recommended` and `minimal`, neither appears. Under `releases.branching = "main+tags"` the installation line names the released tag inside release-please's version markers, and `README.md` is a release-please extra file, so the release pull request moves it.
 
 An organisation replaces a block's template with `templates/readme/<block>.md.j2` in its profile; the template gets the same context, plus `readme` with the values above already worked out.

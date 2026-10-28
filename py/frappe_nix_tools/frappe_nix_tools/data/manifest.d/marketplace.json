@@ -38,12 +38,13 @@
 				"org.copyright-holder",
 				"org.email?",
 				"org.support-url?",
+				"org.docs-url?",
 				"org.dev-docs-url",
 				"org.repo-url",
 				"org.readme.badges?",
 				"org.readme.links?",
 				"readme.install-ref",
-				"listing.publish",
+				"listing.approved",
 				"releases.branching",
 				"releases.tag-prefix"
 			]

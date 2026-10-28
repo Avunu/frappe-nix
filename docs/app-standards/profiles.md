@@ -3,7 +3,7 @@ title: Profiles
 description: "How an app opts in, the built-in minimal and recommended profiles, org profiles, and how [tool.frappe-nix] layers over them."
 order: 1
 tags: [app-standards, profiles, configuration]
-updated: 2026-10-19
+updated: 2026-10-24
 ---
 
 The app standards are opt-in and profile-driven. A profile decides which modules are on (lint, types, tests, commits, releases, Dependabot, CI, …) and sets their parameters and the organisation's values. An app picks one in `[tool.frappe-nix] profile`, and can change any value for itself in the same table. The [interface spec](spec.md) (§8) is the contract this page summarises.
@@ -46,7 +46,7 @@ The modules and their parameters are in the spec (§8.2), and in the schema `fra
 - `metadata`: `build-backend` (`"flit"` or `"any"`), `package-type`, `package-manager`, `node-engine` (`""` leaves the key to the app);
 - `python-lint`: `select`, `ignore`, `line-length`, `indent-style`, `quote-style`, `typing-modules`;
 - `python-types`: `error-on-warning`;
-- `js`: `tool`, `locked-rules`, `format-width`, `format-tabs`, `oxlint.categories`;
+- `js`: `tool`, `locked-rules`, `format-width`, `format-tabs`, `format-tab-width`, `oxlint.categories`;
 - `typescript`: `preset` (`"frappe-types"`, the npm package's presets, or `"inline"`, which needs no extra dependency but rules out `check-js`), `strict-extras`, `check-js`;
 - `commits`: `allowed-types`, `subject-length`;
 - `releases`: `branching` (`"develop+version"` or `"main+tags"`), `version-scheme` (`"semver"` or `"frappe-major"`), `tag-prefix`;
@@ -122,7 +122,7 @@ Dependabot never moves `standards-profile`, because a profile change can rewrite
 frappe-nix profile validate profile.toml [--templates templates]
 ```
 
-which checks the schema, the `extends`, that no app-only key is set, that every module's needs are met under the profile's own switches, `requires-frappe-nix`, that `[[extra-files]]` don't collide with a managed path, and that every template overrides an overridable one (or is an extra file) and renders for a plain app and one with erpnext and hrms. Exit 0, 2 or 3.
+which checks the schema, the `extends`, that no app-only key is set (such as `listing.approved`, which only an app whose marketplace listing is approved sets), that every module's needs are met under the profile's own switches, `requires-frappe-nix`, that `[[extra-files]]` don't collide with a managed path, and that every template overrides an overridable one (or is an extra file) and renders for a plain app and one with erpnext and hrms. Exit 0, 2 or 3.
 
 ## Org values
 

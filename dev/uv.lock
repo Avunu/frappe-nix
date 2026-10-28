@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.14.*"
 
 [manifest]
@@ -745,8 +745,8 @@ dependencies = [
 requires-dist = [
     { name = "a2wsgi", specifier = "~=1.10.10" },
     { name = "httpx", specifier = ">=0.27,<0.29" },
-    { name = "python-engineio", specifier = "~=4.13.2" },
-    { name = "python-socketio", specifier = "~=5.16.2" },
+    { name = "python-engineio", specifier = ">=4.13.2,<5" },
+    { name = "python-socketio", specifier = ">=5.16.2,<6" },
     { name = "uvicorn", specifier = ">=0.42,<1.0" },
     { name = "watchdog", specifier = "~=6.0.0" },
 ]

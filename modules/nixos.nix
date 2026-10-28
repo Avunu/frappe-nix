@@ -1423,35 +1423,29 @@ let
       # in front of us, so the public scheme is https.
       pubScheme = if viaSocket then "https" else "$scheme";
 
-      # recommendedProxySettings hardcodes `X-Forwarded-Proto $scheme` and NixOS
-      # emits its include AFTER a location's extraConfig, so the wrong scheme
-      # cannot be overridden from there. Opt the location out and set the whole
-      # header block explicitly instead (python-devops-nix's lib.nixos.nginx).
-      socketProxyHeaders = optionalString viaSocket base.nixos.nginx.socketProxyHeaders;
+      # Socket mode listens on the unix socket for the proxy or tunnel in front,
+      # and takes the client's address from Cloudflare's header, since a unix
+      # socket has no peer address; each proxying location sets the socket
+      # header block in place of the recommended one (python-devops-nix's
+      # lib.nixos.nginx: vhost, proxy).
+      vhost = base.nixos.nginx.vhost { inherit (siteCfg.nginx) socketPath; };
     in
     {
       root = "${siteCfg.siteDir}/sites";
 
-      # Socket mode listens on the unix socket for the proxy or tunnel in front.
-      #
       # It used to also listen on loopback:80, because node's realtime server
       # validated sessions by making an HTTP request back to this site's own FQDN
       # (pinned to 127.0.0.1 in networking.hosts below) and node's fetch cannot
       # speak unix. The Python runtime validates in-process against the WSGI app,
       # so under runtime.enable that hop -- and the host pin -- are gone.
-      listen = lib.optionals viaSocket (
-        [ { addr = "unix:${siteCfg.nginx.socketPath}"; } ]
-        ++ lib.optional (!cfg.runtime.enable) {
+      listen =
+        vhost.listen
+        ++ lib.optional (viaSocket && !cfg.runtime.enable) {
           addr = "127.0.0.1";
           port = 80;
-        }
-      );
+        };
 
-      # A unix socket has no peer address, so $remote_addr is meaningless and
-      # recommendedProxySettings would forward it as the client IP. Trust the
-      # socket peer and take the real address from Cloudflare's header instead —
-      # the socket is only reachable from the connector beside it.
-      extraConfig = lib.optionalString viaSocket base.nixos.nginx.cloudflareRealIp;
+      inherit (vhost) extraConfig;
 
       locations = {
         "/assets/" = {
@@ -1477,27 +1471,24 @@ let
         };
         # Frappe checks a private file's permissions, then hands the transfer
         # back to nginx with X-Accel-Redirect: /protected/<path under the site>.
-        "~ ^/protected/(.*)" = {
+        "~ ^/protected/(.*)" = base.nixos.nginx.internal {
           extraConfig = ''
-            internal;
             try_files /${name}/$1 =404;
           '';
         };
-        "/socket.io" = {
-          proxyPass = socketioUpstream;
-          proxyWebsockets = true;
-          recommendedProxySettings = !viaSocket;
+        "/socket.io" = base.nixos.nginx.proxy {
+          pass = socketioUpstream;
+          inherit viaSocket;
+          websockets = true;
           extraConfig = ''
-            ${socketProxyHeaders}
             proxy_set_header X-Frappe-Site-Name ${name};
             proxy_set_header Origin ${pubScheme}://$http_host;
           '';
         };
-        "/" = {
-          proxyPass = webUpstream;
-          recommendedProxySettings = !viaSocket;
+        "/" = base.nixos.nginx.proxy {
+          pass = webUpstream;
+          inherit viaSocket;
           extraConfig = ''
-            ${socketProxyHeaders}
             proxy_set_header X-Frappe-Site-Name ${name};
             proxy_set_header X-Use-X-Accel-Redirect True;
           '';
@@ -2438,37 +2429,25 @@ in
       # entry carries the site in its JSON instead.
       systemd.services.nginx.serviceConfig = logFields { role = "nginx"; };
 
-      services.nginx = {
-        enable = true;
-        recommendedProxySettings = true;
-        recommendedGzipSettings = true;
-
-        # nginx's stderr carries no severity, so its error log would reach the
-        # journal as info, [emerg] and all. Over syslog, nginx maps its own levels
-        # onto syslog's. mkDefault: the operator may want it elsewhere.
-        logError = lib.mkDefault base.nixos.nginx.errorLog;
-
-        # The access log to the journal as one JSON object per request, under
-        # SYSLOG_IDENTIFIER=nginx_access (python-devops-nix's lib.nixos.nginx,
-        # the format odoo-nix sends too), or off. At the http level, before the
-        # vhosts, so every server{} inherits it; either way nginx no longer
-        # writes its compiled-in /var/log/nginx/access.log.
-        commonHttpConfig = base.nixos.nginx.accessLog cfg.logging.accessLog;
-
+      # On, with the recommended proxy and gzip settings; the error log over
+      # syslog, so it keeps its severity (a mkDefault: the operator may want it
+      # elsewhere); and the access log to the journal as one JSON object per
+      # request under SYSLOG_IDENTIFIER=nginx_access, the format odoo-nix sends
+      # too, or off. Either way nginx no longer writes its compiled-in
+      # /var/log/nginx/access.log (python-devops-nix's lib.nixos.nginx).
+      services.nginx = base.nixos.nginx.serviceDefaults { inherit (cfg.logging) accessLog; } // {
         # One upstream per site process that listens on a unix socket.
         upstreams =
           lib.mapAttrs' (
             name: siteCfg:
-            nameValuePair (upstreamName name) {
-              servers."unix:${siteCfg.web.socketPath}" = { };
-            }
+            nameValuePair (upstreamName name) (base.nixos.nginx.upstream { inherit (siteCfg.web) socketPath; })
           ) (filterAttrs (_: s: s.nginx.enable && s.web.socketPath != "") enabledSites)
           // lib.optionalAttrs (!cfg.runtime.enable) (
             lib.mapAttrs' (
               name: siteCfg:
-              nameValuePair (socketioUpstreamName name) {
-                servers."unix:${siteCfg.socketio.socketPath}" = { };
-              }
+              nameValuePair (socketioUpstreamName name) (
+                base.nixos.nginx.upstream { inherit (siteCfg.socketio) socketPath; }
+              )
             ) (filterAttrs (_: s: s.nginx.enable && s.socketio.socketPath != "") enabledSites)
           );
 

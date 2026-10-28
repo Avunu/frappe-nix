@@ -39,12 +39,6 @@ buildPythonPackage {
     watchdog
   ];
 
-  # pyproject.toml pins the Socket.IO server to the 5.16 line, which is what a
-  # bench resolves through uv. This build takes nixpkgs' copy instead, which
-  # moves on its own (5.17 today), and the 5.x line is wire-compatible, so the
-  # pin is not what this check is about.
-  pythonRelaxDeps = [ "python-socketio" ];
-
   # `import frappe_runtime` reaches frappe (the compat shim, and auth.py), which
   # is not in nixpkgs and is not a declared dependency. The real test run happens
   # against a bench — see scripts/run-tests.sh.

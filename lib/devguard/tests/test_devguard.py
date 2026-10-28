@@ -569,6 +569,46 @@ check(
 check("four endpoints per layout", len(_PROTECTED_CMDS) == 8, len(_PROTECTED_CMDS))
 
 # --------------------------------------------------------------------------
+# `bench migrate-to`: the Frappe Cloud site migrator
+#
+# frappe.integrations.frappe_providers is imported on every boot (frappe.boot
+# reaches cloud_settings through it). Before 16.53 it re-exported the migrator
+# from an eager import; 16.53 imports it inside migrate_to, so the package has
+# no frappecloud_migrator at all, and requiring one failed every boot.
+# --------------------------------------------------------------------------
+
+from frappe_devguard.guards.backups import _rebind_frappe_providers
+
+
+def frappe_providers_module(*, reexport):
+	module = types.ModuleType("frappe.integrations.frappe_providers")
+
+	def frappecloud_migrator():
+		raise AssertionError("the real migrator must not run")
+
+	module.migrate_to = frappecloud_migrator
+	if reexport:
+		module.frappecloud_migrator = frappecloud_migrator
+	return module
+
+
+_lazy = frappe_providers_module(reexport=False)
+_rebind_frappe_providers(_lazy)  # must not raise
+expect_raises("16.53's lazy import: migrate_to is blocked", DevGuardBlocked, _lazy.migrate_to)
+check("…and no re-export is invented", not hasattr(_lazy, "frappecloud_migrator"))
+
+_eager = frappe_providers_module(reexport=True)
+_rebind_frappe_providers(_eager)
+expect_raises("the eager re-export: migrate_to is blocked", DevGuardBlocked, _eager.migrate_to)
+expect_raises("…and so is the re-export", DevGuardBlocked, _eager.frappecloud_migrator)
+
+expect_raises(
+	"migrate_to gone fails loudly",
+	DevGuardPatchError,
+	lambda: _rebind_frappe_providers(types.ModuleType("frappe.integrations.frappe_providers")),
+)
+
+# --------------------------------------------------------------------------
 # the Email Queue outgoing-transport patch
 #
 # `bench new-site` imports this module while installing the Email Queue DocType

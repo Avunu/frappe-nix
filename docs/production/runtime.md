@@ -51,13 +51,13 @@ The reconciler (`nix run github:Avunu/frappe-nix -- -y`) does the same and remai
 
 The declaration exists for uv's resolver and is a placeholder, not a version pin. frappe-nix points uv2nix's `srcOverrides` at its own `runtime/` directory, so the code that is actually built is whatever this repository ships, and a bump is `nix flake update frappe-nix`, with no relock in any bench. The entry has to exist because uv2nix indexes its package set by `uv.lock`, and `srcOverrides` can only swap the source of a package already in that set.
 
-The seam is that only the _source_ is overridden. Dependency metadata still comes from `uv.lock`. A frappe-runtime release that adds a new dependency does need one relock:
+The seam is that only the _source_ is overridden. Dependency metadata still comes from `uv.lock`. A frappe-runtime release that changes its dependencies does need one relock:
 
 ```bash
-nix run .#relock -- --upgrade-package frappe-runtime
+nix run .#relock
 ```
 
-Note the flag. A plain `uv lock` keeps an already resolved git revision and reports success without changing anything.
+Use that and not a plain `uv lock`, which keeps an already resolved git revision and reports success without changing anything. `relock`, `bench update` (when it re-locks) and `update-deps` all run `uv lock --upgrade-package frappe-runtime`.
 
 Set `runtime.src = null` to hand version control back to `uv.lock`.
 

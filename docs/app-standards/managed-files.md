@@ -3,7 +3,7 @@ title: Managed files
 description: "The files frappe-nix keeps in an opted-in app, the [tool.frappe-nix] parameters, and frappe-init --sync and --check."
 order: 2
 tags: [app-standards, sync, managed-files]
-updated: 2026-10-16
+updated: 2026-10-24
 ---
 
 An app that has opted in to the app standards carries a set of tool configs that frappe-nix writes and keeps in step: the flake, the git hooks, the formatter and linter settings, the TypeScript projects, the release-please files and the tool locks. Which of them an app gets is decided by its [profile](profiles.md): every file belongs to a module, and exists only while that module is on. The [interface spec](spec.md) (§2, §3) is the contract this page summarises.
@@ -135,7 +135,8 @@ The app's parameters live in its `pyproject.toml`. Sync creates the table once a
 - `site`, `build`, `integration-branch`, `generated` (globs of tracked generated files, kept out of prek, `validate_copyright`, oxfmt and oxlint);
 - `[tool.frappe-nix.typescript]`: `preset` (`"frappe-types"` or `"inline"`), `strict-extras`, `check-js`, and the app-only `browser`, `browser-include`, `web-include`, `paths`, `exclude` (never a source file under the package), and `[[…spa]]` for a Vue/Vite SPA without a `package.json` of its own;
 - `[[tool.frappe-nix.unchecked-js]]`: desk and web scripts left out of strict checkJs while they are typed. `frappe-nix unchecked-js --stale` fails on an entry whose file now type-checks;
-- `[tool.frappe-nix.js]` (`tool`, `locked-rules`, `format-width`, `format-tabs`, `oxlint`, `oxfmt`), `[tool.frappe-nix.stylelint]`, `[tool.frappe-nix.dev-shell]`.
+- `[tool.frappe-nix.listing]` `approved` (app-only, default false): set it to true once the app's Frappe marketplace listing is approved, and only then does the README's installation block link the listing ([Marketplace](marketplace.md));
+- `[tool.frappe-nix.js]` (`tool`, `locked-rules`, `format-width`, `format-tabs`, `format-tab-width`, `oxlint`, `oxfmt`), `[tool.frappe-nix.stylelint]`, `[tool.frappe-nix.dev-shell]`.
 
 What can be read from the tracked tree is never declared: the desk and web script sets, the TypeScript projects, Vite, SCSS, nested frontends, `docs-site/`, submodules and the marketplace listing are discovered from `git ls-files`, so a first `.ts` file under `scripts/` is drift until sync renders `tsconfig.scripts.json`.
 

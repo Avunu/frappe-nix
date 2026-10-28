@@ -7,7 +7,8 @@ profile's ``templates/`` for an override or an ``[[extra-files]]`` template (§8
 the same configuration. Templates get:
 
 - filters ``json`` / ``jsonc`` (oxfmt-formatted JSON), ``json_string`` (one quoted string),
-  ``nix_string`` (a Nix string literal) and ``glob_to_regex`` (§2.14);
+  ``nix_string`` (a Nix string literal), ``glob_to_regex`` (§2.14) and ``org_url`` (an org
+  URL template filled in for the app, ``url_template``);
 - functions ``rev(url, floor)`` and ``pin(action, sha, version)`` (floors, §3.2), bound to
   the file being rendered, and ``gen`` (``scaffold.configs.Gen``).
 """
@@ -65,6 +66,21 @@ def yaml_json(value: Any) -> str:
 	return "'" + json.dumps(value, separators=(",", ":")).replace("'", "''") + "'"
 
 
+def url_template(template: str, ctx: Any) -> str:
+	"""An org URL template with ``{app}``, ``{app_hyphen}`` and ``{repo}`` filled in from the
+	context: the one substitution the listing seed, the README blocks and L12 share."""
+	return (
+		template.replace("{app_hyphen}", ctx["app_hyphen"])
+		.replace("{app}", ctx["app"])
+		.replace("{repo}", ctx.get("repo") or "")
+	)
+
+
+@jinja2.pass_context
+def _org_url(context: Any, template: str) -> str:
+	return url_template(template, context)
+
+
 def _configure(env: jinja2.Environment) -> jinja2.Environment:
 	env.filters["json"] = lambda v: jsonfmt.dumps(v)
 	env.filters["yaml_json"] = yaml_json
@@ -73,6 +89,7 @@ def _configure(env: jinja2.Environment) -> jinja2.Environment:
 	env.filters["nix_string"] = nix_string
 	env.filters["nix_attr"] = nix_attr
 	env.filters["glob_to_regex"] = globs.glob_to_regex
+	env.filters["org_url"] = _org_url
 	return env
 
 
