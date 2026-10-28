@@ -629,8 +629,9 @@
         # The repository checks frappe-nix shares with odoo-nix
         # (python-devops-nix docs/conventions.md, Formatter and Repository files):
         # nixfmt-rs, statix and deadnix over the tree with statix.toml compared
-        # to the shared copy, and .editorconfig, .pre-commit-config.yaml and
-        # ruff.toml carrying the shared settings.
+        # to the shared copy, and .editorconfig, .pre-commit-config.yaml,
+        # committed.toml and ruff.toml carrying the shared settings
+        # (committed.toml's allowed_scopes as a set).
         // {
           nix-lint = inputs.python-devops-nix.lib.checks.nixLint {
             inherit pkgs;
