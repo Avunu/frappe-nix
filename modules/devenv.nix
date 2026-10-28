@@ -4146,6 +4146,16 @@ in
                   set -euo pipefail
                   config="$FRAPPE_BENCH_ROOT/sites/common_site_config.json"
                   ports=${lib.escapeShellArg portLease.file}
+                  # Wait for the lease rather than read a ports.json not yet
+                  # written. Under process-compose each process runs in its own
+                  # devenv-tasks wrapper (`--mode all`), which runs this task too
+                  # but leaves the ordering on frappe-ports to process-compose:
+                  # in frappe-ports' own wrapper and in redis's it starts before
+                  # the holder has written the file.
+                  for _ in $(${pkgs.coreutils}/bin/seq 120); do
+                    ${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime} && break
+                    ${pkgs.coreutils}/bin/sleep 0.5
+                  done
                   port="$(${pkgs.jq}/bin/jq -er .web "$ports")"
 
                   ${lib.optionalString mailpitEnabled ''
@@ -4155,11 +4165,13 @@ in
                     # here — it prefers them over the baked-in preferred ones, and
                     # falls back to those (this bench's own range, never a shared
                     # 1025) when this file is out of reach. In one rename, so an
-                    # interpreter starting meanwhile never reads half of it.
+                    # interpreter starting meanwhile never reads half of it. Its
+                    # own temp file: several wrappers run this task at once.
+                    guard_tmp="$(${pkgs.coreutils}/bin/mktemp "$DEVENV_RUNTIME/devguard-runtime.json.XXXXXX")"
                     ${pkgs.jq}/bin/jq '{guards: {mail: ({port: .mailpit_smtp, http_port: .mailpit_ui}
                       + (if .mailpit_pop3 then {pop3_port: .mailpit_pop3} else {} end))}}' \
-                      "$ports" > "$DEVENV_RUNTIME/devguard-runtime.json.tmp"
-                    mv -f -- "$DEVENV_RUNTIME/devguard-runtime.json.tmp" "$DEVENV_RUNTIME/devguard-runtime.json"
+                      "$ports" > "$guard_tmp"
+                    mv -f -- "$guard_tmp" "$DEVENV_RUNTIME/devguard-runtime.json"
                   ''}
 
                   [ -f "$config" ] || echo '{}' > "$config"
