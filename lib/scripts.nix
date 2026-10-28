@@ -83,9 +83,19 @@
   # lib/scripts.d/README.md. A parameter so tests can point it at a fixture;
   # null merges none.
   scriptsDir ? ./scripts.d,
+  # The dev shell's TUI (python-devops-nix's lib.tui.script), as an absolute
+  # path: what `bench ui` runs. null leaves `bench ui` saying there is none.
+  tui ? null,
 }@args:
 
 let
+  # `bench ui`.
+  menu =
+    if tui == null then
+      ''echo "bench ui: this shell has no menu." >&2; exit 1''
+    else
+      ''exec ${tui} "$@"'';
+
   # Every bench command runs from the bench root. Not a convenience: the bench
   # CLI resolves its bench by walking *up* from cwd (bench/cli.py's
   # change_working_directory → find_parent_bench), so from anywhere else it
@@ -410,6 +420,8 @@ secretScripts
       remove-app)  shift; exec bench-remove-app "$@" ;;
       rename-app)  shift; exec bench-rename-app "$@" ;;
       restore)     shift; exec bench-restore "$@" ;;
+      # The menu. Ours alone: a bare `bench` stays upstream's help.
+      ui)          shift; ${menu} ;;
       # Was the standalone provision-site, which stays as an alias below.
       provision)   shift; FRAPPE_NIX_CLI_CONFIG=${cliConfig} exec ${benchCli} provision "$@" ;;
       setup)

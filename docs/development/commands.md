@@ -6,7 +6,7 @@ tags: [bench, scripts, cli]
 updated: 2026-10-21
 ---
 
-The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules.
+The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `bench` (devenv wraps scripts with `lib.hiPrioSet`, so it wins on `PATH`) and transparently redirects the subcommands that need frappe-nix handling. You run normal `bench` commands and the right thing happens on a read-only Nix store, in a uv workspace, with git submodules. `bench ui` opens the [menu](menu.md).
 
 ## What the wrapper redirects
 
@@ -21,6 +21,7 @@ The shell ships an umbrella **`bench` wrapper**. It shadows the virtualenv's `be
 | `bench rename-app [--no-pull] <OLD> <NEW>`                             | `bench-rename-app`         | Moves the submodule, its clone and the workspace member instead of removing and re-adding them.                                                                                      |
 | `bench restore [<FILE>]`                                               | `bench-restore`            | Injects the MariaDB root credentials. With no file, fetches the latest production backup.                                                                                            |
 | `bench provision [ADMIN_PASSWORD]`                                     | frappe-nix's own           | Creates `$FRAPPE_SITE` and installs every app from `sites/apps.txt`. Not an upstream command. See below.                                                                            |
+| `bench ui`                                                             | the menu                   | Opens the dev shell's [menu](menu.md). Not an upstream command.                                                                                                                      |
 | `bench new-site`                                                       | the real bench             | Injects `--db-socket` and `--db-root-username root`, so site creation is non-interactive.                                                                                            |
 | `bench migrate`, `console`, `clear-cache`                              | `bench-*`                  | Inject `--site $FRAPPE_SITE`.                                                                                                                                                        |
 | everything else (`serve`, `install-app`, `uninstall-app`, `--help`, …) | the real bench             | Unchanged.                                                                                                                                                                           |

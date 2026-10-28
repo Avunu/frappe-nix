@@ -1,0 +1,4861 @@
+{
+ "generated": "2026-10-28",
+ "sources": [
+  "github.com/frappe/marketplace",
+  "github.com/frappe"
+ ],
+ "apps": [
+  {
+   "name": "advanced_compliance",
+   "repo": "norelinorth/norelinorth_ai_advanced_compliance",
+   "title": "Noreli North AI Advanced Compliance",
+   "description": "Automate compliance, manage risks, and reduce audit costs",
+   "category": "Extensions",
+   "categories": [
+    "Extension"
+   ],
+   "stars": 0,
+   "website": "https://github.com/norelinorth/norelinorth_ai_advanced_compliance",
+   "documentation": "https://github.com/norelinorth/norelinorth_ai_advanced_compliance#readme",
+   "logo": "https://cloud.frappe.io/files/generated_image_2bf7da8f-1eda-48f4-97fb-e796e36cd586.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "appe",
+   "repo": "appetech/appe",
+   "title": "Appe - Frappe Mobile App",
+   "description": "Frappe - Frappe Mobile App, you can develop a high-performance Mobile application tailored to your requirements using Frappe.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://appetech.io/appe-mobile-app",
+   "documentation": "https://appetech.io/docs/appe",
+   "logo": "https://cloud.frappe.io/files/A (4).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=14.0.0,<=16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=14.0.0,<=16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": []
+  },
+  {
+   "name": "aql_quality_assurance",
+   "repo": "havaratech/aql_quality_assurance",
+   "title": "AQL Quality Assurance By HavaraTech",
+   "description": "The app extends ERPNext’s Quality Inspection to support sampling, defect classification, and automated pass/fail lot disposition.",
+   "category": "Utilities",
+   "categories": [
+    "Extension",
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://havaratech.com/aql-quality-assurance/",
+   "documentation": "https://havaratech.com/resource/",
+   "logo": "https://cloud.frappe.io/files/Havara App(jpg).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "",
+   "branches": []
+  },
+  {
+   "name": "banking",
+   "repo": "alyf-de/banking",
+   "title": "Banking",
+   "description": "Sync payments from your bank to your ERPNext instance and reconcile them with your vouchers.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://www.alyf.de/bank-integration",
+   "documentation": "https://github.com/alyf-de/banking",
+   "logo": "https://cloud.frappe.io/files/logo_1024.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.2.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.15.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.14.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.36.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.60.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.99.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16-hotfix",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "biometric_integration",
+   "repo": "nilpatel42/biometric_integration",
+   "title": "Biometric Integration (Hikvision)",
+   "description": "The Biometric Integration (Hikvision) app seamlessly connects your Hikvision Face Terminal with the Frappe framework",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": null,
+   "documentation": null,
+   "logo": "https://cloud.frappe.io/files/Biometric.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<=17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": []
+  },
+  {
+   "name": "block_administrator",
+   "repo": "iamimmanuelraj/block_administrator",
+   "title": "Block Administrator",
+   "description": "Block login of the Frappe administrator account when email-password login is enabled",
+   "category": "Utilities",
+   "categories": [
+    "Security"
+   ],
+   "stars": 1,
+   "website": "https://iamimmanuelraj.github.io/block_administrator/",
+   "documentation": "https://github.com/iamimmanuelraj/block_administrator/blob/develop/README.md",
+   "logo": "https://raw.githubusercontent.com/iamimmanuelraj/block_administrator/develop/assets/logo.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.1.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "16.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "blog",
+   "repo": "frappe/blog",
+   "title": "Blog",
+   "description": "Write, publish, and manage blog posts with author profiles & blog categories with interaction capabilities of comments & likes.",
+   "category": "Extensions",
+   "categories": [
+    "Extension",
+    "Website",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://www.github.com/frappe/blog",
+   "documentation": "https://www.github.com/frappe/blog",
+   "logo": "https://cloud.frappe.io/files/blog.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "builder",
+   "repo": "frappe/builder",
+   "title": "Builder",
+   "description": "Low-code website builder for designers and developers",
+   "category": "Developer Tools",
+   "categories": [
+    "Developer",
+    "Featured",
+    "Website",
+    "Official"
+   ],
+   "stars": 2045,
+   "website": "https://frappe.io/builder",
+   "documentation": "https://docs.frappe.io/builder",
+   "logo": "https://cloud.frappe.io/files/builder_logo_hd.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.35.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "bulk_import_export_template",
+   "repo": "invento-software-limited/bulk_import_export_template",
+   "title": "Bulk Import Export Template",
+   "description": "Bulk Import Export Template is a powerful Frappe app designed to streamline and turbocharge your data import/export workflows",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://github.com/invento-software-limited/bulk_import_export_template/blob/develop/README.md",
+   "documentation": "https://github.com/invento-software-limited/bulk_import_export_template/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/6DE3A53C-A0D4-4E8A-BEB5-CEECB75CF5C2.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "burundi_compliance",
+   "repo": "navariltd/burundi_compliance",
+   "title": "Burundi Compliance",
+   "description": "Streamline Burundi EBMS (Electronic Billing) tax compliance in ERPNext. Effortlessly manage tax tasks and stay compliant with ease.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://docs.navari.co.ke/burundi-compliance/getting-started/introduction",
+   "logo": "https://cloud.frappe.io/files/Burundi_compliance-650x650-final2cb511.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "buzz",
+   "repo": "bwhtech/buzz",
+   "title": "Buzz",
+   "description": "Open Source, Powerful, and Comprehensive Event Management Platform",
+   "category": "Applications",
+   "categories": [
+    "Events",
+    "Business"
+   ],
+   "stars": 0,
+   "website": "https://buzz.events",
+   "documentation": "https://docs.bwh.tech/buzz",
+   "logo": "https://buzz.events/files/buzz-logo.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.0.0-beta.4",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<18.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-2"
+   ]
+  },
+  {
+   "name": "bwh_payments",
+   "repo": "bwhtech/bwh_payments",
+   "title": "BWH Payments",
+   "description": "Payment gateway integrations for Frappe/ERPNext: Stripe, Razorpay, Tabby and Telr",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Payments"
+   ],
+   "stars": 0,
+   "website": "https://github.com/bwhtech/bwh_payments",
+   "documentation": "https://docs.bwh.tech/bwh-payments/get-started/overview",
+   "logo": "https://raw.githubusercontent.com/bwhtech/bwh_payments/develop/bwh_payments/public/images/bwh_payments.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "bwh_shipping",
+   "repo": "bwhtech/bwh_shipping",
+   "title": "BWH Shipping",
+   "description": "Shipping orchestrator for Frappe/ERPNext apps. Currently supports AfterShip and Shiprocket, and you can extend the base class to add more providers.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "E-Commerce"
+   ],
+   "stars": 0,
+   "website": "https://github.com/bwhtech/bwh_shipping",
+   "documentation": "https://docs.bwh.tech/bwh-shipping/get-started/overview",
+   "logo": "https://raw.githubusercontent.com/bwhtech/bwh_shipping/develop/bwh_shipping/public/images/bwh_shipping.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0-dev,<18.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "cargo_management",
+   "repo": "AgileShift/cargo_management",
+   "title": "Cargo Management",
+   "description": "The Cargo Management App is a powerful tool designed to streamline logistics and transportation workflows. This app provides features for managing services, tracking orders, and optimizing transport modes across various operations.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://deliverydevs.com/",
+   "documentation": "https://github.com/DeliveryDevs-ERP/Cargo-Management/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/CargoManagementLogo.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.2.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.2.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "changemakers",
+   "repo": "frappe/changemakers",
+   "title": "Changemakers",
+   "description": "Beneficiary Management Platform, built on Frappe Framework.",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 95,
+   "website": "https://frappe.io/products/changemakers",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-14"
+   ]
+  },
+  {
+   "name": "check_run",
+   "repo": "agritheory/check_run",
+   "title": "Check Run",
+   "description": "Check Run is an application that extends ERPNext to allow users to aggregate payments to Employees and Suppliers, bulk-generate PDF checks, and generate ACH files for electronic payments with their bank",
+   "category": "Extensions",
+   "categories": [
+    "Accounting"
+   ],
+   "stars": 0,
+   "website": "https://agritheory.com/",
+   "documentation": "https://agritheory.com/documentation/check_run/",
+   "logo": "https://cloud.frappe.io/files/check_run.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0-dev,<17.0.0",
+      "hrms": ">=16.0.0-dev,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.14.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-15",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "crm",
+   "repo": "frappe/crm",
+   "title": "CRM",
+   "description": "Modern and 100% open source CRM solution to supercharge your sales operations",
+   "category": "Applications",
+   "categories": [
+    "Business",
+    "Customer Relations",
+    "Featured",
+    "Official"
+   ],
+   "stars": 2819,
+   "website": "https://frappe.io/crm",
+   "documentation": "https://docs.frappe.io/crm",
+   "logo": "https://cloud.frappe.io/files/FrappeCRM.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {
+      "whatsapp": ">=1.0.0-dev,<2.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "1.86.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "csf_ke",
+   "repo": "navariltd/navari_csf_ke",
+   "title": "Navari CSF Ke",
+   "description": "EXPNext Country Specific Functionality for Kenya",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/navari_csf_ke",
+   "logo": "https://cloud.frappe.io/files/NewNLLogo3.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.9.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "hrms": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.7.2",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "hrms": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "2.18.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "csf_tz",
+   "repo": "Aakvatech-Limited/csf_tz",
+   "title": "Tanzania Customizations",
+   "description": "Country Specific Functionality for Tanzania required for apps developed by Aakvatech",
+   "category": "Compliance",
+   "categories": [
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://aakvatech.com",
+   "documentation": "https://docs.aakvaerp.com/csf_tz",
+   "logo": "https://cloud.frappe.io/files/proudly_tanzanian.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.2.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.2.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-15-hotfix",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13",
+    "version-12"
+   ]
+  },
+  {
+   "name": "duplicate",
+   "repo": "tbocloud/duplicate",
+   "title": "Duplicate Role",
+   "description": "Allows you to easily duplicate roles with all their permissions, user permissions, and settings.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://teambackoffice.com/",
+   "documentation": "https://github.com/tbocloud/duplicate?tab=readme-ov-file#easy-duplicate-role",
+   "logo": "https://cloud.frappe.io/files/dc.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "e_sign",
+   "repo": "Ranganathanfinstien/Frappe-DSC",
+   "title": "Digital Signature",
+   "description": "DSC digital signing for Frappe & ERPNext — sign PDFs with a hardware DSC USB token, PAdES-compliant, with a rules engine and audit trail",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://www.finstein.ai/",
+   "documentation": "https://github.com/Ranganathanfinstien/Frappe-DSC/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/esign logo.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "easy_cash",
+   "repo": "ahmedyousef96/erpnext_easy_cash",
+   "title": "Easy Cash",
+   "description": "Easy Cash — Simplified Cash In/Out for Non-Accounting Staff",
+   "category": "Utilities",
+   "categories": [
+    "Extension",
+    "Productivity"
+   ],
+   "stars": 0,
+   "website": "https://github.com/ahmedyousef96/erpnext_easy_cash?tab=readme-ov-file",
+   "documentation": "https://github.com/ahmedyousef96/erpnext_easy_cash?tab=readme-ov-file",
+   "logo": "https://cloud.frappe.io/files/logo (2).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "ecommerce_integrations",
+   "repo": "frappe/ecommerce_integrations",
+   "title": "Ecommerce Integrations",
+   "description": "E-commerce marketplace integrations for ERPNext",
+   "category": "Integrations",
+   "categories": [
+    "E-Commerce",
+    "Official"
+   ],
+   "stars": 185,
+   "website": "https://github.com/frappe/ecommerce_integrations",
+   "documentation": "https://docs.erpnext.com/docs/v13/user/manual/en/erpnext_integration#e-commerce-integration",
+   "logo": "https://cloud.frappe.io/files/ERPNext - Ecommerce Integrations.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.20.3",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.20.3",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.17.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.17.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {
+      "erpnext": ">=16.0.0-dev,<=17.0.0-dev"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "edocument",
+   "repo": "prilk-consulting/edocument",
+   "title": "EDocument (Peppol E-Invoicing xml generation)",
+   "description": "Create and import PEPPOL-compliant e-documents with ERPNext with full support for PEPPOL BIS Billing 3.0 using UBL 2.1 XML format.",
+   "category": "Compliance",
+   "categories": [
+    "Extension",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://prilk.com",
+   "documentation": "https://github.com/prilk-consulting/edocument/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/default.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "education",
+   "repo": "frappe/education",
+   "title": "Education",
+   "description": "Open source ERP for academic institutes",
+   "category": "Applications",
+   "categories": [
+    "Official"
+   ],
+   "stars": 536,
+   "website": "https://frappe.io/education",
+   "documentation": "https://docs.frappe.io/erpnext/user/manual/en/education",
+   "logo": "https://cloud.frappe.io/files/education.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "16.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "ekyc_india",
+   "repo": "frappe/ekyc_india",
+   "title": "Ekyc India",
+   "description": "",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 9,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-1"
+   ]
+  },
+  {
+   "name": "email_delivery_service",
+   "repo": "frappe/email_delivery_service",
+   "title": "Email Delivery Service",
+   "description": "A plug and play email delivery service for Frappe Cloud.",
+   "category": "Integrations",
+   "categories": [
+    "Communication",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://github.com/frappe/email_delivery_service",
+   "documentation": "https://github.com/frappe/email_delivery_service",
+   "logo": "https://cloud.frappe.io/files/email-delivery-service (1).png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=12.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "email_reminder",
+   "repo": "NEW-MTC-ERP/email-reminder",
+   "title": "Email Reminder",
+   "description": "The role of this application is to send a reminder email to several users related to certain changes to any document type, in order to keep the users in complete communication and aware of every movement that takes place on any document type or of any change that occurs in the system, and a message or description of what happened on the document is also sent.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/NEW-MTC-ERP/email-reminder",
+   "documentation": "https://github.com/NEW-MTC-ERP/email-reminder",
+   "logo": "https://cloud.frappe.io/files/3S logo300.300.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "eps",
+   "repo": "frappe/eps",
+   "title": "Energy Point System",
+   "description": "Gamify user engagement by rewarding points for app activities, peer-to-peer appreciation, and dynamic leaderboards.",
+   "category": "Extensions",
+   "categories": [
+    "Extension",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://www.github.com/frappe/eps",
+   "documentation": "https://www.github.com/frappe/eps",
+   "logo": "https://cloud.frappe.io/files/eps_logo.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext",
+   "repo": "frappe/erpnext",
+   "title": "ERPNext",
+   "description": "World's best free and open source ERP",
+   "category": "Applications",
+   "categories": [
+    "Accounting",
+    "Business",
+    "Featured",
+    "Official"
+   ],
+   "stars": 35439,
+   "website": "https://frappe.io/erpnext",
+   "documentation": "https://docs.frappe.io/erpnext",
+   "logo": "https://cloud.frappe.io/files/erpnext-blue.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "16.37.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.21.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.121.6",
+     "branch": "version-15",
+     "frappe_core": ">=15.111.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13",
+    "version-12",
+    "version-11"
+   ]
+  },
+  {
+   "name": "erpnext_australian_localisation",
+   "repo": "Arus-Info/ERPNext-Australian-Localisation",
+   "title": "ERPNext Australian Localisation",
+   "description": "AU localisation for ERPNext app will install the necessary setup to get the Business Activity Statement (BAS), ABA files for payment.",
+   "category": "Compliance",
+   "categories": [
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://arus.au/arus-services-erpnext#customapps",
+   "documentation": "https://github.com/Arus-Info/ERPNext-Australian-Localisation/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/AU Localisation Logo 5.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.3.4",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.3.3",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "erpnext_datev",
+   "repo": "alyf-de/erpnext_datev-uo",
+   "title": "DATEV Integration",
+   "description": "Integration with DATEV Unternehmen Online for ERPNext.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://alyf.de",
+   "documentation": "https://github.com/alyf-de/erpnext_datev/blob/version-14/README.md",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.3.8",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16-hotfix",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "erpnext_ec",
+   "repo": "beebtech-net/erpnext_ec",
+   "title": "ERPNext Ecuador",
+   "description": "ERPNext Ec is a localization for Ecuador of ERPNext, designed to comply with the country's legal and fiscal requirements.",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://app.beebtech.net",
+   "documentation": "https://github.com/beebtech-net/erpnext_ec",
+   "logo": "https://cloud.frappe.io/files/btlogo.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=12.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext_egypt_compliance",
+   "repo": "Axentorllc/erpnext_egypt_compliance",
+   "title": "Egypt Compliance - E-Invoice & E-Receipt",
+   "description": "ETA: Egyptian Tax Authority Full Integration, Egypt E-Invoice & Egypt E-Receipt",
+   "category": "Compliance",
+   "categories": [],
+   "stars": 0,
+   "website": "https://axentor.co",
+   "documentation": "https://docs.axentor.app/EG%20Compliance/Introduction",
+   "logo": "https://cloud.frappe.io/files/EG Compliance Logo.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.6.0",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext_germany",
+   "repo": "alyf-de/erpnext_germany",
+   "title": "ERPNext Germany",
+   "description": "ERPNext extension for companies in Germany.",
+   "category": "Compliance",
+   "categories": [
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://github.com/alyf-de/erpnext_germany",
+   "documentation": "https://github.com/alyf-de/erpnext_germany",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.1.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.23.2",
+     "branch": "version-15",
+     "frappe_core": ">=15.64.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.58.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16-hotfix",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "erpnext_indonesia_localization",
+   "repo": "agile-technica/erpnext-indonesia-localization",
+   "title": "ERPNext Indonesia Localization",
+   "description": "ERPNext Indonesia Localization - Localization of ERPNext for Indonesia region, including Indonesia Tax and Charges feature.",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://www.agiletechnica.com/",
+   "documentation": "https://www.agiletechnica.com/erp-system/erpnext-indonesia-localization-module/",
+   "logo": "https://cloud.frappe.io/files/625d11a.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.4.1",
+     "branch": "develop",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "1.4.1",
+     "branch": "master",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "erpnext_mexico_compliance",
+   "repo": "TI-Sin-Problemas/erpnext_mexico_compliance",
+   "title": "ERPNext Mexico Compliance",
+   "description": "Adapt ERPNext to comply with Mexican Authorities rules and regulations",
+   "category": "Compliance",
+   "categories": [
+    "Business",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://tisinproblemas.com/mexico-compliance/introduccion",
+   "documentation": "https://tisinproblemas.com/mexico-compliance/introduccion",
+   "logo": "https://cloud.frappe.io/files/mexico_compliance.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.14.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.10.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "develop",
+     "branch": "main",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "erpnext_portugal",
+   "repo": "envlab-tech/erpnext_portugal",
+   "title": "ERPNext Portugal",
+   "description": "ERPNext extension for companies in Portugal.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://envlab.tech/",
+   "documentation": "https://github.com/envlab-tech/erpnext_portugal",
+   "logo": "https://cloud.frappe.io/files/logo_dark_sqw.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext_s3_integration",
+   "repo": "Solufy-ERPNext-Apps/erpnext_s3_integration",
+   "title": "ERPNext S3 Integration",
+   "description": "Connect Frappe with S3-compatible storage to securely manage files and Backups.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://www.solufyerp.com",
+   "documentation": "https://github.com/Solufy-ERPNext-Apps/erpnext_s3_integration/blob/version-16/README.md",
+   "logo": "https://cloud.frappe.io/files/Frappe-S3 Integration.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext_shipping",
+   "repo": "frappe/erpnext-shipping",
+   "title": "ERPNext Shipping",
+   "description": "Shipping integration for ERPNext",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://github.com/frappe/erpnext-shipping",
+   "documentation": "https://docs.erpnext.com/docs/user/manual/en/erpnext_integration/erpnext_shipping",
+   "logo": "https://cloud.frappe.io/files/shipping-logo-cropped.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.2.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "erpnext_sumup",
+   "repo": "Rocket-Quack/erpnext_sumup",
+   "title": "SumUp POS Integration",
+   "description": "SumUP integration for use in combination with ERPNext POS",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/Rocket-Quack/erpnext_sumup",
+   "documentation": "https://github.com/Rocket-Quack/erpnext_sumup",
+   "logo": "https://cloud.frappe.io/files/SUMUP_INTEGRATION_APP_LOGO.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "15.0.2",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0-dev,<16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "esign_app",
+   "repo": "asoral/E-sign-App",
+   "title": "Esign App",
+   "description": "Empower your business with seamless, secure, and legally binding digital signatures.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://dexciss.io",
+   "documentation": "https://github.com/asoral/E-sign-App/blob/master/README.md",
+   "logo": "https://cloud.frappe.io/files/e-sing.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "eu_einvoice",
+   "repo": "alyf-de/eu_einvoice",
+   "title": "European e-Invoice",
+   "description": "Create and import e-invoices with ERPNext.",
+   "category": "Compliance",
+   "categories": [
+    "Business",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://github.com/alyf-de/eu_einvoice/",
+   "documentation": "https://github.com/alyf-de/eu_einvoice/",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.2.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0-dev,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0-dev,<17.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.16.2",
+     "branch": "version-15",
+     "frappe_core": ">=15.47.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.45.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "fbr_e_invoicing",
+   "repo": "DeliveryDevs-ERP/Pakistan-Compliance",
+   "title": "Pak Compliance",
+   "description": "Pak Compliance App integrates ERPNext with FBR e-invoicing, ensuring compliance, transparency, and efficient regulatory reporting.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://deliverydevs.com/",
+   "documentation": "https://github.com/DeliveryDevs-ERP/Pakistan-Compliance/blob/version-16/README.md",
+   "logo": "https://cloud.frappe.io/files/PakComplianceLogo.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "fc_site_manager",
+   "repo": "wahni-green/fc_site_manager",
+   "title": "FC Site Manager",
+   "description": "An app that connects directly to Frappe Cloud(or press) and pulls relevant data to your instance and allows users to login directly to other instances, rotates user passwords and disable users periodically.",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://wahni.io/",
+   "documentation": "https://wahni-it.frappe.cloud/wiki/about",
+   "logo": "https://cloud.frappe.io/files/FCSM-Cropped.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=14.0.0,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "fintheme_and_sounds",
+   "repo": "Darwin-DJR-Finstein/Fintheme-and-sounds",
+   "title": "Fintheme and Sounds",
+   "description": "Customize Frappe & ERPNext Desk per user — live theme editor, WCAG-checked palettes, 17 themes, and a Sound Studio for Desk audio.",
+   "category": "Utilities",
+   "categories": [
+    "Themes"
+   ],
+   "stars": 0,
+   "website": "https://github.com/Darwin-DJR-Finstein/Fintheme-and-sounds.git",
+   "documentation": "https://github.com/Darwin-DJR-Finstein/Fintheme-and-sounds/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/ChatGPT Image May 15, 2026, 01_57_16 PM.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "forms_pro",
+   "repo": "BuildWithHussain/forms_pro",
+   "title": "Web Forms Pro (Beta)",
+   "description": "Better way to create Web Forms on Frappe",
+   "category": "Utilities",
+   "categories": [
+    "Extension",
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://studios.buildwithhussain.com/forms_pro",
+   "documentation": "https://studios.buildwithhussain.com/forms-pro/getting-started",
+   "logo": "https://cloud.frappe.io/files/logo_300.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_appointment",
+   "repo": "rtCamp/frappe-appointment",
+   "title": "Frappe Appointment",
+   "description": "Frappe app designed to streamline meeting scheduling with smart integrations with Google Calendar, Zoom and Frappe HRMS Leave Module.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://rtcamp.com/erpnext/",
+   "documentation": "https://github.com/rtCamp/frappe-appointment/wiki",
+   "logo": "https://cloud.frappe.io/files/8CAB6793-D424-4B86-9B44-34DE75823718.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.1.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "frappe_assistant_core",
+   "repo": "buildswithpaul/Frappe_Assistant_Core",
+   "title": "Frappe Assistant Core",
+   "description": "Give any Large Language Model the power to interact with your ERPNext system through standardised protocols (MCP)",
+   "category": "Extensions",
+   "categories": [
+    "AI"
+   ],
+   "stars": 0,
+   "website": "https://promantia.in/",
+   "documentation": "https://docs.assistantcore.cloud",
+   "logo": "https://cloud.frappe.io/files/FAC-Resized.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "3.2.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "2.5.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "frappe_books",
+   "repo": "frappe/frappe-books",
+   "title": "Frappe Books",
+   "description": "Frappe Books for Frappe Framework (develop)",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 55,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "frappe_file_merge",
+   "repo": "manavmandli/frappe_file_merge",
+   "title": "Frappe File Merge",
+   "description": "Merge multiple PDFs and images into one PDF directly inside Frappe file uploader. Fast, simple, and seamless.",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://github.com/manavmandli/frappe_file_merge.git",
+   "documentation": "https://github.com/manavmandli/frappe_file_merge.git",
+   "logo": "https://cloud.frappe.io/files/ChatGPT Image Apr 19, 2026, 04_35_06 PM.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_microsoft365",
+   "repo": "Bizmap-Technologies-Pvt-Ltd/frappe_microsoft365",
+   "title": "Microsoft 365",
+   "description": "Outlook calendar two-way sync, Teams meetings, transcripts and Microsoft sign-in",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 4,
+   "website": "https://github.com/Bizmap-Technologies-Pvt-Ltd/frappe_microsoft365",
+   "documentation": "https://github.com/Bizmap-Technologies-Pvt-Ltd/frappe_microsoft365/blob/main/README.md",
+   "logo": "https://raw.githubusercontent.com/Bizmap-Technologies-Pvt-Ltd/frappe_microsoft365/main/.github/logo-transparent.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0-dev,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_mpsa_payments",
+   "repo": "navariltd/frappe-mpsa-payments",
+   "title": "Frappe Mpesa Payments",
+   "description": "Streamline your finance: Easy M-Pesa payments from customers, simple disbursements for your team. All in ERPNext.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Payments"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/frappe-mpsa-payments.git",
+   "logo": "https://cloud.frappe.io/files/mobile_money_transfer_green_sq_bg.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_msg91_integration",
+   "repo": "dhwani-ris/frappe_msg91_integration",
+   "title": "MSG91 Integration",
+   "description": "This app provides integration with the for MSG91 SMS gateway Frappe Framework.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/dhwani-ris/frappe_msg91_integration",
+   "documentation": "https://github.com/dhwani-ris/frappe_msg91_integration",
+   "logo": "https://cloud.frappe.io/files/images_imresizer.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "frappe_openai_integration",
+   "repo": "manavmandli/frappe_openai_integration",
+   "title": "OpenAI Integration",
+   "description": "An easy-to-use Frappe app that integrates OpenAI’s GPT models (like ChatGPT) into your ERP system. Send prompts and get AI responses directly from the Frappe interface.",
+   "category": "Integrations",
+   "categories": [
+    "AI",
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": null,
+   "documentation": "https://github.com/manavmandli/frappe_openai_integration.git",
+   "logo": "https://cloud.frappe.io/files/ChatGPT Image May 26, 2025, 10_37_05 PM.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_paystack",
+   "repo": "mymi14s/frappe_paystack",
+   "title": "Frappe Paystack",
+   "description": "Paystack payment gateway integration for ERPNext and Frappe",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/mymi14s/frappe_paystack",
+   "documentation": "https://ghorz.com/blog/detail/paystack-payment-gateway-plugin-for-erpnext-and-frappe/",
+   "logo": "https://cloud.frappe.io/files/1000525240.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.0.2",
+     "branch": "version-15",
+     "frappe_core": ">=16.0.0,<=17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<=17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-15",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_slack_connector",
+   "repo": "rtCamp/frappe-slack-connector",
+   "title": "Frappe Slack Connector",
+   "description": "Frappe app that integrates the Leave Management module with Slack",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://rtcamp.com/",
+   "documentation": "https://github.com/rtCamp/frappe-slack-connector/wiki",
+   "logo": "https://cloud.frappe.io/files/icon6be5cb.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.1.2",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<=17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "frappe_tingg_payments",
+   "repo": "navariltd/Frappe-Tingg-Payments",
+   "title": "Frappe Tingg Payments",
+   "description": "This is a Frappe-based application that integrates with the Tingg API from Cellulant.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Payments"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/Frappe-Tingg-Payments?tab=readme-ov-file#Frappe-Tingg-Payments",
+   "logo": "https://cloud.frappe.io/files/image(1).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_whatsapp",
+   "repo": "shridarpatil/frappe_whatsapp",
+   "title": "Frappe WhatsApp",
+   "description": "Send WhatsApp Messages from your Frappe app. Without any 3rd party integration.",
+   "category": "Integrations",
+   "categories": [
+    "CRM Integration",
+    "Communication",
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://whatomate.io",
+   "documentation": "https://shridarpatil.github.io/frappe_whatsapp/",
+   "logo": "https://cloud.frappe.io/files/frappewhatsapplogo.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.12",
+     "branch": "master",
+     "frappe_core": ">=14.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "frappe_whatsapp_chatbot",
+   "repo": "shridarpatil/frappe_whatsapp_chatbot",
+   "title": "Frappe WhatsApp Chatbot",
+   "description": "A comprehensive chatbot solution for Frappe WhatsApp integration.",
+   "category": "Integrations",
+   "categories": [
+    "AI",
+    "Communication"
+   ],
+   "stars": 0,
+   "website": "https://whatomate.io",
+   "documentation": "https://shridarpatil.github.io/frappe_whatsapp_chatbot/#/",
+   "logo": "https://cloud.frappe.io/files/logo-squarecca260.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {
+      "frappe_whatsapp": ">=1.0.0,<2.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=14.0.0,<=17.0.0-dev",
+     "dependencies": {
+      "frappe_whatsapp": ">=0.0.1"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "gameplan",
+   "repo": "frappe/gameplan",
+   "title": "Gameplan",
+   "description": "Delightful work communication tool for remote teams",
+   "category": "Applications",
+   "categories": [
+    "Featured",
+    "Human Resources",
+    "Productivity",
+    "Official"
+   ],
+   "stars": 492,
+   "website": "https://frappe.io/gameplan",
+   "documentation": "https://github.com/frappe/gameplan",
+   "logo": "https://cloud.frappe.io/files/tg_image_1025626910.jpeg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.1.18",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.17",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.16",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.15",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.14",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.13",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.12",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.11",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.10",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.9",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.8",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.7",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.6",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.5",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.4",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.3",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.2",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "genie",
+   "repo": "wahni-green/genie",
+   "title": "Genie",
+   "description": "Your guide to unlocking full potential of ERPNext. Raise support tickets right from within your site with screen and voice recording and more!",
+   "category": "Extensions",
+   "categories": [
+    "Business",
+    "Support"
+   ],
+   "stars": 0,
+   "website": "https://wahni.io",
+   "documentation": "https://github.com/wahni-green/genie",
+   "logo": "https://cloud.frappe.io/files/Wahni IT Logo.jpg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=14.0.0,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "go1_cms",
+   "repo": "TridotsTech/go1cms",
+   "title": "Go1 CMS",
+   "description": "Its a Advanced Content Management System built on top of Frappe.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://www.tridotstech.com",
+   "documentation": null,
+   "logo": "https://cloud.frappe.io/files/favicon (1).svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-3"
+   ]
+  },
+  {
+   "name": "health",
+   "repo": "frappe/health",
+   "title": "Health",
+   "description": "Healthcare management with patient records, appointments, lab results, and billing.",
+   "category": "Applications",
+   "categories": [
+    "Official"
+   ],
+   "stars": 501,
+   "website": null,
+   "documentation": null,
+   "logo": "/logos/health.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "erpnext": ">=17.0.0-dev,<18.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "16.6.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.2.4",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "helpdesk",
+   "repo": "frappe/helpdesk",
+   "title": "Helpdesk",
+   "description": "Well designed, open source ticketing system",
+   "category": "Applications",
+   "categories": [
+    "Featured",
+    "Support",
+    "Official"
+   ],
+   "stars": 3184,
+   "website": "https://frappe.io/helpdesk",
+   "documentation": "https://docs.frappe.io/helpdesk",
+   "logo": "https://cloud.frappe.io/files/helpdesk (1).png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.30.1",
+     "branch": "main",
+     "frappe_core": ">=15.116.1,<17.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.22.2",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-14"
+   ]
+  },
+  {
+   "name": "hr_addon",
+   "repo": "phamos-eu/HR-Addon",
+   "title": "HR Addon",
+   "description": "Addon for Erpnext attendance and employee checkins",
+   "category": "Extensions",
+   "categories": [
+    "Human Resources"
+   ],
+   "stars": 0,
+   "website": "https://phamos.eu",
+   "documentation": "https://doku.phamos.eu/books/hr-addon",
+   "logo": "https://cloud.frappe.io/files/phamos-sun.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-15",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "hrms",
+   "repo": "frappe/hrms",
+   "title": "HR & Payroll",
+   "description": "Open source, modern, and user-friendly HR and payroll software for all organizations",
+   "category": "Applications",
+   "categories": [
+    "Featured",
+    "Human Resources",
+    "Official"
+   ],
+   "stars": 8079,
+   "website": "https://frappe.io/hr",
+   "documentation": "https://docs.frappe.io/hr",
+   "logo": "https://cloud.frappe.io/files/Layer_1 (1).png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "erpnext": ">=17.0.0-dev,<18.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "16.20.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.64.2",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "india_compliance",
+   "repo": "resilient-tech/india-compliance",
+   "title": "India Compliance",
+   "description": "Simple, yet powerful compliance solutions for Indian businesses",
+   "category": "Compliance",
+   "categories": [
+    "Featured",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://indiacompliance.app/",
+   "documentation": "https://docs.indiacompliance.app/",
+   "logo": "https://cloud.frappe.io/files/icon_with_margin_bg.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "16.8.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.31.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "india_payroll",
+   "repo": "frappe/india-payroll",
+   "title": "India Payroll",
+   "description": "A Frappe HR extenstion app to simplify payroll and taxes according to indian rules and regulations",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 25,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "insights",
+   "repo": "frappe/insights",
+   "title": "Insights",
+   "description": "Open source business intelligence tool",
+   "category": "Developer Tools",
+   "categories": [
+    "Analytics",
+    "Featured",
+    "Official"
+   ],
+   "stars": 946,
+   "website": "https://frappe.io/insights",
+   "documentation": "https://docs.frappe.io/insights",
+   "logo": "https://cloud.frappe.io/files/Layer_1InsightsLogoNew.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "4.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "3.14.4",
+     "branch": "version-3",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-3"
+   ]
+  },
+  {
+   "name": "it_management",
+   "repo": "phamos-eu/it_management",
+   "title": "IT Management",
+   "description": "With IT Management for ERPNext you can manage your companies or your clients it landscape",
+   "category": "Utilities",
+   "categories": [
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://phamos.eu/contact",
+   "documentation": "https://doku.phamos.eu",
+   "logo": "https://cloud.frappe.io/files/noun_management_3153821.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=13.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "kamra",
+   "repo": "Kamra-PMS/kamra-pms",
+   "title": "Kamra PMS",
+   "description": "Open-source property management system for hotels and short-term rentals",
+   "category": "Applications",
+   "categories": [
+    "Hospitality"
+   ],
+   "stars": 0,
+   "website": "https://kamrapms.com",
+   "documentation": "https://kamrapms.com/docs/",
+   "logo": "https://raw.githubusercontent.com/Kamra-PMS/kamra-pms/main/branding/png/kamra-mark-512.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.6.11",
+     "branch": "main",
+     "frappe_core": ">=16.0.0-dev,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "kenya_compliance_via_slade",
+   "repo": "navariltd/kenya-compliance-via-slade",
+   "title": "Kenya Compliance (KRA eTIMS)",
+   "description": "This app works to integrate ERPNext with KRA's eTIMS via Slade360 to allow for the sharing of information with the revenue authority.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/kenya-compliance-via-slade/wiki",
+   "logo": "https://cloud.frappe.io/files/taxca579e.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.19.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "csf_ke": ">=2.12.0,<3.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.8.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "csf_ke": ">=16.5.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.8.2",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "csf_ke": ">=16.5.0,<17.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "ksa_compliance",
+   "repo": "lavaloon-eg/ksa_compliance",
+   "title": "KSA Compliance (ZATCA Phase 1 and 2 E-Invoicing)",
+   "description": "A free and open-source Frappe application for KSA Compliance (ZATCA Integration) , offering support for both Phase 1 and Phase 2.",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://www.lavaloon.com/",
+   "documentation": "https://lavaloon.com/wiki/E-INVOICE%20KSA%20(Zatca%20)",
+   "logo": "https://cloud.frappe.io/files/LavaLoon.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.61.8",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "0.61.4",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": []
+  },
+  {
+   "name": "leave_calendar",
+   "repo": "kksoftwareag/leave-calendar",
+   "title": "Leave Calendar",
+   "description": "A Leave Calendar to show employee leaves with role-based access and holiday integration",
+   "category": "Utilities",
+   "categories": [
+    "Human Resources",
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://erp-beratung.team/",
+   "documentation": "https://github.com/kksoftwareag/leave-calendar",
+   "logo": "https://cloud.frappe.io/files/OSR_bild_3C@10x.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0",
+      "hrms": ">=15.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "master",
+     "frappe_core": ">=15.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0",
+      "hrms": ">=15.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "lending",
+   "repo": "frappe/lending",
+   "title": "Lending",
+   "description": "Open source loan management system",
+   "category": "Applications",
+   "categories": [
+    "Business",
+    "Extension",
+    "Official"
+   ],
+   "stars": 299,
+   "website": "https://frappe.io/lending",
+   "documentation": "https://docs.frappe.io/lending",
+   "logo": "https://frappe.io/files/image4f3ff7.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "erpnext": ">=17.0.0-dev,<18.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "16.6.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-1"
+   ]
+  },
+  {
+   "name": "lms",
+   "repo": "frappe/lms",
+   "title": "Learning",
+   "description": "Easy to use, open source learning management system",
+   "category": "Applications",
+   "categories": [
+    "Featured",
+    "Official"
+   ],
+   "stars": 2981,
+   "website": "https://frappe.io/learning",
+   "documentation": "https://docs.frappe.io/learning",
+   "logo": "https://cloud.frappe.io/files/learning.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.67.1",
+     "branch": "main",
+     "frappe_core": ">=15.121.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "2.67.0",
+     "branch": "main",
+     "frappe_core": ">=15.121.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "2.64.0",
+     "branch": "main",
+     "frappe_core": ">=15.121.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "2.45.2",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-13",
+    "version-1"
+   ]
+  },
+  {
+   "name": "marley_health",
+   "repo": "earthians/marley",
+   "title": "Marley Healthcare",
+   "description": "One stop solution for all your Healthcare Information System(HIS) & Electronic Medical Records (EMR) needs.",
+   "category": "Extensions",
+   "categories": [
+    "Business",
+    "Healthcare"
+   ],
+   "stars": 0,
+   "website": "https://marleyhealth.io",
+   "documentation": "https://marleyhealth.io/docs",
+   "logo": "https://raw.githubusercontent.com/frappe/healthcare/develop/healthcare/public/images/healthcare.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "erpnext": ">=17.0.0-dev,<18.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "16.4.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.2.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "meeting_management",
+   "repo": "finbyz/meeting_management",
+   "title": "Meeting Management",
+   "description": "The Meeting Notes feature in this app allows users to track meeting discussions, action items, and expenses in a uniform and organized manner. This information can be easily accessed from the scheduled meeting and is saved in the history of the Lead, Opportunity, or Customer document. A video is available to help understand the process of creating a meeting note.",
+   "category": "Utilities",
+   "categories": [
+    "Productivity",
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://finbyz.tech/",
+   "documentation": "https://finbyz.tech/meeting-management-erpnext",
+   "logo": "https://cloud.frappe.io/files/Meeting Management App-NewLogo.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "mint",
+   "repo": "The-Commit-Company/mint",
+   "title": "Mint",
+   "description": "Better bank reconciliation for ERPNext",
+   "category": "Integrations",
+   "categories": [
+    "Business",
+    "Integrations",
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://github.com/The-Commit-Company/mint",
+   "documentation": "https://github.com/The-Commit-Company/mint",
+   "logo": "https://cloud.frappe.io/files/mint-logo-modified.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.5.3",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "1.5.3",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "multi_cloud_storage",
+   "repo": "dhwani-ris/frappe-cloud-storage",
+   "title": "MultiCloud Storage",
+   "description": "Multi-cloud file storage app for the Frappe framework. Uploads File attachments to Amazon S3 or Google Cloud Storage (GCS)",
+   "category": "Integrations",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/dhwani-ris/frappe-cloud-storage",
+   "documentation": "https://github.com/dhwani-ris/frappe-cloud-storage",
+   "logo": "https://cloud.frappe.io/files/5813080.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "myinvois_erpgulf",
+   "repo": "ERPGulf/myinvois",
+   "title": "Malaysia Compliance",
+   "description": "MyInvois app connects ERPNext with LHDN - Malaysia’s MyInvois e-Invoicing platform, ensuring compliance with phase 1 & 2 e-Invoice mandates",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://cloud.erpgulf.com/",
+   "documentation": "https://cloud.erpgulf.com/blog/news/malaysia-e-invoicing-for-erpnext-%E2%80%94-update",
+   "logo": "https://cloud.frappe.io/files/ERPGulf logo-big.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "3.0.1",
+     "branch": "main",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "navari_cams_biometric",
+   "repo": "navariltd/cams-biometric",
+   "title": "Cams Biometrics Integration",
+   "description": "Integrating the CAMS biometrics system with FrappeHR enables real-time attendance tracking and automated data synchronization.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke",
+   "documentation": "https://docs.navari.co.ke/cams-biometric/10-introduction",
+   "logo": "https://cloud.frappe.io/files/imresizer-1734438159061.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "navari_frappehr_biostar",
+   "repo": "navariltd/navari-frappehr-biostar",
+   "title": "Biostar Biometric Integration",
+   "description": "This application offers a robust integration with Suprema Biostar Biometrics, enabling seamless synchronization of employee check-in records based on specific user configurations.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke",
+   "documentation": "https://github.com/navariltd/navari-frappehr-biostar?tab=readme-ov-file#suprema-biostar-biometric-integration",
+   "logo": "https://cloud.frappe.io/files/biometric.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "newsletter",
+   "repo": "frappe/newsletter",
+   "title": "Newsletter",
+   "description": "Newsletter Management",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 26,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "nigeria_compliance_via_digitax",
+   "repo": "navariltd/Nigeria-Compliance-Via-DigiTax",
+   "title": "Nigeria Compliance via DigiTax",
+   "description": "ERPNext integration for Nigeria tax compliance via DigiTax.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://docs.navari.co.ke/nigeria-compliance/",
+   "documentation": "https://docs.navari.co.ke/nigeria-compliance/",
+   "logo": "https://cloud.frappe.io/files/Untitled Diagram.drawio.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "nl_attendance_timesheet",
+   "repo": "navariltd/nl-attendance-timesheet",
+   "title": "Attendance and Timesheet",
+   "description": "This app includes functionalities to calculate and create timesheets from attendance records. Timesheets are created based on any hours above normal working hours, recorded in attendance.",
+   "category": "Utilities",
+   "categories": [
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/nl-attendance-timesheet",
+   "logo": "https://cloud.frappe.io/files/Attendance.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16,<17",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "offsite_backups",
+   "repo": "frappe/offsite_backups",
+   "title": "Offsite Backups",
+   "description": "Please add a short description about your app here...",
+   "category": "Integrations",
+   "categories": [
+    "Extension",
+    "Integrations",
+    "Official"
+   ],
+   "stars": 0,
+   "website": null,
+   "documentation": null,
+   "logo": null,
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "passkeys",
+   "repo": "Andrometiq/frappe-passkeys",
+   "title": "Passkeys",
+   "description": "Passwordless sign-in and approvals with passkeys",
+   "category": "Extensions",
+   "categories": [
+    "Security"
+   ],
+   "stars": 0,
+   "website": "https://andrometiq.com/software/passkey/",
+   "documentation": "https://andrometiq.github.io/frappe-passkeys/",
+   "logo": "https://raw.githubusercontent.com/Andrometiq/frappe-passkeys/358a91b8addce1c64aa885d5539231dea51b7e5b/.github/logo-512.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.6",
+     "branch": "version-16",
+     "frappe_core": ">=16.18.3,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.0.6",
+     "branch": "version-15",
+     "frappe_core": ">=15.108.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "payment_integration_utils",
+   "repo": "resilient-tech/payment_integration_utils",
+   "title": "Payment Integration Utils",
+   "description": "A base app for building secure bank integrations in ERPNext.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/resilient-tech/payment_integration_utils",
+   "documentation": "https://github.com/resilient-tech/payment_integration_utils",
+   "logo": "https://cloud.frappe.io/files/icon_with_margin_bg.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.2.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "payments",
+   "repo": "frappe/payments",
+   "title": "Payments",
+   "description": "Payment gateway integrations for Stripe, Razorpay, PayPal, Braintree, and more.",
+   "category": "Extensions",
+   "categories": [
+    "Official"
+   ],
+   "stars": 165,
+   "website": null,
+   "documentation": null,
+   "logo": null,
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "payments_processor",
+   "repo": "resilient-tech/payments-processor",
+   "title": "Payments Processor",
+   "description": "Automate, Optimize and Customize Payment Workflows for ERPNext",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/resilient-tech/payments-processor",
+   "documentation": "https://github.com/resilient-tech/payments-processor",
+   "logo": "https://cloud.frappe.io/files/icon_with_margin_bg.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "pdf_on_submit",
+   "repo": "alyf-de/erpnext_pdf-on-submit",
+   "title": "PDF on Submit",
+   "description": "Automatically create a PDF on document submission",
+   "category": "Utilities",
+   "categories": [
+    "Productivity"
+   ],
+   "stars": 0,
+   "website": "https://github.com/alyf-de/erpnext_pdf-on-submit",
+   "documentation": "https://github.com/alyf-de/erpnext_pdf-on-submit",
+   "logo": "https://cloud.frappe.io/files/alyf_128p.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.3.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.3.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "15.6.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13",
+    "version-12"
+   ]
+  },
+  {
+   "name": "persona",
+   "repo": "Govind-Jangid/persona",
+   "title": "Persona",
+   "description": "Lets System Managers impersonate any user",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/aoaicompany",
+   "documentation": null,
+   "logo": "https://cloud.frappe.io/files/logo2fa83e.jpg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "pinelabs_fin",
+   "repo": "Bharathiraja-V/pinelabs_fin",
+   "title": "Pinelabs Fin",
+   "description": "Pine Labs payments in ERPNext - tap on a terminal or send payment links from invoices, with auto-created Payment Entries.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://finstein.ai/index.html",
+   "documentation": "https://github.com/Bharathiraja-V/pinelabs_fin/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/Pasted image.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "pospire",
+   "repo": "promantia-ltd/POSpire",
+   "title": "POSpire",
+   "description": "A modern point-of-sale experience with offers, coupons, and multi-payment support for ERPNext",
+   "category": "Utilities",
+   "categories": [
+    "Extension",
+    "Productivity"
+   ],
+   "stars": 0,
+   "website": "https://promantia.in",
+   "documentation": "https://github.com/promantia-ltd/POSpire/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/pwa-512x512-rounded.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.4",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.2",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "1.0.2",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "precivault",
+   "repo": "precihole/precivault",
+   "title": "PreciVault",
+   "description": "A secure and user-friendly password manager app for Frappe.",
+   "category": "Utilities",
+   "categories": [
+    "Productivity"
+   ],
+   "stars": 0,
+   "website": "https://www.preciholesports.info/PreciVault",
+   "documentation": "https://www.preciholesports.info/PreciVault",
+   "logo": "https://cloud.frappe.io/files/PreciVault_Icon.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": []
+  },
+  {
+   "name": "productivity_next",
+   "repo": "finbyz/productivity_next",
+   "title": "Productivity Next",
+   "description": "Productify by FinByz is a productivity tool that tracks employee activity, work hours, and system usage to enhance workplace efficiency. Available as software and a browser extension, it offers detailed insights into web browsing, keystrokes, mouse clicks, and mobile call analysis.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://finbyz.tech/",
+   "documentation": "https://finbyz.tech/productify",
+   "logo": "https://cloud.frappe.io/files/top_Logo5e6c0b.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14"
+   ]
+  },
+  {
+   "name": "projectit",
+   "repo": "Arus-Info/ProjectIT",
+   "title": "ProjectIT",
+   "description": "ProjectIT is an Open Source PWA mobile app to track the Employees in the field integrated with the Project functionalities of ERPNext.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://arus.au/arus-services-erpnext#customapps",
+   "documentation": "https://github.com/Arus-Info/ProjectIT?tab=readme-ov-file#projectit-",
+   "logo": "https://cloud.frappe.io/files/ProjectIT Logo Resized.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "hrms": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0",
+      "hrms": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.0.3",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "propms",
+   "repo": "Aakvatech-Limited/PropMS",
+   "title": "Property Management Solution",
+   "description": "Includes: Lease, Daily Checklist, Key Set, Meter, Outsourced Attendance. Requires ERPNext.",
+   "category": "Extensions",
+   "categories": [
+    "Business"
+   ],
+   "stars": 0,
+   "website": "https://aakvatech.com",
+   "documentation": null,
+   "logo": "https://cloud.frappe.io/files/aakvatech_logo.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.2.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-15-hotfix",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-12"
+   ]
+  },
+  {
+   "name": "pwa_frappe",
+   "repo": "omfsakib/pwa_frappe",
+   "title": "PWA Frappe",
+   "description": "PWA for enabling your applications to be installed and run as native-like apps on both desktop and mobile devices. 🚀",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://github.com/omfsakib/pwa_frappe",
+   "documentation": "https://github.com/omfsakib/pwa_frappe",
+   "logo": "https://cloud.frappe.io/files/logo_pwa.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.1.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "quickbooks_master_sync",
+   "repo": "invento-software-limited/quickbooks_master_sync",
+   "title": "Quickbooks to ERPNext Data Migrator",
+   "description": "A Frappe app for seamlessly syncing master data from QuickBooks Online into ERPNext—built and maintained by Invento Software Limited.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/invento-software-limited/quickbooks_master_sync",
+   "documentation": "https://github.com/invento-software-limited/quickbooks_master_sync/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/logo7faaa5.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.0.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "raven",
+   "repo": "frappe/raven",
+   "title": "Raven",
+   "description": "Enterprise-first messaging platform that integrates with ERPNext",
+   "category": "Integrations",
+   "categories": [
+    "Communication",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://ravenchat.ai",
+   "documentation": "https://docs.frappe.io/raven",
+   "logo": "https://cloud.frappe.io/files/icon-512x5121f918f.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "3.1.0",
+     "branch": "develop",
+     "frappe_core": ">=15.111.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "3.1.0",
+     "branch": "main",
+     "frappe_core": ">=15.111.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "3.0.0",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "3.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "raven_integration",
+   "repo": "frappe/raven_integration",
+   "title": "Raven Integration",
+   "description": "Keep Raven workspace and channel membership in sync with rules from any app",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Communication",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://github.com/frappe/raven_integration",
+   "documentation": "https://github.com/frappe/raven_integration/blob/main/README.md",
+   "logo": "https://raw.githubusercontent.com/frappe/raven_integration/main/assets/logo.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {
+      "raven": ">=2.0.0,<4.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "razorpayx_integration",
+   "repo": "resilient-tech/razorpayx-integration",
+   "title": "RazorpayX Integration",
+   "description": "Seamless RazorpayX Integration for ERPNext | Automate Bulk Vendor Payouts",
+   "category": "Integrations",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/resilient-tech/razorpayx-integration",
+   "documentation": "https://github.com/resilient-tech/razorpayx-integration/tree/version-15/docs",
+   "logo": "https://cloud.frappe.io/files/icon_with_margin_bg.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "15.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "report_builder",
+   "repo": "PravinKumarJ-Finstein/reportStudio",
+   "title": "Report Builder",
+   "description": "Report Builder: a Frappe/ERPNext app to build table reports via drag-and-drop UI — columns, filters, joins, exports no code, no SQL.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/PravinKumarJ-Finstein/reportStudio",
+   "documentation": "https://github.com/PravinKumarJ-Finstein/reportStudio/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/Report Studio Icon.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "rfq_opening_process",
+   "repo": "navariltd/navari_rfq_opening",
+   "title": "RFQ Opening Process",
+   "description": "This Frappe app enhances ERPNext's standard Request for Quotation (RFQ) feature to streamline the procurement process",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/navari_rfq_opening?tab=readme-ov-file#navari_rfq_opening",
+   "logo": "https://cloud.frappe.io/files/image (2)3e7db7.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "saas_theme",
+   "repo": "vineyrawat/saas_theme",
+   "title": "Saas Theme by CommitStreet",
+   "description": "A modern, polished SaaS UI theme for Frappe Framework v16 — dual sidebar, slide-in editors, enhanced forms & dashboard.",
+   "category": "Utilities",
+   "categories": [
+    "Themes"
+   ],
+   "stars": 0,
+   "website": "https://vinay-rawat.dev/",
+   "documentation": "https://github.com/vineyrawat/saas_theme",
+   "logo": "https://cloud.frappe.io/files/Screenshot 2026-04-05 at 1.43.00 AM 1 (3).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "sales_warehouse_selector",
+   "repo": "murtaza-ghadiali/sales_warehouse_selector",
+   "title": "Warehouse Selector on Sales Order",
+   "description": "Quickly select the best warehouse while creating Sales Orders and Invoice in ERPNext.",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://fusionsofttech.co.in/",
+   "documentation": "https://github.com/murtaza-ghadiali/sales_warehouse_selector/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/logob90ee0.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "scan_me",
+   "repo": "Tusharp21/scan_me",
+   "title": "Scan Me",
+   "description": "QR Code Scan Me is a Frappe app that helps you generate QR codes and barcodes of any type.",
+   "category": "Utilities",
+   "categories": [
+    "Utility"
+   ],
+   "stars": 0,
+   "website": "https://github.com/Tusharp21/scan_me/wiki",
+   "documentation": "https://github.com/Tusharp21/scan_me/wiki/Scan-Me",
+   "logo": "https://cloud.frappe.io/files/qr-code.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.3.2",
+     "branch": "develop",
+     "frappe_core": ">=14.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "simple_subscription",
+   "repo": "alyf-de/simple_subscription",
+   "title": "Simple Subscription",
+   "description": "A simple subscription that works the way you expect",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://github.com/alyf-de/simple_subscription",
+   "documentation": "https://github.com/alyf-de/simple_subscription#simple-subscription",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "16.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "15.3.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-13"
+   ]
+  },
+  {
+   "name": "sipgate",
+   "repo": "alyf-de/frappe_sipgate",
+   "title": "Sipgate Integration",
+   "description": "Sync contacts from Frappe/ERPNext to Sipgate.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://www.alyf.de",
+   "documentation": "https://github.com/alyf-de/frappe_sipgate",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.89.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.89.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "statement_importer",
+   "repo": "norelinorth/norelinorth_brokerage_statement_importer",
+   "title": "Noreli North Brokerage Statement Importer",
+   "description": "Automatically posts journal entries from brokerage statements using artificial intelligence parsing.",
+   "category": "Extensions",
+   "categories": [
+    "Extension"
+   ],
+   "stars": 0,
+   "website": "https://github.com/norelinorth/norelinorth_brokerage_statement_importer",
+   "documentation": "https://github.com/norelinorth/norelinorth_brokerage_statement_importer/blob/main/USER_GUIDE.md",
+   "logo": "https://cloud.frappe.io/files/generated_image_2bf7da8f-1eda-48f4-97fb-e796e36cd586.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.4.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "super_admin",
+   "repo": "Beveren-Software-Inc/super_admin",
+   "title": "Super Admin",
+   "description": "This app is a custom Frappe application built to manage user permissions in ERPNext. It features an intuitive interface and powerful backend functionality to handle complex permission structures within ERPNext.",
+   "category": "Utilities",
+   "categories": [
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://www.linkedin.com/in/sammish",
+   "documentation": "https://github.com/teambackoffice/doc.superadmin/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/google-admin.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=14.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=14.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "sync_simplefin",
+   "repo": "archadianai/Sync_SimpleFIN",
+   "title": "Sync via SimpleFIN",
+   "description": "Automatic import of your bank transaction records into ERPNext via SimpleFIN.",
+   "category": "Integrations",
+   "categories": [
+    "Extension",
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/archadianai/Sync_SimpleFIN",
+   "documentation": "https://github.com/archadianai/Sync_SimpleFIN/blob/master/README.md",
+   "logo": "https://cloud.frappe.io/files/logo_300x3009d3b19.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.4",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "1.0.3",
+     "branch": "master",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "taxjar_integration",
+   "repo": "frappe/taxjar_integration",
+   "title": "Taxjar Integration",
+   "description": "",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 8,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-15"
+   ]
+  },
+  {
+   "name": "telephony",
+   "repo": "frappe/telephony",
+   "title": "Telephony",
+   "description": "Exotel and Twilio integration for Frappe apps",
+   "category": "Integrations",
+   "categories": [
+    "Integrations",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://github.com/frappe/telephony",
+   "documentation": "https://github.com/frappe/telephony/blob/develop/README.md",
+   "logo": "https://cloud.frappe.io/files/telephony (3).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=14.101.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "tims_incotex",
+   "repo": "navariltd/tims_incotex",
+   "title": "Tims Incotex",
+   "description": "Integrate ERPNext with TIMS INCOTEX to automate electronic tax invoice submissions to KRA. Ensure seamless compliance and reporting.",
+   "category": "Extensions",
+   "categories": [],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/tims_incotex?tab=readme-ov-file#tims_incotex",
+   "logo": "https://cloud.frappe.io/files/tims_logo6d91d8.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "uae_erpgulf",
+   "repo": "ERPGulf/uae_erpgulf",
+   "title": "UAE E-Invoicing by ERPGulf",
+   "description": "The UAE E-Invoicing Integration app from ERPGulf provides a configurable foundation for UAE-compliant e-invoicing inside ERPNext.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://erpgulf.com",
+   "documentation": "https://github.com/ERPGulf/uae_erpgulf/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/ERPGulf logo-big.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "main",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-3"
+   ]
+  },
+  {
+   "name": "uganda_compliance",
+   "repo": "erpchampions/uganda_compliance",
+   "title": "Uganda Compliance",
+   "description": "ERPNext integration with Uganda's EFRIS for VAT compliance",
+   "category": "Compliance",
+   "categories": [
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://github.com/erpchampions/uganda_compliance",
+   "documentation": "https://github.com/erpchampions/uganda_compliance/wiki",
+   "logo": "https://cloud.frappe.io/files/Ug-Comp-300x300.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master-too-old-ignore",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-13"
+   ]
+  },
+  {
+   "name": "utility_billing",
+   "repo": "navariltd/utility-billing",
+   "title": "Utility & Rental Billing",
+   "description": "Streamline utility billing, leasing & tenants",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://navari.co.ke/",
+   "documentation": "https://github.com/navariltd/utility-billing/wiki",
+   "logo": "https://cloud.frappe.io/files/utility-billing.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "vat_compliance",
+   "repo": "invento-software-limited/ERPNext-Bangladesh-VAT-Compliance",
+   "title": "Bangladesh VAT Compliance",
+   "description": "Automates your VAT compliance with ERPNext, handles Mushak challans, VDS, and treasury deposits for accurate, efficient business operations.",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://github.com/invento-software-limited/ERPNext-Bangladesh-VAT-Compliance",
+   "documentation": "https://github.com/invento-software-limited/ERPNext-Bangladesh-VAT-Compliance/blob/develop/docs/product_overview.md",
+   "logo": "https://cloud.frappe.io/files/a4c07438-6359-44eb-bafb-9a11a038016c.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "2.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<=17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "visitormanagement",
+   "repo": "Yuvaraj4-S/Visitor_Management_System",
+   "title": "Visitor Management",
+   "description": "visitor management: QR gate check-in, ID verification, blacklist, hospitality, conference rooms, contact tracing & audit logs.",
+   "category": "Extensions",
+   "categories": [
+    "Extension"
+   ],
+   "stars": 0,
+   "website": "https://github.com/Yuvaraj4-S/Visitor_Management_System",
+   "documentation": "https://github.com/Yuvaraj4-S/Visitor_Management_System/blob/main/README.md",
+   "logo": "https://cloud.frappe.io/files/Gemini_Generated_Image_v1r0fgv1r0fgv1r0.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "develop",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.0.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "webshop",
+   "repo": "frappe/webshop",
+   "title": "Webshop",
+   "description": "Open Source eCommerce Platform",
+   "category": "",
+   "categories": [
+    "Official"
+   ],
+   "stars": 209,
+   "website": "",
+   "documentation": "",
+   "logo": "",
+   "listed": false,
+   "releases": [],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "whatsapp",
+   "repo": "frappe/whatsapp",
+   "title": "WhatsApp",
+   "description": "Official WhatsApp integration for Frappe apps, built on Meta's WhatsApp Business Cloud API",
+   "category": "Integrations",
+   "categories": [
+    "Communication",
+    "Integrations",
+    "Official"
+   ],
+   "stars": 25,
+   "website": "https://github.com/frappe/whatsapp",
+   "documentation": "https://github.com/frappe/whatsapp/blob/main/README.md",
+   "logo": null,
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.1.1",
+     "branch": "main",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
+   "name": "whatsapp_automation_pro",
+   "repo": "nexgenerptechnologies/whatsapp_automation_pro",
+   "title": "WhatsApp Automation Pro",
+   "description": "Automate ERPNext via WhatsApp! Zero per-message fees, no official API needed. Includes dynamic triggers & a pro chatbot builder.",
+   "category": "Integrations",
+   "categories": [
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://github.com/nexgenerptechnologies/whatsapp_automation_pro",
+   "documentation": "https://github.com/nexgenerptechnologies/whatsapp_automation_pro",
+   "logo": "https://cloud.frappe.io/files/logo8253cc.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "whatsapp_chat",
+   "repo": "shridarpatil/whatsapp_chat",
+   "title": "Whatsapp Chat",
+   "description": "Chat app to Send and receive WhatsApp messages.",
+   "category": "Integrations",
+   "categories": [],
+   "stars": 0,
+   "website": "https://whatomate.io",
+   "documentation": "https://github.com/shridarpatil/whatsapp_chat",
+   "logo": "https://cloud.frappe.io/files/m013t0007_b_social_media_whats_app_icon_30may23.jpg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {
+      "frappe_whatsapp": ">=1.0.0,<2.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=14.0.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "wiki",
+   "repo": "frappe/wiki",
+   "title": "Wiki",
+   "description": "Open source knowledge management software",
+   "category": "Applications",
+   "categories": [
+    "Featured",
+    "Website",
+    "Official"
+   ],
+   "stars": 408,
+   "website": "https://frappe.io/wiki",
+   "documentation": "https://docs.frappe.io/wiki-v2",
+   "logo": "https://cloud.frappe.io/files/Group 83713.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "3.3.0",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-14",
+    "version-13",
+    "version-3"
+   ]
+  },
+  {
+   "name": "workboard",
+   "repo": "bhavesh95863/workboard",
+   "title": "WorkBoard",
+   "description": "WorkBoard is an internal task management application built on the Frappe Framework.",
+   "category": "Utilities",
+   "categories": [
+    "Productivity",
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://nesscale.com",
+   "documentation": "https://github.com/bhavesh95863/workboard",
+   "logo": "https://cloud.frappe.io/files/workboard.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "master",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "master",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "working_time",
+   "repo": "alyf-de/working_time",
+   "title": "Working Time",
+   "description": "Timetracking and Attendance in ERPNext, integrated with Jira",
+   "category": "Utilities",
+   "categories": [
+    "Productivity"
+   ],
+   "stars": 0,
+   "website": "https://github.com/alyf-de/working_time",
+   "documentation": "https://github.com/alyf-de/working_time",
+   "logo": "https://cloud.frappe.io/files/ALYF A (Mitte 2020).webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "15.6.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.60.0,<16.0.0",
+     "dependencies": {
+      "erpnext": ">=15.57.0,<16.0.0",
+      "hrms": ">=15.0.0,<16.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16",
+    "version-15",
+    "version-14",
+    "version-13"
+   ]
+  },
+  {
+   "name": "za_local",
+   "repo": "EPIUSECX/cohenix_local_za",
+   "title": "South Africa Compliance",
+   "description": "Adds South Africa-specific models, reports, tools, and integrations to manage VAT, payroll, labour, COIDA, and compliance in ERPNext.",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://www.cohenix.com/",
+   "documentation": "https://github.com/EPIUSECX/cohenix_local_za/blob/version-16/README.md",
+   "logo": "https://cloud.frappe.io/files/sa_map_icon.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "1.0.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.0.0",
+     "branch": "main",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
+   "name": "zatca_erpgulf",
+   "repo": "ERPGulf/zatca_erpgulf",
+   "title": "Zatca Phase-2 E-Invoicing",
+   "description": "A Frappe app for users in Saudi Arabia, to be compliant with country tax laws",
+   "category": "Compliance",
+   "categories": [
+    "Integrations",
+    "Localization"
+   ],
+   "stars": 0,
+   "website": "https://ERPGulf.com",
+   "documentation": "https://cloud.erpgulf.com/blog",
+   "logo": "https://cloud.frappe.io/files/ERPGulf logo-big.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "3.0.1",
+     "branch": "main",
+     "frappe_core": ">=14.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": []
+  },
+  {
+   "name": "zikpro_invoice_ocr",
+   "repo": "Zikpro/invoice-ocr-ai",
+   "title": "Zikpro AI Invoice OCR",
+   "description": "Extract invoice data from PDFs and images using AI and automatically generate Purchase Invoices in ERPNext.",
+   "category": "Integrations",
+   "categories": [
+    "AI",
+    "Integrations"
+   ],
+   "stars": 0,
+   "website": "https://zikpro.com",
+   "documentation": "https://github.com/Zikpro/invoice-ocr-ai#readme",
+   "logo": "https://cloud.frappe.io/files/WhatsApp Image 2026-03-01 at 10.53.19 PM.webp",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.2.0",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.2.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "main",
+   "branches": [
+    "version-16"
+   ]
+  }
+ ]
+}
