@@ -56,7 +56,7 @@ frappe-nix/
 │   ├── flake-module.nix      # imports devenv.flakeModule, secrets.nix, devenv.nix and containers.nix
 │   ├── devenv.nix            # perSystem.frappe-nix options, the dev shell and the packages
 │   ├── secrets.nix           # top-level frappe-nix.secrets
-│   ├── containers.nix        # OCI image builds
+│   ├── containers.nix        # OCI image builds, on python-devops-nix's lib.containers
 │   └── nixos.nix             # services.frappe-nix (the NixOS systemd module)
 ├── runtime/                  # frappe-runtime: the unified process (a hard fork, MIT)
 ├── tests/                    # flake checks (see `nix flake check`)
