@@ -168,7 +168,7 @@ def _patch_get_site_config(module):
 	# package without this function, so it is left alone.
 	config = sys.modules.get("frappe.config")
 	if config is not None and getattr(config, "get_site_config", None) is original:
-		config.get_site_config = module.get_site_config
+		config.get_site_config = module.get_site_config  # ty: ignore[unresolved-attribute]
 
 
 # --------------------------------------------------------------------------
