@@ -125,7 +125,7 @@ run_with() {
 # at a time, grep -q exits at the first match, and a line written after that
 # kills printf with SIGPIPE. Under pipefail the match then fails, now and then
 # (issue #180).
-said() { grep -qF -- "$1" <<<"$OUT"; }
+said() { grep -qF -- "$1" <<< "$OUT"; }
 logged() { grep -qF -- "$1" "$WORK/bench.log"; }
 
 # ── 1. a fresh clone bootstraps the site ─────────────────────────────────
@@ -302,8 +302,8 @@ run --at 20260101_010101
 cached_rc=$RC
 cached_out="$OUT"
 run --at 20260101_010101 --no-cache
-if [ "$cached_rc" -eq 0 ] && grep -q 'cached .*-database.sql.gz' <<<"$cached_out" &&
-  [ "$RC" -eq 0 ] && grep -q 'fetch .*-database.sql.gz' <<<"$OUT"; then
+if [ "$cached_rc" -eq 0 ] && grep -q 'cached .*-database.sql.gz' <<< "$cached_out" &&
+  [ "$RC" -eq 0 ] && grep -q 'fetch .*-database.sql.gz' <<< "$OUT"; then
   ok "a repeat restore is served from cache, and --no-cache downloads again"
 else
   no "the cache, and --no-cache" "first: $cached_out | --no-cache: $OUT"
