@@ -121,7 +121,11 @@ run_with() {
   export BENCH_LOG="$WORK/bench.log"
   OUT="$(bash "$script" "$@" 2>&1)" && RC=0 || RC=$?
 }
-said() { printf '%s' "$OUT" | grep -qF -- "$1"; }
+# A here-string, never `printf '%s' "$OUT" | grep -q`: printf writes $OUT a line
+# at a time, grep -q exits at the first match, and a line written after that
+# kills printf with SIGPIPE. Under pipefail the match then fails, now and then
+# (issue #180).
+said() { grep -qF -- "$1" <<<"$OUT"; }
 logged() { grep -qF -- "$1" "$WORK/bench.log"; }
 
 # ── 1. a fresh clone bootstraps the site ─────────────────────────────────
@@ -198,7 +202,7 @@ if logged "migrate"; then no "--no-migrate skips it" "migrate still ran"; else o
 # the restored database and take `bench migrate` down with ModuleNotFoundError.
 printf '{"erp.example.com":["frappe","erpnext","hrms","payments"]}' >"$LIST_APPS_JSON"
 run
-if printf '%s' "$OUT" | grep -q "hrms" && printf '%s' "$OUT" | grep -q "bench get-app" && ! logged "migrate"; then
+if said "hrms" && said "bench get-app" && ! logged "migrate"; then
   ok "an app the bench does not have is named, and migrate is held back"
 else
   no "a missing app is named and migrate held back" "$(printf '%s' "$OUT" | tail -3)"
@@ -251,7 +255,7 @@ fi
 
 # ── 12. --list ───────────────────────────────────────────────────────────
 run --list
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202; then
+if [ "$RC" -eq 0 ] && said 20260202_020202; then
   ok "--list shows the available backups"
 else
   no "--list shows the available backups" "rc=$RC out=$OUT"
@@ -261,8 +265,8 @@ fi
 # FRAPPE_BACKUP_SOURCE became FRAPPE_NIX_BACKUP_SOURCE (python-devops-nix docs/conventions.md,
 # Tool-owned variables); the old name is read, with a warning, through 1.x, until frappe-nix 2.0.0.
 FRAPPE_NIX_BACKUP_SOURCE="" FRAPPE_BACKUP_SOURCE="$SRC" run --list
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 20260202_020202 &&
-  printf '%s' "$OUT" | grep -q 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
+if [ "$RC" -eq 0 ] && said 20260202_020202 &&
+  said 'FRAPPE_BACKUP_SOURCE is deprecated; set FRAPPE_NIX_BACKUP_SOURCE'; then
   ok "FRAPPE_BACKUP_SOURCE is still read, with a deprecation warning"
 else
   no "the legacy FRAPPE_BACKUP_SOURCE still works" "rc=$RC out=$OUT"
@@ -298,8 +302,8 @@ run --at 20260101_010101
 cached_rc=$RC
 cached_out="$OUT"
 run --at 20260101_010101 --no-cache
-if [ "$cached_rc" -eq 0 ] && printf '%s' "$cached_out" | grep -q 'cached .*-database.sql.gz' &&
-  [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q 'fetch .*-database.sql.gz'; then
+if [ "$cached_rc" -eq 0 ] && grep -q 'cached .*-database.sql.gz' <<<"$cached_out" &&
+  [ "$RC" -eq 0 ] && grep -q 'fetch .*-database.sql.gz' <<<"$OUT"; then
   ok "a repeat restore is served from cache, and --no-cache downloads again"
 else
   no "the cache, and --no-cache" "first: $cached_out | --no-cache: $OUT"

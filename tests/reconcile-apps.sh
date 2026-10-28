@@ -126,7 +126,7 @@ unset FAIL_APP
 # ── 5. no FRAPPE_SITE and no positional arg: usage + exit 1 ─────────────
 unset FRAPPE_SITE
 run
-if [ "$RC" -eq 1 ] && printf '%s' "$OUT" | grep -qi "usage"; then
+if [ "$RC" -eq 1 ] && grep -qi "usage" <<<"$OUT"; then
   ok "no site given prints usage and exits 1"
 else
   no "no site given exits 1 with usage" "rc=$RC out=$OUT"
@@ -171,7 +171,7 @@ fi
 
 # ── 9. a failed install is named, and the task still succeeds ────────────
 FAIL_APP=hrms FRAPPE_SITE=mysite.local run
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "failed to install: hrms"; then
+if [ "$RC" -eq 0 ] && grep -q "failed to install: hrms" <<<"$OUT"; then
   ok "a failed install is named on stderr"
 else
   no "a failed install is named" "rc=$RC out=$OUT"
@@ -191,7 +191,7 @@ mv "$WORK/apps.txt" "$ROOT/sites/apps.txt"
 # ── 11. every app installed already: a message only when it installed some ─
 printf '{"mysite.local":["frappe"]}' >"$INSTALLED_APPS_JSON"
 FRAPPE_SITE=mysite.local run
-if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q "mysite.local now has every app in sites/apps.txt installed"; then
+if [ "$RC" -eq 0 ] && grep -q "mysite.local now has every app in sites/apps.txt installed" <<<"$OUT"; then
   ok "says so when the site has every app afterwards"
 else
   no "says the site is reconciled" "rc=$RC out=$OUT"
