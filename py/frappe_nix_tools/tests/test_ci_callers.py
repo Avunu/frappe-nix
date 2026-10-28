@@ -269,6 +269,56 @@ class TestDependabot(CallerCase):
 		self.assertEqual(files[".github/zizmor.yml"]["rules"]["dependabot-cooldown"]["config"]["days"], 5)
 		self.assertEqual(files[".github/dependabot.yml"]["updates"][0]["cooldown"]["default-days"], 5)
 
+	def test_ignore_goes_into_the_matching_entries(self) -> None:
+		"""An ecosystem key reaches every managed entry of it, an ecosystem:directory key one
+		entry; both follow the entry's own ignores."""
+		self.write("frontend/package.json", json.dumps({"name": "frontend"}))
+		files = self.render(
+			"[tool.frappe-nix.dependabot.ignore]\n"
+			'npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }]\n'
+			'"npm:/frontend" = [{ dependency-name = "@vitejs/*", update-types = ["version-update:semver-major"] }]\n'
+			'nix = [{ dependency-name = "nixpkgs" }]\n'
+			'"github-actions:/" = [{ dependency-name = "actions/checkout", versions = [">=5", "<7"] }]\n'
+			'"uv:/elsewhere" = [{ dependency-name = "ruff" }]\n'
+		)
+		updates = files[".github/dependabot.yml"]["updates"]
+		entry = {(e["package-ecosystem"], e["directory"]): e for e in updates}
+		tailwind = {"dependency-name": "tailwindcss", "versions": [">=4"]}
+		self.assertEqual(entry["npm", "/"]["ignore"], [tailwind])
+		self.assertEqual(
+			entry["npm", "/frontend"]["ignore"],
+			[tailwind, {"dependency-name": "@vitejs/*", "update-types": ["version-update:semver-major"]}],
+		)
+		self.assertEqual(
+			entry["nix", "/"]["ignore"], [{"dependency-name": "frappe-nix"}, {"dependency-name": "nixpkgs"}]
+		)
+		self.assertEqual(
+			entry["github-actions", "/"]["ignore"],
+			[
+				{"dependency-name": "Avunu/frappe-nix"},
+				{"dependency-name": "actions/checkout", "versions": [">=5", "<7"]},
+			],
+		)
+		# A directory with no managed entry renders nothing.
+		self.assertNotIn("ignore", entry["uv", "/tools"])
+
+	def test_ignore_is_validated(self) -> None:
+		for value, problem in (
+			('{ cargo = [{ dependency-name = "x" }] }', "does not match"),
+			('{ "npm:docs-site" = [{ dependency-name = "x" }] }', "does not match"),
+			('{ npm = [{ versions = [">=4"] }] }', "dependency-name is required"),
+			('{ npm = [{ dependency-name = "x", version = ">=4" }] }', "unknown key"),
+			('{ npm = [{ dependency-name = "x", update-types = ["major"] }] }', "must be one of"),
+			('{ npm = { dependency-name = "x" } }', "expected array"),
+		):
+			with self.subTest(value=value):
+				self.write("pyproject.toml", self.base + f"[tool.frappe-nix.dependabot]\nignore = {value}\n")
+				self.commit()
+				code, _, err = self.fn("sync", "--write")
+				self.assertEqual(code, 2, err)
+				self.assertIn("dependabot.ignore", err)
+				self.assertIn(problem, err)
+
 
 class TestOptIn(AppCase):
 	profile = "minimal"

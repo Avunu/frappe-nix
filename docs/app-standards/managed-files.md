@@ -3,7 +3,7 @@ title: Managed files
 description: "The files frappe-nix keeps in an opted-in app, the [tool.frappe-nix] parameters, and frappe-init --sync and --check."
 order: 2
 tags: [app-standards, sync, managed-files]
-updated: 2026-10-24
+updated: 2026-10-28
 ---
 
 An app that has opted in to the app standards carries a set of tool configs that frappe-nix writes and keeps in step: the flake, the git hooks, the formatter and linter settings, the TypeScript projects, the release-please files and the tool locks. Which of them an app gets is decided by its [profile](profiles.md): every file belongs to a module, and exists only while that module is on. The [interface spec](spec.md) (§2, §3) is the contract this page summarises.
@@ -84,7 +84,7 @@ The CI caller workflows, `.github/dependabot.yml` and `.github/zizmor.yml` ([CI]
 - **block**: only the text between the markers is sync's.
 - **seed**: written once when missing, then the app's (and validated).
 
-**Local regions** sit between `# frappe-nix:local-begin <name>` and `# frappe-nix:local-end <name>`. Sync keeps their content as it is. A region may add, never redefine: a hook id, a dependabot `updates` entry, an EditorConfig section or a flake input that sync already manages is exit 2, as is an unknown, duplicate or unclosed region.
+**Local regions** sit between `# frappe-nix:local-begin <name>` and `# frappe-nix:local-end <name>`. Sync keeps their content as it is. A region may add, never redefine: a hook id, a dependabot `updates` entry, an EditorConfig section or a flake input that sync already manages is exit 2, as is an unknown, duplicate or unclosed region. An `ignore` on a managed dependabot entry comes from `dependabot.ignore` instead ([CI](ci.md)).
 
 **Floors** are versions dependabot moves. Sync never lowers one: a pre-commit `rev:` at or above the floor is kept, a `devDependencies` caret or exact range whose minimum is at or above the floor is kept, and a `tools/uv.lock` version below its floor is drift that `uv lock --upgrade-package` fixes. A `devDependencies` entry that names a tarball, a git ref or a path has no minimum to compare and is left as the app wrote it.
 
