@@ -971,6 +971,53 @@ check(
 )
 os.environ.pop("FRAPPE_DEVGUARD_OBJECTSTORE_MODE")
 
+# From Frappe 16 get_site_config lives in frappe.config, and frappe re-exports
+# it. 17 (develop) makes the re-export lazy, through a module __getattr__, and
+# frappe.init imports it from frappe.config at call time, past frappe's name.
+# On 15, frappe.config is an unrelated package without it.
+
+
+def frappe_and_config(*, lazy):
+	config = types.ModuleType("frappe.config")
+	config.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
+	frappe = types.ModuleType("frappe")
+	if lazy:
+
+		def __getattr__(name):
+			if name != "get_site_config":
+				raise AttributeError(name)
+			sys.modules["frappe.config"] = config
+			frappe.get_site_config = config.get_site_config
+			return config.get_site_config
+
+		frappe.__getattr__ = __getattr__
+	else:
+		sys.modules["frappe.config"] = config
+		frappe.get_site_config = config.get_site_config
+	return frappe, config
+
+
+for _lazy, _label in ((False, "16's eager re-export"), (True, "17's lazy re-export")):
+	_frappe, _config = frappe_and_config(lazy=_lazy)
+	objectstore._patch_get_site_config(_frappe)
+	check(
+		f"{_label}: frappe.get_site_config forces local disk",
+		_frappe.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+	)
+	check(
+		f"{_label}: so does frappe.config's" + (", which 17's frappe.init calls" if _lazy else ""),
+		_config.get_site_config()["cloud_storage_settings"].get("use_local") is True,
+	)
+	del sys.modules["frappe.config"]
+
+_unrelated = types.ModuleType("frappe.config")
+sys.modules["frappe.config"] = _unrelated
+_frappe_stub = types.ModuleType("frappe")
+_frappe_stub.get_site_config = lambda: {"cloud_storage_settings": {"bucket": "prod"}}
+objectstore._patch_get_site_config(_frappe_stub)
+check("15's frappe.config package is left alone", not hasattr(_unrelated, "get_site_config"))
+del sys.modules["frappe.config"]
+
 
 del sys.modules["frappe"]
 

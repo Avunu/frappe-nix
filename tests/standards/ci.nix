@@ -8,7 +8,8 @@
 #                           zizmor.yml apps get) on every one of frappe-nix's
 #                           .github/workflows (N6: every `uses:` SHA-pinned); the fixture's
 #                           callers rendered under recommended, example-org and the gate matrix
-#                           (tests/standards/ci_render.py) through both; fleet-audit.yml is
+#                           (tests/standards/ci_render.py) through both, and each rendered
+#                           dependabot.yml through oxfmt --check; fleet-audit.yml is
 #                           triggered by workflow_call only; and frappe-nix's own release
 #                           wiring (§4.10, §7 N6): pr-policy.yml has one job, `pr-policy`, and
 #                           re-runs on a retitle that check.yml ignores; check.yml's VM tests
@@ -52,6 +53,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           pkgs.actionlint
           pkgs.shellcheck
           pkgs.zizmor
+          pkgs.oxfmt
         ];
       }
       ''
@@ -109,6 +111,9 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             files=(.github/workflows)
             if [ -f .github/dependabot.yml ]; then
               files+=(.github/dependabot.yml)
+              # §2.17: the rendered file is oxfmt's output at the app's width.
+              printf '{"useTabs": true, "printWidth": 110}\n' > .oxfmtrc.json
+              oxfmt --check .github/dependabot.yml
             fi
             zizmor --offline --config .github/zizmor.yml "''${files[@]}"
           )

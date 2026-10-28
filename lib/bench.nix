@@ -470,8 +470,15 @@ let
       [ -f $TMPDIR/bench/sites/common_site_config.json ] \
         || echo '{}' > $TMPDIR/bench/sites/common_site_config.json
 
+      # --force: build frappe's assets rather than first trying frappe's
+      # prebuilt ones. That download finds its release tag with git in
+      # apps/frappe, which is no repository here, and requests a URL made of
+      # the error. Given the right tag it would still fail, since the sandbox
+      # has no network, and frappe's archive is not built with ESBUILD_TARGET
+      # or the preload anyway. The flag also recompiles translations that are
+      # already current, and a fresh sites/assets/locale has none.
       cd $TMPDIR/bench
-      ${prodPythonEnv}/bin/bench build --production 2>&1
+      ${prodPythonEnv}/bin/bench build --production --force 2>&1
 
       runHook postBuild
     '';

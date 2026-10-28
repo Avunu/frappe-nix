@@ -630,7 +630,7 @@ Files whose entry isn't live MUST NOT exist. Sync deletes them (and retracts mer
 | `.github/workflows/deps.yml` | whole | `ci` and `dependabot` | `dependabot.auto-merge`, `ci.schedules.deps-sweep`, `ci.schedules.deps-relock`, `repo-policy.merge-methods` | N4 |
 | `.github/workflows/nightly.yml` | whole | `ci` (`ci.nightly`) | `ci.schedules.nightly`; the nightly job switches (§4.6) | N4 |
 | `.github/workflows/assets.yml` | whole; the pilot SHA is a floor (preserved) | `pilot-assets` | none | N4 |
-| `.github/dependabot.yml` | whole + local region `updates` | `dependabot` | `dependabot.ecosystems`, `dependabot.cadence`, `dependabot.cooldown-days`, `docs-site.action-patterns`, `docs-site.cooldown-exclude-actions`, `docs-site.package-names` | N4 |
+| `.github/dependabot.yml` | whole + local region `updates` | `dependabot` | `dependabot.ecosystems`, `dependabot.cadence`, `dependabot.cooldown-days`, `dependabot.ignore`, `docs-site.action-patterns`, `docs-site.cooldown-exclude-actions`, `docs-site.package-names` | N4 |
 | `.github/zizmor.yml` | whole | `workflow-lint` (when there is a workflow or `dependabot.yml` to audit) | none | N4 |
 | `marketplace/shots.d.ts` | whole | `screenshots` (`discover.has_shots`) | none | N5 |
 | `marketplace/semgrep-baseline.json` | seed `{"schema":1,"findings":[]}` and validated (§5.2) | `listing` | none | N5 |
@@ -1387,7 +1387,14 @@ Module `releases` (`releases.tool = "release-please"`, the only tool in v1). Pro
 
 ### 2.17 `.github/dependabot.yml` (whole + local region `updates`)
 
-Module `dependabot`. Profile values: `dependabot.ecosystems` (one switch per ecosystem below), `dependabot.cadence` (`"weekly"` in `recommended`, `"daily"` in the Avunu profile) and `dependabot.cadence-overrides` (per ecosystem), `dependabot.cooldown-days` (3), and, when `docs-site` is on, `docs-site.action-patterns` (the `docs-actions` group and auto-merge patterns), `docs-site.cooldown-exclude-actions` (the github-actions entry's cooldown `exclude`, exact names) and `docs-site.package-names` (the `/docs-site` npm entry's cooldown `exclude`). All three are empty in `recommended`. The Avunu profile leaves the module off, because its documentation is built by Avunu/site-docs and not by a `docs-site/` in each app (until 2026-10 it set `["Avunu/docusystem*"]`, `["Avunu/docusystem"]` and `["@avunu/docusystem"]` for docusystem, the npm package that built those sites). The group takes glob patterns, while a docs tool's own check may expect an exact name in the cooldown exclude (docusystem's `doctor` tested `excludes.includes("Avunu/docusystem")`), so the two are separate parameters. Each entry is rendered only when its ecosystem switch is on (and, as before, its `{% if %}` fact holds). `{{ cadence(<ecosystem>) }}` is the override for that ecosystem, else `dependabot.cadence`; a `weekly` cadence renders `day: monday`.
+Module `dependabot`. Profile values: `dependabot.ecosystems` (one switch per ecosystem below), `dependabot.cadence` (`"weekly"` in `recommended`, `"daily"` in the Avunu profile) and `dependabot.cadence-overrides` (per ecosystem), `dependabot.cooldown-days` (3), `dependabot.ignore` (`{}`; below), and, when `docs-site` is on, `docs-site.action-patterns` (the `docs-actions` group and auto-merge patterns), `docs-site.cooldown-exclude-actions` (the github-actions entry's cooldown `exclude`, exact names) and `docs-site.package-names` (the `/docs-site` npm entry's cooldown `exclude`). All three are empty in `recommended`. The Avunu profile leaves the module off, because its documentation is built by Avunu/site-docs and not by a `docs-site/` in each app (until 2026-10 it set `["Avunu/docusystem*"]`, `["Avunu/docusystem"]` and `["@avunu/docusystem"]` for docusystem, the npm package that built those sites). The group takes glob patterns, while a docs tool's own check may expect an exact name in the cooldown exclude (docusystem's `doctor` tested `excludes.includes("Avunu/docusystem")`), so the two are separate parameters. Each entry is rendered only when its ecosystem switch is on (and, as before, its `{% if %}` fact holds). `{{ cadence(<ecosystem>) }}` is the override for that ecosystem, else `dependabot.cadence`; a `weekly` cadence renders `day: monday`.
+
+`dependabot.ignore` adds Dependabot `ignore` conditions to the managed entries, because the `updates` region can add an entry but never redefine one. Its keys are an ecosystem, which reaches every managed entry of that ecosystem, or `<ecosystem>:<directory>`, which reaches the one entry for that directory (`"npm:/docs-site"`). The directory is one a managed entry can have: `/` for every ecosystem but uv, `/tools` for uv, and `/<dir>` (one path segment, no trailing slash) for npm; any other is exit 2. Each value is a list of conditions with `dependency-name` (required), `versions` and `update-types`, as Dependabot reads them; any other key is exit 2. An entry gets its own ignores first, then the ecosystem's, then its directory's. A key whose entry isn't rendered renders nothing, so a profile can name `/docs-site` for the apps that have one. An app's own `"npm:/<dir>"` key that names no managed npm entry is a sync notice, which catches a mistyped directory. An app keeps a deliberate major cap this way:
+
+```toml
+[tool.frappe-nix.dependabot]
+ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }
+```
 
 ```yaml
 # frappe-nix:managed — generated by frappe-nix (`frappe-init --sync`); edit only inside the frappe-nix:local region.
@@ -1410,6 +1417,7 @@ updates:
     # frappe-nix's reusable workflows move only through `frappe-nix repo rollout` and `frappe-init --sync` (S5)
     ignore:
       - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
+{{ ignore_items("github-actions", "/") }}
     groups:
 {% if docs_actions %}
       docs-actions:             # needs-review: a merge publishes the docs site with the new workflow code
@@ -1431,6 +1439,7 @@ updates:
     cooldown: { default-days: {{ cfg.dependabot["cooldown-days"] }} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("npm", "/") }}
     groups:
       toolchain:
         patterns: [oxlint, oxfmt, typescript, frappe-types, "@types/node", "stylelint*"]
@@ -1446,6 +1455,7 @@ updates:
     cooldown: { default-days: {{ cfg.dependabot["cooldown-days"] }} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("npm", "/" ~ d) }}
     groups:
       {{ d }}: { patterns: ["*"], update-types: [minor, patch] }
 {% endfor %}
@@ -1458,6 +1468,7 @@ updates:
     cooldown: { default-days: 7{% if docs_packages %}, exclude: {{ docs_packages | tojson }}{% endif %} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("npm", "/docs-site") }}
     groups:
       docs-site-packages: { patterns: ["*"] }
 {% endif %}
@@ -1470,6 +1481,7 @@ updates:
     cooldown: { default-days: {{ cfg.dependabot["cooldown-days"] }} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("uv", "/tools") }}
     groups:
       tools: { patterns: ["*"], update-types: [minor, patch] }
 {% endif %}
@@ -1481,6 +1493,7 @@ updates:
     cooldown: { default-days: {{ cfg.dependabot["cooldown-days"] }} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("pre-commit", "/") }}
     groups:
       hooks:
         patterns: ["*"]
@@ -1504,6 +1517,7 @@ updates:
 {% if profile.source != "builtin" %}
       - dependency-name: standards-profile
 {% endif %}
+{{ ignore_items("nix", "/") }}
     groups:
       flake-inputs: { patterns: ["*"] }
 {% endif %}
@@ -1515,12 +1529,13 @@ updates:
     cooldown: { default-days: {{ cfg.dependabot["cooldown-days"] }} }
     commit-message: { prefix: chore, include: scope }
     labels: [dependencies]
+{{ ignore("gitsubmodule", "/") }}
 {% endif %}
   # frappe-nix:local-begin updates
   # frappe-nix:local-end updates
 ```
 
-`docs_actions`, `docs_cooldown_exclude` and `docs_packages` are `docs-site.action-patterns`, `docs-site.cooldown-exclude-actions` and `docs-site.package-names` when `docs-site` is on, else empty lists; `pilot_patterns` is `["frappe/pilot*"]` when `pilot-assets` is on. `package_json_live`, `tools_live` and `precommit_has_remote_hooks` say whether those files are live and whether the pre-commit config has a remote `repo:` block. The github-actions ignore names the repository the app locks frappe-nix from (`Avunu/frappe-nix`, or a fork set through `dev-shell.frappe-nix-url`), read from `flake.lock`; frappe-nix's own repository is the one org name a built-in template may contain (S37).
+`docs_actions`, `docs_cooldown_exclude` and `docs_packages` are `docs-site.action-patterns`, `docs-site.cooldown-exclude-actions` and `docs-site.package-names` when `docs-site` is on, else empty lists; `pilot_patterns` is `["frappe/pilot*"]` when `pilot-assets` is on. `package_json_live`, `tools_live` and `precommit_has_remote_hooks` say whether those files are live and whether the pre-commit config has a remote `repo:` block. `ignore_items(<ecosystem>, <directory>)` is that entry's `dependabot.ignore` conditions, one list item each, with string values JSON-quoted and `versions` and `update-types` as block sequences, which oxfmt keeps at any length; `ignore(<ecosystem>, <directory>)` is the same under an `ignore:` key, or nothing when there are none. The github-actions ignore names the repository the app locks frappe-nix from (`Avunu/frappe-nix`, or a fork set through `dev-shell.frappe-nix-url`), read from `flake.lock`; frappe-nix's own repository is the one org name a built-in template may contain (S37).
 
 The rendered output is expanded to block style by oxfmt's rules; the template stores the oxfmt-formatted result. Major npm and uv updates arrive as individual PRs, because the groups only take minor and patch updates. `deps.yml` labels them `needs-review`.
 
@@ -3522,7 +3537,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `hygiene` | pre-commit-hooks basics, `.git-blame-ignore-revs` (§2.20) | `max-file-kb` (int, 1024) | — | off | on | on |
 | `commits` | `committed.toml`, commit-msg hooks, `pr-policy` (§2.15, §4.3) | `tool` ("committed", "committed"); `allowed-types` (list, frappe's commitlint types); `subject-length` (int, 100); `allow-stacked` (bool, true); `pr-allowed-bases` (list of globs, []) (§5.9) | — | off | on | on (`allow-stacked = false`) |
 | `releases` | release-please config and manifest, the version block, `release.yml`, C1, C5 (§2.13, §2.16, §4.4) | `tool` ("release-please"\|"none", "release-please"); `branching` ("develop+version"\|"main+tags", "develop+version"); `version-scheme` ("semver"\|"frappe-major", "semver"); `tag-prefix` ("v"\|"", "v") | `commits` | off | on | on (`version-scheme = "frappe-major"`) |
-| `dependabot` | `.github/dependabot.yml`, `deps.yml` (§2.17, §4.5) | `cadence` ("daily"\|"weekly"\|"monthly", "weekly"); `cadence-overrides` (table ecosystem → cadence, `{}`); `cooldown-days` (int, 3); `auto-merge` (bool, true; acts only where required checks protect the integration branch, §4.5); `ecosystems` (table of bools: `github-actions`, `npm`, `uv`, `pre-commit`, `nix`, `gitsubmodule`; all true) | — | off | on | on (`cadence = "daily"`, overrides below) |
+| `dependabot` | `.github/dependabot.yml`, `deps.yml` (§2.17, §4.5) | `cadence` ("daily"\|"weekly"\|"monthly", "weekly"); `cadence-overrides` (table ecosystem → cadence, `{}`); `cooldown-days` (int, 3); `ignore` (table ecosystem or `<ecosystem>:<directory>` → list of Dependabot ignore conditions, `{}`; §2.17); `auto-merge` (bool, true; acts only where required checks protect the integration branch, §4.5); `ecosystems` (table of bools: `github-actions`, `npm`, `uv`, `pre-commit`, `nix`, `gitsubmodule`; all true) | — | off | on | on (`cadence = "daily"`, overrides below) |
 | `ci` | the caller workflows (§4.7) and so every gate job | `provider` ("github", "github"; other values reserved); `nightly` (bool, true); `test-timeout-minutes` (int, 75); `runs-on` (a runner label or a list of labels, unset: the reusable workflows' `ubuntu-latest`; a fork's PR always runs there, §4.2 "Runner"); `schedules` (table of cron strings, `""` = none: `ci` "0 6 * * *", `release` "30 5 * * *", `deps-sweep` "0 9 * * *", `deps-relock` "0 8 * * 1", `nightly` "0 7 * * *") | — | off | on | on |
 | `repo-policy` | rulesets and repo settings applied by `frappe-nix repo apply`; audit A1, A3 (§4.8, §4.9) | `required-approvals` (int, 1); `require-code-owner-review` (bool, false); `required-checks` ("gates" or a list of gate names, "gates"); `release-bypass` ("github-actions" or "user:<id>", "github-actions"); `secret-scanning` (bool, true); `merge-methods` (list of "squash"\|"merge"\|"rebase", ["squash"]); `require-thread-resolution` (bool, true); `delete-branch-on-merge` (bool, true); `manage-default-branch` (bool, true); `manage-features` (bool, true) | — | off | off | on (`required-approvals = 0`) |
 | `vite-register` | `scripts/vite-register.mjs` and C8, when Vite exists (§5.11) | none | — | off | on | on |
