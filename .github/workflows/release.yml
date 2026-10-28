@@ -137,7 +137,15 @@ jobs:
           git -C "$app" init -q
           git -C "$app" add -A
           git -C "$app" -c user.name=ci -c user.email=ci@example.com commit -qm fixture
-          (cd "$app" && frappe-nix sync --write --offline && git add -A && frappe-nix sync --check)
+          (cd "$app" && frappe-nix sync --write --offline)
+          # A major's first release moves flake.nix's frappe-nix input to release-<major>, and
+          # offline the sync cannot relock: point the fixture lock's original at that branch
+          # (its locked rev is a fixed old commit either way).
+          major="$(cut -d. -f1 version.txt)"
+          lock="$app/flake.lock"
+          jq --indent 2 --arg ref "release-$major" '.nodes["frappe-nix"].original.ref = $ref' "$lock" > "$lock.new"
+          mv "$lock.new" "$lock"
+          (cd "$app" && git add -A && frappe-nix sync --check)
           git -C "$app" diff --cached --binary > "$RUNNER_TEMP/fixture.patch"
           if [ -s "$RUNNER_TEMP/fixture.patch" ]; then
             git apply --index --directory=tests/fixtures/standards-app "$RUNNER_TEMP/fixture.patch"
