@@ -15,7 +15,7 @@ from unittest import mock
 
 from frappe_nix_tools import bench_cli
 from frappe_nix_tools.restore import backup_layout, command
-from frappe_nix_tools.restore.args import RestoreArgs, UsageError, parse_args
+from frappe_nix_tools.restore.args import USAGE, RestoreArgs, UsageError, parse_args
 from frappe_nix_tools.restore.config import ENV, ConfigError, load, parse
 
 RESTORE = {
@@ -114,6 +114,14 @@ class TestArgs(unittest.TestCase):
 		self.assertTrue(parse_args(["--at", "x", "-h", "a", "b"]).help)
 		with self.assertRaises(UsageError):
 			parse_args(["a", "b", "--help"])
+
+	def test_help_reads_no_configuration(self):
+		out = io.StringIO()
+		with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(out):
+			self.assertEqual(command.main(["--at", "x", "--help"]), 0)
+		self.assertEqual(out.getvalue(), USAGE)
+		with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()):
+			self.assertEqual(command.main(["--list"]), 2)
 
 	def test_click_keeps_a_leading_double_dash(self):
 		seen = []

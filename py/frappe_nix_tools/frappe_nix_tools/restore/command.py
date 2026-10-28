@@ -439,10 +439,6 @@ def restore_fetched(args: RestoreArgs, cfg: RestoreConfig, site: str) -> None:
 
 def restore(argv: list[str], cfg: RestoreConfig) -> int:
 	args = parse_args(argv)
-	if args.help:
-		print(USAGE, end="")
-		return 0
-
 	root = os.environ.get("FRAPPE_BENCH_ROOT")
 	if not root:
 		fail(f"{PREFIX}: FRAPPE_BENCH_ROOT is not set; run this from the dev shell.")
@@ -463,6 +459,12 @@ def restore(argv: list[str], cfg: RestoreConfig) -> int:
 
 def main(argv: list[str]) -> int:
 	try:
+		# Before the configuration is read, so the usage prints outside the dev
+		# shell too: python-devops-nix's command-flags check runs it in the
+		# build sandbox (tests/conventions.nix).
+		if parse_args(argv).help:
+			print(USAGE, end="")
+			return 0
 		return restore(argv, load().restore)
 	except UsageError as e:
 		print(f"{PREFIX}: {e}", file=sys.stderr)
