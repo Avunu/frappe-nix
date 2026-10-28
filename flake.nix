@@ -38,8 +38,9 @@
       inputs.flake-parts.follows = "flake-parts";
     };
 
-    # The pieces frappe-nix shares with odoo-nix: the secrets toolkit, the
-    # backup fetch layer and the repository checks
+    # The pieces frappe-nix shares with odoo-nix, as its lib: the dev shell's
+    # tools, the NixOS module's production pieces, the container image parts,
+    # the secrets toolkit, the backup fetch layer and the repository checks
     # (https://github.com/Avunu/python-devops-nix). Its own inputs are nixpkgs
     # and flake-parts, both followed, so it adds one node to the lock.
     python-devops-nix = {
