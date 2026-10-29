@@ -377,7 +377,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -516,7 +516,7 @@ jobs:
         with:
           node-version-file: package.json
 
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -554,7 +554,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -605,7 +605,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir

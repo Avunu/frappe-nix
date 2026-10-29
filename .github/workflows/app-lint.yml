@@ -121,7 +121,7 @@ jobs:
       - if: steps.files.outputs.node == 'true'
         run: yarn install --frozen-lockfile --non-interactive
 
-      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           # Saving the cache uploads it to GitHub; from a self-hosted runner that
           # is slow (100+ MB) and outlasts the job, so only hosted runners save it.
