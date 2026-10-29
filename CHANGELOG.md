@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.0.0](https://github.com/Avunu/frappe-nix/compare/v1.5.0...v2.0.0) (2026-10-29)
+
+
+### Features
+
+* **bench:** a bare bench install-app opens the store as its picker ([#217](https://github.com/Avunu/frappe-nix/issues/217)) ([a0610bc](https://github.com/Avunu/frappe-nix/commit/a0610bcc9e0d742fff4da8b31743f0d5df42fdbd))
+* **cli:** stop reading the 1.x environment variables and flags (FRAPPE_* renamed to FRAPPE_NIX_*, the scheduler guard names, frappe-init --frappe-version and --site, provision-site, lib.frappeSecrets, the pythonOverrides fixes); see docs/development/upgrading.md, 1.x to 2.0, step 4 ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+* **containers:** the images run as frappe, uid and gid 1000, by default (containers.nonRoot); chown the volumes a root image wrote once, see docs/development/upgrading.md, 1.x to 2.0, step 7 ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+* **devenv:** remove the 1.x dev shell option aliases (benchName, siteName, restore.withFiles, runtime.dev, assets.reassert, devguard.mail, devguard.scheduler) and containers.aliases; see docs/development/upgrading.md, 1.x to 2.0, step 2 ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+* **nixos:** remove services.frappe, extraConfig and extraConfigFiles, and make db_name and db_type module-owned in sites.&lt;fqdn&gt;.settings; see docs/development/upgrading.md, 1.x to 2.0, step 3 ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+* **nixos:** services.frappe-nix.hardening.enable defaults to true, so every unit runs under python-devops-nix's hardening baseline; see docs/development/upgrading.md, 1.x to 2.0, step 6 ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+* **standards:** add dependabot.ignore for ignore conditions on the managed Dependabot entries ([#207](https://github.com/Avunu/frappe-nix/issues/207)) ([ae1b903](https://github.com/Avunu/frappe-nix/commit/ae1b90370dd9def432126056eda82d732790c92f))
+* turn on hardening and non-root images by default, and remove every 1.x alias ([#212](https://github.com/Avunu/frappe-nix/issues/212)) ([ef2b600](https://github.com/Avunu/frappe-nix/commit/ef2b600928c47e5197ff36d05c4fdc5acd5a1434))
+
+
+### Bug Fixes
+
+* **assets:** skip frappe's prebuilt-asset download in builtBench ([#210](https://github.com/Avunu/frappe-nix/issues/210)) ([d455ecf](https://github.com/Avunu/frappe-nix/commit/d455ecf502e37f9a9a28eb25e6fbe004be6585d1))
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#218](https://github.com/Avunu/frappe-nix/issues/218)) ([0d0a42a](https://github.com/Avunu/frappe-nix/commit/0d0a42ad07c8a67276bbe26beed2158ac748de0c))
+* **deps:** bump the github-actions group with 2 updates ([#220](https://github.com/Avunu/frappe-nix/issues/220)) ([c9ecc01](https://github.com/Avunu/frappe-nix/commit/c9ecc01a7c40d6de9e19ff58c6a3ae93f6a79b1f))
+* **devguard:** force cloud_storage's local mode where frappe.init reads frappe.config ([#204](https://github.com/Avunu/frappe-nix/issues/204)) ([71a59a9](https://github.com/Avunu/frappe-nix/commit/71a59a99229a863cd2a4fe2cf23362f56c26bd17))
+* **relock:** lock frappe-runtime at the frappe-nix revision flake.lock pins, not the branch head ([#214](https://github.com/Avunu/frappe-nix/issues/214)) ([2af12d1](https://github.com/Avunu/frappe-nix/commit/2af12d17bd96ef0637a0279dc0847c2a20251235))
+* **restore:** print bench restore --help before reading the configuration, so the usage reads without FRAPPE_NIX_CLI_CONFIG and python-devops-nix's command-flags check can run it in the build sandbox ([b11ccbe](https://github.com/Avunu/frappe-nix/commit/b11ccbe6b242cd03351a6133daee7e7d8afa47c9))
+
 ## [1.5.0](https://github.com/Avunu/frappe-nix/compare/v1.4.1...v1.5.0) (2026-10-28)
 
 
