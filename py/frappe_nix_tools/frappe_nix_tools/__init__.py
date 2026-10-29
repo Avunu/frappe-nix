@@ -1,5 +1,5 @@
 """frappe-nix-tools: frappe-nix's app standards tools (docs/app-standards/spec.md)."""
 
 # x-release-please-start-version
-__version__ = "1.5.0"
+__version__ = "2.0.0"
 # x-release-please-end
