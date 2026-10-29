@@ -23,7 +23,7 @@ from typing import Any
 
 from frappe_nix_tools import cli
 from frappe_nix_tools.common import config, schema
-from frappe_nix_tools.scaffold import engine, manifest
+from frappe_nix_tools.scaffold import context, engine, manifest
 from frappe_nix_tools.scaffold.fixtures import CONTEXTS
 
 BASE = """[project]
@@ -141,7 +141,7 @@ def snapshot(root: Path) -> dict[str, bytes]:
 def lock(apps: list[str]) -> dict:
 	nodes: dict = {}
 	for name, owner, ref in [
-		("frappe-nix", "Avunu", "release-1"),
+		("frappe-nix", "Avunu", context.default_frappe_nix_url().rpartition("/")[2]),
 		*[(a, "frappe", "version-16") for a in apps],
 	]:
 		nodes[name] = {
