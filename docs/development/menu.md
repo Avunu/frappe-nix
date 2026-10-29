@@ -21,6 +21,8 @@ The menu changes nothing itself. Everything it does is a `bench …` command lin
 
 ## The store
 
+A bare `bench install-app`, typed at a terminal in a bench, opens the store alone, without the tabs, as its picker. Everything below works the same there, and `q` leaves it. With an app named it is the real `bench install-app`.
+
 The catalog is frappe-nix-tools' `frappe-apps.json`: the marketplace registry's apps, with each release's Frappe range and the apps it needs, and the frappe organisation's apps that are not listed (webshop, newsletter, …). `frappe-nix apps-catalog sync` rewrites it, and a weekly workflow opens a pull request when it changes.
 
 For the bench's Frappe (`apps/frappe`'s version) each app gets a branch: its `version-<n>` branch; else the branch of a registry release whose range holds the version; else, on a develop bench, `develop`. An app with none of these is listed, dimmed, with the branches it has.

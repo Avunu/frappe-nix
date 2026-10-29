@@ -240,6 +240,34 @@ class AppTest(unittest.IsolatedAsyncioTestCase):
 		finally:
 			shutil.rmtree(root)
 
+	async def test_store_alone(self):
+		# The picker a bare `bench install-app` opens (`--only store`).
+		root = bench()
+		try:
+			data = {k: v for k, v in SPEC.items() if k not in ("stack", "commands")}
+			data["plugin"] = {**SPEC["plugin"], "config": {"catalog": str(root / "catalog.json")}}
+			app = DevTui(data, {"benchRoot": str(root), "port": "8000"}, only="store")
+			async with app.run_test(size=(160, 50)) as pilot:
+				self.assertEqual(list(app.query("TabPane")), [])
+				self.assertEqual(app.sub_title, "frappe-nix: add apps")
+				view = app.query_one(StoreView)
+				table = view.query_one("#store-table", DataTable)
+				for _ in range(100):
+					await pilot.pause(0.05)
+					if app.focused is table:
+						break
+				self.assertIs(app.focused, table)
+				view.query_one("#store-search", Input).value = "helpdesk"
+				for _ in range(100):
+					await pilot.pause(0.05)
+					if len(view.rows) == 1:
+						break
+				table.focus()
+				await pilot.press("space")
+				self.assertEqual(view.adds, ["helpdesk"])
+		finally:
+			shutil.rmtree(root)
+
 
 if __name__ == "__main__":
 	unittest.main(argv=[sys.argv[0], "-v"])

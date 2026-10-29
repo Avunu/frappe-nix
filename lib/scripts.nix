@@ -98,6 +98,12 @@ let
       ''echo "bench ui: this shell has no menu." >&2; exit 1''
     else
       ''exec ${tui} "$@"'';
+  # A bare `bench install-app` at a terminal: the store alone, as its picker.
+  # A bench's only: an app repository's siblings are flake inputs, and there
+  # it stays upstream's usage error.
+  store = lib.optionalString (tui != null && !appMode) ''
+    if [ "$#" -eq 1 ] && [ -t 0 ] && [ -t 1 ]; then exec ${tui} --only store; fi
+  '';
 
   # Every bench command runs from the bench root. Not a convenience: the bench
   # CLI resolves its bench by walking *up* from cwd (bench/cli.py's
@@ -440,6 +446,8 @@ secretScripts
         # interactive; `bench provision` stays the create-and-install-all flow.
         shift
         exec ${benchBin} new-site --db-socket "$FRAPPE_DB_SOCKET" --db-root-username root "$@" ;;
+      install-app)
+        ${store}exec ${benchBin} "$@" ;;
       *)           exec ${benchBin} "$@" ;;
     esac
   '';
