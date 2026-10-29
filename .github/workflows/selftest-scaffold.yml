@@ -26,8 +26,8 @@ name: selftest-scaffold
 #              shape, which has to relock and re-enter through the app's dev
 #              shell: --check is clean right after, and the locks exist.
 #   real-lock  `frappe-init --app --standards recommended` on a bare app with no
-#              override: before release-1 exists it refuses (exit 3) with the
-#              tree untouched, after it locks release-1.
+#              override: before release-<major> exists it refuses (exit 3) with
+#              the tree untouched, after it locks release-<major>.
 #   no-nix     `uv tool install` from a clone with no checkout left on disk, then
 #              `frappe-nix sync --check` and `frappe-nix compat` on the fixture:
 #              the package is self-contained (S10). Then the fixture on the in-repo
@@ -376,7 +376,7 @@ jobs:
             nix flake lock --refresh
             rm -rf .git
           else
-            sed -i 's|github:Avunu/frappe-nix/release-1|github:Avunu/frappe-nix|' flake.nix
+            sed -i -E 's|github:Avunu/frappe-nix/release-[0-9]+|github:Avunu/frappe-nix|' flake.nix
             git init -q && git add -A
             nix flake lock --refresh
             rm -rf .git
@@ -478,13 +478,14 @@ jobs:
           "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --standards recommended --version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
           code="${PIPESTATUS[0]}"
           set -e
-          if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix release-1 > /dev/null; then
-            [ "$code" = 0 ] || { echo "::error::frappe-init --app exited $code with release-1 present"; exit 1; }
-            grep -q '"ref": "release-1"' flake.lock || { echo "::error::flake.lock is not on release-1"; exit 1; }
+          release="release-$(cut -d. -f1 "$GITHUB_WORKSPACE/version.txt")"
+          if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix "$release" > /dev/null; then
+            [ "$code" = 0 ] || { echo "::error::frappe-init --app exited $code with $release present"; exit 1; }
+            grep -q "\"ref\": \"$release\"" flake.lock || { echo "::error::flake.lock is not on $release"; exit 1; }
           else
-            # Before v1.0.0 (S32): refused up front, nothing written or staged.
-            [ "$code" = 3 ] || { echo "::error::frappe-init --app exited $code, not 3, without release-1"; exit 1; }
-            grep -q 'has no release-1 branch yet' "$RUNNER_TEMP/app.log"
+            # Before a major's first release (S32): refused up front, nothing written or staged.
+            [ "$code" = 3 ] || { echo "::error::frappe-init --app exited $code, not 3, without $release"; exit 1; }
+            grep -q "has no $release branch yet" "$RUNNER_TEMP/app.log"
             [ -z "$(git status --porcelain)" ] || { echo "::error::the refused run changed the tree"; git status; exit 1; }
           fi
 

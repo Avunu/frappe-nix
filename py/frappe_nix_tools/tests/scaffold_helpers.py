@@ -10,6 +10,7 @@ from typing import ClassVar
 from unittest import mock
 
 from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
+from frappe_nix_tools.scaffold import context
 from helpers import run_cli
 
 PYPROJECT = """[project]
@@ -113,6 +114,8 @@ def git(root: Path, *args: str) -> str:
 
 
 REV = "a" * 40
+# The branch a rendered flake.nix tracks: release-<major> of this frappe-nix-tools.
+RELEASE = context.default_frappe_nix_url().rpartition("/")[2]
 
 
 def _github(owner: str, repo: str, ref: str, rev: str = REV) -> dict:
@@ -123,8 +126,8 @@ def _github(owner: str, repo: str, ref: str, rev: str = REV) -> dict:
 
 
 def flake_lock(apps: list[str], refs: dict[str, str] | None = None) -> dict:
-	"""A lock with frappe-nix on release-1 and each app on version-16 (or ``refs[app]``)."""
-	nodes: dict = {"frappe-nix": _github("Avunu", "frappe-nix", "release-1")}
+	"""A lock with frappe-nix on ``RELEASE`` and each app on version-16 (or ``refs[app]``)."""
+	nodes: dict = {"frappe-nix": _github("Avunu", "frappe-nix", RELEASE)}
 	for app in apps:
 		owner, _, name = app.rpartition("/")
 		nodes[name] = _github(owner or "frappe", name, (refs or {}).get(name, "version-16"), "b" * 40)

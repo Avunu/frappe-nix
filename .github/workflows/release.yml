@@ -7,10 +7,11 @@ name: release
 #                   tags vX.Y.Z (version.txt and both frappe-nix-tools version locations move
 #                   together, release-please-config.json);
 #   fixture         the release PR moves frappe-nix-tools' version, which the caller workflows
-#                   of tests/fixtures/standards-app record (`@<sha> # v<version>`), so it
-#                   re-renders the fixture offline with the PR's own tools and pushes the
-#                   result to the PR branch: every commit on main, the release's included,
-#                   keeps a fixture that `frappe-nix sync --check` passes;
+#                   of tests/fixtures/standards-app record (`@<sha> # v<version>`), as a
+#                   new major moves both fixtures' flake.nix to release-<major>, so it
+#                   re-renders them offline with the PR's own tools and pushes the result
+#                   to the PR branch: every commit on main, the release's included, keeps
+#                   fixtures that `frappe-nix sync --check` passes;
 #   dispatch-ci     a GITHUB_TOKEN push raises no event, so it dispatches check.yml (without
 #                   inputs: `lint` and `flake`, no VM tests), pr-policy.yml and docs.yml (the
 #                   main ruleset's required `build / Check`) on the release PR, each only
@@ -128,29 +129,31 @@ jobs:
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
       - if: steps.pr.outputs.head != ''
-        name: Re-render the fixture with the release PR's frappe-nix-tools
+        name: Re-render the fixtures with the release PR's frappe-nix-tools
         run: |
           set -euo pipefail
           uv tool install --python 3.14 ./py/frappe_nix_tools
-          app="$RUNNER_TEMP/app"
-          cp -r tests/fixtures/standards-app "$app"
-          git -C "$app" init -q
-          git -C "$app" add -A
-          git -C "$app" -c user.name=ci -c user.email=ci@example.com commit -qm fixture
-          (cd "$app" && frappe-nix sync --write --offline)
-          # A major's first release moves flake.nix's frappe-nix input to release-<major>, and
-          # offline the sync cannot relock: point the fixture lock's original at that branch
-          # (its locked rev is a fixed old commit either way).
           major="$(cut -d. -f1 version.txt)"
-          lock="$app/flake.lock"
-          jq --indent 2 --arg ref "release-$major" '.nodes["frappe-nix"].original.ref = $ref' "$lock" > "$lock.new"
-          mv "$lock.new" "$lock"
-          (cd "$app" && git add -A && frappe-nix sync --check)
-          git -C "$app" diff --cached --binary > "$RUNNER_TEMP/fixture.patch"
-          if [ -s "$RUNNER_TEMP/fixture.patch" ]; then
-            git apply --index --directory=tests/fixtures/standards-app "$RUNNER_TEMP/fixture.patch"
-            git diff --cached --stat
-          fi
+          for fixture in standards-app spa-app; do
+            app="$RUNNER_TEMP/$fixture"
+            cp -r "tests/fixtures/$fixture" "$app"
+            git -C "$app" init -q
+            git -C "$app" add -A
+            git -C "$app" -c user.name=ci -c user.email=ci@example.com commit -qm fixture
+            (cd "$app" && frappe-nix sync --write --offline)
+            # A major's first release moves flake.nix's frappe-nix input to release-<major>, and
+            # offline the sync cannot relock: point the fixture lock's original at that branch
+            # (its locked rev is a fixed old commit either way).
+            lock="$app/flake.lock"
+            jq --indent 2 --arg ref "release-$major" '.nodes["frappe-nix"].original.ref = $ref' "$lock" > "$lock.new"
+            mv "$lock.new" "$lock"
+            (cd "$app" && git add -A && frappe-nix sync --check)
+            git -C "$app" diff --cached --binary > "$RUNNER_TEMP/$fixture.patch"
+            if [ -s "$RUNNER_TEMP/$fixture.patch" ]; then
+              git apply --index --directory="tests/fixtures/$fixture" "$RUNNER_TEMP/$fixture.patch"
+            fi
+          done
+          git diff --cached --stat
 
       - if: steps.pr.outputs.head != ''
         name: Commit and push to the release PR branch
@@ -164,7 +167,7 @@ jobs:
             exit 0
           fi
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -m "test: render the standards fixture for v$(cat version.txt)"
+            commit -m "test: render the standards fixtures for v$(cat version.txt)"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$HEAD_REF"
 
   dispatch-ci:

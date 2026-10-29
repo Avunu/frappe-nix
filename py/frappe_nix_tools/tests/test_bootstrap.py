@@ -20,7 +20,7 @@ from frappe_nix_tools.commands import sync
 from frappe_nix_tools.common.report import EnvError
 from frappe_nix_tools.frappe_init.args import parse_args
 from frappe_nix_tools.scaffold import bootstrap
-from scaffold_helpers import AppCase, _github, flake_lock, git
+from scaffold_helpers import RELEASE, AppCase, _github, flake_lock, git
 
 FAKE_NIX = """#!{python}
 import json, os, sys
@@ -43,8 +43,8 @@ sys.exit(0 if argv[:1] == ["eval"] else int(os.environ.get("FAKE_NIX_CODE", "0")
 """
 
 
-# The URL a rendered flake.nix gives frappe-nix by default (release-<N> for v1).
-URL = "github:Avunu/frappe-nix/release-1"
+# The URL a rendered flake.nix gives frappe-nix by default (release-<major>).
+URL = f"github:Avunu/frappe-nix/{RELEASE}"
 PINNED = "github:Avunu/frappe-nix/v1.0.0"
 
 
@@ -105,7 +105,7 @@ class FakeNix(AppCase):
 def specs(*names: str, frappe: str = "version-16") -> dict[str, str | None]:
 	"""``engine.flake_input_specs`` of a rendered flake.nix with these inputs."""
 	known = {
-		"frappe-nix": "github:avunu/frappe-nix/release-1",
+		"frappe-nix": f"github:avunu/frappe-nix/{RELEASE}",
 		"nixpkgs": "follows:frappe-nix/nixpkgs",
 		"frappe": f"github:frappe/frappe/{frappe}",
 	}
@@ -426,7 +426,7 @@ class TestReleaseBranchPreflight(FakeNix):
 		self.commit()
 		code, _, err = self.fn("sync", "--write", "--standards", "minimal", "--frappe-version", "version-16")
 		self.assertEqual(code, 3, err)
-		self.assertIn("has no release-1 branch yet", err)
+		self.assertIn(f"has no {RELEASE} branch yet", err)
 		self.assertEqual(git(self.root, "status", "--porcelain"), "")
 		self.assertEqual(self.calls(), [])
 
@@ -466,7 +466,7 @@ class TestReleaseBranchPreflight(FakeNix):
 
 	def test_preflight_follows_the_apps_own_frappe_nix_url(self):
 		"""dev-shell.frappe-nix-url is the app's choice: the preflight checks the URL phase A
-		would lock (the pre-release escape hatch), not release-1."""
+		would lock (the pre-release escape hatch), not the release branch."""
 		self.absent()
 		self.table('dev-shell.frappe-nix-url = "github:Avunu/frappe-nix"\n')
 		self.commit()
@@ -474,7 +474,7 @@ class TestReleaseBranchPreflight(FakeNix):
 		self.assertEqual(code, 0, err)
 
 	def test_a_dry_run_renders_against_the_rev_the_lock_would_take(self):
-		"""§3.3: a dry run on an unbootstrapped app renders phase B against release-1's head,
+		"""§3.3: a dry run on an unbootstrapped app renders phase B against the release branch's head,
 		as `git ls-remote` reports it, not an empty rev."""
 		from frappe_nix_tools.scaffold import engine
 
