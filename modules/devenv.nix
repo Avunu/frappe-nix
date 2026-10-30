@@ -2375,6 +2375,8 @@ in
           assert benchInfraChecks;
           import ../lib/bench.nix {
             inherit pkgs lib;
+            base = inputs.python-devops-nix.lib;
+            inherit (inputs) pnpm2nix;
             inherit (cfg)
               python
               nodejs
@@ -3320,7 +3322,9 @@ in
                 chromium
                 wkhtmltopdf
 
-                # Package managers
+                # Package managers. yarn is languages.javascript's; pnpm, in
+                # the major its package.json names, when an app's lockfile is
+                # pnpm's (lib/bench.nix, pnpmManagers).
                 uv
                 # `frappe-nix-build-deps {update,check}`: the managed
                 # [tool.uv.extra-build-dependencies] block against uv.lock.
@@ -3339,6 +3343,7 @@ in
                 just
                 pv
               ]
+              ++ benchInfra.pnpmManagers
               ++ lib.optional mailpitEnabled pkgs.mailpit
               # ragenix + the recipient checker, once the bench declares secrets.
               ++ secretsTools.packages

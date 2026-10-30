@@ -834,7 +834,7 @@ Sync creates `package.json` if it's missing, as `{"name": "<App-hyphen>", "versi
 | `license` | `metadata` | exactly `org.license` when it is set; app-owned when it is empty (then L2 only checks that it equals `hooks.app_license`) |
 | `author` | `metadata` | exactly `org.publisher` when it is set; app-owned otherwise |
 | `engines.node` | `metadata` | exactly `metadata.node-engine` (`">=24"`); app-owned when `""` |
-| `packageManager` | `metadata` | exactly `metadata.package-manager` (`"yarn@1.22.22"`); app-owned when `""`. The CI gates install with yarn classic (`yarn install --frozen-lockfile`) whatever this says, so an app on another package manager keeps its own `ci:*` scripts for anything that needs it |
+| `packageManager` | `metadata` | exactly `metadata.package-manager` (`"yarn@1.22.22"`); app-owned when `""`. The CI gates install with yarn classic (`yarn install --frozen-lockfile`) whatever this says, so an app on another package manager keeps its own `ci:*` scripts for anything that needs it. A pnpm app sets it to `""` and pins pnpm through `devEngines.packageManager` instead, because yarn 1 refuses a `packageManager` that names pnpm. The bench installs such an app with pnpm, from its `pnpm-lock.yaml` ([locks](../development/locks.md#pnpm-apps)) |
 | `frappe` | `metadata` | exactly `{"major": "<major>", "branch": "version-<major>"}` (string major, as carbon_frappe has it; the Frappe branch, not the app's release branch) |
 | `scripts.format` | `js` | `"oxfmt"` |
 | `scripts.format:check` | `js` | `"oxfmt --check"` |

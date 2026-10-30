@@ -4,7 +4,11 @@
 # each of the node-locks/ shapes in tests/fixtures/node-locks. Nothing is
 # built — a target's node_modules is only named, never instantiated, so no
 # fetch is planned and the network is never needed.
-{ pkgs, checks }:
+{
+  pkgs,
+  checks,
+  base,
+}:
 
 let
   inherit (pkgs) lib;
@@ -13,7 +17,7 @@ let
     variant: extra:
     import ../lib/bench.nix (
       {
-        inherit pkgs lib;
+        inherit pkgs lib base;
         prodPythonEnv = pkgs.emptyDirectory;
         inherit (pkgs) nodejs;
         workspaceRoot = ./fixtures/node-targets;

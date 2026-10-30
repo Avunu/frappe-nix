@@ -15,8 +15,9 @@ looks like from outside:
 
 none of which names the install, and none of which a re-run repairs.
 
-Checked, in the yarn cache and in every app's node_modules (nested frontends
-included):
+Checked, in the yarn cache and in every yarn app's node_modules (nested
+frontends included; an app whose lockfile is pnpm-lock.yaml is pnpm's, and
+left alone):
 
   * a package directory with no package.json (empty, or extracted in part);
   * a native binary (.node, .so, or an ELF executable) whose ELF headers point
@@ -300,6 +301,10 @@ def main():
 	args = ap.parse_args()
 
 	bench = os.path.abspath(args.bench_root)
+	# An app whose lockfile is pnpm's is pnpm's install: its node_modules is
+	# links into node_modules/.pnpm, and what it is installed from is pnpm's
+	# store, neither of which this knows the shape of.
+	args.apps = [a for a in args.apps if not os.path.isfile(os.path.join(bench, "apps", a, "pnpm-lock.yaml"))]
 
 	stamp = (
 		os.path.join(args.cache, ".frappe-nix-verified") if args.cache and os.path.isdir(args.cache) else None

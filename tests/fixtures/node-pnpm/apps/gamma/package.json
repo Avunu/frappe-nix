@@ -1,0 +1,14 @@
+{
+  "name": "gamma",
+  "private": true,
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.10.1",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "build": "pnpm --filter ./frontend build"
+  }
+}

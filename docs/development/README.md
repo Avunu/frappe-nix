@@ -4,7 +4,7 @@ description: What devenv up runs, how several benches share one machine over uni
 nav_title: Development
 order: 4
 tags: [devenv, development, ports, sockets]
-updated: 2026-10-21
+updated: 2026-10-29
 ---
 
 `devenv up` runs the full stack through process-compose. **Several benches can run at once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which devenv gives each project uniquely, and the ports that remain are per bench.
@@ -65,6 +65,8 @@ That second case is real: Insights' "Site DB" data source is one such app, becau
 ## node_modules in the dev shell
 
 Each app's `node_modules` in the shell is a real `yarn install`, not the Nix-built one used for production. Nested Vite frontends (`erpnext/banking`, `hrms/frontend`, `helpdesk/desk` and others) get their dependencies from a postinstall that needs the network.
+
+An app whose lockfile is `pnpm-lock.yaml` gets `pnpm install --frozen-lockfile` instead, with the pnpm major its `package.json` names, which is on the shell's PATH. The lockfile picks the manager, so a pnpm app is never installed by yarn: yarn 1 in a folder with no `yarn.lock` exits 0 having installed unpinned versions. An app with both lockfiles is refused. `frappe-nix-node-verify` checks yarn's installs only.
 
 - The install is skipped for an app whose `package.json` and `yarn.lock`, its own and every nested one, are unchanged since the last successful install. It re-runs when any of them moves.
 - `bench build` runs it too, and refuses to build if it fails. Without that, pulling an app that added a dependency and building without reinstalling gives a missing-package error from a Vite config several apps deep, naming nothing that leads back to the install.

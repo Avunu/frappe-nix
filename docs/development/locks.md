@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -104,13 +104,13 @@ To move:
 
 The derivations of packages installed from a wheel change once (uv2nix adds a package's extra build dependencies to a wheel's build inputs too, and the stock list named many wheels), so the next deploy rebuilds the environment.
 
-## Node: each app's yarn.lock
+## Node: each app's yarn.lock or pnpm-lock.yaml
 
 Each app with a `package.json`, and each nested frontend under it, is a **node target**. A nested frontend is an immediate subdirectory with its own `package.json`, such as `erpnext/banking`, `hrms/frontend` or `commit/dashboard`. A subdirectory the app tracks as a git submodule, such as `hrms/frappe-ui`, is a project of its own and is skipped.
 
-Each target gets a `node_modules` in the bench package, built from the target's own **`yarn.lock`**. Nothing about it is committed to the bench or computed by hand.
+Each target gets a `node_modules` in the bench package, built from the target's own **`yarn.lock`**, or its **`pnpm-lock.yaml`** for an app that has moved to pnpm ([below](#pnpm-apps)). Nothing about it is committed to the bench or computed by hand.
 
-1. [`lib/yarn-lock.nix`](../../lib/yarn-lock.nix) reads the lock at evaluation time and turns every tarball in it into one `fetchurl`, by the URL and the `integrity` the lock already states, or the `#sha1` on the URL in an older lock. A git dependency is fetched by its commit with `builtins.fetchGit` at evaluation time, so a cold cache needs the repository reachable the first time anything forces the package, `nix flake check --no-build` included. It is then packed the way nixpkgs' `prefetch-yarn-deps` packs it.
+1. python-devops-nix's `lib.node.yarnLock` (it was `lib/yarn-lock.nix` here) reads the lock at evaluation time and turns every tarball in it into one `fetchurl`, by the URL and the `integrity` the lock already states, or the `#sha1` on the URL in an older lock. A git dependency is fetched by its commit with `builtins.fetchGit` at evaluation time, so a cold cache needs the repository reachable the first time anything forces the package, `nix flake check --no-build` included. It is then packed the way nixpkgs' `prefetch-yarn-deps` packs it.
 2. The fetched tarballs are linked into an offline mirror under the names nixpkgs' `fixup-yarn-lock` rewrites the lock to, and nixpkgs' own `yarnConfigHook` installs from it: `yarn install --offline --frozen-lockfile --ignore-scripts --ignore-engines --ignore-platform`. This is what nixpkgs does for any yarn 1 project, minus `fetchYarnDeps`, the one fixed-output derivation over the whole mirror whose hash had to be mined out of a failing build.
 3. The derivation sees only the target's `package.json`, `yarn.lock`, `.yarnrc` and `.npmrc`. A change to anything else in the app does not rebuild its `node_modules`, and an upstream `yarn.lock` bump refetches only what moved.
 
@@ -121,6 +121,20 @@ Lifecycle scripts are not run in the sandbox. Every native piece a Frappe fronte
 In the bench tree each target's `node_modules` is a real directory of links into the store, not a link to the store's directory. Vite creates `node_modules/.vite-temp` while bundling an ESM `vite.config`, and only a permission error is tolerated: the sandbox's read-only store answers `EROFS`.
 
 `bench build` is unchanged: `yarn run production`, then `yarn build` in every app with a build script. The dev shell is unchanged too. Its `node_modules` is a plain online `yarn install`, as upstream tooling expects. See [The development shell](README.md#node_modules-in-the-dev-shell).
+
+### pnpm apps
+
+An app whose lockfile is `pnpm-lock.yaml` is installed with pnpm, by python-devops-nix's `lib.node` (its [JavaScript conventions](https://github.com/Avunu/python-devops-nix/blob/main/docs/conventions.md#javascript), the rules odoo-nix follows too). frappe/pilot's deploys follow the same rules (frappe/pilot#617).
+
+- **The pnpm version.** `package.json`'s `packageManager`, or `devEngines.packageManager` (the form a pnpm app uses, since yarn 1 refuses `packageManager`), names the major, and nixpkgs provides that `pnpm_<major>`. Without either, the current `pnpm` is used. The same pnpm is on the dev shell's PATH. pnpm never switches itself to the exact version `devEngines` names, in the sandbox or in the shell (`pnpm_config_pm_on_fail=ignore`).
+- **The install.** It is offline and frozen. [pnpm2nix-nzbr](https://github.com/FliegendeWurst/pnpm2nix-nzbr) turns the lock into one fetch per package, by the integrity the lock records. pnpm 11+ writes two YAML documents into the lock when `devEngines` pins pnpm; only the project's document, the last one, is read. The derivation sees only the manifests: `package.json`, the lock, `pnpm-workspace.yaml` (its `overrides` and `allowBuilds` included), `.npmrc` and each workspace member's `package.json`.
+- **Workspace members.** A nested frontend without a lock of its own that the app's `pnpm-lock.yaml` lists under `importers:` is a member of the app's workspace. It is installed with the app, once, and is not a target of its own. A member's links to another member point at that member's code in the bench tree.
+- **Two lockfiles.** A `pnpm-lock.yaml` next to a `yarn.lock` is an evaluation error, and the dev shell refuses it too. Delete the one the app no longer uses.
+- **Building.** `bench build` still runs `yarn build` in the app. That works for a pnpm app whose build script is a plain command (suite's is `vite build`), because the node_modules is already there. A build script that calls `pnpm` finds it on PATH.
+
+The `node-locks/` fallback below is yarn's: an app that has no lockfile of its own is resolved with yarn.
+
+`pnpm2nix` reads the lock by import-from-derivation (a derivation converts it to JSON at evaluation time). Only a pnpm app pays that cost. CI's `nix flake check --no-build` has to realise it first, the same way it does for the dev shell's own IFD.
 
 ## The fallback: node-locks/
 

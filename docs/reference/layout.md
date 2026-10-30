@@ -3,7 +3,7 @@ title: Repository layout
 description: Where things live in the frappe-nix repository, the flake checks that CI runs, and how to build these documentation pages locally.
 order: 5
 tags: [reference, contributing, layout, tests]
-updated: 2026-10-28
+updated: 2026-10-29
 ---
 
 This page is for people who read or change frappe-nix itself.
@@ -23,7 +23,6 @@ frappe-nix/
 │   ├── relock-advice.nix     # how a bench re-locks, for the stale-lock message
 │   ├── build-deps.nix        # [tool.uv.extra-build-dependencies] from uv.lock
 │   ├── overrides.nix         # mysqlclient (the shared fixes are python-devops-nix's)
-│   ├── yarn-lock.nix         # one fetchurl per tarball in a yarn.lock
 │   ├── node-locks.nix        # the node-locks/ fallback generator (frappe_nix_tools.deps)
 │   ├── secrets.nix           # python-devops-nix's secrets tools, with frappe-nix's names
 │   ├── shell-tools.nix       # python-devops-nix's dev-shell pieces (sources, db-nocow, banner, CI mode), configured
