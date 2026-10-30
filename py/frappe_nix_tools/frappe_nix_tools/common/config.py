@@ -359,8 +359,21 @@ def _switch(cfg: dict, module: str) -> bool:
 	return bool(table.get("enable")) and table.get("tool") != "none"
 
 
-def _modules(cfg: dict, app: dict, on_github: bool, notices: list[str]) -> dict[str, bool]:
-	"""``modules``: each module's effective switch under §8.2's rules."""
+def _app_turns_off(app: dict, module: str) -> bool:
+	"""Whether the app's own table turns ``module`` off, which no profile layer can undo."""
+	table = app.get(module, {})
+	return table.get("enable") is False or table.get("tool") == "none"
+
+
+def _modules(
+	cfg: dict, app: dict, on_github: bool, notices: list[str], *, provisional: bool = False
+) -> dict[str, bool]:
+	"""``modules``: each module's effective switch under §8.2's rules.
+
+	``provisional`` is phase A's resolution of an org profile it cannot read yet (§3.3 step
+	3): ``cfg`` stands on ``minimal``, not on the profile, so a need it leaves off may be one
+	the profile turns on. Such a module stays as the app set it, and the full resolution after
+	the lock checks the need; only a need the app's own table turns off is refused now."""
 	if not _switch(cfg, "dev-shell"):
 		raise ConfigError(
 			"module dev-shell is required: every opted-in app has it (enable = false is invalid)"
@@ -398,6 +411,8 @@ def _modules(cfg: dict, app: dict, on_github: bool, notices: list[str]) -> dict[
 					host_off.add(m)
 					changed = True
 					break
+				if provisional and not _app_turns_off(app, need):
+					continue
 				raise ConfigError(f"module {m} needs module {need}, which is off: turn {need} on or {m} off")
 	return on
 
@@ -442,6 +457,7 @@ def resolve_doc(
 	profile_dir: Path | None = None,
 	profile_doc: dict | None = None,
 	on_github: bool | None = None,
+	provisional: bool = False,
 ) -> Resolved:
 	"""Resolve a parsed ``pyproject.toml`` (§8.4).
 
@@ -450,6 +466,10 @@ def resolve_doc(
 	``profile_doc`` is the org profile's ``profile.toml`` read by the caller, and
 	``on_github`` the host rule's answer when the caller knows it: both for a committed
 	state (``engine.history``), whose profile and host may not be today's.
+
+	``provisional`` resolves the app's table over ``minimal`` in place of an org profile not
+	locked yet (phase A, §3.3): a module need that profile may meet is left to the full
+	resolution (``_modules``).
 	"""
 	app = pyproject.tool_frappe_nix(doc)
 	if app is None:
@@ -515,7 +535,7 @@ def resolve_doc(
 
 	notices: list[str] = []
 	github = host in (None, "github.com") if on_github is None else on_github
-	modules = _modules(cfg, app, github, notices)
+	modules = _modules(cfg, app, github, notices, provisional=provisional)
 	return Resolved(
 		cfg=cfg, modules=modules, profile=profile_info, sources=sources, repo_host=host, notices=notices
 	)

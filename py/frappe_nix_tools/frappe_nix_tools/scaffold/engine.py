@@ -476,7 +476,9 @@ def resolve(
 
 	``bootstrap`` is phase A's: an org profile whose input is not locked yet (or is locked
 	from another URL) cannot be read, so the flake is rendered from the app's own table on
-	top of ``minimal``, locked, and then rendered again from the real resolution.
+	top of ``minimal``, locked, and then rendered again from the real resolution. A module the
+	app turns on whose need only the profile turns on (``docs-site`` on ``dependabot``) is
+	checked then, not over ``minimal`` (``config._modules``).
 	"""
 	table = created if created is not None else pyproject.tool_frappe_nix(app.pyproject)
 	if table is None:
@@ -484,7 +486,7 @@ def resolve(
 	doc = with_table(app.pyproject, table)
 	if bootstrap and profile_dir is None and not profile_locked(app.root, table):
 		doc = with_table(app.pyproject, {**table, "profile": "minimal"})
-		resolved = config.resolve_doc(doc, root=app.root)
+		resolved = config.resolve_doc(doc, root=app.root, provisional=True)
 		resolved.cfg["profile"] = table.get("profile", "minimal")
 		resolved.profile["source"] = table.get("profile", "minimal")
 		return resolved
