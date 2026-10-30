@@ -20,7 +20,7 @@ from frappe_nix_tools.commands import sync
 from frappe_nix_tools.common.report import EnvError
 from frappe_nix_tools.frappe_init.args import parse_args
 from frappe_nix_tools.scaffold import bootstrap
-from scaffold_helpers import RELEASE, AppCase, _github, flake_lock, git
+from scaffold_helpers import RELEASE, AppCase, _github, flake_lock, git, write_profile
 
 FAKE_NIX = """#!{python}
 import json, os, sys
@@ -507,3 +507,58 @@ class TestReleaseBranchPreflight(FakeNix):
 		bootstrap.require_release_branch(bootstrap.Runner(self.root, dry_run=True), URL)
 		with mock.patch.object(bootstrap, "release_branch_exists", return_value=None):
 			bootstrap.require_release_branch(self.runner(), URL)
+
+
+class TestOrgProfileFirstLock(FakeNix):
+	"""The first sync of an app whose own table turns docs-site on, with an org profile that
+	turns dependabot on (docs-site needs it) and is not locked yet: phase A renders the flake
+	over minimal, where dependabot is off, so the need is left to the full resolution after
+	the lock instead of refusing the sync."""
+
+	profile = "github:example/profile"
+
+	def test_docs_site_need_waits_for_the_locked_profile(self):
+		from frappe_nix_tools.common import nar
+
+		rev = "c" * 40
+		self.write(
+			"pyproject.toml", self.read("pyproject.toml") + "\n[tool.frappe-nix.docs-site]\nenable = true\n"
+		)
+		self.write("docs-site/package.json", '{"name": "docs"}\n')
+		self.commit()
+		# The locked tree, where pin-path finds it without a fetch.
+		tree = write_profile(self.root, rel=f".dev-dist/pins/profile-{rev}")
+		lock = flake_lock(["frappe"])
+		lock["nodes"]["standards-profile"] = {
+			"flake": False,
+			"locked": {
+				"type": "github",
+				"owner": "example",
+				"repo": "profile",
+				"rev": rev,
+				"narHash": nar.nar_hash(tree),
+			},
+			"original": {"type": "github", "owner": "example", "repo": "profile"},
+		}
+		lock["nodes"]["root"]["inputs"]["standards-profile"] = "standards-profile"
+		os.environ["FAKE_NIX_LOCKS"] = json.dumps({"flake lock": lock})
+		code, _, err = self.fn("sync", "--write", "--phase", "a")
+		self.assertEqual(code, 0, err)
+		flake = self.read("flake.nix")
+		self.assertIn('url = "github:example/profile";', flake)
+		self.assertIn('excludeNodeTargets = [ "docs-site" ];', flake)
+		# The flake rendered over minimal is the one the locked profile renders: one lock.
+		self.assertEqual([a for a in self.argvs() if a.startswith("flake")], ["flake lock"])
+		# The full resolution still checks the need: an app that turns dependabot off itself
+		# is refused before anything is locked.
+		self.write(
+			"pyproject.toml", self.read("pyproject.toml") + "\n[tool.frappe-nix.dependabot]\nenable = false\n"
+		)
+		git(self.root, "rm", "-q", "--cached", "flake.lock")
+		(self.root / "flake.lock").unlink()
+		self.commit()
+		self.log.unlink()
+		code, _, err = self.fn("sync", "--write", "--phase", "a")
+		self.assertEqual(code, 2, err)
+		self.assertIn("docs-site needs module dependabot", err)
+		self.assertEqual(self.calls(), [])
