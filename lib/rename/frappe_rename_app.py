@@ -631,7 +631,15 @@ class SiteRename:
 		return self.db.table_exists(doctype) and self.db.has_column(doctype, field)
 
 	def installed(self) -> list[str]:
-		return json.loads(self.db.get_global("installed_apps") or "[]")
+		# Raw SQL both ways, not get_global/set_global: set_default runs the query builder,
+		# which loads every installed app's hooks whenever they are not cached (a fresh
+		# production site, after a restart), and OLD is no longer there to import. The
+		# read is raw too because get_global is cached: after an earlier pair's raw write
+		# it would return the list from before it, and this pair would undo that rename.
+		rows = self.db.sql(
+			"select defvalue from `tabDefaultValue` where parent='__global' and defkey='installed_apps'"
+		)
+		return json.loads(rows[0][0] if rows and rows[0][0] else "[]")
 
 	def check(self, old: str, new: str, installed: list[str], bench_apps: list[str]) -> bool:
 		"""Whether the pair has anything to do; a failed precondition raises."""
@@ -671,8 +679,10 @@ class SiteRename:
 		installed = self.installed()
 		after = [new if a == old else a for a in installed]
 		self.log.append(f"installed_apps: {installed} -> {after}")
-		if not self.dry_run:
-			self.db.set_global("installed_apps", json.dumps(after))
+		self.update(
+			"update `tabDefaultValue` set defvalue=%s where parent='__global' and defkey='installed_apps'",
+			(json.dumps(after),),
+		)
 
 		for doctype, field in APP_COLUMNS:
 			if not self.has_column(doctype, field):
@@ -749,10 +759,15 @@ class SiteRename:
 
 def drop_caches(frappe) -> None:
 	"""Forget the cached app and module maps (redis and frappe's per-process cache)."""
+	from frappe.cache_manager import clear_defaults_cache
+
 	for cache in (frappe.cache, getattr(frappe, "client_cache", None)):
 		if cache is not None:
 			for key in CACHE_KEYS:
 				cache.delete_value(key)
+	# installed_apps is a global default that SiteRename writes by hand, past the cache
+	# set_global would have dropped.
+	clear_defaults_cache("__global")
 
 
 def cmd_site(args) -> int:
