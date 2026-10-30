@@ -107,6 +107,13 @@ def facts(root: Path, app: str, cfg: dict, tracked: list[str], modules: dict | N
 		and (p.count("/") == 0 or (p.count("/") == 1 and p.split("/", 1)[0] in vite_dirs))
 	]
 
+	# Vue single-file components the app's own package.json builds: not in a nested frontend
+	# (its own package.json and node_modules) or the docs tool's docs-site/.
+	vue_sfc = any(
+		p.endswith(".vue") and not globs.match_any([*nested_globs, "docs-site/**", "**/node_modules/**"], p)
+		for p in tracked
+	)
+
 	scripts_ts = bool(globs.select(["scripts/**/*.ts", "marketplace/**/*.ts", "ci/**/*.ts"], tracked))
 	test_ts = bool(globs.select(["test/**/*.ts"], tracked))
 	unit_tests = bool(globs.select(["test/unit/**/*.test.ts"], tracked))
@@ -142,6 +149,7 @@ def facts(root: Path, app: str, cfg: dict, tracked: list[str], modules: dict | N
 		"browser_ts": browser_ts,
 		"vite": bool(vite_configs),
 		"vite_configs": vite_configs,
+		"vue_sfc": vue_sfc,
 		"solution": solution,
 		"ts_projects": projects,
 		"scripts_ts": scripts_ts,

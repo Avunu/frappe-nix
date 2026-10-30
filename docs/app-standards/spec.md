@@ -482,7 +482,7 @@ root = "portal"                              # package.json of its own. "." for 
 include = ["portal/src/**"]                  # its sources; removed from the browser, desk and web projects
 tsconfig = "portal/tsconfig.json"            # app-owned; MAY extend another SPA's app-owned config (portal's
                                              # "../tsconfig.json" when an SPA owns the root), never a managed file
-check = "vue-tsc --noEmit -p portal/tsconfig.json"   # run by `typecheck` and chained into scripts.check
+check = "node scripts/vue-tsc.cjs --noEmit -p portal/tsconfig.json"   # run by `typecheck`, chained into scripts.check
 
 [tool.frappe-nix.js.oxlint]
 ignore = []                                  # appended to ignorePatterns
@@ -509,19 +509,19 @@ How the two SPA layouts in the fleet are declared:
 root = "."
 include = ["erpnext_taskview/public/js/**"]
 tsconfig = "tsconfig.json"                   # app-owned, so the managed solution is tsconfig.solution.json
-check = "vue-tsc --noEmit -p tsconfig.json"
+check = "node scripts/vue-tsc.cjs --noEmit -p tsconfig.json"
 [[tool.frappe-nix.typescript.spa]]
 root = "portal"
 include = ["portal/src/**"]
 tsconfig = "portal/tsconfig.json"            # keeps "extends": "../tsconfig.json"
-check = "vue-tsc --noEmit -p portal/tsconfig.json"
+check = "node scripts/vue-tsc.cjs --noEmit -p portal/tsconfig.json"
 
 # timeclock: vite.config.ts and tsconfig.json at the root, sources in the package
 [[tool.frappe-nix.typescript.spa]]
 root = "."
 include = ["timeclock/public/js/timeclock/**", "timeclock/public/js/job_timeclock/**"]
 tsconfig = "tsconfig.json"
-check = "vue-tsc --noEmit -p tsconfig.json"
+check = "node scripts/vue-tsc.cjs --noEmit -p tsconfig.json"
 ```
 
 `frappe_nix_tools/data/known-apps.json` (N3a) holds the template for each known sibling. `{n}` is the major and `{n1}` is the major plus one. It names only Frappe's own apps and one generic rule for any GitHub-hosted app; a profile's `[known-apps]` table, and then the app's `[tool.frappe-nix.known-apps]`, add or override entries with the same shape (§8.1, §8.4). The generic rule assumes the Frappe convention (`version-{n}` branches, major-tracking versions). A sibling on another convention (a `main`-branch, semver shared library) is declared with the object form in `siblings` or a `known-apps` entry, and every check that compares a sibling's branch or range (C3, C4, L3) uses that resolved value.
@@ -556,6 +556,7 @@ Sync computes these from `git ls-files` (tracked files only), so the result is t
 | `scss` | `stylelint.globs`, or `["<app>/public/**/*.scss"]` when any such file is tracked |
 | `nested_frontends` | Top-level directories other than `node_modules`, `.frappe-nix`, `nix` and (while the `docs-site` module is on) `docs-site` that contain a tracked `package.json`. A frontend without its own `package.json`, such as taskview's `portal/`, is declared as an SPA instead. |
 | `docs_site` | A tracked `docs-site/package.json` |
+| `vue_sfc` | A tracked `*.vue` file outside every nested frontend, `docs-site/` and `**/node_modules/**`: a Vue component the app's own `package.json` builds (§2.8.1) |
 | `gitmodules` | A tracked `.gitmodules` |
 | `github_workflows` | Any tracked file under `.github/workflows/` |
 | `has_listing` | A tracked `marketplace/listing.toml` |
@@ -622,6 +623,8 @@ Files whose entry isn't live MUST NOT exist. Sync deletes them (and retracts mer
 | `release-please-config.json` | whole (JSON, no header) | `releases` | `releases.tool`, `releases.tag-prefix`; README.md as an extra file when `readme` is on under `main+tags` (§2.19) | N3 |
 | `.release-please-manifest.json` | seed `{".": "<__version__>"}`; when seeding, sync also sets `package.json` `version` to `__version__` (§2.16) | `releases` | none | N3 |
 | `scripts/vite-register.mjs` | whole (`ts` header) | `vite-register` (`discover.vite`) | none | N2 |
+| `scripts/vue-tsc.cjs` | whole (`ts` header) | `typescript` (`vue_typescript5`: a tracked `.vue` file outside a nested frontend and `docs-site/`, and a managed TS project or an SPA entry) | none | N3 |
+| `scripts/vue-sfc-typescript.mjs` | whole (`ts` header) | `typescript` (`vue_typescript5 and discover.vite`) | none | N3 |
 | `.git-blame-ignore-revs` | seed (header only) and validated (§2.20) | `hygiene` | none | N3 |
 | `nix/node-locks/<key>/{yarn.lock,source.json}` | seed from `frappe_nix_tools/data/node-locks/version-<major>/` | `dev-shell` (sibling present and no lock) | none | N3 |
 | `.github/workflows/ci.yml` | whole (frappe-nix SHA sync-owned); one caller job per enabled gate (S39) | `ci` | `ci.test-timeout-minutes`, `ci.schedules.ci`, `ci.runs-on`; the gate list | N4 |
@@ -840,13 +843,13 @@ Sync creates `package.json` if it's missing, as `{"name": "<App-hyphen>", "versi
 | `scripts.format:check` | `js` | `"oxfmt --check"` |
 | `scripts.lint` | `js` (tool `oxc`) | `"oxlint"`. With `js` off (`tool = "none"`, the route for teams on eslint, prettier or biome) `lint` is app-owned and sync never writes it |
 | `scripts.lint:css` | `stylelint` (`discover.scss`) | `stylelint "<glob>"` for each scss glob, joined by ` && ` |
-| `scripts.typecheck` | `typescript` | `"tsc --build <discover.solution>"` when the solution is rendered, followed by ` && <check>` for each `[[tool.frappe-nix.typescript.spa]]` in order; just the SPA checks joined by ` && ` when there is no solution; absent when there is neither. TS 7's `tsc` can't check `.vue` imports, so SPAs keep `vue-tsc` (a `devDependencies` key the app owns) |
+| `scripts.typecheck` | `typescript` | `"tsc --build <discover.solution>"` when the solution is rendered, followed by ` && <check>` for each `[[tool.frappe-nix.typescript.spa]]` in order; just the SPA checks joined by ` && ` when there is no solution; absent when there is neither. TS 7's `tsc` can't check `.vue` imports, so SPAs keep `vue-tsc` (a `devDependencies` key the app owns), run through the managed `scripts/vue-tsc.cjs` (`check = "node scripts/vue-tsc.cjs --noEmit -p tsconfig.json"`, §2.8.1) |
 | `scripts.build` | `vite-register` | App-owned, but when `discover.vite`: it MUST end with ` && node scripts/vite-register.mjs` (sync appends it if missing, exit 1 under `--check`). This is `frappe-nix compat` C8. |
 | `scripts.test:unit` | `tests` (`tests.js-unit`) | `"node --test --experimental-test-coverage --test-coverage-include='<app>/public/js/**' --test-coverage-lines=<tests.js-coverage-min> 'test/unit/**/*.test.ts'"`; iff `discover.unit_tests` |
 | `scripts.lint:py` | `python-lint` | `"uv run --frozen --project tools ruff check . && uv run --frozen --project tools ruff format --check ."` |
 | `scripts.typecheck:py` | `python-types` | `"uv run --frozen --project tools ty check --python \"${FRAPPE_BENCH_ROOT:-.frappe-nix/bench}/env\""` |
 | `scripts.check` | `js` (tool `oxc`) | the parts joined by ` && `, in this order: `yarn -s format:check`, `yarn -s lint`, `yarn -s lint:css`, `yarn -s typecheck`, `yarn -s test:unit`, each only if that script is present, whoever owns it. With `js` off, `check` is app-owned, so an adopter's own lint and format steps never fall out of it |
-| `devDependencies.<pkg>` | per package | **floor** (S9). The app's range MUST be a caret or exact range whose minimum is ≥ the floor; otherwise sync sets `^<floor>`. Floors: `oxlint` 1.87.0 and `oxfmt` 0.72.0 (`js`); `typescript` 7.0.2, `frappe-types` 16.5.0 (the minor that ships `tsconfig/*` presets, `frappe-types/web` and `gen-doctypes`; only with `typescript.preset = "frappe-types"`, §2.9) and `@types/node` 26.6.4 (`typescript`, when any TS or desk project exists); `stylelint` 17.16.0 and `stylelint-config-standard-scss` 17.0.0 (`stylelint`, when `discover.scss`). |
+| `devDependencies.<pkg>` | per package | **floor** (S9). The app's range MUST be a caret or exact range whose minimum is ≥ the floor; otherwise sync sets `^<floor>`. Floors: `oxlint` 1.87.0 and `oxfmt` 0.72.0 (`js`); `typescript` 7.0.2, `frappe-types` 16.5.0 (the minor that ships `tsconfig/*` presets, `frappe-types/web` and `gen-doctypes`; only with `typescript.preset = "frappe-types"`, §2.9) and `@types/node` 26.6.4 (`typescript`, when any TS or desk project exists); the alias `typescript5` at `npm:typescript@^5.9.3` (`typescript`, as `typescript`, when a Vue single-file component is tracked outside a nested frontend and `docs-site/`, §2.8.1: an alias floor holds for an alias of the same package whose range meets it); `stylelint` 17.16.0 and `stylelint-config-standard-scss` 17.0.0 (`stylelint`, when `discover.scss`). |
 
 When a module turns off, sync removes its keys whose values still equal what it would render (a toolchain `devDependencies` entry counts as equal when its range is `^<floor>` or higher), and leaves any other value as app-owned, with a warning (§3.3 step 6).
 
@@ -855,6 +858,15 @@ Forbidden (exit 2), each only while the named module is on:
 - (`metadata`) a `build` script when none of these holds: `discover.vite`, a nested frontend, an SPA entry, or `[tool.frappe-nix] build = true` (carbon sets it for its patch-assets, audits and ai-chat build). frappe's esbuild runs every app's `build`, so a stray one runs on every bench. Conversely, `build = true` without a `build` script is exit 2.
 - (`js`, tool `oxc`) `eslint*`, `prettier*`, `@typescript-eslint/*` or `eslint-config-*` in any dependency map;
 - (any) `scripts` keys starting with `frappe-nix:`, which are reserved.
+
+#### 2.8.1 Vue single-file components on TypeScript 5
+
+The `typescript` floor is the native TypeScript 7 build, which ships no JS API. Two Vue tools need that API. `@vue/compiler-sfc`, which `@vitejs/plugin-vue` runs, reads the types `defineProps<T>()` and `defineEmits<T>()` import from another file (frappe-ui's components do) through it, and fails with "No fs option provided to `compileScript`". vue-tsc 3 drives only the JS compiler. So when the app's own package builds Vue single-file components (`vue_typescript5`: module `typescript` on, a tracked `.vue` file outside a nested frontend and `docs-site/`, and a managed TS project or an SPA entry), sync adds the `typescript5` alias (§2.8, `npm:typescript@^5.9.3`) and renders two whole files that point those tools at it:
+
+- `scripts/vue-tsc.cjs` runs vue-tsc on `typescript5/lib/tsc`. An SPA's `check` calls it: `node scripts/vue-tsc.cjs --noEmit -p tsconfig.json`. An app's own copy at that path is replaced by the managed one.
+- `scripts/vue-sfc-typescript.mjs`, with `discover.vite`, registers `typescript5` with compiler-sfc's CommonJS build, the one `@vitejs/plugin-vue` loads, after that build's own default (`typescript`). The app's Vite config imports it before any component is compiled: `import "./scripts/vue-sfc-typescript.mjs";` (one line in an app-owned file; sync doesn't edit it). The managed `.oxlintrc.json` turns `import/no-unassigned-import` off for `discover.vite_configs` then, since the import is there for what it does on load.
+
+Both files live and retract with module `typescript`, like the alias.
 
 ### 2.9 TypeScript configs (whole, JSONC with header)
 
@@ -4270,7 +4282,7 @@ The implementing PRs record their deviations from the spec here, one row each, a
 | N3 | §3.3 step 4 | The re-exec compares the locked frappe-nix's `version.txt` (read from the store with `builtins.fetchTree`, the lock node passed as data in `FRAPPE_NIX_LOCKED_REV`) with the running `frappe_nix_tools.__version__`, and is skipped under `FRAPPE_NIX_URL_OVERRIDE`. | A package built from a source tree does not know its own commit; releases are tags, so equal versions mean the same release. |
 | N3 | §3.3 step 3 | `nix flake update frappe-nix` moves frappe-nix to the rendered URL; under `FRAPPE_NIX_URL_OVERRIDE` every write runs `nix flake lock --override-input frappe-nix <url>`. | `nix flake lock --update-input` is deprecated. |
 | N3 | §3.3 step 11 | Relock runs when phase A changed `flake.lock` or `nix/uv.lock` is missing. | Relock writes no header into `nix/uv.lock` (uv owns that file and would drop a comment). |
-| N3 | §2.3 | `frappe_nix.major` is 1 while `frappe_nix_tools.__version__` is `0.x` (before `v1.0.0`). The context also carries `frappe_nix.url` (the URL `flake.nix` gives the input), `profile_input`, `precommit_live`, `tools_deps` and `package_json_live`, which the manifest's `when`s and the shared files read. | Otherwise every pre-release render pins `release-0`. The shared files are live while any of their modules is on, which a `when` needs as one fact. |
+| N3 | §2.3 | `frappe_nix.major` is 1 while `frappe_nix_tools.__version__` is `0.x` (before `v1.0.0`). The context also carries `frappe_nix.url` (the URL `flake.nix` gives the input), `profile_input`, `precommit_live`, `tools_deps`, `package_json_live` and `vue_typescript5` (§2.8.1), which the manifest's `when`s and the shared files read. | Otherwise every pre-release render pins `release-0`. The shared files are live while any of their modules is on, which a `when` needs as one fact. |
 | N3 | §2.12 | A missing `fail_under` is seeded as `tests.coverage.initial-floor` (then the app's). `[tool.vulture] exclude` is a `test-utils` key. | test_utils' `static_analysis` runs vulture over `.` and reads this table; without it, `tools/.venv` and `.frappe-nix/` are reported as the app's dead code. |
 | N3 | §2.14 | `static_analysis` and `track_overrides` run through a managed `entry:` that prunes their own walks (`os.walk`, `Path.rglob`) at `.git`, `__pycache__` and the unmanaged directories (`.venv`, `node_modules`, `.frappe-nix`, `.dev-dist`, `.devenv`, `.direnv`), which are also `[tool.vulture] exclude`. | Both walk the checkout themselves and take no exclude, so in the dev shell they read the materialized bench and devenv's virtualenv as the app's source (frappe's templates, site-packages' dead code); a clean checkout passed. |
 | N3 | §2.4.1, §2.12 | `requirements.txt` is retired anywhere outside `docs/` and `docs-site/` (the docs tool's, §2.4: a ReadTheDocs `docs/requirements.txt` is not the app's dependencies) (exit 1, deleted by sync) while `metadata.build-backend = "flit"`, once `[project].dependencies` names every package it lists; until then it is exit 2, naming the missing ones. | Deleting it unconditionally dropped a package only `requirements.txt` declared. |

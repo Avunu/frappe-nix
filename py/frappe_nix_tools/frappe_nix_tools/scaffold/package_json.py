@@ -176,6 +176,9 @@ def dev_floors(ctx: Any) -> dict[str, dict[str, str]]:
 	ts = dict(f.get("npm-ts", {})) if has_ts(ctx) else {}
 	if ts and ctx.cfg.get("typescript", {}).get("preset", "frappe-types") == "frappe-types":
 		ts.update(f.get("npm-frappe-types", {}))
+	# The typescript5 alias Vue's tools run on (scripts/vue-tsc.cjs, vue-sfc-typescript.mjs).
+	if ts and ctx.discover.vue_sfc:
+		ts.update(f.get("npm-vue", {}))
 	return {
 		"js": dict(f.get("npm-js", {})),
 		"typescript": ts,
@@ -442,7 +445,7 @@ def merge(current: dict | None, ctx: Any, *, version: str | None) -> Merged:
 				if isinstance(have, str) and NON_REGISTRY.match(have):
 					continue
 				if not isinstance(have, str) or not floors.range_ok(have, floor):
-					_put(_dict(doc, "devDependencies"), pkg, f"^{floor}", dep_order)
+					_put(_dict(doc, "devDependencies"), pkg, floors.caret(floor), dep_order)
 			elif isinstance(dev, dict) and have is not None and _was_on(ctx, module):
 				if isinstance(have, str) and floors.range_ok(have, floor):
 					del dev[pkg]

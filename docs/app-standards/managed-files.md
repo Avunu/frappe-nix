@@ -69,6 +69,7 @@ It needs only `nix` and `git`. Sync runs in two phases. **Phase A** creates `[to
 | `tsconfig.base.json` | whole | `typescript` (browser, scripts or test project) |
 | `tsconfig.browser.json`, `.scripts.json`, `.test.json` | whole | `typescript` (that project has files) |
 | `tsconfig.desk.json`, `.web.json` | whole | `typescript` with `check-js` (that project has files) |
+| `scripts/vue-tsc.cjs`, `scripts/vue-sfc-typescript.mjs` (with a Vite config) | whole | `typescript` (the app's own package has Vue components; [App assets](assets.md#vue-components-and-typescript-7)) |
 | `release-please-config.json` | whole, no header (JSON) | `releases` |
 | `.release-please-manifest.json` | seed `{".": "<__version__>"}` | `releases` |
 | `.git-blame-ignore-revs` | seed, then validated | `hygiene` |
@@ -86,7 +87,7 @@ The CI caller workflows, `.github/dependabot.yml` and `.github/zizmor.yml` ([CI]
 
 **Local regions** sit between `# frappe-nix:local-begin <name>` and `# frappe-nix:local-end <name>`. Sync keeps their content as it is. A region may add, never redefine: a hook id, a dependabot `updates` entry, an EditorConfig section or a flake input that sync already manages is exit 2, as is an unknown, duplicate or unclosed region. An `ignore` on a managed dependabot entry comes from `dependabot.ignore` instead ([CI](ci.md)).
 
-**Floors** are versions dependabot moves. Sync never lowers one: a pre-commit `rev:` at or above the floor is kept, a `devDependencies` caret or exact range whose minimum is at or above the floor is kept, and a `tools/uv.lock` version below its floor is drift that `uv lock --upgrade-package` fixes. A `devDependencies` entry that names a tarball, a git ref or a path has no minimum to compare and is left as the app wrote it.
+**Floors** are versions dependabot moves. Sync never lowers one: a pre-commit `rev:` at or above the floor is kept, a `devDependencies` caret or exact range whose minimum is at or above the floor is kept, and a `tools/uv.lock` version below its floor is drift that `uv lock --upgrade-package` fixes. A floor on an npm alias (`typescript5`, `npm:typescript@5.9.3`) holds for an alias of the same package whose range meets it. A `devDependencies` entry that names a tarball, a git ref or a path has no minimum to compare and is left as the app wrote it.
 
 ### Turning a module off
 
@@ -123,7 +124,7 @@ Refused (exit 2), each only while its module is on: extra codes in the top-level
 
 ### `package.json`
 
-By module: `metadata` owns `private`, `type` (`metadata.package-type`), `license` and `author` (only when the profile sets `org.license` and `org.publisher`), `engines.node`, `packageManager` and `frappe` (`{major, branch}`), each left to the app when its parameter is `""`; `js` the `format`, `format:check`, `lint` and `check` scripts and the oxlint and oxfmt floors; `stylelint` the `lint:css` script and its floors; `typescript` the `typecheck` script and the typescript and `@types/node` floors (plus frappe-types with `typescript.preset = "frappe-types"`); `tests` `test:unit`; `python-lint` `lint:py`; `python-types` `typecheck:py`; `vite-register` the `node scripts/vite-register.mjs` step a Vite app's `build` must end with. `check` chains `format:check`, `lint`, `lint:css`, `typecheck` and `test:unit`, each when that script exists, whoever owns it. With `js.tool = "none"`, `lint` and `check` are the app's, so an eslint or biome setup keeps its own scripts.
+By module: `metadata` owns `private`, `type` (`metadata.package-type`), `license` and `author` (only when the profile sets `org.license` and `org.publisher`), `engines.node`, `packageManager` and `frappe` (`{major, branch}`), each left to the app when its parameter is `""`; `js` the `format`, `format:check`, `lint` and `check` scripts and the oxlint and oxfmt floors; `stylelint` the `lint:css` script and its floors; `typescript` the `typecheck` script and the typescript and `@types/node` floors (plus frappe-types with `typescript.preset = "frappe-types"`, and the `typescript5` alias, `npm:typescript@^5.9.3`, when the app has Vue components); `tests` `test:unit`; `python-lint` `lint:py`; `python-types` `typecheck:py`; `vite-register` the `node scripts/vite-register.mjs` step a Vite app's `build` must end with. `check` chains `format:check`, `lint`, `lint:css`, `typecheck` and `test:unit`, each when that script exists, whoever owns it. With `js.tool = "none"`, `lint` and `check` are the app's, so an eslint or biome setup keeps its own scripts.
 
 Refused: a `build` script with nothing to build (no Vite config, nested frontend, SPA entry or `build = true`), eslint or prettier packages while `js` is on, and `frappe-nix:` script names.
 
