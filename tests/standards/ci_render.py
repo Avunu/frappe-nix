@@ -12,6 +12,8 @@ own locks stay), and copies the rendered ``.github/`` to ``<out>/<case>/.github`
   dependabot off (releases needs commits, and pilot-assets needs releases, so they go too);
 - ``no-schedules``: example-org with every ``ci.schedules`` entry empty;
 - ``self-hosted``: example-org with ``ci.runs-on = ["self-hosted", "nixos"]``;
+- ``github-app``: example-org with screenshots on and ``ci.github-app`` naming a variable and a
+  secret, so release, deps and nightly pass ``APP_ID`` and ``APP_PRIVATE_KEY``;
 - ``dependabot-ignore``: example-org with ``dependabot.ignore`` conditions longer than oxfmt's
   printWidth (§2.17);
 
@@ -43,6 +45,10 @@ OFF = {
 		'[tool.frappe-nix.ci.schedules]\nci = ""\nrelease = ""\ndeps-sweep = ""\ndeps-relock = ""\nnightly = ""\n'
 	),
 	"self-hosted": '[tool.frappe-nix.ci]\nruns-on = ["self-hosted", "nixos"]\n',
+	"github-app": (
+		"[tool.frappe-nix.demo]\nenable = true\n[tool.frappe-nix.screenshots]\nenable = true\n"
+		'[tool.frappe-nix.ci.github-app]\napp-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n'
+	),
 	"dependabot-ignore": (
 		"[tool.frappe-nix.dependabot.ignore]\n"
 		'npm = [{ dependency-name = "tailwindcss", versions = [">=4.0.0-alpha.0", ">=5.0.0", ">=6.0.0", ">=7.0.0"],'

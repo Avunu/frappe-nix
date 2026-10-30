@@ -5,6 +5,9 @@ name: app-deps
 # applies its patch); every Dependabot PR gets the decision table's verdict (auto-merge or
 # needs-review); the sweep re-dispatches CI for bot PRs; relock-upgrade refreshes nix/uv.lock
 # weekly. Auto-merge is enabled only where required checks protect the integration branch.
+# With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) the pushes, PRs, labels and
+# auto-merges use the App's token, so they start CI and the release flow by themselves; without
+# one, GITHUB_TOKEN, and CI is dispatched.
 
 on:
   workflow_call:
@@ -47,6 +50,14 @@ on:
       NIX_CACHE_READ_TOKEN:
         required: false
       FETCH_TOKEN:
+        required: false
+      APP_ID:
+        description: >-
+          ci.github-app: the GitHub App's ID (or client ID). A Dependabot run sees only Dependabot
+          secrets, so the caller passes `vars.<name> || secrets.<name>`.
+        required: false
+      APP_PRIVATE_KEY:
+        description: "ci.github-app: the GitHub App's private key (PEM)"
         required: false
 
 permissions: {}
@@ -250,9 +261,26 @@ jobs:
             exit 1
           fi
 
+      # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
+      # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Commit and push to the PR branch
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
@@ -260,7 +288,8 @@ jobs:
             commit -m "chore(deps): relock and sync after flake bump [dependabot skip]"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$HEAD_REF"
 
-      - name: CI on the new head (a GITHUB_TOKEN push raises no event)
+      - if: steps.app.outputs.enabled != 'true'
+        name: CI on the new head (a GITHUB_TOKEN push raises no event)
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_REF: ${{ github.head_ref }}
@@ -310,7 +339,7 @@ jobs:
         name: Auto-merge, where required checks protect the integration branch
         working-directory: .base
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           INTEGRATION: ${{ inputs.integration-branch }}
           METHOD: ${{ inputs.merge-method }}
@@ -374,9 +403,26 @@ jobs:
             uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
           fi
 
+      # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
+      # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: The decision table
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           INTEGRATION: ${{ inputs.integration-branch }}
           METHOD: ${{ inputs.merge-method }}
@@ -593,9 +639,27 @@ jobs:
           read -ra override <<< "$NIX_OVERRIDE"
           nix run --no-pure-eval "${override[@]}" .#relock -- --upgrade
 
+      # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
+      # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Commit, push and open the PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP: ${{ steps.app.outputs.enabled }}
           INTEGRATION: ${{ inputs.integration-branch }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
           METHOD: ${{ inputs.merge-method }}
@@ -618,9 +682,12 @@ jobs:
               --title "chore(deps): relock python" \
               --body "The weekly \`nix run .#relock -- --upgrade\` of nix/uv.lock, opened by the deps workflow.")"
           fi
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
-          if [ -f .github/workflows/pr-policy.yml ]; then
-            gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          if [ "$APP" != true ]; then
+            # A GITHUB_TOKEN push raises no event.
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            if [ -f .github/workflows/pr-policy.yml ]; then
+              gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            fi
           fi
           if [ "$AUTO_MERGE" = true ]; then
             frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD"

@@ -3,7 +3,7 @@ title: Versioning
 description: "How an app pins frappe-nix and its profile, how a release reaches every app, and what each version number promises."
 order: 10
 tags: [app-standards, versioning, releases]
-updated: 2026-10-17
+updated: 2026-10-30
 ---
 
 frappe-nix stays on `main` and releases with tags `vX.Y.Z`. A branch per major, `release-1`, is fast-forwarded to each `v1.*` tag and never moves otherwise. Apps follow that branch, so updating their lock only ever proposes a release, never an arbitrary `main` commit.
@@ -21,7 +21,7 @@ An app with an org profile also locks the `standards-profile` input, so its mana
 
 ## How a release reaches every app
 
-1. A pull request merges to frappe-nix's `main`. frappe-nix's `release.yml` runs release-please, which opens or updates the release PR. The version bump changes the `# v<version>` comment that the caller workflows of `tests/fixtures/standards-app` carry, so the same run re-renders the fixture offline with the PR's frappe-nix-tools and pushes it to the PR branch; `main` never holds a fixture that `frappe-nix sync --check` rejects. Because a push made with `GITHUB_TOKEN` starts no workflow, the same run then dispatches `check.yml` (its `lint` and `flake` jobs, without the VM tests), `pr-policy.yml` and `docs.yml` (the required `build / Check`) on that PR.
+1. A pull request merges to frappe-nix's `main`. frappe-nix's `release.yml` runs release-please, which opens or updates the release PR. The version bump changes the `# v<version>` comment that the caller workflows of `tests/fixtures/standards-app` carry, so the same run re-renders the fixture offline with the PR's frappe-nix-tools and pushes it to the PR branch; `main` never holds a fixture that `frappe-nix sync --check` rejects. When the repository can read the org's GitHub App (the variable and secret the org profile's `ci.github-app` names), release-please and the fixture push use its token, and the PR starts `check.yml`, `pr-policy.yml` and `docs.yml` by itself. Without it, because a push made with `GITHUB_TOKEN` starts no workflow, the same run then dispatches `check.yml` (its `lint` and `flake` jobs, without the VM tests), `pr-policy.yml` and `docs.yml` (the required `build / Check`) on that PR.
 2. Merging the release PR is the decision to ship. release-please tags `vX.Y.Z` and writes the GitHub release; `release.yml` then moves `release-<major>` to the tag with a REST `PATCH` that GitHub refuses unless it is a fast-forward (it creates the branch on a major's first release), reads it back and fails unless the branch equals the tag.
 3. Each app is moved deliberately, with a token that may change workflow files:
 

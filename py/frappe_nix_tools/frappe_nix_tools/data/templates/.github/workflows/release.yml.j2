@@ -1,5 +1,5 @@
-# Releases without an App (docs: ci.md, S13): release-please, CI on the release PR, the
-# fast-forward of the release branch (develop+version) and, when enabled, the registry PR.
+# Releases (docs: ci.md, S13): release-please, CI on the release PR, the fast-forward of the
+# release branch (develop+version) and, when enabled, the registry PR.
 {% set publish = modules.listing and cfg.listing.publish %}
 {# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
    lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
@@ -57,3 +57,8 @@ jobs:
 {% endif %}
       FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
 
+{% if cfg.ci["github-app"] is defined %}
+{% set gh_app = cfg.ci["github-app"] %}
+      APP_ID: {{ "${{ vars." ~ gh_app["app-id"] ~ " || secrets." ~ gh_app["app-id"] ~ " }}" }}
+      APP_PRIVATE_KEY: {{ "${{ secrets." ~ gh_app["private-key"] ~ " }}" }}
+{% endif %}

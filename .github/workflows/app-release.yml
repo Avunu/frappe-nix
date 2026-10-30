@@ -1,9 +1,11 @@
 name: app-release
 
-# Releases without an App (docs/app-standards/ci.md, spec §4.4, S13), reusable. release-please
-# runs with GITHUB_TOKEN on the integration branch; `dispatch-ci` runs ci.yml and pr-policy.yml
-# on its release PR (a GITHUB_TOKEN push raises no event); `fast-forward` moves the release
-# branch to the new tag by a REST PATCH and checks it (D8); `publish` opens the registry PR.
+# Releases (docs/app-standards/ci.md, spec §4.4, S13), reusable. release-please runs on the
+# integration branch with GITHUB_TOKEN, or with a GitHub App's token when the caller passes
+# APP_ID and APP_PRIVATE_KEY (ci.github-app); `dispatch-ci` runs ci.yml and pr-policy.yml on
+# its release PR when there is no App (a GITHUB_TOKEN push raises no event); `fast-forward`
+# moves the release branch to the new tag by a REST PATCH and checks it (D8); `publish` opens
+# the registry PR.
 
 on:
   workflow_call:
@@ -44,6 +46,14 @@ on:
         required: false
       FETCH_TOKEN:
         required: false
+      APP_ID:
+        description: >-
+          ci.github-app: the GitHub App's ID (or client ID). With APP_PRIVATE_KEY, release-please
+          runs with the App's token, so its release PR starts CI by itself; without, GITHUB_TOKEN.
+        required: false
+      APP_PRIVATE_KEY:
+        description: "ci.github-app: the GitHub App's private key (PEM)"
+        required: false
     outputs:
       released:
         value: ${{ jobs.release-please.outputs.releases_created }}
@@ -67,6 +77,7 @@ jobs:
       releases_created: ${{ steps.rp.outputs.releases_created }}
       sha: ${{ steps.rp.outputs.sha }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
+      app: ${{ steps.app.outputs.enabled }}
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
       # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
@@ -82,10 +93,28 @@ jobs:
             find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
           fi
 
+      # A GitHub App's token when the caller passes one (ci.github-app): the release PR it opens
+      # or updates then starts ci.yml and pr-policy.yml like any other push. Else GITHUB_TOKEN.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - id: rp
         continue-on-error: true
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ steps.app-token.outputs.token || github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: ${{ inputs.integration-branch }}
@@ -95,9 +124,10 @@ jobs:
           echo "::error::release-please failed. If the log says GitHub Actions is not permitted to create pull requests, allow it under Settings > Actions > General > Workflow permissions (can_approve_pull_request_reviews); \`frappe-nix repo doctor\` lists every setting the release flow needs."
           exit 1
 
+  # Only without an App: an App's release PR starts its own CI.
   dispatch-ci:
     needs: release-please
-    if: always() && needs.release-please.result == 'success'
+    if: always() && needs.release-please.result == 'success' && needs.release-please.outputs.app != 'true'
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:

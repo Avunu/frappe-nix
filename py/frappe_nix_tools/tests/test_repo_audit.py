@@ -65,6 +65,16 @@ class TestRepoAudit(RepoCase):
 		_, rows = self.rows()
 		self.assertEqual(rows["A2"]["status"], "red")
 
+	def test_a11_takes_a_release_by_the_ci_github_app(self):
+		route = ("GET", f"repos/{R}/releases/tags/v1.3.0")
+		self.gh.routes[route] = {"author": {"login": "example-ci[bot]"}}
+		_, rows = self.rows()
+		self.assertEqual(rows["A11"]["status"], "green", rows["A11"])
+		self.gh.routes[route] = {"author": {"login": "someone"}}
+		_, rows = self.rows()
+		self.assertEqual(rows["A11"]["status"], "amber", rows["A11"])
+		self.assertIn("released by someone", rows["A11"]["detail"])
+
 	def test_frappe_major_ignores_v1_tags(self):
 		_, rows = self.rows('\n[tool.frappe-nix.releases]\nversion-scheme = "frappe-major"\n')
 		self.assertEqual(rows["A11"]["status"], "red")

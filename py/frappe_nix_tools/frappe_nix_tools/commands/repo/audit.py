@@ -18,7 +18,7 @@ A7    typescript                  the typecheck job green; compat (C7) clean; am
 A8    tests                       coverage ≥ fail_under, testmap clean; amber below the target
 A9    (always)                    no legacy tooling (the retire rules, public/dist, pyupgrade)
 A10   dependabot                  the last nix bump auto-merged with relock; frappe-nix and profile current
-A11   releases                    a release tag exists, released by github-actions[bot]
+A11   releases                    a release tag exists, released by a bot (github-actions[bot], or the ci.github-app App)
 A12   readme                      README blocks in sync, the dev-docs link present
 A13   icons                       ``icon check --structural``
 A14   listing                     ``listing check`` (and ``--links-only`` for a listed app); empty baseline
@@ -427,11 +427,8 @@ def a10(a: Audit) -> tuple[str, str]:
 			c.get("commit", {}).get("message", "").startswith("chore(deps): relock and sync") for c in commits
 		)
 		merger = (pr.get("merged_by") or {}).get("login", "")
-		if not (relocked or len(commits) == 1) or merger not in (
-			"github-actions[bot]",
-			"dependabot[bot]",
-			"",
-		):
+		# github-actions[bot], dependabot[bot], or the App of ci.github-app.
+		if not (relocked or len(commits) == 1) or not (merger == "" or merger.endswith("[bot]")):
 			worst = AMBER
 			notes.append(
 				f"#{pr['number']} merged by {merger or '?'}{'' if relocked else ' without a relock'}"
@@ -482,7 +479,8 @@ def a11(a: Audit) -> tuple[str, str]:
 	if rel is None:
 		return RED, f"{name} has no GitHub release"
 	author = (rel.get("author") or {}).get("login", "")
-	return (GREEN, name) if author == "github-actions[bot]" else (AMBER, f"{name} released by {author}")
+	# release-please's: GITHUB_TOKEN's github-actions[bot], or the App of ci.github-app.
+	return (GREEN, name) if author.endswith("[bot]") else (AMBER, f"{name} released by {author}")
 
 
 def a12(a: Audit) -> tuple[str, str]:

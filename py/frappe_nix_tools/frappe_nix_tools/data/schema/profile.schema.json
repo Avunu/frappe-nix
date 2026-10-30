@@ -1434,6 +1434,27 @@
             ],
             "description": "The runner of every Linux job in the reusable workflows: a runner label, or the labels a runner must all have ([\"self-hosted\", \"nixos\"]). Unset (the default), the callers pass nothing and the jobs run on ubuntu-latest. A pull request from a fork runs on ubuntu-latest whatever this says (docs: ci.md)."
           },
+          "github-app": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "app-id",
+              "private-key"
+            ],
+            "properties": {
+              "app-id": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "description": "The name of the Actions variable that holds the App's ID (or client ID). The callers pass vars.<name> || secrets.<name>, so a Dependabot secret of the same name serves Dependabot's runs."
+              },
+              "private-key": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                "description": "The name of the secret (an Actions secret, and a Dependabot secret for Dependabot's runs) that holds the App's private key."
+              }
+            },
+            "description": "A GitHub App whose token the release, deps and nightly workflows push, open PRs, label and enable auto-merge with, so what they create starts CI without an approval. Names, never values. Unset (the default), the callers pass nothing and those workflows use GITHUB_TOKEN and dispatch CI (docs: ci.md)."
+          },
           "schedules": {
             "type": "object",
             "additionalProperties": false,

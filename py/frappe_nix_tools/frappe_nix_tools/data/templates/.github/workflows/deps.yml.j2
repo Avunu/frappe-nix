@@ -58,3 +58,8 @@ jobs:
 
       FETCH_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}{% endraw %}
 
+{% if cfg.ci["github-app"] is defined %}
+{% set gh_app = cfg.ci["github-app"] %}
+      APP_ID: {{ "${{ vars." ~ gh_app["app-id"] ~ " || secrets." ~ gh_app["app-id"] ~ " }}" }}
+      APP_PRIVATE_KEY: {{ "${{ secrets." ~ gh_app["private-key"] ~ " }}" }}
+{% endif %}
