@@ -85,6 +85,9 @@ def oxlintrc(ctx: Any) -> dict:
 			"rules": {"import/no-unassigned-import": "off"},
 		},
 	]
+	if ctx.get("vue_typescript5") and d.vite_configs:
+		# A Vite config imports scripts/vue-sfc-typescript.mjs for what it does on load.
+		overrides.append({"files": list(d.vite_configs), "rules": {"import/no-unassigned-import": "off"}})
 	if d.desk_js:
 		overrides.append({"files": sorted(d.desk_js), "globals": desk_globals})
 	if d.web_js:

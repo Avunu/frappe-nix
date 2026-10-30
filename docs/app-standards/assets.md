@@ -107,6 +107,38 @@ It is in oxfmt's output form under the managed `.oxfmtrc.jsonc`: tabs by default
 
 Turning the module off (`[tool.frappe-nix.vite-register] enable = false`) deletes `scripts/vite-register.mjs` and drops the ` && node scripts/vite-register.mjs` step from the end of `build` (and the subshell sync put a directory-changing build in); the rest of the script is the app's and stays.
 
+## Vue components and TypeScript 7
+
+With the `typescript` module on, the app's `typescript` is the native TypeScript 7 build, which has no JS API. Two Vue tools need that API:
+
+- `@vitejs/plugin-vue` compiles each component with `@vue/compiler-sfc`. To read a type that `defineProps<T>()` or `defineEmits<T>()` imports from another file (frappe-ui's components do this), the compiler goes through TypeScript's API. With TypeScript 7, `vite build` fails with `[@vue/compiler-sfc] No fs option provided to compileScript in non-Node environment`.
+- vue-tsc 3 can drive only the JS compiler.
+
+So when the app's own `package.json` builds Vue single-file components (a tracked `.vue` file outside a nested frontend and `docs-site/`), sync adds TypeScript 5 under another name, `"typescript5": "npm:typescript@^5.9.3"` in `devDependencies`, and two managed scripts that point those tools at it:
+
+- **`scripts/vue-sfc-typescript.mjs`**, when the app has a Vite config. Import it at the top of that config, before the Vue plugin compiles anything:
+
+  ```ts
+  import "./scripts/vue-sfc-typescript.mjs";
+  import { defineConfig } from "vite";
+  import vue from "@vitejs/plugin-vue";
+
+  export default defineConfig({ plugins: [vue()] /* ... */ });
+  ```
+
+  The managed `.oxlintrc.json` allows that import in Vite configs (`import/no-unassigned-import` is off there).
+- **`scripts/vue-tsc.cjs`** runs vue-tsc on TypeScript 5. An SPA's type check calls it:
+
+  ```toml
+  [[tool.frappe-nix.typescript.spa]]
+  root = "."
+  include = ["my_app/public/js/spa/**"]
+  tsconfig = "tsconfig.json"
+  check = "node scripts/vue-tsc.cjs --noEmit -p tsconfig.json"
+  ```
+
+Both are whole managed files. An app that already has its own `scripts/vue-tsc.cjs` gets the managed one in its place, so its `check` keeps working. One that registered the alias inside its Vite config (`registerTS(() => createRequire(import.meta.url)("typescript5"))`) can replace those lines with the import above. A nested frontend has its own `package.json` and `typescript`, so none of this applies to it. Turning `typescript` off removes both files and the alias.
+
 ## The preload on Nix benches
 
 The preload ([`lib/js/esbuild-preload.js`](../../lib/js/esbuild-preload.js), described in [Asset builds](../development/assets.md)) wraps the `child_process` calls frappe's `esbuild.js` runs each app's build with: `execSync` up to version-16, and `spawn` on `develop`, which builds several apps at once. After a command that matches `yarn build` or `yarn run build` succeeds in `apps/<app>` (any app but `frappe`), whichever way it ran, it registers that app's Vite bundles in `$FRAPPE_BENCH_ROOT/sites` (or the bench `esbuild.js` lives in). A registration that fails, an `assets.json` that does not parse for instance, is a warning in the build log, never a failed build. An app whose build failed is not registered.
@@ -155,4 +187,6 @@ frappe-nix.app = {
 | `vite-register: skipping <manifest>: …` | A `manifest*.json` under `public/dist/` that is not JSON. | Remove it, or name it otherwise. |
 | `vite-register: <app>: skipping <file>: not on disk`, `skipping <file>: <other file> is newer`, or `<key> kept: … is older` | A Vite manifest under `public/dist/` left from an earlier build: the bundle it names is gone, a newer manifest names the same bundle, or esbuild now builds that name. | Delete the stale manifest (or the whole `public/dist/`) and rebuild. |
 | A bundle is built twice, once broken | A Vite source is named `*.bundle.*` under `public/`. | Rename the source to `*.entry.ts`. |
+| `vite build` fails with `[@vue/compiler-sfc] No fs option provided to compileScript` | Vue's compiler is resolving a type a component imports, and the app's `typescript` is the native TypeScript 7 build, which has no JS API. | Import `./scripts/vue-sfc-typescript.mjs` at the top of the Vite config ([above](#vue-components-and-typescript-7)). If the file is missing, run `frappe-init --sync`. |
+| `vue-tsc` crashes, or fails to load TypeScript | vue-tsc runs on the app's native TypeScript 7. | Run it as `node scripts/vue-tsc.cjs` ([above](#vue-components-and-typescript-7)). |
 | `frappe-nix compat` reports C8 | `build` no longer ends with the registration. | Run `frappe-init --sync`, or append ` && node scripts/vite-register.mjs`. |

@@ -337,6 +337,12 @@ def build(
 			"release_workflow_shipped": manifest.ships(".github/workflows/release.yml"),
 			"deps_workflow_shipped": manifest.ships(".github/workflows/deps.yml"),
 			"tools_deps": tools_deps(modules, precommit_live),
+			# Vue single-file components beside the typescript floor (native TypeScript 7, which
+			# has no JS API): the typescript5 alias and the scripts that point Vue's compiler
+			# and vue-tsc at it (manifest.d/core.json, package_json.dev_floors).
+			"vue_typescript5": bool(modules.get("typescript"))
+			and facts["vue_sfc"]
+			and (bool(facts["ts_projects"]) or bool(cfg.get("typescript", {}).get("spa"))),
 			"package_json_live": any(
 				modules.get(m, False)
 				for m in (
