@@ -246,6 +246,77 @@ class TestRunsOn(CallerCase):
 				self.assertIn("runs-on", err)
 
 
+GITHUB_APP = '[tool.frappe-nix.ci.github-app]\napp-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n'
+SCREENSHOTS = "[tool.frappe-nix.demo]\nenable = true\n[tool.frappe-nix.screenshots]\nenable = true\n"
+APP_SECRETS = {
+	"APP_ID": "${{ vars.ORG_CI_APP_ID || secrets.ORG_CI_APP_ID }}",
+	"APP_PRIVATE_KEY": "${{ secrets.ORG_CI_PRIVATE_KEY }}",
+}
+# The callers whose reusable workflow pushes, opens PRs or enables auto-merge (nightly: `shots`).
+APP_CALLERS = {"release": "release", "deps": "deps", "nightly": "nightly"}
+
+
+class TestGitHubApp(CallerCase):
+	def app_secrets(self, files: dict[str, dict]) -> dict[str, dict]:
+		out = {}
+		for path, doc in files.items():
+			for name, job in doc.get("jobs", {}).items():
+				got = {k: v for k, v in (job.get("secrets") or {}).items() if k.startswith("APP_")}
+				if got:
+					out[f"{path}:{name}"] = got
+		return out
+
+	def test_unset_passes_no_app(self) -> None:
+		self.assertEqual(self.app_secrets(self.render(SCREENSHOTS)), {})
+
+	def test_names_reach_the_callers_that_push(self) -> None:
+		unset = self.render(SCREENSHOTS)
+		files = self.render(SCREENSHOTS + GITHUB_APP)
+		expected = {f"{WORKFLOWS}/{name}.yml:{job}": APP_SECRETS for name, job in APP_CALLERS.items()}
+		self.assertEqual(self.app_secrets(files), expected)
+		# The id falls back to a secret of the same name: Dependabot's runs see only its secrets.
+		deps = (self.root / WORKFLOWS / "deps.yml").read_text()
+		self.assertIn("      APP_ID: ${{ vars.ORG_CI_APP_ID || secrets.ORG_CI_APP_ID }}\n", deps)
+		# Nothing else moves, and no caller passes every secret.
+		for path, doc in files.items():
+			for job in doc.get("jobs", {}).values():
+				self.assertNotEqual(job.get("secrets"), "inherit", path)
+				for key in APP_SECRETS:
+					(job.get("secrets") or {}).pop(key, None)
+			self.assertEqual(doc, unset[path], path)
+
+	def test_nightly_passes_it_only_for_screenshots(self) -> None:
+		files = self.render(GITHUB_APP)
+		self.assertEqual(
+			set(self.app_secrets(files)),
+			{f"{WORKFLOWS}/release.yml:release", f"{WORKFLOWS}/deps.yml:deps"},
+		)
+
+	def test_a_profile_sets_it(self) -> None:
+		self.write(
+			".standards-profile/profile.toml",
+			EVERYTHING + '\n[ci.github-app]\napp-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n',
+		)
+		self.commit()
+		got = self.app_secrets(self.render(SCREENSHOTS))
+		self.assertEqual(set(got), {f"{WORKFLOWS}/{name}.yml:{job}" for name, job in APP_CALLERS.items()})
+
+	def test_invalid_values_are_exit_2(self) -> None:
+		for table in (
+			'app-id = "ORG_CI_APP_ID"\n',  # no private-key
+			'app-id = "123456"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n',  # a value, not a name
+			'app-id = "ORG_CI_APP_ID"\nprivate-key = "-----BEGIN RSA PRIVATE KEY-----"\n',
+			'app-id = "ORG_CI_APP_ID"\nprivate-key = "KEY }} ${{ github.token"\n',
+			'app-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\nowner = "x"\n',
+		):
+			with self.subTest(table=table):
+				self.write("pyproject.toml", self.base + "[tool.frappe-nix.ci.github-app]\n" + table)
+				self.commit()
+				code, _, err = self.fn("sync", "--write")
+				self.assertEqual(code, 2, err)
+				self.assertIn("github-app", err)
+
+
 class TestDependabot(CallerCase):
 	def test_every_entry_has_a_cooldown_and_targets_the_integration_branch(self) -> None:
 		files = self.render()

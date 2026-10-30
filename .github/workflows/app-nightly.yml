@@ -4,7 +4,9 @@ name: app-nightly
 # optional job is a `run-*` input the caller renders from its module switch: the integration
 # suites (tests), screenshots (screenshots), the listing links (listing), code duplication
 # (test-utils) and the registry refresh (listing.publish). `drift` always runs: it keeps the
-# "frappe-nix vX.Y.Z available" and "standards profile update available" issues.
+# "frappe-nix vX.Y.Z available" and "standards profile update available" issues. With a GitHub
+# App (APP_ID and APP_PRIVATE_KEY, ci.github-app) `shots` pushes and opens its PR with the
+# App's token, which starts CI by itself; without one, GITHUB_TOKEN, and CI is dispatched.
 
 on:
   workflow_call:
@@ -52,6 +54,12 @@ on:
       FETCH_TOKEN:
         required: false
       REGISTRY_TOKEN:
+        required: false
+      APP_ID:
+        description: "ci.github-app: the GitHub App's ID (or client ID); passed only with screenshots on"
+        required: false
+      APP_PRIVATE_KEY:
+        description: "ci.github-app: the GitHub App's private key (PEM)"
         required: false
 
 permissions: {}
@@ -316,10 +324,29 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
+      # A GitHub App's token when the caller passes one (ci.github-app), minted only after
+      # frappe-shots ran: the PR it pushes then starts CI like any other push. Else GITHUB_TOKEN.
+      - if: steps.spec.outputs.tracked == 'true'
+        id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.spec.outputs.tracked == 'true' && steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - if: steps.spec.outputs.tracked == 'true'
         name: Open or update the screenshots PR (never merged automatically)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP: ${{ steps.app.outputs.enabled }}
           INTEGRATION: ${{ inputs.integration-branch }}
           DIFFS: ${{ steps.diffs.outputs.artifact-url }}
         run: |
@@ -345,9 +372,12 @@ jobs:
               --title "docs: refresh screenshots" \
               --body "The nightly frappe-shots run found changed screenshots. Review the diff images before merging: ${DIFFS:-the screenshot-diffs artifact}")"
           fi
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
-          if [ -f .github/workflows/pr-policy.yml ]; then
-            gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          if [ "$APP" != true ]; then
+            # A GITHUB_TOKEN push raises no event.
+            gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            if [ -f .github/workflows/pr-policy.yml ]; then
+              gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+            fi
           fi
           echo "Screenshots changed: $url (diff images: ${DIFFS:-the screenshot-diffs artifact})" >> "$GITHUB_STEP_SUMMARY"
 

@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-28
+updated: 2026-10-30
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -106,7 +106,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | git submodules | always | |
 
 - **Ignores.** A managed `.github/dependabot.yml` entry takes Dependabot `ignore` conditions from `dependabot.ignore`, keyed by ecosystem (every managed entry of it) or by `<ecosystem>:<directory>` (one entry). Sync gives a notice when an app's `npm:/<dir>` key names no managed entry. A major cap the app holds on purpose goes there, because the `updates` region can't redefine a managed entry: `ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }`.
-- **The sweep** re-dispatches `ci.yml` and `pr-policy.yml` on bot PRs that have no `ci / *` run on their head, which covers dispatches a Dependabot-triggered job could not make.
+- **The sweep** re-dispatches `ci.yml` and `pr-policy.yml` on bot PRs that have no `ci / *` run on their head, which covers dispatches a Dependabot-triggered job could not make. With a [GitHub App](#a-github-app) there is nothing to dispatch: the App's pushes start CI themselves.
 - **The weekly relock** runs `nix run .#relock -- --upgrade` and opens `chore(deps): relock python` on `standards/relock-python`.
 
 No workflow ever pushes a change to `.github/workflows/`: GitHub refuses that from `GITHUB_TOKEN`, so every pushing job refuses such a patch first.
@@ -128,7 +128,7 @@ Every schedule is a profile parameter, `ci.schedules`, and `""` turns one off:
 
 | Key | Default | Why |
 |---|---|---|
-| `ci` | `0 6 * * *` | An auto-merge made with `GITHUB_TOKEN` raises no push, so the integration branch's checks catch up daily |
+| `ci` | `0 6 * * *` | An auto-merge made with `GITHUB_TOKEN` raises no push, so the integration branch's checks catch up daily (one enabled by a [GitHub App](#a-github-app) does) |
 | `release` | `30 5 * * *` | The same, for the release PR |
 | `deps-sweep` | `0 9 * * *` | The sweep |
 | `deps-relock` | `0 8 * * 1` | The weekly Python relock |
@@ -183,9 +183,47 @@ Pull requests, Dependabot runs and every job that resolves new third-party code 
 
 An org profile, a frappe fork or a sibling app in a private repository needs a token to fetch: set the secret `FRAPPE_NIX_FETCH_TOKEN` (Contents read on those repositories; also a Dependabot secret when `dependabot` is on). The callers pass it to every reusable workflow, which gives it to `pin-path` and `minibench`, and to Nix as an access token.
 
+## A GitHub App
+
+What a workflow pushes, opens or merges with `GITHUB_TOKEN` starts no workflow on its own, or starts one that waits for a maintainer to approve it (a repository that asks for approval from first-time contributors counts `github-actions[bot]` as one). So without an App, the release PR, the relock commits on Dependabot's PRs, the weekly relock PR and the screenshots PR get their CI by dispatch, and the merges auto-merge makes are only noticed by the `ci` and `release` crons.
+
+An organisation that has a GitHub App can hand it to these workflows instead. Bot branches and PRs then start CI the normal way, with nothing waiting for approval and nothing to dispatch, and an auto-merged PR raises a `push`, so CI and release-please run on the integration branch at once.
+
+1. Create a GitHub App owned by the organisation, with the repository permissions Contents and Pull requests set to read and write, and install it on the app repositories (or all of them). It needs no webhook. The workflows mint tokens that ask for Contents and Pull requests write only; they never push a workflow file, so the App needs no Workflows permission for them.
+2. Store its ID (the App ID or its client ID) in an organisation Actions **variable**, and generate a private key and store the PEM in an organisation Actions **secret**. With the `dependabot` module on, also store the key as an organisation **Dependabot secret** of the same name, and the ID too if Dependabot's runs can't read the variable: the callers read `vars.<name> || secrets.<name>`.
+3. Name them in the org profile's `[ci]` (or an app's `[tool.frappe-nix.ci]`), and roll the profile out:
+
+   ```toml
+   [ci.github-app]
+   app-id = "ORG_CI_APP_ID"            # the variable (or secret) with the App's ID
+   private-key = "ORG_CI_PRIVATE_KEY"  # the secret with its private key
+   ```
+
+These are the names of a variable and a secret, never their values; `frappe-init --sync` refuses anything that isn't a valid name. It then passes them to `release.yml`, `deps.yml` and, with `screenshots` on, `nightly.yml`:
+
+```yaml
+    secrets:
+      FETCH_TOKEN: ${{ secrets.FRAPPE_NIX_FETCH_TOKEN }}
+      APP_ID: ${{ vars.ORG_CI_APP_ID || secrets.ORG_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.ORG_CI_PRIVATE_KEY }}
+```
+
+The App's ID travels as a secret because a caller's `with:` can't read secrets, and a run that Dependabot started sees only Dependabot secrets.
+
+| Job | With the App's token |
+|---|---|
+| release `release-please` | opens and updates the release PR, and tags the release; `dispatch-ci` is skipped |
+| deps `relock-push` | pushes the relock commit and enables auto-merge; CI is not dispatched |
+| deps `auto-merge` | enables auto-merge, labels or closes the Dependabot PR |
+| deps `relock-upgrade` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
+| nightly `shots` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
+
+Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch keeps `GITHUB_TOKEN`, because the release-branch ruleset lets only GitHub Actions move it.
+
 ## Security notes
 
 - Every third-party action is pinned to a commit SHA with a version comment, and `.github/zizmor.yml` makes zizmor enforce it. Dependabot moves third-party pins; frappe-nix's own pin moves only with `frappe-init --sync`.
 - Every checkout uses `persist-credentials: false`. The three jobs that push (relock-push, relock-upgrade and nightly shots) push to an explicit token URL from that step alone.
+- A [GitHub App](#a-github-app)'s token is minted only in the jobs that push, open PRs, label or enable auto-merge, after any step that runs the app's or third-party code, for the current repository alone and with Contents and Pull requests write only. It is revoked when the job ends.
 - Every workflow starts from `permissions: {}`, and each job asks for exactly what it uses.
 - The jobs that hold a write token never install frappe-nix-tools from the PR's `flake.lock`: they read the integration branch's.
