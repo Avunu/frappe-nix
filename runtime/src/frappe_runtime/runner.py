@@ -221,7 +221,11 @@ class WebServer:
 		if config.uds:
 			with suppress(FileNotFoundError):
 				os.unlink(config.uds)
-			binding = {"uds": config.uds}
+			# uvicorn honors X-Forwarded-* only from a trusted client address, and a
+			# unix socket peer has none, so the proxy's https was dropped and Frappe
+			# built http:// URLs (OAuth discovery, redirects). Only the proxy in front
+			# can reach the socket, and it sets these headers itself.
+			binding = {"uds": config.uds, "forwarded_allow_ips": "*"}
 		else:
 			binding = {"host": config.host, "port": config.port}
 

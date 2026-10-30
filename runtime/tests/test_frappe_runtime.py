@@ -1294,6 +1294,50 @@ class TestSchedulerThread(unittest.TestCase):
 		self.assertEqual(len(busy), 1)
 
 
+class TestWebServerBinding(unittest.TestCase):
+	"""Behind nginx on a unix socket, X-Forwarded-Proto must reach Frappe.
+
+	2026-10-30: erp.avunu.net advertised http:// OAuth URLs, because uvicorn
+	trusts forwarded headers only from 127.0.0.1 and a unix socket peer has no
+	address. MCP clients that require https refused to connect."""
+
+	def config_kwargs(self, **overrides: object) -> dict:
+		from frappe_runtime import runner
+
+		base = dict(
+			host="127.0.0.1",
+			port=8000,
+			queue=None,
+			verbose=False,
+			web_threads=1,
+			job_threads=1,
+			restart_after_requests=0,
+			restart_after_jobs=0,
+			restart_idle_seconds=0,
+			request_drain_seconds=5,
+			job_drain_seconds=5,
+			dev=False,
+		)
+		uvicorn = types.ModuleType("uvicorn")
+		uvicorn.Config = MagicMock()
+		uvicorn.Server = MagicMock()
+		with (
+			patch.dict(sys.modules, {"uvicorn": uvicorn}),
+			patch.object(runner.TrafficMiddleware, "load", return_value=object()),
+		):
+			runner.WebServer(runner.Config(**{**base, **overrides}), MagicMock())
+		return uvicorn.Config.call_args.kwargs
+
+	def test_a_unix_socket_trusts_the_proxy_headers(self) -> None:
+		with tempfile.TemporaryDirectory() as tmp:
+			kwargs = self.config_kwargs(uds=os.path.join(tmp, "web.sock"))
+		self.assertEqual(kwargs["forwarded_allow_ips"], "*")
+
+	def test_tcp_keeps_uvicorns_loopback_default(self) -> None:
+		# Over TCP anyone who can reach the port could forge the headers.
+		self.assertNotIn("forwarded_allow_ips", self.config_kwargs())
+
+
 class TestSourceWatch(unittest.TestCase):
 	"""--dev's source watcher must not take the web server down with it.
 
