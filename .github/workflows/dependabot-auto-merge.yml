@@ -40,7 +40,7 @@ jobs:
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # gh pr merge --auto
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@d9bf3f0d94bfc2cc32709511905effe9e4bf48f8 # python-devops-nix#52 (unreleased)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@64a23eede77e3b9fcb2ac1e785dbfcde6fcd1bda # python-devops-nix#52 (unreleased)
     # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
     secrets:
       APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
@@ -52,7 +52,7 @@ jobs:
       contents: write # update-branch without the App
       pull-requests: write # comment `@dependabot rebase`, update-branch
       actions: write # without the App, dispatch the required checks on the new head
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@d9bf3f0d94bfc2cc32709511905effe9e4bf48f8 # python-devops-nix#52 (unreleased)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@64a23eede77e3b9fcb2ac1e785dbfcde6fcd1bda # python-devops-nix#52 (unreleased)
     with:
       # The workflows of the checks main requires ("flake", "build / Check"), and pr-policy.
       dispatch: check.yml docs.yml pr-policy.yml
