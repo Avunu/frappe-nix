@@ -16,6 +16,9 @@
 #   standards-shots-cdp      tests/standards/shots-cdp.ts: the engine's launch starts the real
 #                            chromium under a TMPDIR too long for its singleton socket, in a
 #                            short run directory it removes again
+#   standards-shots-diff     tests/standards/shots-diff.ts: the engine's comparison (pixelmatch's
+#                            tolerance, a new size), the change threshold's verdict and the
+#                            lossless WebP round trip
 #   standards-icon           on the fixture with the example-org profile (tile #336699):
 #                            `frappe-icon check` passes, raster rules included; `build`
 #                            writes the same bytes twice; a stroke fails it (exit 1); an
@@ -122,6 +125,20 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
       node ${./shots-cdp.ts}
     touch "$out"
   '';
+
+  standards-shots-diff =
+    checks.script "standards-shots-diff"
+      {
+        tools = [
+          pkgs.nodejs_24
+          pkgs.libwebp
+        ];
+      }
+      ''
+        export HOME="$TMPDIR"
+        DIFF=${tools.frappe-shots.engine}/diff.ts node ${./shots-diff.ts}
+        touch "$out"
+      '';
 
   standards-icon = checks.script "standards-icon" { tools = nativeBuildInputs; } ''
     set -euo pipefail

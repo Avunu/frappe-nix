@@ -265,7 +265,11 @@ has 'the screenshots module is off' "the module off"
 pyproject $'[tool.frappe-nix.screenshots]\nenable = true\nno-such-key = 1'
 run 2 "an invalid configuration" "$SHOTS"
 has 'cannot read the' "an invalid configuration"
-ok "frappe-shots: --help is 0; a usage error is 2; no dev shell or site is 3; the module off is 0 doing nothing; a bad configuration is 2"
+pyproject $'[tool.frappe-nix.demo]\nenable = true\n\n[tool.frappe-nix.screenshots]\nenable = true\nchange-threshold = 1.5'
+run 2 "a change threshold over 1" "$SHOTS"
+has 'cannot read the' "a change threshold over 1"
+[ ! -s "$STATE/log" ] || fail "a change threshold over 1 still ran: $(cat "$STATE/log")"
+ok "frappe-shots: --help is 0; a usage error is 2; no dev shell or site is 3; the module off is 0 doing nothing; a bad configuration (a change threshold over 1 included) is 2"
 
 pyproject "$ON"
 run 2 "no spec" "$SHOTS" --spec marketplace/nowhere.ts
@@ -328,6 +332,10 @@ has 'the bench is not up' "--reuse-site, bench down"
 touch "$STATE/pc-up"
 run 2 "--reuse-site" "$SHOTS" --reuse-site --only nosuch
 not_logged '^bench provision\|^python \|^bench build\|^devenv' "--reuse-site"
+pyproject $'[tool.frappe-nix.demo]\nenable = true\n\n[tool.frappe-nix.screenshots]\nenable = true\nchange-threshold = 0.2'
+run 2 "--reuse-site, a change threshold of 0.2" "$SHOTS" --reuse-site --only nosuch
+has '--only names no shot: nosuch' "the runner takes the change threshold"
+pyproject "$ON"
 echo '{}' > bench/sites/common_site_config.json
 run 3 "no webserver_port" "$SHOTS" --reuse-site
 has 'no webserver_port in' "no webserver_port"

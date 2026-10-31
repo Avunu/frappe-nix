@@ -1678,6 +1678,13 @@
             "type": "string",
             "minLength": 1,
             "default": "en-US"
+          },
+          "change-threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0,
+            "description": "The share of a screenshot's pixels (0 to 1) that must differ before frappe-shots --update, and so the nightly screenshots PR, replaces it. 0 replaces whatever a shot's maxDiffRatio lets through; a new shot, a new size or a removed shot always counts (\u00a75.5)."
           }
         },
         "description": "marketplace/shots.d.ts, frappe-shots, nightly shots (\u00a75.5). Needs demo."

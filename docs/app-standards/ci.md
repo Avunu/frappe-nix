@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -116,7 +116,7 @@ No workflow ever pushes a change to `.github/workflows/`: GitHub refuses that fr
 | Job | Runs when | What |
 |---|---|---|
 | integration | `tests` | `frappe-test --ci --keep-up`, `bench build`, then each `nightly-suites` command against the running site |
-| shots | `screenshots` | `frappe-shots --update`; changed screenshots go to a `standards/screenshots` PR that is never merged automatically |
+| shots | `screenshots` | `frappe-shots --update`; screenshots that changed by at least `screenshots.change-threshold` go to a `standards/screenshots` PR that is never merged automatically |
 | links | `listing` | The listing's website and documentation answer 200; with `icons`, the raster icon checks |
 | duplication | `test-utils` with `check_code_duplication` | Informational |
 | registry-refresh | `listing.publish` | Rebuilds the open registry PR on upstream `main` |
