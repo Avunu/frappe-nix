@@ -3,17 +3,17 @@ title: GitHub settings
 description: "The optional rulesets and repository settings, the release flow, and how they are applied and audited."
 order: 6
 tags: [app-standards, github, rulesets, releases]
-updated: 2026-10-16
+updated: 2026-10-30
 ---
 
 The CI gates and the release flow need a few repository settings to work, and rulesets to be worth anything: auto-merge is only as safe as the checks the integration branch requires. frappe-nix renders the settings and rulesets from an app's resolved configuration, and `frappe-nix repo apply` applies them, but only for an app whose profile turns on `repo-policy` (it is off in `recommended`). Without it nobody applies anything, and `frappe-nix repo doctor` tells you what the enabled modules rely on.
 
 ## The release flow
 
-`release.yml` runs releases with no GitHub App:
+`release.yml` runs releases with no GitHub App, or with the one `ci.github-app` names (see [CI](ci.md#a-github-app)):
 
-1. **release-please** runs with `GITHUB_TOKEN` on every push to the integration branch, and on a daily schedule, because a `GITHUB_TOKEN` merge raises no push. It keeps the release PR open, and cuts the tag and the GitHub release once that PR is merged.
-2. **dispatch-ci** runs `ci.yml` and `pr-policy.yml` on the release PR, because a push made with `GITHUB_TOKEN` starts no workflow. It checks each required check on the PR's head separately, so a run that failed or was cancelled is retried by the next one.
+1. **release-please** runs on every push to the integration branch, and on a daily schedule, because a `GITHUB_TOKEN` merge raises no push. It keeps the release PR open, and cuts the tag and the GitHub release once that PR is merged. It uses `GITHUB_TOKEN`, or the App's token when there is one, and then the release PR starts `ci.yml` and `pr-policy.yml` by itself.
+2. **dispatch-ci**, without an App only, runs `ci.yml` and `pr-policy.yml` on the release PR, because a push made with `GITHUB_TOKEN` starts no workflow. It checks each required check on the PR's head separately, so a run that failed or was cancelled is retried by the next one.
 3. **fast-forward** (`develop+version` only) moves the release branch, `version-<major>`, to the commit of the new tag with a REST `PATCH` that GitHub refuses unless it is a fast-forward (or creates the branch on the first release). It then reads the branch back and fails unless it equals the tag. Under `frappe-major` the tag must also start with `<tag-prefix><major>.`.
 4. **assets** dispatches `assets.yml` on the release branch (or on the tag under `main+tags`) when `pilot-assets` is on.
 5. **publish** opens the Frappe marketplace registry PR when `listing.publish` is on and the repository variable `MARKETPLACE_PUBLISH` is `true`, using the `REGISTRY_TOKEN` secret, and appends the PR's link to the release notes.
@@ -22,7 +22,8 @@ Merging the release PR is the decision to ship. Nothing merges it automatically.
 
 | Setting | Needed by |
 |---|---|
-| Actions may create pull requests (Settings → Actions → General → Workflow permissions) | release-please, the weekly relock, the screenshots PR |
+| Actions may create pull requests (Settings → Actions → General → Workflow permissions) | release-please, the weekly relock, the screenshots PR, unless `ci.github-app` names an App |
+| The `ci.github-app` App installed on the repository, its ID in an Actions variable and its private key in an Actions secret (both also Dependabot secrets with `dependabot` on) | bot PRs that start CI without approval or dispatch (optional; see [CI](ci.md#a-github-app)) |
 | GitHub Actions may update `version-*` (the release-branch ruleset's bypass, or no ruleset there) | the fast-forward |
 | Auto-merge allowed, and a ruleset or branch protection requiring every enabled `ci / <gate>` | Dependabot auto-merge |
 | `REGISTRY_TOKEN` secret and `listing.registry-fork` | publishing to the registry |

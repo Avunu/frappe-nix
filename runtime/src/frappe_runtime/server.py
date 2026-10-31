@@ -136,7 +136,9 @@ class RealtimeServer:
 		"""Bind to the UDS path if configured, else to the port on all interfaces."""
 		binding: dict[str, Any]
 		if self.config.uds:
-			binding = {"uds": self.config.uds}
+			# Trust the proxy's X-Forwarded-* headers: a unix socket peer has no
+			# address for uvicorn to match, and only the proxy can reach the socket.
+			binding = {"uds": self.config.uds, "forwarded_allow_ips": "*"}
 		else:
 			binding = {"host": "0.0.0.0", "port": self.config.port}
 		# log_config=None keeps the caller's logging setup; access logs would record

@@ -33,6 +33,7 @@
 			"uses": [
 				"ci.schedules.release",
 				"ci.runs-on",
+				"ci.github-app",
 				"listing.publish",
 				"listing.registry-fork"
 			],
@@ -49,6 +50,7 @@
 				"ci.schedules.deps-sweep",
 				"ci.schedules.deps-relock",
 				"ci.runs-on",
+				"ci.github-app",
 				"repo-policy.merge-methods"
 			],
 			"header": "yaml"
@@ -63,6 +65,7 @@
 				"ci.nightly",
 				"ci.schedules.nightly",
 				"ci.runs-on",
+				"ci.github-app",
 				"listing.publish",
 				"test-utils.hooks"
 			],

@@ -14,8 +14,9 @@ A fragment is a JSON object:
     ``deps_in_project`` (a requirements file) retires it only once
     ``[project].dependencies`` names every package it lists, and is exit 2 until then;
 ``floors``
-    version floors by kind (``npm-js``, ``npm-ts``, ``npm-frappe-types``, ``npm-scss``,
-    ``uv``), merged into the template context as ``floors``.
+    version floors by kind (``npm-js``, ``npm-ts``, ``npm-frappe-types``, ``npm-vue``,
+    ``npm-scss``, ``uv``), merged into the template context as ``floors``. An npm floor
+    may name an alias, ``npm:<package>@<version>``.
 
 An entry is live when one of its ``module`` (a name, or a list meaning any of them) is on
 and its ``when`` holds. ``path`` is itself a Jinja template (``{{ app }}/__init__.py``,

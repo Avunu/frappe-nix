@@ -37,6 +37,17 @@
 #                                  directory is run in a subshell and still
 #                                  registers, and outside a bench the script
 #                                  skips.
+#   standards-vue-typescript       the spa-app fixture with the typescript and
+#                                  js modules on and a Vue component: sync
+#                                  renders scripts/vue-tsc.cjs and
+#                                  scripts/vue-sfc-typescript.mjs and the
+#                                  typescript5 alias; both files are oxfmt's
+#                                  output (tabs and two spaces, printWidth 80
+#                                  and 110), node parses them, and they and a
+#                                  vite.config.ts that imports the helper pass
+#                                  oxlint with the rendered rules and the
+#                                  correctness, suspicious and perf categories
+#                                  on.
 {
   pkgs,
   checks,
@@ -249,6 +260,64 @@ in
         got="$(targets ${excludeFlags [ "docs-site" ]})"
         [ "$got" = "docs_app docs_app/frontend " ] || fail "node-locks with docs-site excluded locked: $got"
         echo "ok   node-locks with excludeNodeTargets = [ \"docs-site\" ] leaves it out"
+        touch "$out"
+      '';
+
+  standards-vue-typescript =
+    checks.script "standards-vue-typescript"
+      {
+        tools = [
+          pkgs.nodejs
+          pkgs.git
+          pkgs.jq
+          pkgs.oxfmt
+          pkgs.oxlint
+          pkgs.diffutils
+          frappeNix
+        ];
+      }
+      ''
+        set -euo pipefail
+        fail() { echo "FAIL $*" >&2; exit 1; }
+        export HOME="$TMPDIR" FRAPPE_NIX_OFFLINE=1 GIT_CONFIG_GLOBAL=/dev/null
+        unset FRAPPE_BENCH_ROOT
+        cp -r ${spaApp} app
+        chmod -R u+w app
+        cd app
+        sed -i 's/^siblings = \[\]$/&\ntypescript.enable = true\njs.enable = true/' pyproject.toml
+        printf '<script setup lang="ts">\ndefineProps<{ name: string }>();\n</script>\n' > spa_app/public/js/spa/App.vue
+        git init -q -b develop
+        git add -A
+        git -c user.name=t -c user.email=t@t commit -qm fixture
+        frappe-nix sync --write > /dev/null
+        for f in scripts/vue-tsc.cjs scripts/vue-sfc-typescript.mjs; do
+          [ -f "$f" ] || fail "sync did not render $f"
+          node --check "$f" || fail "node does not parse $f"
+        done
+        [ "$(jq -r .devDependencies.typescript5 package.json)" = "npm:typescript@^5.9.3" ] \
+          || fail "devDependencies.typescript5 is $(jq -r .devDependencies.typescript5 package.json)"
+        echo "ok   sync renders both scripts and the typescript5 alias; node parses them"
+
+        for tabs in true false; do
+          for width in 80 110; do
+            mkdir -p "../fmt-$tabs-$width"
+            printf '{"useTabs": %s, "printWidth": %s}\n' "$tabs" "$width" > "../fmt-$tabs-$width/.oxfmtrc.json"
+            for f in vue-tsc.cjs vue-sfc-typescript.mjs; do
+              cp "scripts/$f" "../fmt-$tabs-$width/$f"
+              chmod u+w "../fmt-$tabs-$width/$f"
+              (cd "../fmt-$tabs-$width" && oxfmt "$f" > /dev/null)
+              diff -u "scripts/$f" "../fmt-$tabs-$width/$f" || fail "oxfmt (useTabs $tabs, printWidth $width) rewrites scripts/$f"
+            done
+          done
+        done
+        echo "ok   both are oxfmt's output, tabs or spaces, at printWidth 80 and 110"
+
+        sed -i '1i import "./scripts/vue-sfc-typescript.mjs";' vite.config.ts
+        jq '.categories = {"correctness": "error", "suspicious": "error", "perf": "warn"} | del(."$schema")' \
+          .oxlintrc.json > ../oxlintrc.json
+        oxlint -c ../oxlintrc.json --deny-warnings scripts/vue-tsc.cjs scripts/vue-sfc-typescript.mjs vite.config.ts \
+          || fail "oxlint flags the scripts or the Vite config's import under the rendered rules"
+        echo "ok   they and a Vite config importing the helper pass oxlint"
         touch "$out"
       '';
 

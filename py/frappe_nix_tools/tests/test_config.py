@@ -180,6 +180,30 @@ class TestResolve(unittest.TestCase):
 		self.assertEqual(code, 0, message)
 		self.assertFalse(self.resolve(profile="recommended", js={"tool": "none"}).modules["js"])
 
+	def test_provisional_leaves_needs_to_the_profile(self):
+		"""Phase A over minimal, before the org profile is locked (§3.3): a need minimal leaves
+		off may be one the profile turns on, so it is checked by the full resolution."""
+		docs = {"docs-site": {"enable": True}}
+		code, message = code_of(lambda: self.resolve(**docs))
+		self.assertEqual(code, 2)
+		self.assertIn("docs-site needs module dependabot", message)
+		r = config.resolve_doc(app(**docs), root=self.root, provisional=True)
+		self.assertTrue(r.modules["docs-site"])
+		self.assertFalse(r.modules["dependabot"])
+		# A need the app's own table turns off is the app's: no profile can turn it back on.
+		code, message = code_of(
+			lambda: config.resolve_doc(
+				app(**docs, dependabot={"enable": False}), root=self.root, provisional=True
+			)
+		)
+		self.assertEqual(code, 2)
+		self.assertIn("docs-site needs module dependabot", message)
+		# tool = "none" turns it off the same way.
+		pilot = {"pilot-assets": {"enable": True}, "releases": {"tool": "none"}}
+		code, message = code_of(lambda: config.resolve_doc(app(**pilot), root=self.root, provisional=True))
+		self.assertEqual(code, 2)
+		self.assertIn("pilot-assets needs module releases", message)
+
 	def test_dev_shell_is_required(self):
 		self.assertEqual(code_of(lambda: self.resolve(**{"dev-shell": {"enable": False}}))[0], 2)
 

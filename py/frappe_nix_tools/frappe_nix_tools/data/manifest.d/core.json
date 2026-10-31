@@ -4,6 +4,7 @@
 		"npm-js": { "oxlint": "1.87.0", "oxfmt": "0.72.0" },
 		"npm-ts": { "typescript": "7.0.2", "@types/node": "26.6.4" },
 		"npm-frappe-types": { "frappe-types": "16.5.0" },
+		"npm-vue": { "typescript5": "npm:typescript@5.9.3" },
 		"npm-scss": { "stylelint": "17.16.0", "stylelint-config-standard-scss": "17.0.0" },
 		"uv": {
 			"ruff": "0.16.10",
@@ -304,6 +305,22 @@
 			"header": "jsonc",
 			"header_note": "Customise via [tool.frappe-nix.typescript].",
 			"when": "cfg.typescript['check-js'] and discover.web_project"
+		},
+		{
+			"path": "scripts/vue-tsc.cjs",
+			"template": "scripts/vue-tsc.cjs",
+			"strategy": "whole",
+			"module": "typescript",
+			"when": "vue_typescript5",
+			"header": "ts"
+		},
+		{
+			"path": "scripts/vue-sfc-typescript.mjs",
+			"template": "scripts/vue-sfc-typescript.mjs",
+			"strategy": "whole",
+			"module": "typescript",
+			"when": "vue_typescript5 and discover.vite",
+			"header": "ts"
 		},
 		{
 			"path": "release-please-config.json",

@@ -5,7 +5,7 @@ import tomllib
 import unittest
 
 from frappe_nix_tools.common import data_path, schema
-from frappe_nix_tools.scaffold import blocks, globs, jsonfmt, manifest
+from frappe_nix_tools.scaffold import blocks, floors, globs, jsonfmt, manifest
 from scaffold_helpers import AppCase
 
 
@@ -172,3 +172,32 @@ class TestUncheckedJs(AppCase):
 
 if __name__ == "__main__":
 	unittest.main()
+
+
+class TestNpmFloors(unittest.TestCase):
+	def test_ranges(self):
+		for spec, ok in (
+			("^7.0.2", True),
+			("7.1.0", True),
+			("^7.0.1", False),
+			("~7.0.2", False),
+			(">=7", False),
+		):
+			self.assertEqual(floors.range_ok(spec, "7.0.2"), ok, spec)
+		self.assertEqual(floors.caret("7.0.2"), "^7.0.2")
+
+	def test_an_alias_floor(self):
+		"""``typescript5`` (§2.8.1): an alias of the same package whose range meets the floor."""
+		floor = "npm:typescript@5.9.3"
+		for spec, ok in (
+			("npm:typescript@^5.9.3", True),
+			("npm:typescript@6.0.2", True),
+			("npm:typescript@^5.4.0", False),
+			("npm:typescript@~5.9.3", False),
+			("^5.9.3", False),
+			("npm:typescript-fork@^5.9.3", False),
+		):
+			self.assertEqual(floors.range_ok(spec, floor), ok, spec)
+		self.assertEqual(floors.caret(floor), "npm:typescript@^5.9.3")
+		self.assertTrue(floors.range_ok("npm:@scope/pkg@^1.2.0", "npm:@scope/pkg@1.0.0"))
+		self.assertEqual(floors.caret("npm:@scope/pkg@1.0.0"), "npm:@scope/pkg@^1.0.0")

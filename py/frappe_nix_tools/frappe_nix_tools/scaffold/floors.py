@@ -56,8 +56,25 @@ def range_minimum(spec: str) -> Version | None:
 	return version(m["v"]) if m else None
 
 
+# An npm alias, ``npm:<package>@<range>``: a floor names it as ``npm:<package>@<version>``.
+_ALIAS = re.compile(r"^npm:(?P<pkg>(?:@[^/@\s]+/)?[^/@\s]+)@(?P<rest>.+)$")
+
+
+def caret(floor: str) -> str:
+	"""The range sync writes for ``floor``: ``^<floor>``, or ``npm:<package>@^<version>``."""
+	m = _ALIAS.match(floor)
+	return f"npm:{m['pkg']}@^{m['rest']}" if m else f"^{floor}"
+
+
 def range_ok(spec: str, floor: str) -> bool:
-	"""Whether the app's range is a caret or exact range whose minimum is at least ``floor``."""
+	"""Whether the app's range is a caret or exact range whose minimum is at least ``floor``.
+
+	An alias floor (``npm:typescript@5.9.3``) holds for an alias of the same package whose
+	range does."""
+	alias = _ALIAS.match(floor)
+	if alias:
+		have = _ALIAS.match(spec)
+		return bool(have) and have["pkg"] == alias["pkg"] and range_ok(have["rest"], alias["rest"])
 	m = _RANGE.match(spec)
 	if not m or m["op"] not in (None, "^", "="):
 		return False
