@@ -1,7 +1,8 @@
 // Image comparison for frappe-shots (docs/app-standards/spec.md §5.5): PNG decoding with
-// pngjs, the per-pixel comparison with pixelmatch, and the WebP round trip through libwebp's
+// pngjs, the per-pixel comparison with pixelmatch, the WebP round trip through libwebp's
 // cwebp and dwebp (lossless, so a committed screenshot decodes to exactly the master it
-// was made from).
+// was made from), and the verdict that decides whether a capture replaces the committed
+// screenshot.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -70,4 +71,28 @@ export function compare(capture: Image, committed: Image | null, threshold: numb
 		threshold,
 	});
 	return { ratio: pixels / (capture.width * capture.height), pixels, diff };
+}
+
+/**
+ * What a capture is, against the committed screenshot:
+ * - `new`: there is no committed screenshot to compare with;
+ * - `same`: no more than `maxDiffRatio` of its pixels differ;
+ * - `minor`: more than `maxDiffRatio` differ, but less than `changeThreshold`;
+ * - `changed`: at least `changeThreshold` differ (a new size is 1, so always).
+ *
+ * `--check` reports `minor` and `changed` alike; `--update` replaces only `new` and
+ * `changed`, so a `changeThreshold` of 0 (the default) replaces whatever `maxDiffRatio`
+ * lets through.
+ */
+export type Verdict = "new" | "same" | "minor" | "changed";
+
+export function judge(
+	result: Comparison,
+	committed: boolean,
+	maxDiffRatio: number,
+	changeThreshold: number,
+): Verdict {
+	if (!committed) return "new";
+	if (result.ratio <= maxDiffRatio) return "same";
+	return result.ratio >= changeThreshold ? "changed" : "minor";
 }

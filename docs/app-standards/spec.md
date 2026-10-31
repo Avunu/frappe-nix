@@ -3,7 +3,7 @@ title: Interface spec
 description: "The contract the app standards are built to: managed files, profiles, CI gates, tools, versioning and acceptance tests."
 order: 12
 tags: [app-standards, spec]
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 # App Standards and Quality Gates: Interface Spec (frappe-nix v1)
@@ -2871,14 +2871,14 @@ When frappe-shots invokes it, the whole bench runs under libfaketime (§5.5).
 
 ### 5.5 `frappe-shots` (N5)
 
-Module `screenshots` (off in `recommended`; needs `demo`). Profile values: `screenshots.timezone` and `screenshots.locale`, the defaults for the spec fields of the same names.
+Module `screenshots` (off in `recommended`; needs `demo`). Profile values: `screenshots.timezone` and `screenshots.locale`, the defaults for the spec fields of the same names, and `screenshots.change-threshold` (a share from 0 to 1, default 0), the share of a screenshot's pixels that must differ before `--update` replaces it.
 
 ```
 frappe-shots [--spec marketplace/screenshots.ts] [--only a,b] [--theme light|dark]
              [--update | --check] [--reuse-site] [--out docs/screenshots] [--video <name>]
 ```
 
-The default is `--update`. Nightly uses `--update`, then checks `git status`. `--check` writes diffs only and exits 1 if anything differs.
+The default is `--update`. Nightly uses `--update`, then checks `git status`: when no screenshot reached `change-threshold`, nothing changed and it pushes nothing. `--check` writes diffs only and exits 1 if anything differs past `maxDiffRatio`; `change-threshold` does not apply to it.
 
 **The engine** is `lib/shots/`:
 
@@ -2942,7 +2942,7 @@ export interface ShotSpec {
    - wait for `document.fonts.ready`, then network idle (no request in flight for 500 ms), then `waitFor` or `waitForFn` (timeout 30 s → exit 4);
    - run the actions, apply `hide` and `mask`;
    - capture `clip`, `fullPage` or the viewport as PNG.
-4. Write the master to `.dev-dist/shots/<name>-<theme>.png`. Decode the committed `docs/screenshots/<name>-<theme>.webp` with `dwebp` and run `pixelmatch(threshold)`. If the differing ratio is above `maxDiffRatio`: in update mode, write `cwebp -lossless -exact -z 9`; in check mode, record the diff PNG under `.dev-dist/shots/diff/`.
+4. Write the master to `.dev-dist/shots/<name>-<theme>.png`. Decode the committed `docs/screenshots/<name>-<theme>.webp` with `dwebp` and run `pixelmatch(threshold)` (anti-aliased pixels do not count). A shot with no committed WebP, or of another size (ratio 1), always differs. If the differing ratio is above `maxDiffRatio`: in update mode, write `cwebp -lossless -exact -z 9` when the ratio is also at least `screenshots.change-threshold` (`runner.ts --change-threshold`, default 0), and otherwise keep the committed WebP; in check mode, record the diff PNG under `.dev-dist/shots/diff/`.
 5. Write `docs/screenshots/manifest.json` (committed): `[{name, theme, alt, featured, readme, width, height, sha256}]`, sorted. The README and any org website read it.
 
 **Exit codes:** 0 no differences, or updated; 1 differences in `--check`; 2 a spec error (validation against the types runs at runtime); 3 environment; 4 a capture error (navigation, timeout or JS error).
@@ -3582,7 +3582,7 @@ Every module has `enable` (boolean). A module is effectively on when its own `en
 | `listing` | registry readiness: marketplace files, `ci / marketplace`, L1–L12, R3; and registry publishing when `publish` is on (§2.21, §5.2); the README's marketplace link when `approved` is on (§2.19). An app that isn't listed keeps it on with `publish = false` and no `listing.toml` | `publish` (bool, false); app-only `approved` (bool, false; true once the app's marketplace listing is approved); `registry-upstream` (string, "frappe/marketplace"); `registry-fork` (string, ""; required when `publish`); `getapp-check` (bool, true) | `metadata` | off | off | on (`publish = true`, fork "Avunu/marketplace") |
 | `readme` | README generated blocks (§2.19) | `install-ref` (string, "" = automatic) | `listing` | off | off | on |
 | `icons` | icon checks, desktop-icon fixture (§5.3) | none (`org.brand`) | — | off | off | on |
-| `screenshots` | `marketplace/shots.d.ts`, frappe-shots, nightly `shots` (§5.5) | `timezone` (string, "America/New_York"); `locale` (string, "en-US") | `demo` | off | off | on |
+| `screenshots` | `marketplace/shots.d.ts`, frappe-shots, nightly `shots` (§5.5) | `timezone` (string, "America/New_York"); `locale` (string, "en-US"); `change-threshold` (number 0 to 1, 0) | `demo` | off | off | on |
 | `demo` | frappe-demo (§5.4) | `company-name` ("Demo Company"); `company-abbr` ("DC"); `country` ("United States"); `currency` ("USD"); `timezone` ("America/New_York"); `language` ("English"); `date` ("2026-01-15"); `seed` (1); `erpnext-demo` (false) | — | off | off | on (company "Avunu Demo", "AD") |
 | `test-utils` | the agritheory/test_utils hooks (S19), minibench customizations, nightly duplication | `hooks` (list of hook ids, all eight of §2.14); `track-overrides` (bool, false) | — | off | off | on |
 | `docs-site` | dependabot entries and groups for a docs site (§2.17), and the `docs-site` node-target exclusion (§5.11) | `action-patterns` (list, []); `cooldown-exclude-actions` (list, []); `package-names` (list, []) | `dependabot` | off | off | off |
