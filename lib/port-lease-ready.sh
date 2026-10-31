@@ -8,10 +8,10 @@
 #
 # The frappe-ports readiness probe, the frappe:config task's wait and the
 # check before `devenv up` run this, several times a second while a bench
-# starts. A Python start-up per check (python3Minimal ships no bytecode)
-# cost about 0.2 s of CPU, and on a CI host running many benches at once it
-# took longer than the probe's timeout: the lease was up, the probe never
-# passed, and nginx and the runtime never started.
+# starts: a few milliseconds each, and nothing asked of the holder. `ready`
+# itself asked the holder for its identity over a claim socket, in a Python
+# start-up per check that on the CI runner host took seconds (see
+# lib/port-lease.nix for why).
 dir="${1:?usage: frappe-nix-lease-ready RUNTIME}/frappe-nix"
 [ -s "$dir/ports.json" ] || exit 1
 # Read-only, so a check never creates the lock file.
