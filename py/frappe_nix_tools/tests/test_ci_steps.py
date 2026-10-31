@@ -267,6 +267,51 @@ class TestVerdict(FakeCase):
 		self.assertEqual((code, stdout.strip()), (0, "auto"))
 		self.assertEqual(out.read_text(), "verdict=auto\n")
 
+	def test_policy_all_merges_every_review(self):
+		"""``dependabot.auto-merge-policy = "all"``: every review row auto-merges; relock and close stay."""
+		for meta, table in METADATA:
+			with self.subTest(meta=meta):
+				got = verdict.decide(
+					meta["package-ecosystem"],
+					update_type=meta["update-type"],
+					group=meta["dependency-group"],
+					dependency_names=meta["dependency-names"],
+					directory=meta["directory"],
+					policy="all",
+				)
+				self.assertEqual(got, "auto" if table == "review" else table)
+		self.assertEqual(verdict.decide("cargo", dependency_names="x", policy="all"), "auto")
+		self.assertEqual(
+			verdict.decide(
+				"github_actions", dependency_names="example/docs-tool", docs_patterns=["example/docs-tool*"],
+				policy="all",
+			),
+			"auto",
+		)  # fmt: skip
+
+	def test_policy_all_never_merges_a_frappe_nix_pin(self):
+		"""frappe-nix moves only through `frappe-nix repo rollout` (S5), whatever the policy."""
+		got = verdict.decide(
+			"github_actions", group="actions", dependency_names="example/frappe-nix",
+			frappe_nix_repo="Example/frappe-nix", policy="all",
+		)  # fmt: skip
+		self.assertEqual(got, "review")
+
+	def test_policy_cli(self):
+		code, stdout, _ = run_cli(
+			"ci",
+			"verdict",
+			"--ecosystem",
+			"uv",
+			"--update-type",
+			"version-update:semver-major",
+			"--policy",
+			"all",
+		)
+		self.assertEqual((code, stdout.strip()), (0, "auto"))
+		code, _, err = run_cli("ci", "verdict", "--ecosystem", "uv", "--policy", "everything")
+		self.assertEqual(code, 2, err)
+
 
 class TestAutomerge(FakeCase):
 	def apply(self, decision, **kw):
@@ -339,6 +384,28 @@ class TestAutomerge(FakeCase):
 			)
 		self.assertEqual([c[:2] for c in fake.clis], [("pr", "comment"), ("pr", "close")])
 		self.assertIn("frappe-nix moves through `frappe-nix repo rollout`", fake.clis[0][-1])
+
+	def test_already_enabled_is_left_alone(self):
+		"""The weekly relock and the nightly screenshots enable it again on the same PR."""
+		fake = self.use(
+			Fake(
+				protected([f"ci / {g}" for g in GATES]),
+				{("pr", "view"): Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))},
+			)
+		)
+		with mock.patch("builtins.print"):
+			self.assertEqual(self.apply("auto"), "merging")
+		self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+
+	def test_cli_policy_all_merges_a_major(self):
+		fake = self.use(Fake(protected(["ci / lint", "ci / test"])))
+		code, _, err = run_cli(
+			"ci", "automerge", "--pr-url", PR, "--repo", REPO, "--integration", "develop",
+			"--gates", "lint,test", "--ecosystem", "uv", "--update-type", "version-update:semver-major",
+			"--policy", "all",
+		)  # fmt: skip
+		self.assertEqual(code, 0, err)
+		self.assertIn(("pr", "merge", "--auto", "--squash", PR), fake.clis)
 
 	def test_review_labels(self):
 		fake = self.use(Fake())

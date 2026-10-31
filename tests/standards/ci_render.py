@@ -16,6 +16,8 @@ own locks stay), and copies the rendered ``.github/`` to ``<out>/<case>/.github`
   secret, so release, deps and nightly pass ``APP_ID`` and ``APP_PRIVATE_KEY``;
 - ``dependabot-ignore``: example-org with ``dependabot.ignore`` conditions longer than oxfmt's
   printWidth (§2.17);
+- ``bot-prs``: the ``github-app`` case with ``dependabot.auto-merge-policy = "all"`` and
+  ``dependabot.update-branches``, so deps runs on a push and nightly auto-merges the screenshots PR;
 
 selftest-ci.yml runs actionlint and zizmor (the fixture's pinned versions) on each.
 """
@@ -48,6 +50,11 @@ OFF = {
 	"github-app": (
 		"[tool.frappe-nix.demo]\nenable = true\n[tool.frappe-nix.screenshots]\nenable = true\n"
 		'[tool.frappe-nix.ci.github-app]\napp-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n'
+	),
+	"bot-prs": (
+		"[tool.frappe-nix.demo]\nenable = true\n[tool.frappe-nix.screenshots]\nenable = true\n"
+		'[tool.frappe-nix.ci.github-app]\napp-id = "ORG_CI_APP_ID"\nprivate-key = "ORG_CI_PRIVATE_KEY"\n'
+		'[tool.frappe-nix.dependabot]\nauto-merge-policy = "all"\nupdate-branches = true\n'
 	),
 	"dependabot-ignore": (
 		"[tool.frappe-nix.dependabot.ignore]\n"

@@ -18,6 +18,13 @@
 
 Anything else (an ecosystem the table does not name, a frappe-nix bump that arrived despite
 the ignore) is ``review``: nothing merges without a rule that says it may.
+
+``dependabot.auto-merge-policy`` chooses between that table (``decision-table``, the default)
+and ``all``: every ``review`` becomes ``auto``, so the required checks alone decide what merges,
+majors, the ``docs-actions``, ``pilot`` and ``test-utils`` groups and ``/docs-site`` included.
+Two verdicts stay as they are under ``all``: a nix bump still waits for its relock
+(``relock``) or is closed when it moves a rollout input (``close``), and a frappe-nix pin
+bump is still ``review``, because frappe-nix moves only through ``frappe-nix repo rollout`` (S5).
 """
 
 from fnmatch import fnmatchcase
@@ -27,6 +34,10 @@ REVIEW = "review"
 RELOCK = "relock"
 CLOSE = "close"
 VERDICTS = (AUTO, REVIEW, RELOCK, CLOSE)
+
+DECISION_TABLE = "decision-table"
+ALL = "all"
+POLICIES = (DECISION_TABLE, ALL)
 
 MAJOR = "version-update:semver-major"
 MINOR_PATCH = ("version-update:semver-minor", "version-update:semver-patch")
@@ -53,21 +64,31 @@ def _minor_or_patch(update_type: str, group: str) -> bool:
 	return update_type in MINOR_PATCH or (not update_type and bool(group))
 
 
-def decide(
+def _moves_frappe_nix(ecosystem: str, deps: list[str], frappe_nix_repo: str) -> bool:
+	"""A github-actions bump of the frappe-nix pin: ignored by dependabot.yml (S5), and never
+	merged if it arrives anyway, under either policy."""
+	return (
+		ecosystem == "github_actions"
+		and bool(frappe_nix_repo)
+		and any(d.lower() == frappe_nix_repo.lower() for d in deps)
+	)
+
+
+def _table(
 	ecosystem: str,
-	update_type: str = "",
-	group: str = "",
-	dependency_names: str = "",
-	directory: str = "/",
-	docs_patterns: list[str] | tuple[str, ...] = (),
-	frappe_nix_repo: str = "",
+	update_type: str,
+	group: str,
+	dependency_names: str,
+	directory: str,
+	docs_patterns: list[str] | tuple[str, ...],
+	frappe_nix_repo: str,
 ) -> str:
-	"""The verdict for one Dependabot PR: ``auto``, ``review``, ``relock`` or ``close``."""
+	"""The §4.5 decision table itself."""
 	deps = names(dependency_names)
 	directory = "/" + directory.strip("/") if directory else "/"
 	if ecosystem == "github_actions":
-		if frappe_nix_repo and any(d.lower() == frappe_nix_repo.lower() for d in deps):
-			return REVIEW  # ignored by dependabot.yml (S5); never merged if it arrives anyway
+		if _moves_frappe_nix(ecosystem, deps, frappe_nix_repo):
+			return REVIEW
 		if group in ("docs-actions", "pilot"):
 			return REVIEW
 		if any(_matches(d, list(docs_patterns)) or _matches(d, PILOT_PATTERNS) for d in deps):
@@ -94,6 +115,29 @@ def decide(
 	if ecosystem == "submodules":
 		return AUTO
 	return REVIEW
+
+
+def decide(
+	ecosystem: str,
+	update_type: str = "",
+	group: str = "",
+	dependency_names: str = "",
+	directory: str = "/",
+	docs_patterns: list[str] | tuple[str, ...] = (),
+	frappe_nix_repo: str = "",
+	policy: str = DECISION_TABLE,
+) -> str:
+	"""The verdict for one Dependabot PR: ``auto``, ``review``, ``relock`` or ``close``."""
+	decision = _table(
+		ecosystem, update_type, group, dependency_names, directory, docs_patterns, frappe_nix_repo
+	)
+	if (
+		policy == ALL
+		and decision == REVIEW
+		and not _moves_frappe_nix(ecosystem, names(dependency_names), frappe_nix_repo)
+	):
+		return AUTO
+	return decision
 
 
 def nix_verdict(relock_state: str) -> str:

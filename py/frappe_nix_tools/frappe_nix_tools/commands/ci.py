@@ -18,6 +18,7 @@ step                   prints                                                   
 ``refuse-workflows``   the workflow paths (exit 1) or nothing                        —
 ``dispatch-ci``        each dispatch                                                 ``dispatched``
 ``sweep``              each dispatch                                                 ``dispatched``
+``update-branches``    what it did to each bot PR that was behind                    ``updated``
 ``fast-forward``       ``<branch> = <tag> = <sha>``                                  —
 ``drift``              one line per issue                                            —
 =====================  ============================================================  ==========================
@@ -29,9 +30,10 @@ Exit codes: 0, or 1 when a refusal or the fast-forward guard fails; 2 for a bad 
 import argparse
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 
-from frappe_nix_tools.ci import automerge, drift, error, output, release, relock, verdict
+from frappe_nix_tools.ci import automerge, branches, drift, error, output, release, relock, verdict
 from frappe_nix_tools.common import appgates
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError
 
@@ -68,6 +70,7 @@ def _decide(args: argparse.Namespace) -> str:
 		directory=args.directory,
 		docs_patterns=patterns,
 		frappe_nix_repo=args.frappe_nix_repo,
+		policy=args.policy,
 	)
 
 
@@ -164,6 +167,21 @@ def run_sweep(args: argparse.Namespace) -> int:
 	return CLEAN
 
 
+def run_update_branches(args: argparse.Namespace) -> int:
+	if args.limit < 1:
+		raise ConfigError("--limit must be at least 1")
+	done = branches.Updater(
+		_repo(args),
+		args.integration,
+		dispatch_ci=args.dispatch_ci,
+		contexts=_contexts(args.context) if args.context else release.CI_CONTEXTS,
+		limit=args.limit,
+		rebase_wait=timedelta(hours=args.rebase_wait_hours),
+	).run()
+	output(updated=",".join(f"{n}:{what}" for n, what in done.items()))
+	return CLEAN
+
+
 def run_fast_forward(args: argparse.Namespace) -> int:
 	scheme, prefix, major = args.version_scheme, args.tag_prefix, args.frappe_major
 	if scheme is None or prefix is None or (scheme == "frappe-major" and major is None):
@@ -203,6 +221,12 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
 	p.add_argument("--directory", default="/", help="fetch-metadata directory")
 	p.add_argument("--docs-patterns", default="[]", help="docs-site.action-patterns, as a JSON list")
 	p.add_argument("--frappe-nix-repo", default="", help="the <owner>/<repo> the app locks frappe-nix from")
+	p.add_argument(
+		"--policy",
+		choices=verdict.POLICIES,
+		default=verdict.DECISION_TABLE,
+		help="dependabot.auto-merge-policy: the decision table, or every PR (all)",
+	)
 
 
 def _merge_args(p: argparse.ArgumentParser) -> None:
@@ -270,6 +294,30 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 	q = sub.add_parser("sweep", help="dispatch CI on bot PRs whose head has no ci runs (§4.5)")
 	q.add_argument("--repo", default="")
 	q.set_defaults(func=run_sweep)
+
+	q = sub.add_parser("update-branches", help="bring bot PRs that are behind up to date (§4.5)")
+	q.add_argument("--repo", default="")
+	q.add_argument("--integration", required=True, help="branches.integration")
+	q.add_argument(
+		"--dispatch-ci",
+		action="store_true",
+		help="the token is GITHUB_TOKEN, whose update raises no event: dispatch CI on the new head",
+	)
+	q.add_argument(
+		"--context",
+		action="append",
+		default=[],
+		metavar="CHECK=WORKFLOW",
+		help="with --dispatch-ci, a required check and the workflow that reports it (as dispatch-ci)",
+	)
+	q.add_argument("--limit", type=int, default=10, help="the most PRs to act on in one run")
+	q.add_argument(
+		"--rebase-wait-hours",
+		type=float,
+		default=6.0,
+		help="how long a `@dependabot rebase` request may go unanswered before the branch is updated",
+	)
+	q.set_defaults(func=run_update_branches)
 
 	q = sub.add_parser("fast-forward", help="move the release branch to the release and guard it (§4.4)")
 	q.add_argument("--repo", default="")

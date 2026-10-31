@@ -3,8 +3,10 @@ name: app-deps
 # Dependency PRs (docs/app-standards/ci.md, spec §4.5), reusable. A Dependabot nix PR is
 # relocked and synced (relock-plan runs the PR's code with no write token; relock-push only
 # applies its patch); every Dependabot PR gets the decision table's verdict (auto-merge or
-# needs-review); the sweep re-dispatches CI for bot PRs; relock-upgrade refreshes nix/uv.lock
-# weekly. Auto-merge is enabled only where required checks protect the integration branch.
+# needs-review), or auto-merge under the `all` policy; the sweep re-dispatches CI for bot PRs;
+# update-branches brings bot PRs that are behind the integration branch up to date;
+# relock-upgrade refreshes nix/uv.lock weekly. Auto-merge is enabled only where required
+# checks protect the integration branch.
 # With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) the pushes, PRs, labels and
 # auto-merges use the App's token, so they start CI and the release flow by themselves; without
 # one, GITHUB_TOKEN, and CI is dispatched.
@@ -26,6 +28,14 @@ on:
         description: dependabot.auto-merge
         type: boolean
         default: true
+      auto-merge-policy:
+        description: 'dependabot.auto-merge-policy: "decision-table", or "all" (every Dependabot PR)'
+        type: string
+        default: decision-table
+      update-branches:
+        description: dependabot.update-branches
+        type: boolean
+        default: false
       merge-method:
         description: the first of repo-policy.merge-methods
         type: string
@@ -426,6 +436,7 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           INTEGRATION: ${{ inputs.integration-branch }}
           METHOD: ${{ inputs.merge-method }}
+          POLICY: ${{ inputs.auto-merge-policy }}
           ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
           UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
           GROUP: ${{ steps.meta.outputs.dependency-group }}
@@ -436,7 +447,7 @@ jobs:
           MOVED: ${{ needs.relock-plan.outputs.moved }}
         run: |
           set -euo pipefail
-          args=(--pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
+          args=(--pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD" --policy "$POLICY"
             --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE" --dependency-group "$GROUP"
             --dependency-names "$NAMES" --directory "$DIRECTORY"
             --frappe-nix-repo "$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)")
@@ -511,6 +522,107 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: frappe-nix ci sweep --repo "$GITHUB_REPOSITORY"
+
+  update-branches:
+    if: inputs.update-branches && (github.event_name == 'push' || (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch')
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    timeout-minutes: 15
+    # One run at a time; a burst of merges leaves one run pending, which sees them all.
+    concurrency:
+      group: update-branches-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # update-branch without an App
+      pull-requests: write # comment `@dependabot rebase`, update-branch
+      actions: write # without an App, dispatch ci.yml and pr-policy.yml on the new head
+      checks: read # which ci / * checks ran on that head
+    steps:
+      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
+      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
+      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
+      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir and workspace
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
+      # A GitHub App's token when the caller passes one (ci.github-app): the update it makes is a
+      # push that starts CI. A merge that brings .github/workflows/ changes in needs Workflows
+      # write, so the token asks for it first and, from an App without it, falls back to Contents
+      # and Pull requests. Else GITHUB_TOKEN, and CI is dispatched on each new head.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token-workflows
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - if: steps.app.outputs.enabled == 'true' && steps.app-token-workflows.outcome != 'success'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Bring bot PRs that are behind up to date
+        env:
+          GH_TOKEN: ${{ steps.app-token-workflows.outputs.token || steps.app-token.outputs.token || github.token }}
+          APP: ${{ steps.app-token-workflows.outputs.token != '' || steps.app-token.outputs.token != '' }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY" --integration "$INTEGRATION")
+          if [ "$APP" != true ]; then
+            # A GITHUB_TOKEN update raises no event.
+            args+=(--dispatch-ci)
+          fi
+          frappe-nix ci update-branches "${args[@]}"
 
   relock-upgrade:
     if: (inputs.relock-cron != '' && github.event.schedule == inputs.relock-cron) || github.event_name == 'workflow_dispatch'

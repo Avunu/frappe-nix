@@ -1,6 +1,8 @@
 # Nightly (docs: ci.md, §4.6): the integration suites, and the reminders that the pinned
 # frappe-nix or standards profile is behind. Never a required check.
 {% set publish = modules.listing and cfg.listing.publish %}
+{# dependabot.auto-merge-policy = "all" covers the bot's own maintenance PRs: the screenshots PR too. #}
+{% set shots_merge = modules.screenshots and modules.dependabot and cfg.dependabot["auto-merge"] and cfg.dependabot["auto-merge-policy"] == "all" %}
 {# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
    lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
 {% macro uses(workflow) %}
@@ -46,6 +48,10 @@ jobs:
       run-shots: {{ "true" if modules.screenshots else "false" }}
       run-links: {{ "true" if modules.listing else "false" }}
       run-duplication: {{ "true" if modules["test-utils"] and "check_code_duplication" in cfg["test-utils"].hooks else "false" }}
+{% if shots_merge %}
+      auto-merge: true
+      merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
+{% endif %}
 {% if publish %}
       publish: {% raw %}${{ vars.MARKETPLACE_PUBLISH == 'true' }}{% endraw %}
 

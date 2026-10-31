@@ -9,6 +9,8 @@ the PR is labelled ``needs-review`` with a notice naming ``frappe-nix repo docto
 step still succeeds. Every label is created (``--force``, idempotent) before it is applied.
 """
 
+import json
+
 from frappe_nix_tools.ci import LABELS, notice, verdict
 from frappe_nix_tools.common import github
 
@@ -30,6 +32,18 @@ def label(pr_url: str, name: str, repo: str = "") -> None:
 		notice(f"could not label {pr_url} {name}: {res.stderr.strip()}")
 
 
+def auto_merge_enabled(pr_url: str) -> bool:
+	"""Whether the PR already has auto-merge on, so a job that runs again (the weekly relock, the
+	nightly screenshots) leaves it as it is rather than asking twice."""
+	res = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
+	if res.code != 0 or not res.stdout.strip():
+		return False
+	try:
+		return bool(json.loads(res.stdout).get("autoMergeRequest"))
+	except (json.JSONDecodeError, AttributeError):
+		return False
+
+
 def enable(pr_url: str, repo: str, integration: str, gates: list[str], merge_method: str) -> str:
 	"""``gh pr merge --auto`` when the gates protect ``integration``; else label ``needs-review``.
 
@@ -42,6 +56,9 @@ def enable(pr_url: str, repo: str, integration: str, gates: list[str], merge_met
 			f" labelled needs-review. {DOCTOR}"
 		)
 		return "needs-review"
+	if auto_merge_enabled(pr_url):
+		print(f"auto-merge is already enabled on {pr_url}")
+		return "merging"
 	res = github.cli("pr", "merge", "--auto", f"--{merge_method}", pr_url)
 	if res.code != 0:
 		label(pr_url, "needs-review", repo)

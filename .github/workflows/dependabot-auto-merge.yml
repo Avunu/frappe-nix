@@ -1,24 +1,139 @@
 name: Dependabot auto-merge
 
-# Dependabot pull requests, through python-devops-nix's reusable workflow (its
-# docs/conventions.md, CI) with its default policy: every update type auto-merges,
-# and github-actions bumps, which change what CI runs, are reviewed by a person.
-# GitHub merges once the branch is mergeable and every *required* status check
-# passes, so auto-merge is only as safe as the checks marked required on `main`.
-# Dependabot's github-actions entry moves the pin below.
+# frappe-nix's own Dependabot pull requests (docs/app-standards/spec.md §4.10):
 #
-# Requires (one-time, in repo settings):
-#   • Settings → General → Pull Requests → "Allow auto-merge"
-#   • Settings → Branches → protect `main`, require the "flake" status check
-on: pull_request
+#   auto-merge       every one, whatever its ecosystem or update type, github-actions bumps
+#                    included, gets auto-merge (squash): GitHub merges it once every check
+#                    the main ruleset requires passes, and one that fails stays open. The
+#                    required checks are the gate, so auto-merge is only as safe as they are.
+#   update-branches  after each push to main, and daily, every open Dependabot PR that is
+#                    behind main is brought up to date: `@dependabot rebase` while it has
+#                    only Dependabot's commits, else the update-branch API. A PR that is not
+#                    behind is left alone. The tools come from this checkout, because
+#                    frappe-nix's flake.lock has no frappe-nix node.
+#
+# The org's GitHub App, when the repository can read it (the variable AVUNU_CI_APP_ID, or a
+# Dependabot secret of that name, and the secret AVUNU_CI_PRIVATE_KEY), enables the auto-merge
+# and updates the branches, so the merge raises a push that starts check.yml, release.yml and
+# this workflow's update-branches on main at once, and an updated branch starts its CI. Without
+# it, GITHUB_TOKEN: the merge raises no push (release.yml's daily cron catches up), and CI is
+# dispatched on each updated branch.
+#
+# python-devops-nix's reusable dependabot-auto-merge.yml enables auto-merge with GITHUB_TOKEN
+# and leaves github-actions bumps to a person, so this repository does it itself.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   auto-merge:
     # The PR's author, not github.actor (which a re-run by a person changes).
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      contents: write # gh pr merge --auto
-      pull-requests: write # gh pr merge --auto
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@28418614a8f4479c11ac755aa4f402c0a9aa6192 # main (no release yet)
+      contents: write # gh pr merge --auto without the App
+      pull-requests: write # gh pr merge --auto without the App
+    steps:
+      # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
+      - id: app
+        name: Whether the repository can read the GitHub App
+        env:
+          ENABLED: ${{ (vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID) != '' && secrets.AVUNU_CI_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            echo "auto-merge is already enabled on $PR_URL"
+            exit 0
+          fi
+          gh pr merge --auto --squash "$PR_URL"
+
+  update-branches:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # One run at a time; a burst of merges leaves one run pending, which sees them all.
+    concurrency:
+      group: update-branches
+      cancel-in-progress: false
+    permissions:
+      contents: write # update-branch without the App
+      pull-requests: write # comment `@dependabot rebase`, update-branch
+      actions: write # without the App, dispatch the required checks on the new head
+      checks: read # which of them ran on that head
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+      - name: Install frappe-nix-tools from this checkout
+        run: uv tool install --python 3.14 ./py/frappe_nix_tools
+
+      - id: app
+        name: Whether the repository can read the GitHub App
+        env:
+          ENABLED: ${{ vars.AVUNU_CI_APP_ID != '' && secrets.AVUNU_CI_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      # A merge that brings .github/workflows/ changes in needs Workflows write: ask for it
+      # first and, from an App without it, fall back to Contents and Pull requests.
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token-workflows
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - if: steps.app.outputs.enabled == 'true' && steps.app-token-workflows.outcome != 'success'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Bring Dependabot PRs that are behind main up to date
+        env:
+          GH_TOKEN: ${{ steps.app-token-workflows.outputs.token || steps.app-token.outputs.token || github.token }}
+          APP: ${{ steps.app-token-workflows.outputs.token != '' || steps.app-token.outputs.token != '' }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY" --integration main)
+          if [ "$APP" != true ]; then
+            # A GITHUB_TOKEN update raises no event: dispatch what the main ruleset requires.
+            args+=(--dispatch-ci --context lint=check.yml --context pr-policy=pr-policy.yml
+              --context "build / Check=docs.yml")
+          fi
+          frappe-nix ci update-branches "${args[@]}"
