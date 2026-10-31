@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.2.0](https://github.com/Avunu/frappe-nix/compare/v2.1.0...v2.2.0) (2026-10-31)
+
+
+### Features
+
+* **ci:** let a profile auto-merge every bot PR and keep bot PRs up to date ([#234](https://github.com/Avunu/frappe-nix/issues/234)) ([de6fa0d](https://github.com/Avunu/frappe-nix/commit/de6fa0da642253cb962c275003cf3c8179f5fed6))
+* **standards:** replace screenshots only past screenshots.change-threshold ([#233](https://github.com/Avunu/frappe-nix/issues/233)) ([33ad215](https://github.com/Avunu/frappe-nix/commit/33ad215c349e2183ad53ee2cc7f0ed5394df5967))
+
+
+### Bug Fixes
+
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#238](https://github.com/Avunu/frappe-nix/issues/238)) ([c9714e5](https://github.com/Avunu/frappe-nix/commit/c9714e5b1d5b11b8469beb03d73f5c88346da47c))
+* **ports:** check the port lease with a flock, not a Python start-up ([#235](https://github.com/Avunu/frappe-nix/issues/235)) ([318d850](https://github.com/Avunu/frappe-nix/commit/318d8508bd50d30cbc5229e9ec015f51a057e704))
+* **ports:** run the port-lease tool isolated, so its start-up never lists /nix/store ([#237](https://github.com/Avunu/frappe-nix/issues/237)) ([820fbb5](https://github.com/Avunu/frappe-nix/commit/820fbb5aaf23431f564d3c503d82a9b64c1d6415))
+* **release:** move the release branch with the GitHub App when the release changes workflows ([#231](https://github.com/Avunu/frappe-nix/issues/231)) ([9fc4e9d](https://github.com/Avunu/frappe-nix/commit/9fc4e9de4f21b8f7e5fe986166142096ac5b5a21))
+
 ## [2.1.0](https://github.com/Avunu/frappe-nix/compare/v2.0.0...v2.1.0) (2026-10-31)
 
 

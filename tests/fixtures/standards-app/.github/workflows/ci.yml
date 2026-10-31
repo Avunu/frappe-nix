@@ -21,7 +21,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: Avunu/frappe-nix/.github/workflows/app-lint.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.1.0
+    uses: Avunu/frappe-nix/.github/workflows/app-lint.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.2.0
     with:
       app: standards_fixture
       integration-branch: develop
@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    uses: Avunu/frappe-nix/.github/workflows/app-typecheck.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.1.0
+    uses: Avunu/frappe-nix/.github/workflows/app-typecheck.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.2.0
     with:
       app: standards_fixture
       integration-branch: develop
@@ -43,7 +43,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: Avunu/frappe-nix/.github/workflows/app-test.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.1.0
+    uses: Avunu/frappe-nix/.github/workflows/app-test.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.2.0
     with:
       app: standards_fixture
       integration-branch: develop
