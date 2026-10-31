@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0](https://github.com/Avunu/frappe-nix/compare/v2.0.0...v2.1.0) (2026-10-31)
+
+
+### Features
+
+* **app-standards:** run Vue's TypeScript tooling on a managed TypeScript 5 alias ([#225](https://github.com/Avunu/frappe-nix/issues/225)) ([b28f8d1](https://github.com/Avunu/frappe-nix/commit/b28f8d1e0ac99711dee823da08e101e800df44b9))
+* **ci:** let bot pushes and PRs use a GitHub App token named by ci.github-app ([#228](https://github.com/Avunu/frappe-nix/issues/228)) ([eb406f5](https://github.com/Avunu/frappe-nix/commit/eb406f59476ebe60819d594513f27c8043d1d805))
+* **node:** pnpm apps install and build through lib.node ([#223](https://github.com/Avunu/frappe-nix/issues/223)) ([2ce52f0](https://github.com/Avunu/frappe-nix/commit/2ce52f0d66feadee372577cdfbc0c3f590dc249e))
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#222](https://github.com/Avunu/frappe-nix/issues/222)) ([ac41cbb](https://github.com/Avunu/frappe-nix/commit/ac41cbb66ba58d94ba22cb7ac19017268c998bab))
+* **migrate:** write installed_apps with raw SQL, so a cold site renames ([#227](https://github.com/Avunu/frappe-nix/issues/227)) ([aed5cc2](https://github.com/Avunu/frappe-nix/commit/aed5cc227cfbe4c41f7b5165a61bcc5470ef1602))
+* **runtime:** trust the proxy's forwarded headers on a unix socket ([#229](https://github.com/Avunu/frappe-nix/issues/229)) ([2d1cb3f](https://github.com/Avunu/frappe-nix/commit/2d1cb3fbe8dfa61817060c14a4c870a01150b738))
+* **sync:** leave module needs to the org profile until it is locked ([#224](https://github.com/Avunu/frappe-nix/issues/224)) ([a144109](https://github.com/Avunu/frappe-nix/commit/a144109df32c36aff29246c7d46d3e1f4c429898))
+
 ## [2.0.0](https://github.com/Avunu/frappe-nix/compare/v1.5.0...v2.0.0) (2026-10-29)
 
 
