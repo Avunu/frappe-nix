@@ -618,6 +618,33 @@ class TestZizmorConfig(AppCase):
 		self.assertIn('"*": hash-pin', text)
 
 
+class TestDocsActionsGroup(AppCase):
+	"""The docs-actions group of dependabot.yml says how deps.yml treats it (§2.17, §4.5)."""
+
+	DOCS = (
+		'\n[tool.frappe-nix.docs-site]\nenable = true\naction-patterns = ["example/docs-tool*"]\n'
+		'cooldown-exclude-actions = ["example/docs-tool"]\n'
+	)
+	extra_pyproject = DOCS
+
+	def test_needs_review_by_default(self):
+		self.synced()
+		text = self.read(".github/dependabot.yml")
+		self.assertIn("# needs-review: a merge publishes the docs site", text)
+		self.assertIn('docs-actions:\n        patterns: ["example/docs-tool*"]', text)
+
+
+class TestDocsActionsGroupAutoMerged(AppCase):
+	extra_pyproject = TestDocsActionsGroup.DOCS + "auto-merge-actions = true\n"
+
+	def test_merged_automatically_when_on(self):
+		self.synced()
+		text = self.read(".github/dependabot.yml")
+		self.assertIn("# merged automatically: the docs tool's workflow only checks", text)
+		self.assertNotIn("needs-review: a merge publishes", text)
+		self.assertIn('docs-actions:\n        patterns: ["example/docs-tool*"]', text)
+
+
 class TestZizmorConfigNothingToAudit(AppCase):
 	extra_pyproject = (
 		"\n[tool.frappe-nix.ci]\nenable = false\n\n[tool.frappe-nix.dependabot]\nenable = false\n"

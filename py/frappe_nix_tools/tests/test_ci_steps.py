@@ -257,6 +257,31 @@ class TestVerdict(FakeCase):
 		)
 		self.assertEqual(verdict.decide("cargo", dependency_names="x"), "review")
 
+	def test_docs_auto_merge(self):
+		"""docs-site.auto-merge-actions merges the docs-actions group, and nothing else changes."""
+		docs = {"docs_patterns": ["example/docs-tool*"], "docs_auto_merge": True}
+		self.assertEqual(verdict.decide("github_actions", group="docs-actions", **docs), "auto")
+		self.assertEqual(
+			verdict.decide(
+				"github_actions", dependency_names="example/docs-tool/.github/workflows/c.yml", **docs
+			),
+			"auto",
+		)
+		self.assertEqual(verdict.decide("github_actions", group="pilot", **docs), "review")
+		self.assertEqual(verdict.decide("github_actions", dependency_names="frappe/pilot", **docs), "review")
+		self.assertEqual(
+			verdict.decide("github_actions", group="docs-actions", docs_patterns=docs["docs_patterns"]),
+			"review",
+		)
+		self.assertEqual(verdict.decide("npm_and_yarn", directory="/docs-site", **docs), "review")
+
+	def test_docs_auto_merge_cli(self):
+		args = ("ci", "verdict", "--ecosystem", "github_actions", "--dependency-group", "docs-actions",
+			"--docs-patterns", '["example/docs-tool*"]')  # fmt: skip
+		with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(Path(tempfile.mkdtemp()) / "out")}):
+			self.assertEqual(run_cli(*args)[1].strip(), "review")
+			self.assertEqual(run_cli(*args, "--docs-auto-merge")[1].strip(), "auto")
+
 	def test_cli(self):
 		out = Path(tempfile.mkdtemp()) / "out"
 		with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(out)}):

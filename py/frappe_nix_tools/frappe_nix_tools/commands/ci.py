@@ -68,6 +68,7 @@ def _decide(args: argparse.Namespace) -> str:
 		directory=args.directory,
 		docs_patterns=patterns,
 		frappe_nix_repo=args.frappe_nix_repo,
+		docs_auto_merge=args.docs_auto_merge,
 	)
 
 
@@ -202,6 +203,11 @@ def _metadata_args(p: argparse.ArgumentParser) -> None:
 	p.add_argument("--dependency-names", default="", help="fetch-metadata dependency-names")
 	p.add_argument("--directory", default="/", help="fetch-metadata directory")
 	p.add_argument("--docs-patterns", default="[]", help="docs-site.action-patterns, as a JSON list")
+	p.add_argument(
+		"--docs-auto-merge",
+		action="store_true",
+		help="docs-site.auto-merge-actions: merge the docs-actions group like the actions group",
+	)
 	p.add_argument("--frappe-nix-repo", default="", help="the <owner>/<repo> the app locks frappe-nix from")
 
 

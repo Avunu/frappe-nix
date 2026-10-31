@@ -91,6 +91,7 @@
 				"dependabot.ignore",
 				"docs-site.action-patterns",
 				"docs-site.cooldown-exclude-actions",
+				"docs-site.auto-merge-actions",
 				"docs-site.package-names",
 				"test-utils.hooks"
 			],

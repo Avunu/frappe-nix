@@ -98,7 +98,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
 
   | Ecosystem | Merged automatically | Labelled `needs-review` |
   |---|---|---|
-  | GitHub Actions | the `actions` group | the docs-site actions group and the `pilot` group |
+  | GitHub Actions | the `actions` group, and the docs-site actions group with `docs-site.auto-merge-actions` | the docs-site actions group otherwise, and the `pilot` group |
   | npm | minor and patch | `/docs-site`, and any major |
   | uv (`/tools`) | minor and patch | major |
   | pre-commit | the `hooks` group | the `test-utils` group |

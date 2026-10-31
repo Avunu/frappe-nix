@@ -3,8 +3,9 @@
 ========================  ==========================================  ===========================================
 ``package-ecosystem``     merged automatically (``auto``)              labelled ``needs-review`` (``review``)
 ========================  ==========================================  ===========================================
-``github_actions``        the ``actions`` group                        the ``docs-actions`` group (or a name matching
-                                                                       ``docs-site.action-patterns``) and the
+``github_actions``        the ``actions`` group; the ``docs-actions``  the ``docs-actions`` group (or a name matching
+                          group too with                               ``docs-site.action-patterns``) without
+                          ``docs-site.auto-merge-actions``             ``docs-site.auto-merge-actions``, and the
                                                                        ``pilot`` group (``frappe/pilot*``)
 ``npm_and_yarn``          minor and patch, in ``/`` and nested         ``directory == /docs-site``; any
                           frontends                                    ``version-update:semver-major``
@@ -61,17 +62,21 @@ def decide(
 	directory: str = "/",
 	docs_patterns: list[str] | tuple[str, ...] = (),
 	frappe_nix_repo: str = "",
+	docs_auto_merge: bool = False,
 ) -> str:
-	"""The verdict for one Dependabot PR: ``auto``, ``review``, ``relock`` or ``close``."""
+	"""The verdict for one Dependabot PR: ``auto``, ``review``, ``relock`` or ``close``.
+
+	``docs_auto_merge`` is ``docs-site.auto-merge-actions``: the docs tool's workflow is pinned
+	to its releases and only checks, so its bump merges like any other action's."""
 	deps = names(dependency_names)
 	directory = "/" + directory.strip("/") if directory else "/"
 	if ecosystem == "github_actions":
 		if frappe_nix_repo and any(d.lower() == frappe_nix_repo.lower() for d in deps):
 			return REVIEW  # ignored by dependabot.yml (S5); never merged if it arrives anyway
-		if group in ("docs-actions", "pilot"):
+		if group == "pilot" or any(_matches(d, PILOT_PATTERNS) for d in deps):
 			return REVIEW
-		if any(_matches(d, list(docs_patterns)) or _matches(d, PILOT_PATTERNS) for d in deps):
-			return REVIEW
+		if group == "docs-actions" or any(_matches(d, list(docs_patterns)) for d in deps):
+			return AUTO if docs_auto_merge else REVIEW
 		if group == "actions" or (not group and deps):
 			return AUTO
 		return REVIEW

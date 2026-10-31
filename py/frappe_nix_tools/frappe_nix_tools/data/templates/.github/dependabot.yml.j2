@@ -63,7 +63,11 @@ updates:
       - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
 {{ ignore_items("github-actions", "/") }}    groups:
 {% if docs_actions %}
+{% if cfg["docs-site"]["auto-merge-actions"] %}
+      # merged automatically: the docs tool's workflow only checks, pinned to its releases
+{% else %}
       # needs-review: a merge publishes the docs site with the new workflow code
+{% endif %}
       docs-actions:
         patterns: {{ docs_actions | tojson }}
 {% endif %}

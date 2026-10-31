@@ -442,6 +442,9 @@ jobs:
             --frappe-nix-repo "$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)")
           if [ "$(frappe-nix config modules.docs-site)" = true ]; then
             args+=(--docs-patterns "$(frappe-nix config docs-site.action-patterns --json)")
+            if [ "$(frappe-nix config docs-site.auto-merge-actions)" = true ]; then
+              args+=(--docs-auto-merge)
+            fi
           fi
           if [ "$ECOSYSTEM" = nix ]; then
             if [ "$RELOCK_STATE" = rollout-input-moved ]; then

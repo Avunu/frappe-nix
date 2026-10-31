@@ -1805,6 +1805,11 @@
             },
             "default": []
           },
+          "auto-merge-actions": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether deps.yml merges the docs-actions group automatically, like the actions group, once CI passes. Leave it false when merging a bump of the docs tool's workflow publishes a site; set it true when the workflow only checks and is pinned to the tool's release tags (`@<sha> # vX.Y.Z`), so a bump arrives only with a release (spec \u00a72.17, \u00a74.5)."
+          },
           "package-names": {
             "type": "array",
             "items": {
