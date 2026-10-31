@@ -16,7 +16,7 @@ Nothing is installed or compiled at deploy time or at container start. The envir
 | Part               | Comes from                                                                                                                                      |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Python environment | `uv.lock`, through uv2nix. Nothing runs `uv sync` at build or start time.                                                                       |
-| `node_modules`     | Each node target's own `yarn.lock`, or a `node-locks/` fallback. See [Dependencies and locks](../development/locks.md#node-each-apps-yarnlock). |
+| `node_modules`     | Each node target's own `yarn.lock` (or `pnpm-lock.yaml`), or a `node-locks/` fallback. See [Dependencies and locks](../development/locks.md#node-each-apps-yarnlock). |
 | Compiled assets    | `bench build --production --force`, run inside the Nix sandbox. See [Build production images](images.md#how-the-immutable-bench-is-built).      |
 | App registry       | `sites/apps.txt` and `sites/apps.json`, regenerated from the workspace members. See [Apps in a bench](../development/apps.md#the-app-registry). |
 

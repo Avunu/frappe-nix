@@ -104,7 +104,7 @@ To move:
 
 The derivations of packages installed from a wheel change once (uv2nix adds a package's extra build dependencies to a wheel's build inputs too, and the stock list named many wheels), so the next deploy rebuilds the environment.
 
-## Node: each app's yarn.lock or pnpm-lock.yaml
+## Node: each app's yarn.lock
 
 Each app with a `package.json`, and each nested frontend under it, is a **node target**. A nested frontend is an immediate subdirectory with its own `package.json`, such as `erpnext/banking`, `hrms/frontend` or `commit/dashboard`. A subdirectory the app tracks as a git submodule, such as `hrms/frappe-ui`, is a project of its own and is skipped.
 
