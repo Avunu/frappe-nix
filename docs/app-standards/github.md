@@ -3,7 +3,7 @@ title: GitHub settings
 description: "The optional rulesets and repository settings, the release flow, and how they are applied and audited."
 order: 6
 tags: [app-standards, github, rulesets, releases]
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 The CI gates and the release flow need a few repository settings to work, and rulesets to be worth anything: auto-merge is only as safe as the checks the integration branch requires. frappe-nix renders the settings and rulesets from an app's resolved configuration, and `frappe-nix repo apply` applies them, but only for an app whose profile turns on `repo-policy` (it is off in `recommended`). Without it nobody applies anything, and `frappe-nix repo doctor` tells you what the enabled modules rely on.
@@ -25,7 +25,8 @@ Merging the release PR is the decision to ship. Nothing merges it automatically.
 | Actions may create pull requests (Settings → Actions → General → Workflow permissions) | release-please, the weekly relock, the screenshots PR, unless `ci.github-app` names an App |
 | The `ci.github-app` App installed on the repository, its ID in an Actions variable and its private key in an Actions secret (both also Dependabot secrets with `dependabot` on) | bot PRs that start CI without approval or dispatch (optional; see [CI](ci.md#a-github-app)) |
 | GitHub Actions may update `version-*` (the release-branch ruleset's bypass, or no ruleset there) | the fast-forward |
-| Auto-merge allowed, and a ruleset or branch protection requiring every enabled `ci / <gate>` | Dependabot auto-merge |
+| Auto-merge allowed, and a ruleset or branch protection requiring every enabled `ci / <gate>` | Dependabot auto-merge, and with `dependabot.auto-merge-policy = "all"` the screenshots PR |
+| Workflows write for the `ci.github-app` App (optional) | `dependabot.update-branches` updating a bot PR across a change to `.github/workflows/` |
 | `REGISTRY_TOKEN` secret and `listing.registry-fork` | publishing to the registry |
 | `FRAPPE_NIX_FETCH_TOKEN` secret (Actions, and Dependabot) | a private org profile, frappe fork or sibling |
 

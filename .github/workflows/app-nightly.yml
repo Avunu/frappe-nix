@@ -7,6 +7,7 @@ name: app-nightly
 # "frappe-nix vX.Y.Z available" and "standards profile update available" issues. With a GitHub
 # App (APP_ID and APP_PRIVATE_KEY, ci.github-app) `shots` pushes and opens its PR with the
 # App's token, which starts CI by itself; without one, GITHUB_TOKEN, and CI is dispatched.
+# `auto-merge` (dependabot.auto-merge-policy = "all") enables auto-merge on that PR.
 
 on:
   workflow_call:
@@ -36,6 +37,14 @@ on:
       run-duplication:
         type: boolean
         default: false
+      auto-merge:
+        description: 'auto-merge the screenshots PR (dependabot.auto-merge-policy = "all")'
+        type: boolean
+        default: false
+      merge-method:
+        description: the first of repo-policy.merge-methods
+        type: string
+        default: squash
       frappe-nix-override:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
@@ -327,6 +336,33 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
+      - if: steps.spec.outputs.tracked == 'true' && inputs.auto-merge
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+      # For the auto-merge safety rule (spec §4.5). From the integration branch's flake.lock, as
+      # every job that holds a write token installs it, and not through the app's dev shell.
+      - if: steps.spec.outputs.tracked == 'true' && inputs.auto-merge
+        name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OVERRIDE" ]; then
+            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+            rev="$(jq -r .rev <<<"$node")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+          fi
+
       # A GitHub App's token when the caller passes one (ci.github-app), minted only after
       # frappe-shots ran: the PR it pushes then starts CI like any other push. Else GITHUB_TOKEN.
       - if: steps.spec.outputs.tracked == 'true'
@@ -346,12 +382,14 @@ jobs:
           permission-pull-requests: write
 
       - if: steps.spec.outputs.tracked == 'true'
-        name: Open or update the screenshots PR (never merged automatically)
+        name: Open or update the screenshots PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           APP: ${{ steps.app.outputs.enabled }}
           INTEGRATION: ${{ inputs.integration-branch }}
           DIFFS: ${{ steps.diffs.outputs.artifact-url }}
+          AUTO_MERGE: ${{ inputs.auto-merge }}
+          METHOD: ${{ inputs.merge-method }}
         run: |
           set -euo pipefail
           if [ -z "$(git status --porcelain docs/screenshots)" ]; then
@@ -371,9 +409,14 @@ jobs:
           gh label create screenshots --repo "$GITHUB_REPOSITORY" --color c5def5 --description "Screenshot refresh from nightly" --force
           url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
           if [ -z "$url" ]; then
+            if [ "$AUTO_MERGE" = true ]; then
+              review="It merges once the required checks pass. The diff images"
+            else
+              review="Review the diff images before merging"
+            fi
             url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$INTEGRATION" --head "$branch" --label screenshots \
               --title "docs: refresh screenshots" \
-              --body "The nightly frappe-shots run found changed screenshots. Review the diff images before merging: ${DIFFS:-the screenshot-diffs artifact}")"
+              --body "The nightly frappe-shots run found changed screenshots. $review: ${DIFFS:-the screenshot-diffs artifact}")"
           fi
           if [ "$APP" != true ]; then
             # A GITHUB_TOKEN push raises no event.
@@ -381,6 +424,9 @@ jobs:
             if [ -f .github/workflows/pr-policy.yml ]; then
               gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
             fi
+          fi
+          if [ "$AUTO_MERGE" = true ]; then
+            frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD"
           fi
           echo "Screenshots changed: $url (diff images: ${DIFFS:-the screenshot-diffs artifact})" >> "$GITHUB_STEP_SUMMARY"
 

@@ -4,10 +4,12 @@ The workflows set up the job and call these; the decisions (what auto-merges, wh
 patch may be pushed, whether the release branch may move) live here, where they are unit
 tested, rather than in YAML. Every GitHub call goes through ``common.github``.
 
-- ``verdict``: the auto-merge decision table of §4.5, from fetch-metadata's outputs;
+- ``verdict``: the auto-merge decision table of §4.5, from fetch-metadata's outputs, or the
+  ``all`` policy;
 - ``automerge``: applies a verdict under the auto-merge safety rule (§4.5);
 - ``relock``: the relock-plan input check, the relock patch and the workflow-path refusal (S29);
 - ``release``: ``dispatch-ci``, the sweep and the release-branch fast-forward with its guard (§4.4);
+- ``branches``: ``update-branches``, which keeps bot PRs up to date with the integration branch (§4.5);
 - ``drift``: the nightly reminders that frappe-nix or the org profile moved (§4.6).
 """
 

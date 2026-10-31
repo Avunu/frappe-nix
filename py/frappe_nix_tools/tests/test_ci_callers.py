@@ -317,6 +317,77 @@ class TestGitHubApp(CallerCase):
 				self.assertIn("github-app", err)
 
 
+BOT_PRS = '[tool.frappe-nix.dependabot]\nauto-merge-policy = "all"\nupdate-branches = true\n'
+
+
+class TestBotPRs(CallerCase):
+	"""``dependabot.auto-merge-policy`` and ``dependabot.update-branches`` (§4.5, §4.6)."""
+
+	def deps_with(self, files: dict[str, dict]) -> dict:
+		return files[f"{WORKFLOWS}/deps.yml"]["jobs"]["deps"]["with"]
+
+	def nightly_with(self, files: dict[str, dict]) -> dict:
+		return files[f"{WORKFLOWS}/nightly.yml"]["jobs"]["nightly"]["with"]
+
+	def test_unset_renders_nothing_new(self) -> None:
+		files = self.render(SCREENSHOTS)
+		self.assertNotIn("auto-merge-policy", self.deps_with(files))
+		self.assertNotIn("update-branches", self.deps_with(files))
+		self.assertNotIn("push", on(files[f"{WORKFLOWS}/deps.yml"]))
+		self.assertNotIn("auto-merge", self.nightly_with(files))
+
+	def test_all_and_update_branches(self) -> None:
+		unset = self.render(SCREENSHOTS)
+		files = self.render(SCREENSHOTS + BOT_PRS)
+		deps = files[f"{WORKFLOWS}/deps.yml"]
+		self.assertEqual(self.deps_with(files)["auto-merge-policy"], "all")
+		self.assertIs(self.deps_with(files)["update-branches"], True)
+		self.assertEqual(on(deps)["push"], {"branches": ["develop"]})
+		self.assertEqual(self.nightly_with(files)["auto-merge"], True)
+		self.assertEqual(self.nightly_with(files)["merge-method"], "squash")
+		# Nothing else moves.
+		self.deps_with(files).pop("auto-merge-policy")
+		self.deps_with(files).pop("update-branches")
+		on(deps).pop("push")
+		self.nightly_with(files).pop("auto-merge")
+		self.nightly_with(files).pop("merge-method")
+		for path, doc in files.items():
+			self.assertEqual(doc, unset[path], path)
+
+	def test_no_screenshots_no_nightly_merge(self) -> None:
+		files = self.render(BOT_PRS)
+		self.assertEqual(self.deps_with(files)["auto-merge-policy"], "all")
+		self.assertNotIn("auto-merge", self.nightly_with(files))
+
+	def test_auto_merge_off_wins(self) -> None:
+		files = self.render(SCREENSHOTS + BOT_PRS + "auto-merge = false\n")
+		self.assertIs(self.deps_with(files)["auto-merge"], False)
+		self.assertNotIn("auto-merge-policy", self.deps_with(files))
+		self.assertNotIn("auto-merge", self.nightly_with(files))
+		# Keeping branches current is its own switch.
+		self.assertIs(self.deps_with(files)["update-branches"], True)
+
+	def test_a_profile_sets_it(self) -> None:
+		self.write(
+			".standards-profile/profile.toml",
+			EVERYTHING + '\n[dependabot]\nauto-merge-policy = "all"\nupdate-branches = true\n',
+		)
+		self.commit()
+		files = self.render(SCREENSHOTS)
+		self.assertEqual(self.deps_with(files)["auto-merge-policy"], "all")
+		self.assertIs(self.deps_with(files)["update-branches"], True)
+		self.assertEqual(self.nightly_with(files)["auto-merge"], True)
+
+	def test_invalid_values_are_exit_2(self) -> None:
+		for table in ('auto-merge-policy = "everything"\n', 'update-branches = "yes"\n'):
+			with self.subTest(table=table):
+				self.write("pyproject.toml", self.base + "[tool.frappe-nix.dependabot]\n" + table)
+				self.commit()
+				code, _, err = self.fn("sync", "--write")
+				self.assertEqual(code, 2, err)
+				self.assertIn("dependabot", err)
+
+
 class TestDependabot(CallerCase):
 	def test_every_entry_has_a_cooldown_and_targets_the_integration_branch(self) -> None:
 		files = self.render()

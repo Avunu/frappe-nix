@@ -2,6 +2,8 @@
 # decision table, and the sweep that re-dispatches CI for bot PRs (§4.5).
 {% set sweep = cfg.ci.schedules["deps-sweep"] %}
 {% set relock = cfg.ci.schedules["deps-relock"] %}
+{% set policy = cfg.dependabot["auto-merge-policy"] if cfg.dependabot["auto-merge"] else "decision-table" %}
+{% set update_branches = cfg.dependabot["update-branches"] %}
 {# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
    lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
 {% macro uses(workflow) %}
@@ -19,10 +21,15 @@
 name: deps
 on:
   pull_request:
+{% if update_branches %}
+  # Bring the bot PRs that are behind up to date.
+  push:
+    branches: [{{ branches.integration }}]
+{% endif %}
 {% if sweep or relock %}
   schedule:
 {% if sweep %}
-    # Re-dispatch CI for bot PRs.
+    # Re-dispatch CI for bot PRs{{ " and bring them up to date" if update_branches else "" }}.
     - cron: "{{ sweep }}"
 {% endif %}
 {% if relock %}
@@ -49,6 +56,12 @@ jobs:
       nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
 
       auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}
+{% if policy != "decision-table" %}
+      auto-merge-policy: {{ policy }}
+{% endif %}
+{% if update_branches %}
+      update-branches: true
+{% endif %}
       merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
       relock-cron: "{{ relock }}"
     secrets:

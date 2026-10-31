@@ -3,7 +3,7 @@ title: Profiles
 description: "How an app opts in, the built-in minimal and recommended profiles, org profiles, and how [tool.frappe-nix] layers over them."
 order: 1
 tags: [app-standards, profiles, configuration]
-updated: 2026-10-30
+updated: 2026-10-31
 ---
 
 The app standards are opt-in and profile-driven. A profile decides which modules are on (lint, types, tests, commits, releases, Dependabot, CI, …) and sets their parameters and the organisation's values. An app picks one in `[tool.frappe-nix] profile`, and can change any value for itself in the same table. The [interface spec](spec.md) (§8) is the contract this page summarises.
@@ -51,6 +51,7 @@ The modules and their parameters are in the spec (§8.2), and in the schema `fra
 - `commits`: `allowed-types`, `subject-length`;
 - `releases`: `branching` (`"develop+version"` or `"main+tags"`), `version-scheme` (`"semver"` or `"frappe-major"`), `tag-prefix`;
 - `tests`: `coverage.initial-floor`, `js-unit`, `js-coverage-min`;
+- `dependabot`: `auto-merge`, and `auto-merge-policy` (`"decision-table"`, the default, or `"all"`: every Dependabot PR and the screenshots PR, with the required checks as the only gate) and `update-branches` (keep bot PRs up to date with the integration branch; see [CI](ci.md#dependency-prs-depsyml));
 - `ci`: `test-timeout-minutes`, `schedules`, `runs-on`, the runner of the reusable workflows' Linux jobs (unset: `ubuntu-latest`; see [CI](ci.md#runners)), and `github-app`, the names of the variable and secret holding a GitHub App's ID and private key, whose token the bot pushes and PRs then use (unset: `GITHUB_TOKEN`; see [CI](ci.md#a-github-app)).
 
 ## Resolution

@@ -105,9 +105,21 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | nix | after the relock lands, or when there was nothing to relock | a move of `frappe-nix` or `standards-profile` is closed instead |
   | git submodules | always | |
 
+  That table is the default, `dependabot.auto-merge-policy = "decision-table"`. With `"all"`, every Dependabot PR gets auto-merge, majors and the `needs-review` column included, and so does the nightly screenshots PR: the required checks alone decide what merges, and a PR whose checks fail stays open for a person. Two rows don't change: a nix bump still waits for its relock, and one that moves `frappe-nix` or `standards-profile` is still closed. A bump of the `frappe-nix` pin in the callers is never merged either (Dependabot ignores it; it moves only with `frappe-nix repo rollout`).
+
+  ```toml
+  [dependabot]
+  auto-merge = true
+  auto-merge-policy = "all"   # default "decision-table"
+  update-branches = true      # default false
+  ```
+
 - **Ignores.** A managed `.github/dependabot.yml` entry takes Dependabot `ignore` conditions from `dependabot.ignore`, keyed by ecosystem (every managed entry of it) or by `<ecosystem>:<directory>` (one entry). Sync gives a notice when an app's `npm:/<dir>` key names no managed entry. A major cap the app holds on purpose goes there, because the `updates` region can't redefine a managed entry: `ignore = { npm = [{ dependency-name = "tailwindcss", versions = [">=4"] }] }`.
 - **The sweep** re-dispatches `ci.yml` and `pr-policy.yml` on bot PRs that have no `ci / *` run on their head, which covers dispatches a Dependabot-triggered job could not make. With a [GitHub App](#a-github-app) there is nothing to dispatch: the App's pushes start CI themselves.
 - **The weekly relock** runs `nix run .#relock -- --upgrade` and opens `chore(deps): relock python` on `standards/relock-python`.
+- **Keeping bot PRs current** (`dependabot.update-branches`, off by default). `deps.yml` then also runs on every push to the integration branch, and its `update-branches` job, on that push and on the sweep's schedule, looks at every open bot maintenance PR into the integration branch that is behind it: Dependabot's, and the `standards/*` branches a bot pushes (the weekly relock, the screenshots). Release-please's release PR and any other bot's PR (a coding agent's, say) are left alone. A Dependabot PR that has only Dependabot's commits gets the comment `@dependabot rebase`, once per head, so Dependabot rebases it and keeps maintaining it; if it hasn't after six hours, or the PR carries another commit (a relock), the branch is updated through GitHub's update-branch API. At most ten PRs move per run, and a PR that is up to date is left alone, so a run that repeats changes nothing. A conflict, or a merge that brings in `.github/workflows/` changes without a [GitHub App](#a-github-app) that has Workflows write, leaves the PR as it is with a notice.
+
+  Each update starts the PR's CI again: Dependabot's rebase does so by itself, and so does an update made with the App's token. One made with `GITHUB_TOKEN` raises no event, so the job waits for the new head and dispatches `ci.yml` and `pr-policy.yml` on it (the sweep retries what it misses). Updates are not needed for a merge, because the integration ruleset doesn't require a branch to be up to date; they make each PR's checks run against what it would merge into.
 
 No workflow ever pushes a change to `.github/workflows/`: GitHub refuses that from `GITHUB_TOKEN`, so every pushing job refuses such a patch first.
 
@@ -116,7 +128,7 @@ No workflow ever pushes a change to `.github/workflows/`: GitHub refuses that fr
 | Job | Runs when | What |
 |---|---|---|
 | integration | `tests` | `frappe-test --ci --keep-up`, `bench build`, then each `nightly-suites` command against the running site |
-| shots | `screenshots` | `frappe-shots --update`; screenshots that changed by at least `screenshots.change-threshold` go to a `standards/screenshots` PR that is never merged automatically |
+| shots | `screenshots` | `frappe-shots --update`; screenshots that changed by at least `screenshots.change-threshold` go to a `standards/screenshots` PR, merged automatically only under `dependabot.auto-merge-policy = "all"` |
 | links | `listing` | The listing's website and documentation answer 200; with `icons`, the raster icon checks |
 | duplication | `test-utils` with `check_code_duplication` | Informational |
 | registry-refresh | `listing.publish` | Rebuilds the open registry PR on upstream `main` |
@@ -130,7 +142,7 @@ Every schedule is a profile parameter, `ci.schedules`, and `""` turns one off:
 |---|---|---|
 | `ci` | `0 6 * * *` | An auto-merge made with `GITHUB_TOKEN` raises no push, so the integration branch's checks catch up daily (one enabled by a [GitHub App](#a-github-app) does) |
 | `release` | `30 5 * * *` | The same, for the release PR |
-| `deps-sweep` | `0 9 * * *` | The sweep |
+| `deps-sweep` | `0 9 * * *` | The sweep, and with `dependabot.update-branches` the daily pass that keeps bot PRs current |
 | `deps-relock` | `0 8 * * 1` | The weekly Python relock |
 | `nightly` | `0 7 * * *` | The nightly jobs |
 
@@ -214,6 +226,7 @@ The App's ID travels as a secret because a caller's `with:` can't read secrets, 
 |---|---|
 | release `release-please` | opens and updates the release PR, and tags the release; `dispatch-ci` is skipped |
 | deps `relock-push` | pushes the relock commit and enables auto-merge; CI is not dispatched |
+| deps `update-branches` | comments `@dependabot rebase` and updates bot PRs from the integration branch, asking for Workflows write too when the App has it; CI is not dispatched |
 | deps `auto-merge` | enables auto-merge, labels or closes the Dependabot PR |
 | deps `relock-upgrade` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
 | nightly `shots` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
@@ -224,6 +237,6 @@ Unset (the default), or with the variable or the secret empty in a run, every jo
 
 - Every third-party action is pinned to a commit SHA with a version comment, and `.github/zizmor.yml` makes zizmor enforce it. Dependabot moves third-party pins; frappe-nix's own pin moves only with `frappe-init --sync`.
 - Every checkout uses `persist-credentials: false`. The three jobs that push (relock-push, relock-upgrade and nightly shots) push to an explicit token URL from that step alone.
-- A [GitHub App](#a-github-app)'s token is minted only in the jobs that push, open PRs, label or enable auto-merge, after any step that runs the app's or third-party code, for the current repository alone and with Contents and Pull requests write only. It is revoked when the job ends.
+- A [GitHub App](#a-github-app)'s token is minted only in the jobs that push, open PRs, label or enable auto-merge, after any step that runs the app's or third-party code, for the current repository alone and with Contents and Pull requests write only (`update-branches` asks for Workflows write too, and without it falls back to those two). It is revoked when the job ends.
 - Every workflow starts from `permissions: {}`, and each job asks for exactly what it uses.
 - The jobs that hold a write token never install frappe-nix-tools from the PR's `flake.lock`: they read the integration branch's.

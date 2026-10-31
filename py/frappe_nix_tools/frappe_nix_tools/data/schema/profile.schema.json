@@ -1358,6 +1358,19 @@
             "default": true,
             "description": "Acts only where required checks protect the integration branch (\u00a74.5)."
           },
+          "auto-merge-policy": {
+            "enum": [
+              "decision-table",
+              "all"
+            ],
+            "default": "decision-table",
+            "description": "With auto-merge on, what gets it: the decision table's verdicts (\"decision-table\"), or every Dependabot PR, majors and the needs-review groups included, and the screenshots PR (\"all\"), so the required checks alone decide (\u00a74.5)."
+          },
+          "update-branches": {
+            "type": "boolean",
+            "default": false,
+            "description": "Bring every bot PR that is behind the integration branch up to date after each push to it, and on the deps-sweep schedule: `@dependabot rebase` for Dependabot's own PRs, the update-branch API for the rest (\u00a74.5)."
+          },
           "ecosystems": {
             "type": "object",
             "additionalProperties": false,

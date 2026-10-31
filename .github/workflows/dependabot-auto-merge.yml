@@ -1,24 +1,61 @@
 name: Dependabot auto-merge
 
-# Dependabot pull requests, through python-devops-nix's reusable workflow (its
-# docs/conventions.md, CI) with its default policy: every update type auto-merges,
-# and github-actions bumps, which change what CI runs, are reviewed by a person.
-# GitHub merges once the branch is mergeable and every *required* status check
-# passes, so auto-merge is only as safe as the checks marked required on `main`.
-# Dependabot's github-actions entry moves the pin below.
+# frappe-nix's own Dependabot pull requests (docs/app-standards/spec.md §4.10), through
+# python-devops-nix's reusable workflows (its docs/conventions.md, CI) with their default
+# policy. Dependabot's github-actions entry moves the pins below.
+#
+#   auto-merge       every one, whatever its ecosystem or update type, github-actions bumps
+#                    included, gets auto-merge (squash): GitHub merges it once every check
+#                    the main ruleset requires passes, and one that fails stays open. The
+#                    required checks are the gate, so auto-merge is only as safe as they are.
+#   update-branches  after each push to main, and daily, every open Dependabot PR that is
+#                    behind main is brought up to date: `@dependabot rebase` while it has
+#                    only Dependabot's commits, else the update-branch API. A PR that is not
+#                    behind is left alone.
+#
+# The org's GitHub App, when the repository can read it (the variable AVUNU_CI_APP_ID, or a
+# Dependabot secret of that name, and the secret AVUNU_CI_PRIVATE_KEY), enables the auto-merge
+# and updates the branches, so the merge raises a push that starts check.yml, release.yml and
+# update-branches on main at once, and an updated branch starts its CI. Without it,
+# GITHUB_TOKEN: the merge raises no push (release.yml's daily cron catches up), and the
+# workflows main requires are dispatched on each updated branch.
 #
 # Requires (one-time, in repo settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
-#   • Settings → Branches → protect `main`, require the "flake" status check
-on: pull_request
+#   • Settings → Rules → the main ruleset requires "flake" and "build / Check"
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
   auto-merge:
     # The PR's author, not github.actor (which a re-run by a person changes).
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # gh pr merge --auto
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@28418614a8f4479c11ac755aa4f402c0a9aa6192 # main (no release yet)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@943029bfb2b56888c38514e4efce20d34eb9d2bc # python-devops-nix main, #52 (no release yet)
+    # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+
+  update-branches:
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write # update-branch without the App
+      pull-requests: write # comment `@dependabot rebase`, update-branch
+      actions: write # without the App, dispatch the required checks on the new head
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@943029bfb2b56888c38514e4efce20d34eb9d2bc # python-devops-nix main, #52 (no release yet)
+    with:
+      # The workflows of the checks main requires ("flake", "build / Check"), and pr-policy.
+      dispatch: check.yml docs.yml pr-policy.yml
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}

@@ -9,8 +9,9 @@ version: 2
 # pulled or patched within the week never reaches a pull request. Security
 # updates are not held back.
 #
-# Keeps this repo's dependencies up to date. PRs auto-merge once the required checks go
-# green — see .github/workflows/dependabot-auto-merge.yml.
+# Keeps this repo's dependencies up to date. PRs, github-actions bumps included, auto-merge
+# once the required checks go green and are kept up to date with main — see
+# .github/workflows/dependabot-auto-merge.yml.
 #
 # Deliberately NOT configured: templates/bench/pyproject.toml. It is a scaffolding
 # template, not a resolvable project — not even valid TOML until `frappe-init`
