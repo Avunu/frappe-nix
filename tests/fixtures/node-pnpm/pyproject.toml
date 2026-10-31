@@ -1,0 +1,8 @@
+# A bench with no Frappe apps registered: only its JavaScript is under test
+# (tests/node-pnpm.nix).
+[project]
+name = "node-pnpm-fixture"
+version = "0.0.0"
+
+[tool.uv.workspace]
+members = []

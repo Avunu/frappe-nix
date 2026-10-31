@@ -1,0 +1,10 @@
+{
+  "name": "gamma-frontend",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"require('is-number')\""
+  },
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}

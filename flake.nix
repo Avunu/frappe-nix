@@ -49,6 +49,15 @@
       inputs.flake-parts.follows = "flake-parts";
     };
 
+    # An app's pnpm-lock.yaml as one fetch per package, by the integrity
+    # hashes the lock carries (python-devops-nix's lib.node passes it to
+    # pnpm2nix's lockfile.nix). A source tree, not a flake: its own inputs
+    # would only add nodes to a consumer's lock.
+    pnpm2nix = {
+      url = "github:FliegendeWurst/pnpm2nix-nzbr";
+      flake = false;
+    };
+
     # The registry checks an app must pass, pinned (docs/app-standards/spec.md S20).
     # Not flakes: plain source trees. They reach each app through its
     # flake.lock, where `frappe-nix pin-path <name>` finds them under the
@@ -614,11 +623,20 @@
         // import ./tests/editable-src.nix { inherit pkgs checks; }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
         // import ./tests/node-targets.nix { inherit pkgs checks; }
-        # yarn.lock → offline mirror: the parser, the naming, what is fetched.
-        // import ./tests/yarn-lock.nix { inherit pkgs checks; }
         # Which lock each target builds from — its own, a fallback, a forced
-        # fallback — and the notices that go with it.
-        // import ./tests/node-locks-precedence.nix { inherit pkgs checks; }
+        # fallback — and the notices that go with it. (The yarn.lock reader
+        # itself is python-devops-nix's lib.node, tested there.)
+        // import ./tests/node-locks-precedence.nix {
+          inherit pkgs checks;
+          base = inputs.python-devops-nix.lib;
+        }
+        # A pnpm app (lib.node over pnpm2nix): its frontend a workspace member,
+        # its node_modules built offline and linked into benchRoot.
+        // import ./tests/node-pnpm.nix {
+          inherit pkgs checks;
+          base = inputs.python-devops-nix.lib;
+          inherit (inputs) pnpm2nix;
+        }
         # The bench workspace app mode assembles around a single app.
         // import ./tests/app-workspace.nix { inherit pkgs checks; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it

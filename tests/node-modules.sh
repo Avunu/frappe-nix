@@ -437,6 +437,41 @@ before=$(calls)
 env PATH="$ROOT/no-such-dir" "$TOOL" "$BENCH" alpha > /dev/null 2>&1 \
   && ok "an app that needs nothing needs no yarn either" || no "an app that needs nothing needs no yarn either"
 
+echo "── an app whose lockfile is pnpm's ──────────────────────────────"
+# A stub pnpm, recording its arguments: the lockfile picks the manager.
+printf '#!%s\n' "$(command -v bash)" > "$BIN/pnpm"
+cat >> "$BIN/pnpm" <<'STUB'
+echo "$PWD $* pm_on_fail=${pnpm_config_pm_on_fail:-}" >> "$PNPM_CALLS"
+mkdir -p node_modules/.pnpm
+exit 0
+STUB
+chmod +x "$BIN/pnpm"
+export PNPM_CALLS="$ROOT/pnpm-calls"
+: > "$PNPM_CALLS"
+mkdir -p "$BENCH/apps/suite"
+echo '{"name":"suite","devEngines":{"packageManager":{"name":"pnpm","version":"12.10.1"}}}' \
+  > "$BENCH/apps/suite/package.json"
+printf "lockfileVersion: '9.0'\n" > "$BENCH/apps/suite/pnpm-lock.yaml"
+before=$(calls)
+"$TOOL" "$BENCH" suite > "$ROOT/pnpm.log" 2>&1
+check_eq "pnpm installs it, frozen, keeping the shell's pnpm" \
+  "$BENCH/apps/suite install --frozen-lockfile pm_on_fail=ignore" "$(cat "$PNPM_CALLS")"
+check_eq "…and yarn is not called" "$before" "$(calls)"
+"$TOOL" "$BENCH" suite > /dev/null 2>&1
+check_eq "an unchanged pnpm app is not installed again" "1" "$(wc -l < "$PNPM_CALLS" | tr -d ' ')"
+echo '# yarn lockfile v1' > "$BENCH/apps/suite/yarn.lock"
+rc=0
+"$TOOL" "$BENCH" suite > "$ROOT/both.log" 2>&1 || rc=$?
+check_eq "both lockfiles in one app exits 1" "1" "$rc"
+check "…naming the fix" grep -q 'apps/suite has pnpm-lock.yaml and yarn.lock' "$ROOT/both.log"
+check_eq "…and installs nothing" "1" "$(wc -l < "$PNPM_CALLS" | tr -d ' ')"
+rm "$BENCH/apps/suite/yarn.lock"
+printf "lockfileVersion: '9.0'\n# bumped\n" > "$BENCH/apps/suite/pnpm-lock.yaml"
+rc=0
+env PATH="$ROOT/no-such-dir" "$TOOL" "$BENCH" suite > "$ROOT/nopnpm.log" 2>&1 || rc=$?
+check_eq "no pnpm on PATH exits 2" "2" "$rc"
+check "…and says so" grep -q 'pnpm is not on PATH — cannot install suite' "$ROOT/nopnpm.log"
+
 echo "── usage ────────────────────────────────────────────────────────"
 check_not "no arguments is an error" "$TOOL"
 check_not "a bench root with no apps is an error" "$TOOL" "$BENCH"

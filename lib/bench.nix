@@ -17,6 +17,13 @@
   prodPythonEnv,
   workspaceRoot,
   nodejs,
+  # python-devops-nix's lib: lib.node, the JavaScript targets both products
+  # share (its docs/conventions.md, JavaScript) — the yarn.lock reader, and
+  # the whole install for an app whose lockfile is pnpm's.
+  base,
+  # pnpm2nix-nzbr's source (frappe-nix's `pnpm2nix` input): what lib.node
+  # reads a pnpm-lock.yaml with. Only a pnpm app needs it.
+  pnpm2nix ? null,
   # The interpreter prodPythonEnv is built on, as passthru.python: the NixOS
   # module runs its migrate flow (python-devops-nix's, stdlib only) on it, so
   # the flow adds no second interpreter to the closure.
@@ -165,20 +172,63 @@ let
   # The dev shell does not use these: it installs with a plain online
   # `yarn install`, as upstream tooling expects (lib/node-modules.nix).
 
-  # Dev-shell contract only (scripts.nix, enterShell): `yarn install
-  # --frozen-lockfile` wants a yarn.lock, so this is the apps that have one.
+  # Dev-shell contract only (scripts.nix, enterShell): a frozen install
+  # wants a lockfile, so this is the apps that have one, yarn's or pnpm's.
   appsWithNode = lib.filter (
     app:
     builtins.pathExists (appSrcOf app + "/package.json")
-    && builtins.pathExists (appSrcOf app + "/yarn.lock")
+    && (
+      builtins.pathExists (appSrcOf app + "/yarn.lock")
+      || builtins.pathExists (appSrcOf app + "/pnpm-lock.yaml")
+    )
   ) names;
 
-  yarnLock = import ./yarn-lock.nix { inherit lib; };
+  yarnLock = base.node.yarnLockWith { label = "frappe-nix"; };
 
-  nodeTargets = (import ./node-targets.nix { inherit lib; }).discover {
+  # An app (or nested frontend) with a pnpm-lock.yaml installs with pnpm,
+  # through lib.node, whose rules it then follows whole: package.json's
+  # packageManager or devEngines.packageManager names the pnpm major, and a
+  # yarn.lock beside the pnpm lock is an evaluation error. Every other target
+  # keeps the yarn path below exactly as it was, fallback locks and all.
+  isPnpm = t: builtins.pathExists (t.src + "/pnpm-lock.yaml");
+  pnpmTargetOf =
+    t:
+    base.node.detect {
+      inherit (t) src key;
+      label = "frappe-nix";
+    };
+
+  discoveredTargets = (import ./node-targets.nix { inherit lib; }).discover {
     inherit names appSrcOf;
     excludes = nodeNestedFrontendExcludes;
   };
+
+  # A nested frontend with no lockfile of its own that the app root's pnpm
+  # lock lists as an importer is that workspace's member: installed once, at
+  # the app root, as frappe/pilot installs it — not a target of its own.
+  coveredByPnpmRoot =
+    t:
+    t.subdir != null
+    && !(builtins.pathExists (t.src + "/yarn.lock"))
+    && !(isPnpm t)
+    && (
+      let
+        root = lib.findFirst (r: r.key == t.app) null discoveredTargets;
+      in
+      root != null && isPnpm root && lib.elem t.subdir (pnpmTargetOf root).members
+    );
+  nodeTargets = lib.filter (t: !coveredByPnpmRoot t) discoveredTargets;
+  pnpmTargets = lib.filter isPnpm nodeTargets;
+  pnpmManagers = lib.unique (
+    map (
+      t:
+      base.node.managerPackage {
+        inherit pkgs nodejs;
+        target = pnpmTargetOf t;
+        label = "frappe-nix";
+      }
+    ) pnpmTargets
+  );
   nodeTargetKeys = map (t: t.key) nodeTargets;
 
   lockDirOf = t: nodeLocksDir + "/${t.key}";
@@ -203,7 +253,14 @@ let
   # unless the bench deliberately forced it aside.
   lockOf =
     t:
-    if hasUpstreamLock t && !isForced t then
+    if isPnpm t then
+      {
+        file = t.src + "/pnpm-lock.yaml";
+        label = "apps/${t.key}/pnpm-lock.yaml";
+        fallback = false;
+        pnpm = true;
+      }
+    else if hasUpstreamLock t && !isForced t then
       {
         file = upstreamLockOf t;
         label = "apps/${t.key}/yarn.lock";
@@ -249,74 +306,90 @@ let
 
   withNotices = msgs: x: builtins.foldl' (acc: m: lib.warn m acc) x msgs;
 
+  # A pnpm target's node_modules: lib.node's, from the manifests alone (the
+  # app's package.json, the lock, pnpm-workspace.yaml and each member's
+  # package.json), one fetch per package by the lock's integrity.
+  pnpmModulesFor =
+    t:
+    base.node.modules {
+      inherit pkgs nodejs pnpm2nix;
+      label = "frappe-nix";
+      target = pnpmTargetOf t;
+      overrides = nodeOverrides.${t.key} or { };
+      name = lib.replaceStrings [ "/" ] [ "-" ] t.key;
+    };
+
   nodeModulesFor =
     t:
-    let
-      lock = lockOf t;
-      pname = lib.replaceStrings [ "/" ] [ "-" ] t.key;
-      # Only what `yarn install` reads. Not the app: a node_modules that took
-      # the whole tree as its source would be rebuilt — every tarball
-      # re-linked, every package re-extracted — for a change to any Python
-      # file in the app.
-      manifests = pkgs.runCommand "${pname}-manifests" { } ''
-        mkdir -p $out
-        cp ${t.src + "/package.json"} $out/package.json
-        cp ${lock.file} $out/yarn.lock
-        ${lib.concatMapStrings
-          (
-            f:
-            lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
-              cp ${t.src + "/${f}"} $out/${f}
-            ''
-          )
-          [
-            ".yarnrc"
-            ".npmrc"
-          ]
-        }
-      '';
-      remedy =
-        if lock.fallback then
-          "regenerate it: ${nodeLocksCommand} ${t.key}"
-        else
-          "force a repaired lock over it: ${nodeLocksCommand} ${t.key} (then commit ${nodeLocksLabel}/), or leave the target out: nodeNestedFrontendExcludes";
-    in
-    withNotices (noticesFor t) (
-      pkgs.stdenv.mkDerivation (
-        {
-          name = "${pname}-node-modules";
-          src = manifests;
-          nativeBuildInputs = [
-            pkgs.yarnConfigHook
-            pkgs.yarn
-            nodejs
-          ];
-          yarnOfflineCache = yarnLock.mkOfflineMirror {
-            inherit pkgs;
-            lockFile = lock.file;
-            name = pname;
-          };
-          # The hook's own flags: --frozen-lockfile, --ignore-scripts (no
-          # lifecycle scripts in the sandbox; every native piece a Frappe
-          # frontend needs is a platform package or a prebuilt binary),
-          # --ignore-engines, --ignore-platform. The one failure that is about
-          # the lock rather than the build gets its remedy next to yarn's
-          # message, which names neither.
-          preConfigure = ''
-            echo "frappe-nix: node_modules for ${t.key} from ${lock.label}"
-            echo "  (a \"Couldn't find any versions for … in our cache\" error below means that lock does not cover package.json — ${remedy})"
-          '';
-          dontBuild = true;
-          installPhase = ''
-            runHook preInstall
-            mkdir -p $out
-            cp -R node_modules $out/node_modules
-            runHook postInstall
-          '';
-        }
-        // (nodeOverrides.${t.key} or { })
-      )
-    );
+    if isPnpm t then
+      pnpmModulesFor t
+    else
+      let
+        lock = lockOf t;
+        pname = lib.replaceStrings [ "/" ] [ "-" ] t.key;
+        # Only what `yarn install` reads. Not the app: a node_modules that took
+        # the whole tree as its source would be rebuilt — every tarball
+        # re-linked, every package re-extracted — for a change to any Python
+        # file in the app.
+        manifests = pkgs.runCommand "${pname}-manifests" { } ''
+          mkdir -p $out
+          cp ${t.src + "/package.json"} $out/package.json
+          cp ${lock.file} $out/yarn.lock
+          ${lib.concatMapStrings
+            (
+              f:
+              lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
+                cp ${t.src + "/${f}"} $out/${f}
+              ''
+            )
+            [
+              ".yarnrc"
+              ".npmrc"
+            ]
+          }
+        '';
+        remedy =
+          if lock.fallback then
+            "regenerate it: ${nodeLocksCommand} ${t.key}"
+          else
+            "force a repaired lock over it: ${nodeLocksCommand} ${t.key} (then commit ${nodeLocksLabel}/), or leave the target out: nodeNestedFrontendExcludes";
+      in
+      withNotices (noticesFor t) (
+        pkgs.stdenv.mkDerivation (
+          {
+            name = "${pname}-node-modules";
+            src = manifests;
+            nativeBuildInputs = [
+              pkgs.yarnConfigHook
+              pkgs.yarn
+              nodejs
+            ];
+            yarnOfflineCache = yarnLock.mkOfflineMirror {
+              inherit pkgs;
+              lockFile = lock.file;
+              name = pname;
+            };
+            # The hook's own flags: --frozen-lockfile, --ignore-scripts (no
+            # lifecycle scripts in the sandbox; every native piece a Frappe
+            # frontend needs is a platform package or a prebuilt binary),
+            # --ignore-engines, --ignore-platform. The one failure that is about
+            # the lock rather than the build gets its remedy next to yarn's
+            # message, which names neither.
+            preConfigure = ''
+              echo "frappe-nix: node_modules for ${t.key} from ${lock.label}"
+              echo "  (a \"Couldn't find any versions for … in our cache\" error below means that lock does not cover package.json — ${remedy})"
+            '';
+            dontBuild = true;
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -R node_modules $out/node_modules
+              runHook postInstall
+            '';
+          }
+          // (nodeOverrides.${t.key} or { })
+        )
+      );
 
   nodeModules = lib.listToAttrs (map (t: lib.nameValuePair t.key (nodeModulesFor t)) lockedTargets);
 
@@ -385,10 +458,26 @@ let
             ln -s "$entry" "$2/''${entry##*/}"
           done
         }
-        ${lib.concatMapStrings (t: ''
-          rm -rf $out/bench/apps/${t.key}/node_modules
-          _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
-        '') lockedTargets}
+        ${lib.concatMapStrings (
+          t:
+          if isPnpm t then
+            # lib.node's linking: the app's and each workspace member's
+            # node_modules, scoped packages entry by entry, and a link to a
+            # member pointed at the member in this tree (the store holds only
+            # its node_modules).
+            ''
+              (
+                cd $out/bench/apps/${t.key}
+                modules=${nodeModules.${t.key}}
+                ${base.node.linkModules (pnpmTargetOf t).members}
+              )
+            ''
+          else
+            ''
+              rm -rf $out/bench/apps/${t.key}/node_modules
+              _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
+            ''
+        ) lockedTargets}
 
         # The registry. The committed apps.json, if any, is only a *seed*: the
         # lowest-ranked source, consulted for a commit hash the sandbox cannot
@@ -437,10 +526,20 @@ let
       nodejs
       pkgs.yarn
       pkgs.git
-    ];
+    ]
+    # A pnpm app's build script may call pnpm itself.
+    ++ pnpmManagers;
 
     buildPhase = ''
       runHook preBuild
+      ${lib.optionalString (pnpmTargets != [ ]) ''
+        # pnpm in the sandbox (lib.node.sandboxEnv): no switch to the version
+        # devEngines names, no install before `pnpm run`. Only with a pnpm
+        # app, so a yarn bench's build is the derivation it was; and here
+        # rather than as attributes, whose names reading passthru evaluates
+        # (tests/devguard.nix reads it on a bench with no apps/ at all).
+        ${lib.concatStrings (lib.mapAttrsToList (n: v: "export ${n}=${v}\n") base.node.sandboxEnv)}
+      ''}
 
       # Start from the unbuilt benchRoot — copy so we can write into it.
       cp -a ${benchRoot}/bench $TMPDIR/bench
@@ -572,6 +671,9 @@ in
     ++
       lib.optional (missingLocks != [ ])
         "missing: ${lib.concatMapStringsSep " " (t: t.key) missingLocks}";
+  # The pnpm packages the apps' lockfiles and package.json name, for the
+  # dev shell's PATH (yarn is there already).
+  inherit pnpmManagers;
   inherit
     registeredApps
     appsWithNode

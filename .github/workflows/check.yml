@@ -118,8 +118,13 @@ jobs:
       # (fetchFromGitHub, then `import`): import-from-derivation, which `nix flake check
       # --no-build` cannot build and fails on with "path ... is not valid". `nix eval` can, so
       # realise those sources first and the evaluation below finds them in the store.
+      # So does a pnpm lock: pnpm2nix reads it through a derivation that converts
+      # it to JSON (python-devops-nix's lib.node), which tests/node-pnpm.nix
+      # evaluates.
       - name: Fetch what the dev shell imports from derivation
-        run: nix eval --raw .#devShells.x86_64-linux.default.drvPath
+        run: |
+          nix eval --raw .#devShells.x86_64-linux.default.drvPath
+          nix eval --raw .#checks.x86_64-linux.node-pnpm.drvPath
 
       # Evaluates checks/packages/apps/devShells and the NixOS module without building
       # the VM tests. Catches the overwhelming majority of flake.lock breakage.
