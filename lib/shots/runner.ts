@@ -6,14 +6,16 @@
 //   node runner.ts --spec <screenshots.ts> --base <url> --mode update|check
 //     [--only a,b] [--theme light|dark] [--out docs/screenshots] [--masters .dev-dist/shots]
 //     [--video <name>] [--timezone Z] [--locale L] [--clock <YYYY-MM-DD>] [--password P]
+//     [--change-threshold <0..1>]
 //
 // For each theme and shot: the user's desk theme and prefers-color-scheme, the timezone,
 // locale, viewport and device scale; the route; no animations, transitions or caret; web
 // fonts, then a quiet network (500 ms), then waitFor or waitForFn (30 s); the actions; hide
 // and mask; the capture. The PNG master goes to the masters directory; the committed
 // <name>-<theme>.webp is decoded and compared with pixelmatch. Update mode writes a new
-// lossless WebP where the share of differing pixels passes maxDiffRatio, and the manifest;
-// check mode writes only diff PNGs.
+// lossless WebP where the share of differing pixels passes maxDiffRatio and reaches
+// --change-threshold (screenshots.change-threshold; a new shot or a new size always does),
+// and the manifest; check mode writes only diff PNGs, for every shot past maxDiffRatio.
 //
 // Exit codes: 0 no differences, or updated; 1 differences in check mode; 2 a spec error;
 // 3 an environment error; 4 a capture error (navigation, timeout or a page error).
@@ -26,7 +28,7 @@ import { parseArgs } from "node:util";
 import { launch, login, newPage } from "./cdp.ts";
 import { clockShim, zonedTime } from "./clock.ts";
 import type { Page } from "./cdp.ts";
-import { compare, readPng, readWebp, writePng, writeWebp } from "./diff.ts";
+import { compare, judge, readPng, readWebp, writePng, writeWebp } from "./diff.ts";
 import type { Action, Shot, ShotSpec, Theme, Viewport } from "./shots.d.ts";
 
 const SPEC_ERROR = 2;
@@ -58,6 +60,7 @@ interface Options {
 	locale: string;
 	clock: string;
 	password: string;
+	changeThreshold: number;
 }
 
 interface ManifestEntry {
@@ -86,6 +89,7 @@ function options(): Options {
 			locale: { type: "string", default: "en-US" },
 			clock: { type: "string", default: "" },
 			password: { type: "string", default: "admin" },
+			"change-threshold": { type: "string", default: "0" },
 		},
 	});
 	if (!values.spec || !values.base) throw new ExitError(SPEC_ERROR, "--spec and --base are required");
@@ -94,6 +98,10 @@ function options(): Options {
 	}
 	if (values.theme && values.theme !== "light" && values.theme !== "dark") {
 		throw new ExitError(SPEC_ERROR, `--theme is light or dark, not ${values.theme}`);
+	}
+	const changeThreshold = Number(values["change-threshold"]);
+	if (values["change-threshold"].trim() === "" || !(changeThreshold >= 0 && changeThreshold <= 1)) {
+		throw new ExitError(SPEC_ERROR, `--change-threshold is a number in [0, 1], not ${values["change-threshold"]}`);
 	}
 	return {
 		spec: path.resolve(values.spec),
@@ -108,6 +116,7 @@ function options(): Options {
 		locale: values.locale,
 		clock: values.clock,
 		password: values.password,
+		changeThreshold,
 	};
 }
 
@@ -413,6 +422,7 @@ async function main(): Promise<number> {
 	}
 	const page = Object.assign(await newPage(browser.port), { base: opts.base });
 	let changed = 0;
+	let kept = 0;
 	let differing = 0;
 	try {
 		if (start !== null) await page.send("Page.addScriptToEvaluateOnNewDocument", { source: clockShim(start) });
@@ -436,11 +446,19 @@ async function main(): Promise<number> {
 				const committed = fs.existsSync(webp) ? readWebp(webp) : null;
 				const result = compare(image, committed, shot.threshold ?? 0.1);
 				const allowed = shot.maxDiffRatio ?? 0.001;
-				const differs = committed === null || result.ratio > allowed;
-				console.log(`${differs ? "DIFF" : "same"} ${id}: ${(result.ratio * 100).toFixed(3)}% of pixels differ (allowed ${(allowed * 100).toFixed(3)}%)`);
-				if (differs && opts.mode === "update") {
+				const verdict = judge(result, committed !== null, allowed, opts.changeThreshold);
+				const differs = verdict !== "same";
+				const share = `${(result.ratio * 100).toFixed(3)}% of pixels differ (allowed ${(allowed * 100).toFixed(3)}%`;
+				if (opts.mode === "update" && verdict === "minor") {
+					console.log(`kept ${id}: ${share}, below the change threshold of ${(opts.changeThreshold * 100).toFixed(3)}%)`);
+				} else {
+					console.log(`${differs ? "DIFF" : "same"} ${id}: ${share})`);
+				}
+				if (opts.mode === "update" && (verdict === "new" || verdict === "changed")) {
 					writeWebp(master, webp);
 					changed += 1;
+				} else if (opts.mode === "update" && verdict === "minor") {
+					kept += 1;
 				} else if (differs) {
 					differing += 1;
 					if (result.diff) writePng(path.join(opts.masters, "diff", `${id}.png`), result.diff);
@@ -480,8 +498,12 @@ async function main(): Promise<number> {
 		page.close();
 		browser.proc.kill();
 	}
-	if (opts.mode === "update") console.log(`frappe-shots: ${changed} screenshot(s) updated`);
-	else console.log(differing ? `frappe-shots: ${differing} screenshot(s) differ (diffs in ${path.join(opts.masters, "diff")})` : "frappe-shots: no differences");
+	if (opts.mode === "update") {
+		const below = kept ? `; ${kept} differ by less than the change threshold and are kept` : "";
+		console.log(`frappe-shots: ${changed} screenshot(s) updated${below}`);
+	} else {
+		console.log(differing ? `frappe-shots: ${differing} screenshot(s) differ (diffs in ${path.join(opts.masters, "diff")})` : "frappe-shots: no differences");
+	}
 	return differing ? 1 : 0;
 }
 

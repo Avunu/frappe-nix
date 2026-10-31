@@ -317,6 +317,9 @@ jobs:
           attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
           attic use "ci:$NAME"
 
+      # Replaces a committed screenshot only when at least screenshots.change-threshold of its
+      # pixels differ (a new, resized or removed shot always counts; docs/app-standards/spec.md
+      # §5.5). When none does, docs/screenshots is unchanged and nothing is pushed below.
       - if: steps.spec.outputs.tracked == 'true'
         name: frappe-shots --update
         run: |

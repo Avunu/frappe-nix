@@ -422,6 +422,28 @@ class TestFrappeShots(unittest.TestCase):
 			],
 		)
 
+	def test_runner_args_pass_the_change_threshold(self) -> None:
+		args = frappe_shots.ShotsArgs()
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_TEST_ADMIN_PASSWORD": ""}):
+			for value, word in ((0.2, "0.2"), (0, "0"), (1, "1")):
+				with self.subTest(value=value):
+					cmd = frappe_shots.runner_args(
+						args,
+						spec="s",
+						out="o",
+						repo="/r",
+						site="s",
+						port="1",
+						cfg={"change-threshold": value},
+						date="d",
+					)
+					at = cmd.index("--change-threshold")
+					self.assertEqual(cmd[at + 1], word)
+			cmd = frappe_shots.runner_args(
+				args, spec="s", out="o", repo="/r", site="s", port="1", cfg={}, date="d"
+			)
+		self.assertNotIn("--change-threshold", cmd)
+
 
 class TestDevshell(unittest.TestCase):
 	def test_jq(self) -> None:

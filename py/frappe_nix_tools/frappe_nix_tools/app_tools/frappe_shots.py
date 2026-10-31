@@ -17,10 +17,11 @@ existing site is only dropped with --recreate-site or a yes at the prompt, as
 frappe-test does.
 
 Then lib/shots/runner.ts drives chromium over the site: --update (the default)
-writes the lossless WebPs and docs/screenshots/manifest.json; --check writes diff
-PNGs under .dev-dist/shots/diff/ only. Masters go to .dev-dist/shots/; --video
-<name> records one of the spec's flows to .dev-dist/shots/<name>.mp4 (never
-committed).
+writes the lossless WebPs and docs/screenshots/manifest.json, replacing a committed
+screenshot only when at least screenshots.change-threshold of its pixels differ;
+--check writes diff PNGs under .dev-dist/shots/diff/ only. Masters go to
+.dev-dist/shots/; --video <name> records one of the spec's flows to
+.dev-dist/shots/<name>.mp4 (never committed).
 
 Exit codes: 0 no differences, or updated; 1 differences under --check; 2 a spec
 error; 3 an environment error; 4 a capture error (navigation, timeout or a page
@@ -158,6 +159,10 @@ def runner_args(
 		devshell.jq_raw(cfg.get("locale")),
 	]
 	cmd += ["--clock", date, "--password", devshell.admin_password()]
+	# The share of pixels that must differ before --update replaces a committed screenshot.
+	threshold = cfg.get("change-threshold")
+	if threshold is not None:
+		cmd += ["--change-threshold", devshell.jq_raw(threshold)]
 	if args.only:
 		cmd += ["--only", args.only]
 	if args.theme:

@@ -128,7 +128,7 @@ No workflow ever pushes a change to `.github/workflows/`: GitHub refuses that fr
 | Job | Runs when | What |
 |---|---|---|
 | integration | `tests` | `frappe-test --ci --keep-up`, `bench build`, then each `nightly-suites` command against the running site |
-| shots | `screenshots` | `frappe-shots --update`; changed screenshots go to a `standards/screenshots` PR, merged automatically only under `dependabot.auto-merge-policy = "all"` |
+| shots | `screenshots` | `frappe-shots --update`; screenshots that changed by at least `screenshots.change-threshold` go to a `standards/screenshots` PR, merged automatically only under `dependabot.auto-merge-policy = "all"` |
 | links | `listing` | The listing's website and documentation answer 200; with `icons`, the raster icon checks |
 | duplication | `test-utils` with `check_code_duplication` | Informational |
 | registry-refresh | `listing.publish` | Rebuilds the open registry PR on upstream `main` |
@@ -231,7 +231,7 @@ The App's ID travels as a secret because a caller's `with:` can't read secrets, 
 | deps `relock-upgrade` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
 | nightly `shots` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
 
-Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch keeps `GITHUB_TOKEN`, because the release-branch ruleset lets only GitHub Actions move it.
+Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch uses the App too, when it has **Workflows** write: GitHub refuses to move a branch with `GITHUB_TOKEN` onto commits that change `.github/workflows/`, which most releases do (Dependabot action bumps, `frappe-init --sync`). It asks for `contents` and `workflows` write; an App without Workflows write can't mint that token, and the move falls back to `GITHUB_TOKEN`. If the release-branch ruleset restricts updates, add the App to its bypass list. pilot's `assets.yml` dispatch keeps `GITHUB_TOKEN`.
 
 ## Security notes
 

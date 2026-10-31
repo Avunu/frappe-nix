@@ -3,7 +3,7 @@ title: Screenshots
 description: "Repeatable screenshots from a demo site: the screenshot spec, frappe-demo and frappe-shots."
 order: 9
 tags: [app-standards, screenshots, demo]
-updated: 2026-10-22
+updated: 2026-10-31
 ---
 
 `frappe-demo` builds a demo site the same way every time, and `frappe-shots` photographs it the same way every time, so the screenshots in `docs/screenshots/` change only when the app does. Both are dev-shell commands of an app that turned their modules on: `demo`, and `screenshots`, which needs `demo`. Both are off in the built-in profiles. They need the bench the dev shell sets up (`FRAPPE_BENCH_ROOT`), so `nix run .#frappe-shots` on its own stops with exit 3 (frappe-demo: 10); from outside the shell, run them as `nix develop -c frappe-shots ...`.
@@ -21,6 +21,7 @@ erpnext-demo = false            # erpnext's own demo transactions
 enable = true
 timezone = "America/New_York"
 locale = "en-US"
+change-threshold = 0            # the share of pixels that must differ before --update replaces a screenshot
 ```
 
 ## frappe-demo
@@ -91,6 +92,15 @@ Unless `--reuse-site`, it runs `frappe-demo --fresh` on `$FRAPPE_SITE`, the dev 
 
 Recreating a site drops its database and resets Administrator's password. In CI (`CI=true`) that is what happens; at a desk, `frappe-shots` and `frappe-demo --fresh` only drop a site that already exists when you pass `--recreate-site` or answer yes at the prompt, and without a terminal they stop with exit 64. Use `frappe-shots --reuse-site` to photograph the site as it is.
 
-Chromium, libwebp, ffmpeg, libfaketime, Node and a fixed set of fonts (Inter, IBM Plex, Noto) come from frappe-nix's own nixpkgs, so a run on a laptop and a run in CI give the same pixels. The masters are PNGs in `.dev-dist/shots/`; the committed copies are lossless WebP in `docs/screenshots/`, with `manifest.json` listing each one's name, theme, alt text, size and hash for the README and any website. A screenshot changes only when more than `maxDiffRatio` (0.1 % by default) of its pixels differ.
+Chromium, libwebp, ffmpeg, libfaketime, Node and a fixed set of fonts (Inter, IBM Plex, Noto) come from frappe-nix's own nixpkgs, so a run on a laptop and a run in CI give the same pixels. The masters are PNGs in `.dev-dist/shots/`; the committed copies are lossless WebP in `docs/screenshots/`, with `manifest.json` listing each one's name, theme, alt text, size and hash for the README and any website.
 
-The nightly workflow runs `frappe-shots --update` and opens a pull request with the changes, labelled `screenshots`; it is merged automatically only under `dependabot.auto-merge-policy = "all"` (see [CI](ci.md#dependency-prs-depsyml)). Exit codes: 0 no differences, or updated; 1 differences under `--check`; 2 a spec or configuration error; 3 the environment; 4 a capture error (navigation, a timeout or a page error); 64 an existing site kept.
+## When a screenshot changes
+
+Each capture is compared with the committed screenshot pixel by pixel with pixelmatch. A pixel counts as different only when its colour moves by more than the shot's `threshold` (0.1 by default, on pixelmatch's perceptual 0 to 1 scale), and pixels that only differ by anti-aliasing do not count, so font rendering and sub-pixel noise stay out of the measure. The share of pixels that differ is then held to two bars:
+
+- a shot's `maxDiffRatio` (0.1 % by default) is what `--check` allows: past it, the shot differs, its diff PNG goes to `.dev-dist/shots/diff/` and the run exits 1;
+- `screenshots.change-threshold` (0 by default, a share from 0 to 1) is what `--update` needs before it replaces a committed screenshot. A shot past `maxDiffRatio` but below the threshold is kept as it is, and the run says so (`kept <name>-<theme>: ...`).
+
+A new shot, a shot whose size changed (which counts as 100 %) and a shot removed from the spec (it leaves `manifest.json`) always change. With the default of 0, `--update` replaces every shot past `maxDiffRatio`. An organisation whose nightly screenshot PRs are mostly noise sets a higher threshold in its profile, such as `change-threshold = 0.2` for 20 % of the pixels; an app can still set its own in `[tool.frappe-nix.screenshots]`.
+
+The nightly workflow runs `frappe-shots --update` and opens a pull request with the changes, labelled `screenshots`; it is merged automatically only under `dependabot.auto-merge-policy = "all"` (see [CI](ci.md#dependency-prs-depsyml)). When no screenshot reaches the threshold, nothing in `docs/screenshots/` changes, so the job pushes nothing and leaves any open screenshots PR as it is. Exit codes: 0 no differences, or updated; 1 differences under `--check`; 2 a spec or configuration error; 3 the environment; 4 a capture error (navigation, a timeout or a page error); 64 an existing site kept.
