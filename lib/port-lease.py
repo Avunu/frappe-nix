@@ -36,13 +36,15 @@ only a process outside frappe-nix can take the port; between two benches there
 is no window at all.
 
 The lease is up when ports.json is there and ports.lock is held (`ready`). That
-check is a file test and a non-blocking flock, so the readiness probe and the
-waits that poll it (lib/port-lease-ready.sh, the same check without Python)
-cost next to nothing: on a CI host running many benches at once they run every
-second or so in each, and a Python start-up there (python3Minimal ships no
-bytecode, so each one compiles argparse, json, socket and the rest afresh) took
-longer than the probe's timeout, so a bench whose lease was up never became
-ready.
+check is a file test and a non-blocking flock, which the readiness probe and the
+waits that poll it run without Python (lib/port-lease-ready.sh): it needs
+nothing from the holder, and costs a few milliseconds however the host is doing.
+
+Run isolated (`python3 -I`, lib/port-lease.nix): this file sits directly in
+/nix/store, and without -I Python searches a script's directory before the
+stdlib, listing all of /nix/store for the first import and again for each one
+after Nix has changed it. On a CI host that changes it all the time, that made
+the holder's own start-up take minutes.
 
 With --strict (or --pin KEY for one port) only the preferred port is tried,
 and a taken one stops the bench with the holder named.
@@ -486,6 +488,11 @@ def hold(args: argparse.Namespace) -> int:
 		"identity": bool(args.render),
 	}
 	write_atomic(ports_file(args.runtime), json.dumps(record, indent=2) + "\n")
+	# One line when the lease is up, so a bench that did not come up shows in
+	# frappe-ports' log whether its holder got this far.
+	say(
+		f"frappe-ports: leased {' '.join(f'{w.label}={w.host}:{got[w.key]}' for w in args.want)} (pid {os.getpid()})"
+	)
 	return serve(args.runtime, claims, identity)
 
 

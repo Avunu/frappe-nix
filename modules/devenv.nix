@@ -3068,9 +3068,20 @@ in
               else
                 config.processes.web.ports.main.value;
 
-            # How long frappe:config waits for the lease before it fails: as
-            # long as frappe-test waits for the whole bench by default.
-            leaseWait = 300;
+            # How long frappe:config waits for the lease before it fails, in
+            # bash: FRAPPE_NIX_UP_TIMEOUT (what frappe-test, frappe-demo and
+            # frappe-shots wait for the whole bench; 300 s when it is unset or
+            # not a positive whole number), less 30 s, at least 30 s. Shorter
+            # than their wait, so its failure is in frappe-ports' log by the
+            # time they print it.
+            leaseWait = ''
+              _up="''${FRAPPE_NIX_UP_TIMEOUT:-}"
+              _up="''${_up//[[:space:]]/}"
+              case "$_up" in "" | *[!0-9]*) _up=300 ;; esac
+              _up=$((10#$_up))
+              [ "$_up" -gt 0 ] || _up=300
+              wait_s=$((_up > 60 ? _up - 30 : 30))
+            '';
 
             # Runtime port leases (lib/port-lease.py). The frappe-ports process
             # claims nginx's and Mailpit's ports host-wide before anything binds
@@ -3088,10 +3099,10 @@ in
               # still holds ports.lock (lib/port-lease-ready.sh). The one check
               # the frappe-ports probe, frappe:config's wait and the check
               # before `devenv up` share. A shell test and a flock, not `tool
-              # ready`: those poll it several times a second per bench, and a
-              # Python start-up each (python3Minimal ships no bytecode) cost
-              # 0.2 s of CPU, which on a busy CI host outlasted the probe's
-              # timeout, so a bench whose lease was up never became ready.
+              # ready`: those poll it several times a second per bench, and
+              # `ready` was a Python start-up each that asked the holder for
+              # its identity, seconds apiece on the loaded CI host (the tool
+              # runs isolated now; lib/port-lease.nix says why).
               readyTool = import ../lib/port-lease-ready.nix { inherit pkgs; };
               ready = "${lib.getExe readyTool} ${lib.escapeShellArg runtime}";
               # Ours, beside the bench name: DEVENV_RUNTIME is a hash of this
@@ -4336,13 +4347,14 @@ in
                   # count of tries (the tries' cost grows with the host's load),
                   # and past it the task fails, saying so, rather than going on
                   # to a ports.json that is not there or not this holder's.
-                  deadline=$((SECONDS + ${toString leaseWait}))
+                  ${leaseWait}
+                  deadline=$((SECONDS + wait_s))
                   until ${portLease.ready}; do
                     if [ "$SECONDS" -ge "$deadline" ]; then
                       if [ -e "$ports" ]; then
-                        echo "frappe-nix: frappe:config: $ports is there, but no frappe-ports holds this bench's lease (${portLease.dir}/ports.lock) after ${toString leaseWait} s; see the frappe-ports process's log" >&2
+                        echo "frappe-nix: frappe:config: $ports is there, but no frappe-ports holds this bench's lease (${portLease.dir}/ports.lock) after $wait_s s; see the frappe-ports process's log" >&2
                       else
-                        echo "frappe-nix: frappe:config: frappe-ports has not leased this bench's ports ($ports) after ${toString leaseWait} s; see the frappe-ports process's log" >&2
+                        echo "frappe-nix: frappe:config: frappe-ports has not leased this bench's ports ($ports) after $wait_s s; see the frappe-ports process's log" >&2
                       fi
                       exit 1
                     fi
@@ -4428,6 +4440,11 @@ in
                   "devenv:processes:frappe-ports"
                   "devenv:processes:redis"
                 ];
+                # Its output as it runs, in each wrapper's log. Hidden, a
+                # failed run's stderr (the wait's message above) is printed only
+                # when the wrapper exits, which a bench that never came up is
+                # not seen doing.
+                showOutput = true;
               };
             }
             // lib.optionalAttrs cfg.appsReconcile.enable {
