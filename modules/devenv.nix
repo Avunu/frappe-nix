@@ -3068,6 +3068,10 @@ in
               else
                 config.processes.web.ports.main.value;
 
+            # How long frappe:config waits for the lease before it fails: as
+            # long as frappe-test waits for the whole bench by default.
+            leaseWait = 300;
+
             # Runtime port leases (lib/port-lease.py). The frappe-ports process
             # claims nginx's and Mailpit's ports host-wide before anything binds
             # them and holds the claims for as long as the bench runs, moving
@@ -3080,6 +3084,16 @@ in
               tool = import ../lib/port-lease.nix { inherit pkgs; };
               dir = "${runtime}/frappe-nix";
               file = "${dir}/ports.json";
+              # Whether the lease is up: ports.json is there and its holder
+              # still holds ports.lock (lib/port-lease-ready.sh). The one check
+              # the frappe-ports probe, frappe:config's wait and the check
+              # before `devenv up` share. A shell test and a flock, not `tool
+              # ready`: those poll it several times a second per bench, and a
+              # Python start-up each (python3Minimal ships no bytecode) cost
+              # 0.2 s of CPU, which on a busy CI host outlasted the probe's
+              # timeout, so a bench whose lease was up never became ready.
+              readyTool = import ../lib/port-lease-ready.nix { inherit pkgs; };
+              ready = "${lib.getExe readyTool} ${lib.escapeShellArg runtime}";
               # Ours, beside the bench name: DEVENV_RUNTIME is a hash of this
               # checkout's path, so two copies of one bench differ here. nginx
               # answers it at /__frappe_nix/bench, which is how frappe-test
@@ -3903,7 +3917,7 @@ in
               # these very ports, and devenv attaches to the running manager
               # after this. Not under the native manager, which has no `before`.
               (lib.mkIf (config.process.manager.implementation != "native") ''
-                if ! ${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}; then
+                if ! ${portLease.ready}; then
                   ${portLease.hold "" "--dry-run"} || exit 1
                   # A fresh start: the last run's readiness latches go (`latched`).
                   ${pkgs.coreutils}/bin/rm -rf ${lib.escapeShellArg latchDir}
@@ -4099,11 +4113,17 @@ in
                   # Not the file alone: one a killed holder left behind would
                   # pass before this holder has written its own. Latched
                   # (`latched`): nginx and Mailpit read it long after it passed.
+                  # Cheap (portLease.ready), so failures come a second apart,
+                  # and failing it many times over is no failure: the holder
+                  # ends `devenv up` itself when it cannot lease, so the
+                  # threshold only has to outlast a slow start on a loaded host
+                  # (process-compose stops a process whose readiness fails that
+                  # many times in a row; at 30 that was half a minute).
                   ready = {
-                    exec = latched "frappe-ports" "${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime}";
+                    exec = latched "frappe-ports" portLease.ready;
                     period = 1;
                     probe_timeout = 5;
-                    failure_threshold = 30;
+                    failure_threshold = 600;
                   };
                   # A second run would lease afresh, perhaps other ports, under
                   # an nginx and a Mailpit already bound to the first's.
@@ -4312,9 +4332,20 @@ in
                   # devenv-tasks wrapper (`--mode all`), which runs this task too
                   # but leaves the ordering on frappe-ports to process-compose:
                   # in frappe-ports' own wrapper and in redis's it starts before
-                  # the holder has written the file.
-                  for _ in $(${pkgs.coreutils}/bin/seq 120); do
-                    ${lib.getExe portLease.tool} ready --runtime ${lib.escapeShellArg runtime} && break
+                  # the holder has written the file. Up to a deadline, not a
+                  # count of tries (the tries' cost grows with the host's load),
+                  # and past it the task fails, saying so, rather than going on
+                  # to a ports.json that is not there or not this holder's.
+                  deadline=$((SECONDS + ${toString leaseWait}))
+                  until ${portLease.ready}; do
+                    if [ "$SECONDS" -ge "$deadline" ]; then
+                      if [ -e "$ports" ]; then
+                        echo "frappe-nix: frappe:config: $ports is there, but no frappe-ports holds this bench's lease (${portLease.dir}/ports.lock) after ${toString leaseWait} s; see the frappe-ports process's log" >&2
+                      else
+                        echo "frappe-nix: frappe:config: frappe-ports has not leased this bench's ports ($ports) after ${toString leaseWait} s; see the frappe-ports process's log" >&2
+                      fi
+                      exit 1
+                    fi
                     ${pkgs.coreutils}/bin/sleep 0.5
                   done
                   port="$(${pkgs.jq}/bin/jq -er .web "$ports")"

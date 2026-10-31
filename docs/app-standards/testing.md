@@ -28,7 +28,7 @@ Every stage after the tests runs even when an earlier one failed, so one run rep
 
 | Stage | What | Fails with |
 |---|---|---|
-| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s for MariaDB and for the web port to answer as this bench (its `/__frappe_nix/bench` identity, so another bench's nginx on the same port does not count); a failed `devenv up` (a taken port under `ports.strict`, say) fails at once. The leased ports are copied to `ports.json` in the output directory, and a web port that never answers is reported with `frappe-nix-ports who`. | 10 |
+| up | `devenv up -D` unless the bench is already up (stopped again afterwards unless `--keep-up`). Waits up to 300 s (or `FRAPPE_NIX_UP_TIMEOUT` seconds, for a host that is slow by design) for MariaDB and for the web port to answer as this bench (its `/__frappe_nix/bench` identity, so another bench's nginx on the same port does not count); a failed `devenv up` (a taken port under `ports.strict`, say) fails at once. The leased ports are copied to `ports.json` in the output directory, and a web port that never answers is reported with `frappe-nix-ports who`. | 10 |
 | site | `bench provision` for the `--site`, which recreates an existing one (`bench new-site --force`: its database is dropped), unless `--reuse-site` is given and the site exists; then `allow_tests`, then the `[tool.frappe-nix.tests] setup` steps (without the guards `devguard-disable` names, see [Development guards in a test run](#development-guards-in-a-test-run)). | 10 |
 | tests | `coverage run … frappe … run-tests --app <app>`. | 1 |
 | coverage | `coverage report` against `[tool.coverage.report] fail_under`, and the upward ratchet. | 2 |

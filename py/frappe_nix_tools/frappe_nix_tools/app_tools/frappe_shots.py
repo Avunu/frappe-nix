@@ -261,7 +261,7 @@ class Shots:
 				ENVIRONMENT,
 				f"no webserver_port in {config_file} (the bench's port lease is not up: {leases})",
 			)
-		tries = devshell.TRIES
+		tries = devshell.up_tries()
 		while not devshell.web_answers(port, devshell.bench_id()):
 			tries -= 1
 			if tries <= 0:
@@ -269,7 +269,7 @@ class Shots:
 				devshell.report_not_up(self.compose, "frappe-shots")
 				raise Fail(
 					ENVIRONMENT,
-					f"the web server did not answer on port {port} within 300 s"
+					f"the web server did not answer on port {port} within {devshell.up_timeout()} s"
 					+ (f" ({holder})" if holder else ""),
 				)
 			time.sleep(2)

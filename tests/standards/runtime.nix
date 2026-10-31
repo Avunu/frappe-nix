@@ -202,11 +202,30 @@ let
     assert lib.assertMsg (
       benchShell.processes ? frappe-ports
       && lib.hasInfix "frappe-nix-port-lease hold" benchShell.processes.frappe-ports.exec
-      && lib.hasInfix "frappe-nix-port-lease ready" benchShell.processes.frappe-ports.ready.exec
+      && lib.hasInfix "frappe-nix-lease-ready" benchShell.processes.frappe-ports.ready.exec
       && benchShell.processes.frappe-ports.after == [ ]
       && benchShell.processes.frappe-ports.restart.on == "never"
       && benchShell.processes.frappe-ports.process-compose.availability.restart == "exit_on_failure"
     ) "no frappe-ports process holding the leases, or one whose refusal does not end devenv up";
+    # What polls the lease while a bench starts (the frappe-ports probe, every
+    # second, and frappe:config's wait, in each process's wrapper) is the shell
+    # check, not a Python start-up: on a loaded CI host that outlasted the
+    # probe's timeout, and the bench never came up. The wait has a deadline and
+    # fails saying so; the probe's threshold outlasts a slow start.
+    assert lib.assertMsg
+      (
+        let
+          probe = benchShell.processes.frappe-ports.ready;
+          wait = benchShell.tasks."frappe:config".exec;
+        in
+        !(lib.hasInfix "frappe-nix-port-lease" probe.exec)
+        && probe.failure_threshold * probe.period >= 300
+        && lib.hasInfix "frappe-nix-lease-ready" wait
+        && !(lib.hasInfix "frappe-nix-port-lease" wait)
+        && lib.hasInfix "frappe-ports has not leased this bench's ports" wait
+        && lib.hasInfix "exit 1" wait
+      )
+      "the lease is polled through Python, without a deadline, or with a probe threshold a slow start exhausts";
     # process-compose reads a dependency's health once, late: one failed probe
     # of a process that was ready skips its dependents for good (nginx, on a
     # loaded CI host). So whatever something waits on is latched once ready,
@@ -273,8 +292,9 @@ let
     # while this bench's own lease is up. None under the native manager.
     assert lib.assertMsg (
       lib.hasInfix "if ! " benchUpPreamble
-      && lib.hasInfix "frappe-nix-port-lease ready --runtime" benchUpPreamble
+      && lib.hasInfix "frappe-nix-lease-ready ${benchShell.env.DEVENV_RUNTIME}" benchUpPreamble
       && !(lib.hasInfix "frappe-nix-port-lease" nativeShell.process.manager.before)
+      && !(lib.hasInfix "frappe-nix-lease-ready" nativeShell.process.manager.before)
       && failed "process.manager.before" nativeShell == [ ]
     ) "the lease check runs on a bench already up, or under the native manager";
     # Bench mode cannot move (its webserver_port is committed); TCP mode is
