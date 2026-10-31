@@ -26,12 +26,23 @@ from the preferred one to preferred + span - 1:
      to the claim socket reads one JSON line naming the bench that holds it
      (`who`), which nothing else can say across those sandboxes.
 
-Then it renders the templates it was given (nginx.conf: @WEB_PORT@ and
-@BENCH_ID@), writes <runtime>/frappe-nix/ports.json in one rename, and waits.
-nginx, Mailpit and the frappe:config task start after it and read their ports
-from that file. Between the TCP check and nginx's own bind only a process
-outside frappe-nix can take the port; between two benches there is no window
-at all.
+Before any of that it takes an exclusive flock on <runtime>/frappe-nix/ports.lock
+and keeps it for as long as it runs, and drops a ports.json a holder that was
+killed left behind. Then it renders the templates it was given (nginx.conf:
+@WEB_PORT@ and @BENCH_ID@), writes <runtime>/frappe-nix/ports.json in one
+rename, and waits. nginx, Mailpit and the frappe:config task start after it and
+read their ports from that file. Between the TCP check and nginx's own bind
+only a process outside frappe-nix can take the port; between two benches there
+is no window at all.
+
+The lease is up when ports.json is there and ports.lock is held (`ready`). That
+check is a file test and a non-blocking flock, so the readiness probe and the
+waits that poll it (lib/port-lease-ready.sh, the same check without Python)
+cost next to nothing: on a CI host running many benches at once they run every
+second or so in each, and a Python start-up there (python3Minimal ships no
+bytecode, so each one compiles argparse, json, socket and the rest afresh) took
+longer than the probe's timeout, so a bench whose lease was up never became
+ready.
 
 With --strict (or --pin KEY for one port) only the preferred port is tried,
 and a taken one stops the bench with the holder named.
@@ -56,6 +67,7 @@ import selectors
 import signal
 import socket
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -231,6 +243,54 @@ def ports_file(runtime: str) -> Path:
 	return Path(runtime) / "frappe-nix" / "ports.json"
 
 
+def lock_file(runtime: str) -> Path:
+	"""Held (an exclusive flock) by the bench's holder for as long as it runs.
+	Never removed: a reader that opened a removed one would lock a file nobody
+	else can see."""
+	return Path(runtime) / "frappe-nix" / "ports.lock"
+
+
+#: How long `hold` retries the runtime's lock: a `ready` that is testing it
+#: holds a shared lock for a moment.
+LOCK_WAIT = 10.0
+
+
+def lock_runtime(runtime: str, wait: float = LOCK_WAIT) -> int | None:
+	"""The runtime's lock, taken exclusively: its fd, kept open (and so held)
+	until this process ends. None when another holder of this runtime has it."""
+	path = lock_file(runtime)
+	path.parent.mkdir(parents=True, exist_ok=True)
+	fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+	deadline = time.monotonic() + wait
+	while True:
+		try:
+			fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			return fd
+		except BlockingIOError:
+			if time.monotonic() >= deadline:
+				os.close(fd)
+				return None
+			time.sleep(0.05)
+
+
+def lock_held(runtime: str) -> bool:
+	"""Some process holds the runtime's lock: a `hold` that is running. A shared
+	lock taken here is refused while it does, and dropped at once otherwise."""
+	try:
+		fd = os.open(lock_file(runtime), os.O_RDONLY | os.O_CLOEXEC)
+	except OSError:
+		return False
+	try:
+		fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+	except BlockingIOError:
+		return True
+	except OSError:
+		return False
+	finally:
+		os.close(fd)
+	return False
+
+
 def write_atomic(path: Path, text: str) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
 	tmp = path.with_name(f".{path.name}.{os.getpid()}")
@@ -251,12 +311,14 @@ def alive(pid: Any) -> bool:
 
 
 def live(runtime: str) -> dict[str, Any] | None:
-	"""ports.json, when the holder that wrote it is still running."""
+	"""ports.json, when the holder that wrote it is still running: the runtime's
+	lock is held, which no holder that was killed still does, and a holder drops
+	a file its killed predecessor left before it writes its own."""
 	try:
 		data = json.loads(ports_file(runtime).read_text())
 	except (OSError, ValueError):
 		return None
-	if not isinstance(data, dict) or not alive(data.get("pid")):
+	if not isinstance(data, dict) or not alive(data.get("pid")) or not lock_held(runtime):
 		return None
 	return data
 
@@ -312,6 +374,18 @@ def hold(args: argparse.Namespace) -> int:
 		"root": args.root,
 		"pid": os.getpid(),
 	}
+	if not args.dry_run:
+		# One holder per runtime, and the lock `ready` tests: kept until exit.
+		if lock_runtime(args.runtime) is None:
+			other = ""
+			with contextlib.suppress(OSError, ValueError, AttributeError):
+				other = f" (pid {json.loads(ports_file(args.runtime).read_text()).get('pid', '?')})"
+			say(f"cannot start {args.name}: its ports are already leased by another frappe-ports{other}")
+			return 1
+		# Whatever is here, a holder that was killed wrote: drop it before the
+		# lock makes it look live.
+		with contextlib.suppress(FileNotFoundError):
+			ports_file(args.runtime).unlink()
 	pinned = set(args.pin)
 	claims: list[Claim] = []
 	got: dict[str, int] = {}
@@ -416,16 +490,14 @@ def hold(args: argparse.Namespace) -> int:
 
 
 def ready(args: argparse.Namespace) -> int:
-	"""ports.json is there and its holder is the one answering on the claims: a
-	file left by a holder that was killed never counts."""
-	data = live(args.runtime)
-	if data is None:
+	"""ports.json is there and the runtime's lock is held: a file left by a
+	holder that was killed never counts. lib/port-lease-ready.sh is this check
+	without Python, for the probes and waits that poll it."""
+	try:
+		data = json.loads(ports_file(args.runtime).read_text())
+	except (OSError, ValueError):
 		return 1
-	ports = [data[k] for k in data.get("preferred", {}) if isinstance(data.get(k), int)]
-	if ports and backend() == "abstract":
-		who = holder(ports[0])
-		return 0 if who is not None and who.get("pid") == data["pid"] else 1
-	return 0
+	return 0 if isinstance(data, dict) and lock_held(args.runtime) else 1
 
 
 def show(args: argparse.Namespace) -> int:
