@@ -7,15 +7,20 @@
 # probes' check, lib/port-lease-ready.sh) agrees with `ready` at every step, and
 # the runtime's lock admits one holder and makes a killed one's ports.json stale.
 # Run once per backend: the abstract-socket claims (Linux) and the flock
-# fallback (darwin), forced here.
+# fallback (darwin), forced here. Through the tool as the shell runs it,
+# frappe-nix-port-lease, whose interpreter is isolated: first, that neither
+# PYTHONPATH nor the script's own directory is searched.
 #
 #   port-lease.sh <python> <port-lease.py> <base port> <frappe-nix-lease-ready>
+#                 <frappe-nix-port-lease> <its interpreter command>
 set -euo pipefail
 
 PY="$1"
 LEASE="$2"
 BASE="$3"
 READY="$4"
+TOOL="$5"
+read -r -a INTERP <<< "$6"
 WORK="$(mktemp -d)"
 pids=()
 cleanup() {
@@ -29,7 +34,7 @@ fail() {
   exit 1
 }
 ok() { echo "ok   $*"; }
-lease() { "$PY" "$LEASE" "$@"; }
+lease() { "$TOOL" "$@"; }
 # is_ready <n>: bench n's lease is up, by `ready` and by the probes' check, which
 # have to agree; is_down <n>: it is not, by either.
 is_ready() {
@@ -46,7 +51,7 @@ hold() {
   local n="$1"
   shift
   mkdir -p "$WORK/rt$n"
-  "$PY" "$LEASE" hold --runtime "$WORK/rt$n" --bench-id "bench/$n" --name bench --root "$WORK/root$n" "$@" \
+  "$TOOL" hold --runtime "$WORK/rt$n" --bench-id "bench/$n" --name bench --root "$WORK/root$n" "$@" \
     > "$WORK/hold$n.log" 2>&1 &
   pids+=("$!")
 }
@@ -89,6 +94,9 @@ run() {
   [ "$(jq -r .preferred.web "$WORK/rt7/frappe-nix/ports.json")" = "$BASE" ] || fail "$mode: no preferred port in ports.json"
   [ "$(jq -r .identity "$WORK/rt7/frappe-nix/ports.json")" = true ] || fail "$mode: a rendered nginx.conf is not recorded as answering the identity"
   ok "$mode: nginx.conf rendered with the leased port and the bench id; ports.json records both"
+  grep -qx "frappe-nix: frappe-ports: leased nginx=127.0.0.1:$(port_of 7) mailpit-smtp=127.0.0.1:$(port_of 7 mailpit_smtp) (pid $(jq -r .pid "$WORK/rt7/frappe-nix/ports.json"))" "$WORK/hold7.log" \
+    || fail "$mode: the holder did not log its lease: $(cat "$WORK/hold7.log")"
+  ok "$mode: the holder logs the ports it leased"
 
   # Who holds the preferred port.
   local first=""
@@ -205,6 +213,29 @@ s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(600)' "$BASE" &
   pids=()
   rm -rf "$WORK"/rt* "$WORK"/*.log
 }
+
+# Isolated. The real script is a file directly in /nix/store, and Python
+# searches a script's directory before the stdlib: every import listed the
+# whole store, again each time Nix had changed it, and on the CI runner host
+# the holder had not written ports.json 300 s after it started. Decoys of the
+# tool's imports that exit 97: on PYTHONPATH, and beside a copy of the script
+# run by the tool's own interpreter command. Without -I, they are found.
+decoy="$WORK/decoy"
+mkdir -p "$decoy"
+for m in argparse dataclasses json selectors socket typing; do
+  echo 'raise SystemExit(97)' > "$decoy/$m.py"
+done
+cp "$LEASE" "$decoy/port-lease.py"
+rc=0
+"$PY" "$decoy/port-lease.py" ready --runtime "$WORK/none" || rc=$?
+[ "$rc" = 97 ] || fail "isolation: control: without -I, the decoys beside the script were not imported (exit $rc)"
+rc=0
+"${INTERP[@]}" "$decoy/port-lease.py" ready --runtime "$WORK/none" || rc=$?
+[ "$rc" = 1 ] || fail "isolation: ${INTERP[*]} imported the decoys beside the script (exit $rc, not 1: not up)"
+rc=0
+PYTHONPATH="$decoy" "$TOOL" ready --runtime "$WORK/none" || rc=$?
+[ "$rc" = 1 ] || fail "isolation: frappe-nix-port-lease imported the decoys on PYTHONPATH (exit $rc, not 1: not up)"
+ok "isolated: the tool searches neither PYTHONPATH nor its script's directory"
 
 if [ "$(uname -s)" = Linux ]; then
   FRAPPE_NIX_PORT_LEASE_BACKEND=abstract run abstract

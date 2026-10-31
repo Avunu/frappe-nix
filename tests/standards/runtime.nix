@@ -210,22 +210,34 @@ let
     # What polls the lease while a bench starts (the frappe-ports probe, every
     # second, and frappe:config's wait, in each process's wrapper) is the shell
     # check, not a Python start-up: on a loaded CI host that outlasted the
-    # probe's timeout, and the bench never came up. The wait has a deadline and
-    # fails saying so; the probe's threshold outlasts a slow start.
+    # probe's timeout, and the bench never came up. The wait has a deadline,
+    # FRAPPE_NIX_UP_TIMEOUT's less 30 s, and fails saying so, in the wrapper's
+    # log as it happens (showOutput); the probe's threshold outlasts a slow
+    # start.
     assert lib.assertMsg
       (
         let
           probe = benchShell.processes.frappe-ports.ready;
-          wait = benchShell.tasks."frappe:config".exec;
+          task = benchShell.tasks."frappe:config";
+          wait = task.exec;
         in
         !(lib.hasInfix "frappe-nix-port-lease" probe.exec)
         && probe.failure_threshold * probe.period >= 300
         && lib.hasInfix "frappe-nix-lease-ready" wait
         && !(lib.hasInfix "frappe-nix-port-lease" wait)
         && lib.hasInfix "frappe-ports has not leased this bench's ports" wait
+        && lib.hasInfix "FRAPPE_NIX_UP_TIMEOUT" wait
+        && lib.hasInfix "deadline=$((SECONDS + wait_s))" wait
         && lib.hasInfix "exit 1" wait
+        && task.showOutput
       )
-      "the lease is polled through Python, without a deadline, or with a probe threshold a slow start exhausts";
+      "the lease is polled through Python, without a deadline (FRAPPE_NIX_UP_TIMEOUT's), with its failure hidden until the wrapper exits, or with a probe threshold a slow start exhausts";
+    # The holder, and every other run of the tool, is isolated (python3 -I,
+    # lib/port-lease.nix): its script sits directly in /nix/store, which an
+    # unisolated start-up listed for each import Nix had changed it before.
+    assert lib.assertMsg (lib.hasSuffix "/bin/python3 -I"
+      (import ../../lib/port-lease.nix { inherit pkgs; }).python
+    ) "frappe-nix-port-lease runs Python without -I";
     # process-compose reads a dependency's health once, late: one failed probe
     # of a process that was ready skips its dependents for good (nginx, on a
     # loaded CI host). So whatever something waits on is latched once ready,
