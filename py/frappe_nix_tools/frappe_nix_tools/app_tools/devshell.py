@@ -27,8 +27,8 @@ from typing import Any
 #: Role. Started again afterwards, the task finds every app installed.
 APP_PROCESSES = ("runtime", "web", "worker", "scheduler", "socketio")
 
-#: Counted, not timed: 150 tries two seconds apart.
-TRIES = 150
+#: Seconds a bench has to come up in, unless FRAPPE_NIX_UP_TIMEOUT says otherwise.
+UP_TIMEOUT = 300
 
 #: The processes whose logs a bench that did not come up is reported with: the
 #: lease, the public listener, and what serves behind it (split or not).
@@ -55,6 +55,25 @@ def say(text: str) -> None:
 def warn(text: str) -> None:
 	sys.stdout.flush()
 	print(text, file=sys.stderr, flush=True)
+
+
+def up_timeout() -> int:
+	"""How long frappe-test, frappe-demo and frappe-shots wait for the bench to
+	come up: FRAPPE_NIX_UP_TIMEOUT seconds, for a host that is slow by design
+	(UP_TIMEOUT when it is unset; a value that is not a positive whole number is
+	ignored, with a warning)."""
+	raw = os.environ.get("FRAPPE_NIX_UP_TIMEOUT", "").strip()
+	if not raw:
+		return UP_TIMEOUT
+	if raw.isdigit() and int(raw) > 0:
+		return int(raw)
+	warn(f"frappe-nix: FRAPPE_NIX_UP_TIMEOUT={raw!r} is not a number of seconds; waiting {UP_TIMEOUT} s")
+	return UP_TIMEOUT
+
+
+def up_tries() -> int:
+	"""up_timeout() as tries two seconds apart (at least one)."""
+	return max(1, up_timeout() // 2)
 
 
 def _wait(proc: subprocess.Popen) -> int:

@@ -2633,7 +2633,7 @@ frappe-test [--app APP] [--site SITE] [--reuse-site] [--keep-up | --down] [--ci]
 
 1. **Up.**
    - If no process-compose is listening on `$PC_SOCKET_PATH`: `DEVENV_IN_DIRENV_SHELL=true PC_TUI_ENABLED=0 devenv up -D`, with a trap that runs `process-compose -U -u "$PC_SOCKET_PATH" down` unless `--keep-up` is given.
-   - Wait at most 300 s for `mariadb-admin --socket "$FRAPPE_DB_SOCKET" ping`, then for an HTTP answer on `127.0.0.1:$(jq .webserver_port sites/common_site_config.json)`.
+   - Wait at most 300 s (`FRAPPE_NIX_UP_TIMEOUT` seconds when set) for `mariadb-admin --socket "$FRAPPE_DB_SOCKET" ping`, then for an HTTP answer on `127.0.0.1:$(jq .webserver_port sites/common_site_config.json)`.
    - Failure → exit 10.
 2. **Site.**
    - Unless `--reuse-site` is given and the site exists: `printf '\n' | bench provision "$ADMIN_PW"`.

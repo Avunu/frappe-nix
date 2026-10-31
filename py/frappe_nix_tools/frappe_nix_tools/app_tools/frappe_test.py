@@ -117,9 +117,6 @@ STALE = (
 	"ports.json",
 )
 
-#: Seconds the bench has to come up in.
-UP_TIMEOUT = 300
-
 
 class UsageError(Exception):
 	"""A command line frappe-test refuses: exit 64, after the usage when SHOW_USAGE."""
@@ -471,7 +468,8 @@ class Run:
 				)
 			self.stop_bench = not self.args.keep_up
 
-		deadline = time.monotonic() + UP_TIMEOUT
+		timeout = devshell.up_timeout()
+		deadline = time.monotonic() + timeout
 		db_up = web_up = False
 		port = ""
 		while time.monotonic() < deadline:
@@ -491,7 +489,7 @@ class Run:
 			holder = devshell.who(port)
 			devshell.report_not_up(self.compose, "frappe-test")
 			raise self.environment_failure(
-				f"::error::frappe-test: the bench did not come up within {UP_TIMEOUT} s "
+				f"::error::frappe-test: the bench did not come up within {timeout} s "
 				f"(database: {int(db_up)}, web on port {port or '?'}: {int(web_up)})"
 				+ (f"; port {port}: {holder}" if holder else ""),
 				"up",

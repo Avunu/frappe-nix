@@ -163,12 +163,12 @@ def bring_up(repo: str, bench: Path, compose: Compose) -> None:
 			raise Fail("devenv up -D failed")
 	# Counted, not timed, as frappe-shots waits for the web server; one count
 	# for both.
-	tries = devshell.TRIES
+	tries = devshell.up_tries()
 	while not devshell.db_answers():
 		tries -= 1
 		if tries <= 0:
 			devshell.report_not_up(compose, "frappe-demo")
-			raise Fail("the database did not come up within 300 s")
+			raise Fail(f"the database did not come up within {devshell.up_timeout()} s")
 		time.sleep(2)
 	while True:
 		port = devshell.webserver_port(bench)
@@ -179,7 +179,8 @@ def bring_up(repo: str, bench: Path, compose: Compose) -> None:
 			holder = devshell.who(port)
 			devshell.report_not_up(compose, "frappe-demo")
 			raise Fail(
-				"the web server did not answer within 300 s" + (f" (port {port}: {holder})" if holder else "")
+				f"the web server did not answer within {devshell.up_timeout()} s"
+				+ (f" (port {port}: {holder})" if holder else "")
 			)
 		time.sleep(2)
 

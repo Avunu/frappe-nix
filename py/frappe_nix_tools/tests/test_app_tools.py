@@ -435,6 +435,20 @@ class TestDevshell(unittest.TestCase):
 		self.assertFalse(devshell.truthy(None) or devshell.truthy(False))
 		self.assertTrue(devshell.truthy(0) and devshell.truthy(""))
 
+	def test_up_timeout(self) -> None:
+		"""FRAPPE_NIX_UP_TIMEOUT sets how long the tools wait for the bench; unset
+		or not a positive number of seconds, 300 s (the latter with a warning)."""
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_UP_TIMEOUT": ""}):
+			self.assertEqual((devshell.up_timeout(), devshell.up_tries()), (300, 150))
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_UP_TIMEOUT": "900"}):
+			self.assertEqual((devshell.up_timeout(), devshell.up_tries()), (900, 450))
+		with mock.patch.dict(os.environ, {"FRAPPE_NIX_UP_TIMEOUT": "1"}):
+			self.assertEqual(devshell.up_tries(), 1)
+		for bad in ("0", "-5", "5m", "1.5"):
+			with mock.patch.dict(os.environ, {"FRAPPE_NIX_UP_TIMEOUT": bad}), quiet() as err:
+				self.assertEqual(devshell.up_timeout(), 300, bad)
+				self.assertIn("FRAPPE_NIX_UP_TIMEOUT", err.getvalue())
+
 	@mock.patch.dict(os.environ, {"FRAPPE_NIX_PORTS_FILE": ""})
 	def test_webserver_port(self) -> None:
 		with tempfile.TemporaryDirectory() as tmp:
