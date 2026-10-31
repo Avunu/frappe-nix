@@ -66,8 +66,13 @@ class TestWhichPRs(unittest.TestCase):
 		self.assertTrue(branches.is_bot_pr(pr(2, ACTIONS, "standards/relock-python", "a")))
 		self.assertTrue(branches.is_bot_pr(pr(3, APP, "standards/screenshots", "a")))
 		self.assertFalse(branches.is_bot_pr(pr(4, PERSON, "feat/x", "a")))
+		self.assertFalse(branches.is_bot_pr(pr(8, PERSON, "standards/frappe-nix-v2.2.0", "a")))  # a rollout
+		agent = {"login": "app/copilot-swe-agent", "is_bot": True}
+		self.assertFalse(branches.is_bot_pr(pr(9, agent, "copilot/fix-5", "a")))
 		self.assertFalse(branches.is_bot_pr(pr(5, APP, "release-please--branches--develop", "a")))
-		self.assertFalse(branches.is_bot_pr(pr(6, ACTIONS, "other", "a", labels=["autorelease: pending"])))
+		self.assertFalse(
+			branches.is_bot_pr(pr(6, ACTIONS, "standards/x", "a", labels=["autorelease: pending"]))
+		)
 		fork = pr(7, DEPENDABOT, "dependabot/uv/x", "a")
 		fork["isCrossRepository"] = True
 		self.assertFalse(branches.is_bot_pr(fork))

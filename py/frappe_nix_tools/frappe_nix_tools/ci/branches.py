@@ -1,8 +1,9 @@
 """Keeping bot PRs up to date with the integration branch (spec §4.5, ``dependabot.update-branches``).
 
 ``update`` runs after every push to the integration branch, and on the sweep's schedule. For each
-open PR into the integration branch that a bot opened (Dependabot, GitHub Actions or a GitHub App:
-the relock and screenshot PRs) and that is behind it:
+open bot maintenance PR into the integration branch (Dependabot's, and the ``standards/*``
+branches GitHub Actions or a GitHub App push: the weekly relock and the screenshots) that is
+behind it:
 
 - a Dependabot PR whose every commit is Dependabot's gets the comment ``@dependabot rebase``:
   Dependabot then rebases it itself, keeps maintaining it, and its push starts CI like any of
@@ -16,7 +17,8 @@ the relock and screenshot PRs) and that is behind it:
   ``dispatch_ci`` waits for the new head and dispatches ``ci.yml`` and ``pr-policy.yml`` on it
   (``release.ensure_ci``; ``contexts`` replaces those pairs, as for frappe-nix's own repository).
 
-Release-please's PR is never touched: it is a bot's PR, but a person merges it. A PR that is
+Release-please's PR is never touched: it is a bot's PR, but a person merges it; nor is any
+other bot's (a coding agent's PR is a person's work). A PR that is
 not behind is skipped, so a run that repeats changes nothing, and at most ``limit`` PRs are
 updated per run (the oldest first); the next push or schedule takes the rest. A refusal (a
 conflict, or a merge that would change ``.github/workflows/`` with a token that has no
@@ -33,6 +35,7 @@ from frappe_nix_tools.common import github
 
 DEPENDABOT_LOGINS = frozenset({"app/dependabot", "dependabot[bot]"})
 DEPENDABOT_COMMENT = "@dependabot rebase"
+BOT_BRANCHES = "standards/"
 RELEASE_PREFIX = "release-please--"
 RELEASE_LABELS = frozenset({"autorelease: pending", "autorelease: tagged"})
 
@@ -42,18 +45,21 @@ def _login(pr: dict) -> str:
 
 
 def is_bot_pr(pr: dict) -> bool:
-	"""A PR a bot opened, other than release-please's."""
+	"""A bot maintenance PR: Dependabot's, or a bot's on a ``standards/`` branch; never
+	release-please's, nor a fork's."""
 	author = pr.get("author") or {}
 	login = author.get("login", "")
-	if not (
+	head = pr.get("headRefName") or ""
+	if pr.get("isCrossRepository") or head.startswith(RELEASE_PREFIX):
+		return False
+	if any((label.get("name") or "") in RELEASE_LABELS for label in pr.get("labels") or []):
+		return False
+	if login in DEPENDABOT_LOGINS:
+		return True
+	is_bot = (
 		author.get("is_bot") or login in release.BOTS or login.startswith("app/") or login.endswith("[bot]")
-	):
-		return False
-	if pr.get("isCrossRepository"):
-		return False
-	if (pr.get("headRefName") or "").startswith(RELEASE_PREFIX):
-		return False
-	return not any((label.get("name") or "") in RELEASE_LABELS for label in pr.get("labels") or [])
+	)
+	return bool(is_bot) and head.startswith(BOT_BRANCHES)
 
 
 def behind_by(repo: str, integration: str, sha: str) -> int:
