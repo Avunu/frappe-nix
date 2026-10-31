@@ -496,6 +496,21 @@ class TestFastForward(FakeCase):
 		self.assertEqual([w[:2] for w in fake.writes()], [("POST", f"repos/{REPO}/git/refs")])
 		self.assertIn(("workflow", "run", "assets.yml", "--repo", REPO, "--ref", "version-16"), fake.clis)
 
+	def test_a_refused_move_names_the_workflow_file_cause(self):
+		"""GitHub refuses GITHUB_TOKEN's ref update onto commits that change .github/workflows/
+		(issue #230): exit 1 with the cause and the manual PATCH, not a traceback."""
+		routes = self.routes("0" * 40)
+		routes[("PATCH", f"repos/{REPO}/git/refs/heads/version-16")] = 403
+		self.use(Fake(routes))
+		with mock.patch("builtins.print") as p:
+			self.assertEqual(self.ff().run(), 1)
+		out = " ".join(str(a) for call in p.call_args_list for a in call.args)
+		self.assertIn("::error::", out)
+		self.assertIn(".github/workflows/", out)
+		self.assertIn(
+			f"gh api -X PATCH repos/{REPO}/git/refs/heads/version-16 -f sha={self.SHA} -F force=false", out
+		)
+
 	def test_dry_run_refuses_a_commit_that_is_not_the_tag(self):
 		fake = self.use(Fake(self.routes(self.SHA, tag_at="0" * 40)))
 		with mock.patch("builtins.print"):

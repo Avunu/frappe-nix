@@ -148,14 +148,30 @@ class FastForward:
 		if not self.scheme_ok():
 			return 1
 		endpoint = f"repos/{self.repo}/git/ref/heads/{self.branch}"
-		if github.get_or_none(endpoint) is not None:
-			self._write(
-				"PATCH", f"repos/{self.repo}/git/refs/heads/{self.branch}", {"sha": self.sha, "force": False}
+		try:
+			if github.get_or_none(endpoint) is not None:
+				self._write(
+					"PATCH",
+					f"repos/{self.repo}/git/refs/heads/{self.branch}",
+					{"sha": self.sha, "force": False},
+				)
+			else:
+				self._write(
+					"POST",
+					f"repos/{self.repo}/git/refs",
+					{"ref": f"refs/heads/{self.branch}", "sha": self.sha},
+				)
+		except github.GitHubError as e:
+			if e.status != 403:
+				raise
+			error(
+				f"GitHub refused to move {self.branch} to {self.tag} (HTTP 403). GITHUB_TOKEN can't move a"
+				" branch onto commits that change .github/workflows/; name a GitHub App with Workflows write"
+				" in ci.github-app (its token then makes this move). To move it by hand, with a token that"
+				f" can change workflow files: gh api -X PATCH repos/{self.repo}/git/refs/heads/{self.branch}"
+				f" -f sha={self.sha} -F force=false"
 			)
-		else:
-			self._write(
-				"POST", f"repos/{self.repo}/git/refs", {"ref": f"refs/heads/{self.branch}", "sha": self.sha}
-			)
+			return 1
 		if self.dry_run:
 			head = self.sha  # what the write would leave
 		else:

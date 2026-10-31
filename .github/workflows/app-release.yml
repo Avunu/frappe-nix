@@ -196,7 +196,7 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
-      contents: write # move the release branch (the ruleset's bypass actor is GitHub Actions)
+      contents: write # move the release branch without the App (the ruleset's bypass actor is GitHub Actions)
       actions: write # dispatch assets.yml
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
@@ -243,21 +243,44 @@ jobs:
             echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
           fi
 
+      # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
+      # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the
+      # move uses its token, which can (Workflows write). Minted after the tools are installed.
+      - id: app
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      # An App without Workflows write can't mint this token: fall back to GITHUB_TOKEN, which
+      # moves the branch whenever the release changes no workflow file.
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Fast-forward the release branch to the new tag, and check it (D8)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           VB: ${{ inputs.release-branch }}
           SHA: ${{ needs.release-please.outputs.sha }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
-          PILOT_ASSETS: ${{ inputs.pilot-assets }}
-        run: |
-          set -euo pipefail
-          args=(--repo "$REPO" --release-branch "$VB" --sha "$SHA" --tag "$TAG")
-          if [ "$PILOT_ASSETS" = true ]; then
-            args+=(--pilot-assets)
-          fi
-          frappe-nix ci fast-forward "${args[@]}"
+        run: frappe-nix ci fast-forward --repo "$REPO" --release-branch "$VB" --sha "$SHA" --tag "$TAG"
+
+      # S14, with GITHUB_TOKEN (actions: write): the App asks for no Actions permission.
+      - if: inputs.pilot-assets
+        name: Build pilot's assets on the release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VB: ${{ inputs.release-branch }}
+        run: gh workflow run assets.yml --repo "$REPO" --ref "$VB"
 
   assets-on-tag:
     needs: release-please

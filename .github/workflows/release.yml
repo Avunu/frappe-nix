@@ -261,7 +261,7 @@ jobs:
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
     timeout-minutes: 10
     permissions:
-      contents: write # move release-<major> (the ruleset's bypass actor is GitHub Actions)
+      contents: write # move release-<major> without the App (the ruleset's bypass actor is GitHub Actions)
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
       # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
@@ -289,9 +289,30 @@ jobs:
       - name: Install frappe-nix-tools from this checkout
         run: uv tool install --python 3.14 ./py/frappe_nix_tools
 
+      # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
+      # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the
+      # move uses its token, which can (Workflows write). Minted after the tools are installed.
+      - id: app
+        name: Whether the org's GitHub App is available
+        env:
+          ENABLED: ${{ vars.AVUNU_CI_APP_ID != '' && secrets.AVUNU_CI_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      # An App without Workflows write can't mint this token: fall back to GITHUB_TOKEN, which
+      # moves the branch whenever the release changes no workflow file.
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Fast-forward release-<major> to the new tag, and check it
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ needs.release-please.outputs.sha }}
           TAG: ${{ needs.release-please.outputs.tag_name }}
