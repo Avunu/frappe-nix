@@ -218,7 +218,7 @@ The App's ID travels as a secret because a caller's `with:` can't read secrets, 
 | deps `relock-upgrade` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
 | nightly `shots` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
 
-Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch keeps `GITHUB_TOKEN`, because the release-branch ruleset lets only GitHub Actions move it.
+Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch uses the App too, when it has **Workflows** write: GitHub refuses to move a branch with `GITHUB_TOKEN` onto commits that change `.github/workflows/`, which most releases do (Dependabot action bumps, `frappe-init --sync`). It asks for `contents` and `workflows` write; an App without Workflows write can't mint that token, and the move falls back to `GITHUB_TOKEN`. If the release-branch ruleset restricts updates, add the App to its bypass list. pilot's `assets.yml` dispatch keeps `GITHUB_TOKEN`.
 
 ## Security notes
 
