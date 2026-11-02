@@ -9,9 +9,8 @@ name: Dependabot auto-merge
 #                    the main ruleset requires passes, and one that fails stays open. The
 #                    required checks are the gate, so auto-merge is only as safe as they are.
 #   update-branches  after each push to main, and daily, every open Dependabot PR that is
-#                    behind main is brought up to date: `@dependabot rebase` while it has
-#                    only Dependabot's commits, else the update-branch API. A PR that is not
-#                    behind is left alone.
+#                    behind main is brought up to date through the update-branch API. A PR
+#                    that is not behind is left alone.
 #
 # The org's GitHub App, when the repository can read it (the variable AVUNU_CI_APP_ID, or a
 # Dependabot secret of that name, and the secret AVUNU_CI_PRIVATE_KEY), enables the auto-merge
@@ -50,7 +49,7 @@ jobs:
     if: github.event_name != 'pull_request'
     permissions:
       contents: write # update-branch without the App
-      pull-requests: write # comment `@dependabot rebase`, update-branch
+      pull-requests: write # update-branch
       actions: write # without the App, dispatch the required checks on the new head
     uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@943029bfb2b56888c38514e4efce20d34eb9d2bc # python-devops-nix main, #52 (no release yet)
     with:

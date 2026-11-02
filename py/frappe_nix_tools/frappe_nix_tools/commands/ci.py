@@ -30,7 +30,6 @@ Exit codes: 0, or 1 when a refusal or the fast-forward guard fails; 2 for a bad 
 import argparse
 import json
 import os
-from datetime import timedelta
 from pathlib import Path
 
 from frappe_nix_tools.ci import automerge, branches, drift, error, output, release, relock, verdict
@@ -176,7 +175,6 @@ def run_update_branches(args: argparse.Namespace) -> int:
 		dispatch_ci=args.dispatch_ci,
 		contexts=_contexts(args.context) if args.context else release.CI_CONTEXTS,
 		limit=args.limit,
-		rebase_wait=timedelta(hours=args.rebase_wait_hours),
 	).run()
 	output(updated=",".join(f"{n}:{what}" for n, what in done.items()))
 	return CLEAN
@@ -311,12 +309,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 		help="with --dispatch-ci, a required check and the workflow that reports it (as dispatch-ci)",
 	)
 	q.add_argument("--limit", type=int, default=10, help="the most PRs to act on in one run")
-	q.add_argument(
-		"--rebase-wait-hours",
-		type=float,
-		default=6.0,
-		help="how long a `@dependabot rebase` request may go unanswered before the branch is updated",
-	)
 	q.set_defaults(func=run_update_branches)
 
 	q = sub.add_parser("fast-forward", help="move the release branch to the release and guard it (§4.4)")
