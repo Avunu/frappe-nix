@@ -21,7 +21,7 @@ let
     name: _:
     throw "frappe-nix: lib.overrides.${name} was removed in 2.0.0. python-devops-nix's lib.python.overrides applies it to every bench already; remove it from pythonOverrides.";
 in
-{
+rec {
   # mysqlclient needs MariaDB/MySQL headers and client libraries.
   mysqlclient =
     { pkgs, mariadb }:
@@ -65,6 +65,16 @@ in
         '';
       });
     };
+
+  # Every override above, as the one overlay modules/devenv.nix applies to each
+  # bench (its builtinOverrides). checks.dev-tools builds with it too, so the
+  # check sees the set a bench gets.
+  builtin =
+    { pkgs, mariadb }:
+    pkgs.lib.composeManyExtensions [
+      (mysqlclient { inherit pkgs mariadb; })
+      (semgrep { inherit pkgs; })
+    ];
 
   pycups = removed "pycups";
   python-ldap = removed "python-ldap";

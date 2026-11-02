@@ -62,6 +62,24 @@ updates:
       dev-tools:
         patterns: ["*"]
 
+  # tests/fixtures/dev-tools: the bench template's dev group, which checks.dev-tools builds
+  # and runs. This moves its committed lock, so the check on every PR tests the tools a
+  # fresh bench gets, a week behind. The week is the canary's
+  # (.github/workflows/canary-dev-tools.yml), which re-locks against each day's PyPI. A bump
+  # releases nothing: the fixture ships in no bench.
+  - package-ecosystem: uv
+    directory: /tests/fixtures/dev-tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps)"
+    groups:
+      bench-dev-tools:
+        patterns: ["*"]
+
   # The hook revs in .pre-commit-config.yaml: pre-commit-hooks, ssort, uv. Dependabot
   # names these by repository URL, which is what `ignore` has to say.
   #
