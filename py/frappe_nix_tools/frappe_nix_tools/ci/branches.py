@@ -3,19 +3,17 @@
 ``update`` runs after every push to the integration branch, and on the sweep's schedule. For each
 open bot maintenance PR into the integration branch (Dependabot's, and the ``standards/*``
 branches GitHub Actions or a GitHub App push: the weekly relock and the screenshots) that is
-behind it:
+behind it, ``PUT repos/{r}/pulls/{n}/update-branch`` merges the integration branch into it, with
+``expected_head_sha`` so a PR that moved meanwhile is skipped. With a GitHub App's token
+(``ci.github-app``) that push starts CI. With ``GITHUB_TOKEN`` it raises no event, so
+``dispatch_ci`` waits for the new head and dispatches ``ci.yml`` and ``pr-policy.yml`` on it
+(``release.ensure_ci``; ``contexts`` replaces those pairs, as for frappe-nix's own repository).
 
-- a Dependabot PR whose every commit is Dependabot's gets the comment ``@dependabot rebase``:
-  Dependabot then rebases it itself, keeps maintaining it, and its push starts CI like any of
-  its pushes. The comment is made once per head: a PR that already has one newer than its head
-  commit is left alone, until ``rebase_wait`` has passed without a rebase, when it is updated
-  like any other bot PR;
-- any other bot PR (a Dependabot PR that carries a relock commit, a relock or screenshot PR) is
-  updated through ``PUT repos/{r}/pulls/{n}/update-branch``, which merges the integration branch
-  into it, with ``expected_head_sha`` so a PR that moved meanwhile is skipped. With a GitHub App's
-  token (``ci.github-app``) that push starts CI. With ``GITHUB_TOKEN`` it raises no event, so
-  ``dispatch_ci`` waits for the new head and dispatches ``ci.yml`` and ``pr-policy.yml`` on it
-  (``release.ensure_ci``; ``contexts`` replaces those pairs, as for frappe-nix's own repository).
+Dependabot's PRs are updated the same way. ``@dependabot rebase`` would keep Dependabot
+maintaining the PR, but Dependabot takes commands only from a person with push access: from a
+GitHub App or ``github-actions[bot]`` it answers "only users with push access can use that
+command" and does nothing. Once the branch is updated, Dependabot stops rebasing that PR, so a
+later conflict needs a person; auto-merge usually lands the PR before that.
 
 Release-please's PR is never touched: it is a bot's PR, but a person merges it; nor is any
 other bot's (a coding agent's PR is a person's work). A PR that is
@@ -28,20 +26,14 @@ Workflows permission) is a notice, never a failure.
 import json
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
 
 from frappe_nix_tools.ci import notice, release
 from frappe_nix_tools.common import github
 
 DEPENDABOT_LOGINS = frozenset({"app/dependabot", "dependabot[bot]"})
-DEPENDABOT_COMMENT = "@dependabot rebase"
 BOT_BRANCHES = "standards/"
 RELEASE_PREFIX = "release-please--"
 RELEASE_LABELS = frozenset({"autorelease: pending", "autorelease: tagged"})
-
-
-def _login(pr: dict) -> str:
-	return (pr.get("author") or {}).get("login", "")
 
 
 def is_bot_pr(pr: dict) -> bool:
@@ -67,19 +59,6 @@ def behind_by(repo: str, integration: str, sha: str) -> int:
 	return int(data.get("behind_by") or 0)
 
 
-def _date(text: str) -> datetime | None:
-	try:
-		return datetime.fromisoformat(text.replace("Z", "+00:00"))
-	except (AttributeError, ValueError):
-		return None
-
-
-def _is_dependabots(commit: dict) -> bool:
-	author = (commit.get("author") or {}).get("login", "")
-	email = ((commit.get("commit") or {}).get("author") or {}).get("email", "")
-	return author in DEPENDABOT_LOGINS or email.startswith("49699333+dependabot[bot]@")
-
-
 class Updater:
 	def __init__(
 		self,
@@ -89,8 +68,6 @@ class Updater:
 		dispatch_ci: bool = False,
 		contexts: tuple[tuple[str, str], ...] = release.CI_CONTEXTS,
 		limit: int = 10,
-		rebase_wait: timedelta = timedelta(hours=6),
-		now: Callable[[], datetime] = lambda: datetime.now(UTC),
 		sleep: Callable[[float], None] = time.sleep,
 	) -> None:
 		self.repo = repo
@@ -98,8 +75,6 @@ class Updater:
 		self.dispatch_ci = dispatch_ci
 		self.contexts = contexts
 		self.limit = limit
-		self.rebase_wait = rebase_wait
-		self.now = now
 		self.sleep = sleep
 
 	def open_prs(self) -> list[dict]:
@@ -110,36 +85,6 @@ class Updater:
 		if res.code != 0:
 			raise github.GitHubError(f"gh pr list: {res.stderr.strip()}")
 		return sorted(json.loads(res.stdout or "[]"), key=lambda pr: pr.get("number", 0))
-
-	def rebase_requested(self, number: int, head_date: datetime | None) -> datetime | None:
-		"""When ``@dependabot rebase`` was last asked for since the head commit, or ``None``."""
-		comments = github.get(f"repos/{self.repo}/issues/{number}/comments", paginate=True) or []
-		latest = None
-		for c in comments:
-			if DEPENDABOT_COMMENT not in (c.get("body") or ""):
-				continue
-			at = _date(c.get("created_at", ""))
-			if at and (head_date is None or at > head_date) and (latest is None or at > latest):
-				latest = at
-		return latest
-
-	def ask_dependabot(self, pr: dict, commits: list[dict]) -> str:
-		head = commits[-1] if commits else {}
-		head_date = _date(((head.get("commit") or {}).get("committer") or {}).get("date", ""))
-		asked = self.rebase_requested(pr["number"], head_date)
-		if asked is None:
-			github.request(
-				"POST", f"repos/{self.repo}/issues/{pr['number']}/comments", {"body": DEPENDABOT_COMMENT}
-			)
-			print(f"#{pr['number']}: asked Dependabot to rebase it on {self.integration}")
-			return "rebase-requested"
-		if self.now() - asked < self.rebase_wait:
-			print(f"#{pr['number']}: Dependabot was asked to rebase it at {asked.isoformat()}; waiting")
-			return "waiting"
-		notice(
-			f"#{pr['number']}: Dependabot has not rebased it since {asked.isoformat()}; updating the branch instead"
-		)
-		return self.update_branch(pr)
 
 	def update_branch(self, pr: dict) -> str:
 		number, sha = pr["number"], pr["headRefOid"]
@@ -184,11 +129,6 @@ class Updater:
 				notice(f"updated {self.limit} PRs in this run; #{number} and the rest wait for the next one")
 				break
 			acted += 1
-			if _login(pr) in DEPENDABOT_LOGINS:
-				commits = github.get(f"repos/{self.repo}/pulls/{number}/commits", paginate=True) or []
-				if commits and all(_is_dependabots(c) for c in commits):
-					done[number] = self.ask_dependabot(pr, commits)
-					continue
 			done[number] = self.update_branch(pr)
 		if not done:
 			print(f"every bot PR is up to date with {self.integration}")

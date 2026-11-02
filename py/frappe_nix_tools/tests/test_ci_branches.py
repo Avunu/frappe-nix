@@ -3,7 +3,6 @@ to date (spec §4.5, ``dependabot.update-branches``), against a fake GitHub."""
 
 import json
 import unittest
-from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 from frappe_nix_tools.ci import branches
@@ -11,8 +10,6 @@ from frappe_nix_tools.common.github import Result
 from helpers import run_cli
 from test_ci_steps import REPO, Fake, FakeCase
 
-NOW = datetime(2026, 10, 31, 12, 0, tzinfo=UTC)
-HEAD_DATE = "2026-10-31T08:00:00Z"
 DEPENDABOT = {"login": "app/dependabot", "is_bot": True}
 ACTIONS = {"login": "app/github-actions", "is_bot": True}
 APP = {"login": "app/example-ci", "is_bot": True}
@@ -30,23 +27,12 @@ def pr(number, author, head, sha, labels=()):
 	}
 
 
-def commit(login, email, date=HEAD_DATE):
-	return {"author": {"login": login}, "commit": {"author": {"email": email}, "committer": {"date": date}}}
-
-
-DEPENDABOT_COMMIT = commit("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com")
-RELOCK_COMMIT = commit("github-actions[bot]", "41898282+github-actions[bot]@users.noreply.github.com")
-
-
 class UpdateCase(FakeCase):
-	def fake(self, prs, behind, commits=None, comments=None, extra=None):
+	def fake(self, prs, behind, extra=None):
 		routes = {}
 		for p in prs:
 			n, sha = p["number"], p["headRefOid"]
 			routes[("GET", f"repos/{REPO}/compare/develop...{sha}")] = {"behind_by": behind.get(n, 0)}
-			routes[("GET", f"repos/{REPO}/pulls/{n}/commits")] = (commits or {}).get(n, [DEPENDABOT_COMMIT])
-			routes[("GET", f"repos/{REPO}/issues/{n}/comments")] = (comments or {}).get(n, [])
-			routes[("POST", f"repos/{REPO}/issues/{n}/comments")] = {}
 			routes[("PUT", f"repos/{REPO}/pulls/{n}/update-branch")] = {
 				"message": "Updating pull request branch."
 			}
@@ -54,7 +40,6 @@ class UpdateCase(FakeCase):
 		return self.use(Fake(routes, {("pr", "list"): Result(0, json.dumps(prs))}))
 
 	def run_updater(self, **kw):
-		kw.setdefault("now", lambda: NOW)
 		kw.setdefault("sleep", lambda _s: None)
 		with mock.patch("builtins.print"):
 			return branches.Updater(REPO, "develop", **kw).run()
@@ -79,17 +64,11 @@ class TestWhichPRs(unittest.TestCase):
 
 
 class TestUpdate(UpdateCase):
-	def test_dependabot_only_commits_get_a_rebase_comment(self):
+	def test_dependabot_prs_update_branch_without_a_rebase_comment(self):
+		# Dependabot answers `@dependabot rebase` from an App or github-actions[bot] with "only
+		# users with push access can use that command", so its PRs are updated like the rest.
 		prs = [pr(1, DEPENDABOT, "dependabot/uv/x", "a" * 40)]
 		fake = self.fake(prs, {1: 2})
-		self.assertEqual(self.run_updater(), {1: "rebase-requested"})
-		self.assertEqual(
-			fake.writes(), [("POST", f"repos/{REPO}/issues/1/comments", {"body": "@dependabot rebase"})]
-		)
-
-	def test_a_relock_commit_means_update_branch(self):
-		prs = [pr(1, DEPENDABOT, "dependabot/nix/frappe", "a" * 40)]
-		fake = self.fake(prs, {1: 1}, commits={1: [DEPENDABOT_COMMIT, RELOCK_COMMIT]})
 		self.assertEqual(self.run_updater(), {1: "updated"})
 		self.assertEqual(
 			fake.writes(),
@@ -111,27 +90,11 @@ class TestUpdate(UpdateCase):
 		self.assertNotIn(("GET", f"repos/{REPO}/compare/develop...{'b' * 40}", None), fake.requests)
 		self.assertNotIn(("GET", f"repos/{REPO}/compare/develop...{'d' * 40}", None), fake.requests)
 
-	def test_a_rebase_already_asked_for_waits_then_updates(self):
-		prs = [pr(1, DEPENDABOT, "dependabot/uv/x", "a" * 40)]
-		asked = [{"body": "@dependabot rebase", "created_at": "2026-10-31T10:00:00Z"}]
-		fake = self.fake(prs, {1: 1}, comments={1: asked})
-		self.assertEqual(self.run_updater(), {1: "waiting"})
-		self.assertEqual(fake.writes(), [])
-		# An old request from before the head commit does not count: ask again.
-		stale = [{"body": "@dependabot rebase", "created_at": "2026-10-30T10:00:00Z"}]
-		fake = self.fake(prs, {1: 1}, comments={1: stale})
-		self.assertEqual(self.run_updater(), {1: "rebase-requested"})
-		# Unanswered for longer than the wait: update the branch instead.
-		fake = self.fake(prs, {1: 1}, comments={1: asked})
-		later = NOW + timedelta(hours=7)
-		self.assertEqual(self.run_updater(now=lambda: later), {1: "updated"})
-		self.assertEqual([w[0] for w in fake.writes()], ["PUT"])
-
 	def test_a_refusal_is_a_notice(self):
 		prs = [pr(1, ACTIONS, "standards/relock-python", "a" * 40)]
 		self.fake(prs, {1: 1}, extra={("PUT", f"repos/{REPO}/pulls/1/update-branch"): 422})
 		with mock.patch("builtins.print") as p:
-			done = branches.Updater(REPO, "develop", now=lambda: NOW, sleep=lambda _s: None).run()
+			done = branches.Updater(REPO, "develop", sleep=lambda _s: None).run()
 		self.assertEqual(done, {1: "refused"})
 		printed = " ".join(str(a) for call in p.call_args_list for a in call.args)
 		self.assertIn("::notice::", printed)

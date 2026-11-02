@@ -533,7 +533,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write # update-branch without an App
-      pull-requests: write # comment `@dependabot rebase`, update-branch
+      pull-requests: write # update-branch
       actions: write # without an App, dispatch ci.yml and pr-policy.yml on the new head
       checks: read # which ci / * checks ran on that head
     steps:
