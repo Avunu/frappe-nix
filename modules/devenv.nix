@@ -2176,10 +2176,13 @@ in
 
         overrides = import ../lib/overrides.nix;
 
-        builtinOverrides = overrides.mysqlclient {
-          inherit pkgs;
-          mariadb = cfg.mariadb.package;
-        };
+        builtinOverrides = lib.composeManyExtensions [
+          (overrides.mysqlclient {
+            inherit pkgs;
+            mariadb = cfg.mariadb.package;
+          })
+          (overrides.semgrep { inherit pkgs; })
+        ];
 
         dg = cfg.devguard;
         mc = dg.mail;
