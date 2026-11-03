@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-10-29
+updated: 2026-11-03
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -62,6 +62,26 @@ In app mode the cause is `nix flake update` and not a submodule bump, and the fi
 When a published package declares requirements that cannot be met alongside Frappe, the bench template carries a `[[tool.uv.dependency-metadata]]` entry that corrects them, and the reconcile adds it to existing benches by package name. If a bench has its own entry for the same package, that entry wins. App mode renders its root from the same template.
 
 There is one entry today, for `pypika-stubs`. It is reached through frappe's `dev` extra, which uv locks for every workspace member. Its only release caps `pypika<0.49`, and Frappe 16.53 moved its PyPika fork to 0.51.1. The entry drops the cap and keeps the package, which holds only type hints. Without it, `uv lock` fails with "frappe[dev] depends on pypika>=0.48.9,<0.49.0".
+
+### Apps' dev dependencies
+
+An app lists what its tests need beyond its runtime requirements under `[tool.bench.dev-dependencies]`, a table of `name = "specifier"`. Frappe lists `freezegun`, `Faker`, `hypothesis`, `responses` and a few more, and ERPNext's tests import `freezegun`, so an app whose tests import theirs needs them too. A conventional bench installs them with `bench setup requirements --dev`. Here a package has to be in `uv.lock` to be in the environment, so the bench root declares them as a dependency group of its own, `bench-dev`, and uv resolves them with everything else:
+
+```toml
+[dependency-groups]
+dev = [ … ]          # yours, and frappe-nix's dev tools
+bench-dev = [        # derived from the apps; do not edit
+    "faker~=18.10.1",
+    "freezegun~=1.5.5",
+    "hypothesis~=6.77.0",
+]
+```
+
+Each specifier is read the way bench reads it: a bare version is an exact pin (`"1.5.5"` is `==1.5.5`), anything else is used as written. When two apps name the same package, the entry carries both specifiers. A package the `dev` group already names (`coverage`, `responses`, `unittest-xml-reporting`) is left to that group's pin. The dev environment installs every group of the root, and the production environment installs none.
+
+The group is rewritten from the apps whenever they change: by `bench-get-app`, `bench-new-app` and `bench-remove-app`, and otherwise by the shell-entry reconcile and `nix run .#relock`, which re-lock when it moved. Keep a bench's own dev tools in `dev`, which nothing rewrites. While an app registered in the workspace is missing from `apps/`, the group is left as it is.
+
+In app mode the generated root has the group when the app has opted in to the [app standards](../app-standards/README.md). The root of an app that has not opted in keeps only the entries its committed `nix/uv.lock` already lists in that group, which for any lock frappe-nix wrote before the group existed is none (spec S35). That app's root and lock stay as they were.
 
 ### Build dependencies
 

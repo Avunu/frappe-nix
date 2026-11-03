@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, what to commit afterwards, and how to move a 1.x bench to 2.0.
 order: 9
 tags: [upgrade, flake-update, reconcile, release]
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -155,7 +155,7 @@ A frappe-nix bump can ask something new of a bench's **workspace root**. The cas
 
 So `enterShell` reconciles `pyproject.toml` on every entry, with the same `ensure-root` step `frappe-init` runs:
 
-- It **adds what is missing** and changes nothing that is already there. Your name, your `requires-python`, your override list and your comments stay, because the file is edited with tomlkit and not rewritten.
+- It **adds what is missing** and changes nothing that is already there. Your name, your `requires-python`, your override list and your comments stay, because the file is edited with tomlkit and not rewritten. The one group it rewrites is `bench-dev`, which it keeps in step with the apps' `[tool.bench.dev-dependencies]` (see [Apps' dev dependencies](locks.md#apps-dev-dependencies)). The first entry after the upgrade adds it, with frappe's entries, and re-locks.
 - It runs `uv lock` only when that changed the file. On the common path it is one TOML parse and says nothing.
 
 When it does change something, it says so, lists what it added, and tells you to **commit `pyproject.toml` and `uv.lock` and re-enter the shell**, because the shell you are in was built from the previous lock. Until you do, `devenv up` runs whatever shape the old lock supports. A bench whose lock predates the runtime gets the split `web`, `socketio`, `worker` and `scheduler` processes for that session, and the banner says so. Nothing about that shape is degraded: it is `runtime.enable = false`, which `checks.socket` covers.
@@ -181,6 +181,8 @@ In an [app repository](../scaffolding/app-mode.md) the pins are flake inputs, so
 The bench root's dev group gained `coverage` and `unittest-xml-reporting`, which [`frappe-test`](../app-standards/testing.md) runs the tests under. An app that has not opted in to the [app standards](../app-standards/README.md) keeps the root it had: each of the two stays out of it unless the root package in the committed `nix/uv.lock` already lists it in its `dev` group. On version-15 and version-16 alike, the generated root, the dev environment and the lock stay exactly as they were, and `nix run .#relock` leaves `nix/uv.lock` as it is. A version-16 lock does have both packages, through Frappe's `test` extra, but that does not put them in the dev environment.
 
 `frappe-test` then has no coverage to run under and says so (exit 10): pass `--no-coverage`, or opt in and run `nix run .#relock`, which adds them.
+
+The generated root of an app that has opted in also gains the `bench-dev` group: each app's `[tool.bench.dev-dependencies]`, which is what `bench setup requirements --dev` installs (see [Apps' dev dependencies](locks.md#apps-dev-dependencies)). The next `nix run .#relock` rewrites `nix/uv.lock` for it, so commit that. Until then the dev environment already has the packages that the lock carries. A version-16 lock carries all of frappe's, through its `test` and `dev` extras. If the lock lacks one, as a version-15 lock can, evaluation stops and names `nix run .#relock`. An app that has not opted in gets no such group, and its root and lock stay as they were.
 
 ## Ports are leased at `devenv up`
 

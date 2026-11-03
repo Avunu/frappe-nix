@@ -73,7 +73,10 @@ let
   ) (rootPyproject.project.dependencies or [ ]);
   rootDepsAttr = lib.genAttrs rootDepNames (_: [ ]);
 
-  # Extract dev-group packages from [dependency-groups]
+  # Extract dev-group packages from [dependency-groups]: every group, so dev and
+  # bench-dev (each app's [tool.bench.dev-dependencies], what `bench setup
+  # requirements --dev` installs; lib/frappe-workspace.py). The dev env only:
+  # prodPythonEnv takes [project].dependencies alone.
   rootDevDepNames =
     map (dep: lib.strings.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep)))
       (

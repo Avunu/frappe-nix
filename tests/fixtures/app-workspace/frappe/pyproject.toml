@@ -7,3 +7,11 @@ dependencies = []
 [build-system]
 requires = ["flit_core >=3.4,<4"]
 build-backend = "flit_core.buildapi"
+
+# What `bench setup requirements --dev` installs, frappe 16's shape: coverage
+# and responses are in the template's dev group too, which keeps its own pins.
+[tool.bench.dev-dependencies]
+coverage = "~=7.10.0"
+Faker = "~=18.10.1"
+responses = "==0.23.1"
+freezegun = "~=1.5.5"

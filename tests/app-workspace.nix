@@ -111,6 +111,19 @@ in
     check("extra-build-dependencies survived the render",
           "cairocffi" in doc["tool"]["uv"]["extra-build-dependencies"], True)
 
+    # `bench setup requirements --dev`: every member's
+    # [tool.bench.dev-dependencies], in a group of its own so production never
+    # sees it. Nobody passed a lock or a tools/pyproject.toml here, so nothing
+    # trims it (tests/standards/runtime.nix has those roots).
+    check("bench-dev holds every app's [tool.bench.dev-dependencies]",
+          doc["dependency-groups"].get("bench-dev"),
+          ["faker~=18.10.1", "freezegun~=1.5.5", "hypothesis==6.77.0"])
+    template = tomllib.loads(Path("${../templates/bench/pyproject.toml}").read_text())
+    check("the dev group is the template's, its pins kept",
+          doc["dependency-groups"]["dev"], template["dependency-groups"]["dev"])
+    check("[project].dependencies, what production installs, are the template's",
+          doc["project"]["dependencies"], template["project"]["dependencies"])
+
     check("no placeholder outlived substitution",
           "@" in (ws / "pyproject.toml").read_text().replace("@example.com", ""), False)
 

@@ -161,6 +161,31 @@ check "pyproject.toml byte-identical" cmp -s "$BENCH/pyproject.toml" "$ROOT/pypr
 check_eq "…and not even rewritten (mtime kept)" "$EPOCH" "$(mtime "$BENCH/pyproject.toml")"
 check_eq "uv not called again" 1 "$(uv_calls)"
 
+echo "── an app's [tool.bench.dev-dependencies] become the bench-dev group ──"
+# What `bench setup requirements --dev` installs, frappe's shape: a table of
+# name = "specifier". apps/frappe had no pyproject.toml above, so no group yet.
+printf '[project]\nname = "frappe"\n\n[tool.bench.dev-dependencies]\nfreezegun = "~=1.5.5"\nFaker = "18.10.1"\n' \
+  > "$BENCH/apps/frappe/pyproject.toml"
+: > "$UV_CALLS"
+out="$("$TOOL" "$BENCH" 2>&1)" && rc=0 || rc=$?
+check_eq "exits 0" 0 "$rc"
+check_eq "the group holds them, read as bench reads them (a bare version is ==)" \
+  "['faker==18.10.1', 'freezegun~=1.5.5']" \
+  "$(toml_get "$BENCH/pyproject.toml" "d['dependency-groups']['bench-dev']")"
+check_eq "the bench's own dev group is still untouched" \
+  "['ruff>=0.15.0', 'mypy', 'pre-commit>=4.5.1', 'semgrep']" \
+  "$(toml_get "$BENCH/pyproject.toml" "d['dependency-groups']['dev']")"
+check_eq "the lock was regenerated, once" 1 "$(uv_calls)"
+check "it lists the group" grep -q 'bench-dev = faker==18.10.1, freezegun~=1.5.5' <<< "$out"
+: > "$UV_CALLS"
+out="$("$TOOL" "$BENCH" 2>&1)" && rc=0 || rc=$?
+check_eq "a second run says nothing" "" "$out"
+check_eq "…and does not re-lock" 0 "$(uv_calls)"
+rm "$BENCH/apps/frappe/pyproject.toml"
+check "the app dropping its table" "$TOOL" "$BENCH"
+check_eq "…takes the group with it" False \
+  "$(toml_get "$BENCH/pyproject.toml" "'bench-dev' in d['dependency-groups']")"
+
 echo "── a root with no dev group gets the template's ──"
 NODEV="$ROOT/nodev"
 mkdir -p "$NODEV"

@@ -135,14 +135,14 @@ def app_tools(path):
 TEST_TOOLS = ("coverage", "unittest-xml-reporting")
 
 
-def locked_root_dev(path):
-	"""The normalized names a uv.lock's workspace root lists in its dev group.
+def locked_root_dev(path, group="dev"):
+	"""The normalized names a uv.lock's workspace root lists in a dependency group, dev by default.
 
 	The root is the lock's `source = { virtual = "." }` package; what it lists
-	is [package.metadata.requires-dev].dev (what the root's pyproject.toml asked
-	for), not [package.dev-dependencies] (which carries markers and extras per
-	entry, and is what that resolves to). An empty set when the lock has no such
-	package, None when there is no lock at all.
+	is [package.metadata.requires-dev].<group> (what the root's pyproject.toml
+	asked for), not [package.dev-dependencies] (which carries markers and
+	extras per entry, and is what that resolves to). An empty set when the lock
+	has no such package, None when there is no lock at all.
 	"""
 	try:
 		text = Path(path).read_text()
@@ -152,31 +152,33 @@ def locked_root_dev(path):
 		if package.get("source", {}).get("virtual") != ".":
 			continue
 		requires_dev = package.get("metadata", {}).get("requires-dev", {})
-		return {normalize(r["name"]) for r in requires_dev.get("dev", []) if "name" in r}
+		return {normalize(r["name"]) for r in requires_dev.get(group, []) if "name" in r}
 	return set()
 
 
-def drop_unlocked_test_tools(dev, locked):
-	"""Remove from ``dev``, in place, each TEST_TOOLS entry ``locked`` (a set of names) lacks.
+def drop_unlocked_test_tools(dev, locked, group="dev", names=TEST_TOOLS):
+	"""Remove from ``dev``, in place, each entry named in ``names`` that ``locked`` (a set of names) lacks.
 
-	Returns the change lines ensure-root prints.
+	``names`` None means every entry: the BENCH_DEV group is frappe-nix's
+	addition as a whole. Returns the change lines ensure-root prints.
 	"""
 	gone = [
 		i
 		for i, item in enumerate(dev)
 		if isinstance(item, str)
-		and requirement_name(item) in TEST_TOOLS
+		and (names is None or requirement_name(item) in names)
 		and requirement_name(item) not in locked
 	]
 	changed = [
-		f"[dependency-groups].dev -= {dev[i]} (not in the dev group of the app's uv.lock)" for i in gone
+		f"[dependency-groups].{group} -= {dev[i]} (not in the {group} group of the app's uv.lock)"
+		for i in gone
 	]
 	for i in reversed(gone):
 		del dev[i]
 	return changed
 
 
-def drop_app_pinned(dev, tools):
+def drop_app_pinned(dev, tools, group="dev"):
 	"""Remove from ``dev``, in place, each APP_PINNED tool whose replacement ``tools`` lists.
 
 	Returns the change lines ensure-root prints. Nothing else in the group moves.
@@ -184,11 +186,141 @@ def drop_app_pinned(dev, tools):
 	drop = {normalize(name) for name, pinned in APP_PINNED.items() if normalize(pinned) in tools}
 	gone = [i for i, item in enumerate(dev) if isinstance(item, str) and requirement_name(item) in drop]
 	changed = [
-		f"[dependency-groups].dev -= {dev[i]} (pinned by the app's tools/pyproject.toml)" for i in gone
+		f"[dependency-groups].{group} -= {dev[i]} (pinned by the app's tools/pyproject.toml)" for i in gone
 	]
 	for i in reversed(gone):
 		del dev[i]
 	return changed
+
+
+# What `bench setup requirements --dev` installs, as a dependency group of the
+# root: each registered app's [tool.bench.dev-dependencies], a table of
+# `name = "specifier"` (frappe lists freezegun, Faker, hypothesis and the rest
+# there, and erpnext's tests import freezegun). bench pip-installs them into its
+# env, outside any lock; here they have to be in uv.lock to be in the dev env,
+# so they are a group the root declares and uv resolves with the rest. Their
+# own group, not [dependency-groups].dev: it is derived, and rewritten from the
+# members whenever they change (ensure-root, add-app, remove-app, sync-apps), so
+# an app's removal takes its entries with it and a bench's own dev group is
+# never touched. lib/python.nix puts every root group in the dev env and none
+# in the production one.
+BENCH_DEV = "bench-dev"
+
+
+def bench_dev_requirement(name, spec):
+	"""One [tool.bench.dev-dependencies] entry as a PEP 508 requirement.
+
+	bench's own rule (bench/utils/bench.py, _generate_dev_deps_pattern) is
+	`op = "==" if "=" not in version else ""`: a bare version is an exact pin,
+	anything else a specifier as written. Read here as "a version that starts
+	with no operator", which agrees on every value bench can install and also
+	takes "<2"; an empty one or "*" is no constraint.
+	"""
+	spec = str(spec).strip()
+	if spec in ("", "*"):
+		return name
+	if spec[0] not in "<>=!~":
+		spec = f"=={spec}"
+	return f"{name}{spec}"
+
+
+def app_bench_dev(app_dir):
+	"""``{normalized name: requirement}`` from an app's [tool.bench.dev-dependencies].
+
+	Empty for an app with no pyproject.toml or no such table, the way bench
+	skips it; None when the pyproject.toml cannot be read, since then what the
+	app wants is unknown.
+	"""
+	pyproject = Path(app_dir) / "pyproject.toml"
+	if not pyproject.is_file():
+		return {}
+	try:
+		table = tomllib.loads(pyproject.read_text()).get("tool", {}).get("bench", {})
+	except (OSError, ValueError):
+		return None
+	deps = table.get("dev-dependencies", {}) if isinstance(table, dict) else {}
+	if not isinstance(deps, dict):
+		return {}
+	return {normalize(name): bench_dev_requirement(normalize(name), spec) for name, spec in deps.items()}
+
+
+def warn(msg):
+	print(f"  ⚠  {msg}", file=sys.stderr)
+
+
+def member_dirs(doc):
+	"""Directory names of the explicit `apps/<x>` workspace members, in order.
+
+	Only two-segment `apps/<x>` entries count. A glob is ignored with a warning:
+	frappe-nix writes explicit entries, and lib/bench.nix mirrors this rule
+	without a glob matcher, so accepting one here would let the two disagree.
+	"""
+	members = doc.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
+	out = []
+	for member in members:
+		member = str(member).strip("/")
+		parts = member.split("/")
+		if any(c in member for c in "*?["):
+			warn(f"workspace member {member!r} is a glob — register apps explicitly")
+			continue
+		if len(parts) != 2 or parts[0] != "apps":
+			continue
+		if parts[1] not in out:
+			out.append(parts[1])
+	return out
+
+
+def bench_dev_group(doc, root):
+	"""The BENCH_DEV group for the root ``doc`` at ``root``: sorted requirement strings.
+
+	Over the workspace members in order. Two apps naming the same package
+	are both held to theirs (the specifiers joined, which uv reads as both),
+	where bench would simply install twice; a package [dependency-groups].dev
+	already names is left to that pin (coverage, unittest-xml-reporting and
+	responses, which frappe lists too). None when a member is not on disk or
+	its pyproject.toml is unreadable: the group is then left as it is rather
+	than rewritten without that app's entries.
+	"""
+	dev = {requirement_name(r) for r in doc.get("dependency-groups", {}).get("dev", []) if isinstance(r, str)}
+	merged = {}
+	for app in member_dirs(doc):
+		app_dir = Path(root) / "apps" / app
+		if not app_dir.is_dir():
+			return None
+		deps = app_bench_dev(app_dir)
+		if deps is None:
+			return None
+		for name, requirement in deps.items():
+			if name in dev:
+				continue
+			have = merged.setdefault(name, [])
+			spec = requirement[len(name) :]
+			if spec not in have:
+				have.append(spec)
+	return [name + ",".join(s for s in specs if s) for name, specs in sorted(merged.items())]
+
+
+def sync_bench_dev(doc, root):
+	"""Rewrite ``doc``'s BENCH_DEV group, in place, from its members; returns the change lines.
+
+	Written only when the entries differ, so a run that changes nothing
+	leaves the file's bytes alone; dropped, table and all, when no member
+	declares anything, so a root without it renders exactly as before.
+	"""
+	want = bench_dev_group(doc, root)
+	if want is None:
+		return []
+	groups = doc.get("dependency-groups")
+	have = [str(r) for r in groups.get(BENCH_DEV, [])] if groups is not None else []
+	if have == want:
+		return []
+	if not want:
+		del groups[BENCH_DEV]
+		return [f"[dependency-groups].{BENCH_DEV} -= all (no member declares [tool.bench.dev-dependencies])"]
+	entries = tomlkit.array()
+	entries.extend(want)
+	table_at(doc, "dependency-groups")[BENCH_DEV] = entries.multiline(True)
+	return [f"[dependency-groups].{BENCH_DEV} = {', '.join(want)} (the apps' [tool.bench.dev-dependencies])"]
 
 
 def cmd_ensure_root(args):
@@ -203,14 +335,16 @@ def cmd_ensure_root(args):
 	user's own with none of them. The dev shell's root sync (lib/root-sync.nix)
 	passes none: a frappe-nix bench already has them, and what it is after is
 	the part below that keeps up with frappe-nix itself — the required
-	dependencies and what the template ships for them. Hence --name and
+	dependencies, what the template ships for them, and the BENCH_DEV group
+	in step with the apps (a change there re-locks, as any other does). Hence --name and
 	--requires-python are only required when the key they would fill is
 	absent, and the file is written only when something changed, so a run that
 	changes nothing leaves the mtime (and git) alone. lib/app-workspace.nix
 	passes only --app-tools, for the generated root of an app that opted in to
 	the app standards (drop_app_pinned), or only --test-tools-lock (or
 	--test-tools-unlocked), for the generated root of one that has not
-	(drop_unlocked_test_tools).
+	(drop_unlocked_test_tools), after its sync-apps, so that each rule sees the
+	BENCH_DEV group the members give.
 	"""
 	original = Path(args.pyproject).read_text()
 	doc = tomlkit.parse(original)
@@ -257,20 +391,35 @@ def cmd_ensure_root(args):
 	if "dev" not in groups:
 		groups["dev"] = tomlkit.array(json.dumps(DEV_GROUP))
 		changed.append("[dependency-groups].dev")
+	# The apps' [tool.bench.dev-dependencies], from the members already
+	# registered (none yet in a bench frappe-init is creating: its sync-apps
+	# writes them).
+	changed += sync_bench_dev(doc, Path(args.pyproject).parent)
 	# Only for the generated root of an app that opted in (lib/app-workspace.nix
 	# passes --app-tools then, and only then): the one place this removes
 	# something a root has.
 	if args.app_tools:
-		changed += drop_app_pinned(groups["dev"], app_tools(args.app_tools))
+		tools = app_tools(args.app_tools)
+		changed += drop_app_pinned(groups["dev"], tools)
+		if BENCH_DEV in groups:
+			changed += drop_app_pinned(groups[BENCH_DEV], tools, BENCH_DEV)
 	# Only for the generated root of an app that has not opted in
 	# (lib/app-workspace.nix): that root's dev group stays what main rendered
 	# for it, so upgrading frappe-nix neither changes its dev env nor makes its
 	# committed lock stale. With no lock yet that is main's dev group, without
-	# either test tool; a missing lock file reads the same way.
-	if args.test_tools_unlocked:
-		changed += drop_unlocked_test_tools(groups["dev"], set())
-	elif args.test_tools_lock:
-		changed += drop_unlocked_test_tools(groups["dev"], locked_root_dev(args.test_tools_lock) or set())
+	# either test tool; a missing lock file reads the same way. The BENCH_DEV
+	# group is frappe-nix's addition as a whole, so the same rule keeps of it
+	# only what that lock's root lists there: nothing, for a lock main wrote.
+	if args.test_tools_unlocked or args.test_tools_lock:
+		lock = None if args.test_tools_unlocked else args.test_tools_lock
+		locked = (locked_root_dev(lock) if lock else None) or set()
+		changed += drop_unlocked_test_tools(groups["dev"], locked)
+		if BENCH_DEV in groups:
+			locked = (locked_root_dev(lock, BENCH_DEV) if lock else None) or set()
+			changed += drop_unlocked_test_tools(groups[BENCH_DEV], locked, BENCH_DEV, None)
+	# Emptied by either rule: no group at all, as for a root whose apps declare none.
+	if BENCH_DEV in groups and not groups[BENCH_DEV]:
+		del groups[BENCH_DEV]
 
 	uv = table_at(doc, "tool", "uv")
 	# Not optional: the workspace root is a virtual package. lib/python.nix
@@ -367,6 +516,8 @@ def cmd_add_app(args):
 	else:
 		sources[dist].setdefault("workspace", True)
 
+	for line in sync_bench_dev(doc, Path(args.pyproject).parent):
+		print(f"  + {line}")
 	save(doc, args.pyproject)
 	return 0
 
@@ -399,6 +550,11 @@ def cmd_remove_app(args):
 			del sources[key]
 			print(f"  - [tool.uv.sources].{key}")
 
+	# The app's directory is usually gone by now (bench-remove-app takes it out
+	# of git first), and so is its member entry: the rest are what count.
+	for line in sync_bench_dev(doc, Path(args.pyproject).parent):
+		print(f"  + {line}")
+
 	rendered = tomlkit.dumps(doc)
 	if rendered != original:
 		Path(args.pyproject).write_text(rendered)
@@ -430,6 +586,8 @@ def cmd_sync_apps(args):
 		if not (root / str(member)).is_dir():
 			print(f"  ⚠  workspace member {member} does not exist on disk", file=sys.stderr)
 
+	for line in sync_bench_dev(doc, root):
+		print(f"  + {line}")
 	save(doc, args.pyproject)
 	return 0
 
@@ -495,32 +653,6 @@ def cmd_shim_app(args):
 # and nothing more.
 
 _VERSION_RE = r"""^(\s*%s\s*=\s*['"])(.+?)(['"])"""
-
-
-def warn(msg):
-	print(f"  ⚠  {msg}", file=sys.stderr)
-
-
-def member_dirs(doc):
-	"""Directory names of the explicit `apps/<x>` workspace members, in order.
-
-	Only two-segment `apps/<x>` entries count. A glob is ignored with a warning:
-	frappe-nix writes explicit entries, and lib/bench.nix mirrors this rule
-	without a glob matcher, so accepting one here would let the two disagree.
-	"""
-	members = doc.get("tool", {}).get("uv", {}).get("workspace", {}).get("members", [])
-	out = []
-	for member in members:
-		member = str(member).strip("/")
-		parts = member.split("/")
-		if any(c in member for c in "*?["):
-			warn(f"workspace member {member!r} is a glob — register apps explicitly")
-			continue
-		if len(parts) != 2 or parts[0] != "apps":
-			continue
-		if parts[1] not in out:
-			out.append(parts[1])
-	return out
 
 
 def registered_apps(members, apps_dir):
@@ -857,8 +989,9 @@ def main():
 	p.add_argument("--app-tools", default="")
 	# An app-mode app's committed uv.lock, for an app that has not opted in: drop
 	# from the dev group each TEST_TOOLS entry the lock's own root does not list
-	# in its dev group. --test-tools-unlocked: the same app, with no lock yet;
-	# drop both.
+	# in its dev group, and from the BENCH_DEV group each entry it does not list
+	# there. --test-tools-unlocked: the same app, with no lock yet; drop both
+	# test tools and the whole BENCH_DEV group.
 	p.add_argument("--test-tools-lock", default="")
 	p.add_argument("--test-tools-unlocked", action="store_true")
 	p.set_defaults(func=cmd_ensure_root)
