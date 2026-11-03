@@ -2176,7 +2176,7 @@ in
 
         overrides = import ../lib/overrides.nix;
 
-        builtinOverrides = overrides.mysqlclient {
+        builtinOverrides = overrides.builtin {
           inherit pkgs;
           mariadb = cfg.mariadb.package;
         };

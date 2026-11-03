@@ -1369,7 +1369,7 @@
           "update-branches": {
             "type": "boolean",
             "default": false,
-            "description": "Bring every bot PR that is behind the integration branch up to date after each push to it, and on the deps-sweep schedule: `@dependabot rebase` for Dependabot's own PRs, the update-branch API for the rest (\u00a74.5)."
+            "description": "Bring every bot PR that is behind the integration branch up to date after each push to it, and on the deps-sweep schedule, through the update-branch API (\u00a74.5)."
           },
           "ecosystems": {
             "type": "object",

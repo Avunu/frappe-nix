@@ -4,7 +4,8 @@
 #
 #   ci-pins        every `uses:` in .github pinned by a full SHA, with its version
 #   dependabot     the commit prefix, the cooldown and a catch-all group on each
-#                  ecosystem; dev/'s uv tooling takes chore(deps)
+#                  ecosystem; dev/'s and tests/fixtures/dev-tools's uv locks
+#                  take chore(deps)
 #   check-names    each name in checks.<system> is <x> or <x>-<major>
 #   env-vars       every FRAPPE_* name the tree uses is FRAPPE_NIX_* or
 #                  FRAPPE_DEVGUARD_*, less the exceptions below
@@ -61,11 +62,16 @@ inputs.python-devops-nix.lib.checks.conventions (
     product = "frappe-nix";
     # Only the names are read, so this can be the set the checks join.
     checks = self.checks.${system};
-    # dev/ holds frappe-nix's own lint and type tooling (dev/pyproject.toml).
+    # dev/ holds frappe-nix's own lint and type tooling (dev/pyproject.toml);
+    # tests/fixtures/dev-tools is checks.dev-tools's lock, which no bench ships.
     dependabot.development = [
       {
         ecosystem = "uv";
         directory = "/dev";
+      }
+      {
+        ecosystem = "uv";
+        directory = "/tests/fixtures/dev-tools";
       }
     ];
     commands = {

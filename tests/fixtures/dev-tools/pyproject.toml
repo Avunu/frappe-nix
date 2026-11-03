@@ -1,0 +1,33 @@
+# templates/bench/pyproject.toml's dev group, alone: every tool a fresh bench's
+# dev shell builds that frappe-nix, not Frappe, asks for. checks.dev-tools
+# (tests/dev-tools.nix) asserts this list equals the template's, builds the dev
+# virtualenv lib/python.nix makes from it with the overrides a bench gets, and
+# runs each tool.
+#
+# The canary (.github/workflows/canary-dev-tools.yml) re-locks this daily
+# against PyPI as of that day, since a fresh bench's `uv lock` takes a release
+# the day it is published, and keeps an issue open while the check fails.
+# Dependabot moves the committed lock, a week behind. Re-lock after changing
+# the template's dev group:
+#
+#   uv lock --project tests/fixtures/dev-tools
+[project]
+name = "dev-tools"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "coverage>=7.10",
+    "pre-commit>=4.5.1",
+    "pydantic>=2.12.5",
+    "pytest>=9.0.2",
+    "responses",
+    "ruff>=0.15.0",
+    "semgrep",
+    "unittest-xml-reporting>=3.2",
+]
+
+[tool.uv]
+package = false
