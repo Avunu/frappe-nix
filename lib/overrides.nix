@@ -1,10 +1,10 @@
-# frappe-nix's own Python package override: mysqlclient, which only a Frappe
-# bench builds.
+# frappe-nix's own Python package overrides: mysqlclient, which only a Frappe
+# bench builds, and semgrep, which only a Frappe bench's dev group carries.
 #
 # The fixes both frappe-nix and odoo-nix need (psycopg2, python-ldap, lxml,
 # pycups, python-magic, pyvips, cairocffi) are python-devops-nix's
 # lib.python.overrides, which lib/python.nix applies to every bench right after
-# uv2nix's overlay. This one, and a bench's own `pythonOverrides`, layer on top.
+# uv2nix's overlay. These, and a bench's own `pythonOverrides`, layer on top.
 #
 # Pure-Python build dependencies (setuptools, poetry-core and the like) are not
 # overlays: they belong in [tool.uv.extra-build-dependencies], which
@@ -21,7 +21,7 @@ let
     name: _:
     throw "frappe-nix: lib.overrides.${name} was removed in 2.0.0. python-devops-nix's lib.python.overrides applies it to every bench already; remove it from pythonOverrides.";
 in
-{
+rec {
   # mysqlclient needs MariaDB/MySQL headers and client libraries.
   mysqlclient =
     { pkgs, mariadb }:
@@ -41,6 +41,40 @@ in
         ];
       });
     };
+
+  # semgrep's Linux wheel ships semgrep-core already through patchelf upstream,
+  # and patchelf 0.19 cannot grow such a file twice: auto-patchelf sets the
+  # interpreter, then the RPATH, and the second aborts in shiftFile (`Assertion
+  # splitIndex == -1`), failing the dev shell from semgrep 1.183.0 on. The wheel
+  # bundles everything semgrep-core needs but libc in bin/libs/, each library
+  # with an `$ORIGIN` RUNPATH, so auto-patchelf is not needed: one call sets the
+  # interpreter and a RUNPATH of just `$ORIGIN/libs`. That is no longer than the
+  # wheel's own (which also carries a leaked build path), so it is written in
+  # place and the file grows once.
+  semgrep =
+    { pkgs }:
+    _final: prev:
+    pkgs.lib.optionalAttrs (prev ? semgrep && pkgs.stdenv.hostPlatform.isLinux) {
+      semgrep = prev.semgrep.overrideAttrs (old: {
+        dontAutoPatchelf = true;
+        postFixup = (old.postFixup or "") + ''
+          core=$(echo "$out"/lib/python*/site-packages/semgrep/bin/semgrep-core)
+          patchelf --set-interpreter "$(< "$NIX_CC/nix-support/dynamic-linker")" \
+            --set-rpath '$ORIGIN/libs' "$core"
+          "$core" -version
+        '';
+      });
+    };
+
+  # Every override above, as the one overlay modules/devenv.nix applies to each
+  # bench (its builtinOverrides). checks.dev-tools builds with it too, so the
+  # check sees the set a bench gets.
+  builtin =
+    { pkgs, mariadb }:
+    pkgs.lib.composeManyExtensions [
+      (mysqlclient { inherit pkgs mariadb; })
+      (semgrep { inherit pkgs; })
+    ];
 
   pycups = removed "pycups";
   python-ldap = removed "python-ldap";

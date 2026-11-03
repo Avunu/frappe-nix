@@ -1,0 +1,155 @@
+name: canary-dev-tools
+# The early warning for a dev tool release that no longer builds or runs under Nix, the way
+# semgrep 1.183.0's wheel did not (patchelf aborted on its semgrep-core, so every freshly
+# bootstrapped bench's dev shell failed). templates/bench/pyproject.toml's dev group is
+# unpinned or floors only, so a fresh bench's `uv lock` takes a release the day it is
+# published. Everything else here resolves PyPI as of a fixed date (the committed locks, the
+# self-tests' UV_EXCLUDE_NEWER), and Dependabot waits a week (.github/dependabot.yml).
+#
+# Daily: re-lock tests/fixtures/dev-tools (the template's dev group) with `uv lock
+# --upgrade` against that day's PyPI, without committing it, and build checks.dev-tools
+# (tests/dev-tools.nix) on that lock: the dev env with the overrides a bench gets, and each
+# tool run. While it fails, one open issue says so. The first failing run opens it, later
+# failing runs rewrite its body (what moved since the committed lock, and the failed
+# derivations), and the first run that passes again closes it. A pull request that changes
+# what this runs runs it too, and leaves the issue alone.
+#
+# By hand: uv lock --upgrade --project tests/fixtures/dev-tools
+#          nix build -L .#checks.x86_64-linux.dev-tools
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/canary-dev-tools.yml
+      - tests/dev-tools.nix
+      - tests/fixtures/dev-tools/**
+permissions: {}
+env:
+  FORCE_COLOR: "1"
+# A newer push to a PR replaces its run; the scheduled and dispatched runs always finish, each
+# in a group of its own. The self-hosted runners share one host: a superseded run left going
+# only slows the others.
+concurrency:
+  group: canary-dev-tools-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  canary:
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    timeout-minutes: 30
+    permissions:
+      contents: read # the checkout
+      issues: write # the canary issue
+    steps:
+      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
+      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
+      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
+      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
+      - if: runner.environment != 'github-hosted'
+        name: Clear what an earlier job left in the runner's temp dir and workspace
+        working-directory: ${{ runner.temp }}
+        run: |
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
+          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
+          if [ -d "$GITHUB_WORKSPACE" ]; then
+            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        if: runner.environment == 'github-hosted'
+        with:
+          determinate: false
+
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        if: runner.environment == 'github-hosted'
+        with:
+          diagnostic-endpoint: ""
+          use-flakehub: false
+
+      # uv and Python from this flake's nixpkgs: the uv a bench's relock runs, and an
+      # interpreter that runs on NixOS (a downloaded one does not). The lock stays in the
+      # working tree, uncommitted, which is where the flake reads it from.
+      - name: Re-lock the bench template's dev group against today's PyPI
+        id: lock
+        run: |
+          set -euo pipefail
+          fx=tests/fixtures/dev-tools
+          export UV_PYTHON_DOWNLOADS=never
+          pins() {
+            nix shell --inputs-from . nixpkgs#uv nixpkgs#python314 -c \
+              uv export --project "$fx" --frozen --all-groups --no-hashes --no-header --no-annotate --no-emit-project
+          }
+          pins > "$RUNNER_TEMP/before.txt"
+          nix shell --inputs-from . nixpkgs#uv nixpkgs#python314 -c uv lock --upgrade --project "$fx"
+          pins > "$RUNNER_TEMP/after.txt"
+          {
+            echo '### What moved since the committed lock'
+            echo
+            # diff exits 1 when there is a difference, which pipefail would make the pipeline's.
+            if moved="$({ diff "$RUNNER_TEMP/before.txt" "$RUNNER_TEMP/after.txt" || true; } | grep '^[<>]')"; then
+              echo '```diff'
+              sed -e 's/^</-/' -e 's/^>/+/' <<< "$moved"
+              echo '```'
+            else
+              echo 'Nothing: the committed lock is current.'
+            fi
+          } > "$RUNNER_TEMP/moved.md"
+          cat "$RUNNER_TEMP/moved.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build checks.dev-tools on that lock
+        id: build
+        shell: bash # -o pipefail, through the tee
+        run: nix build -L --show-trace --no-link .#checks.x86_64-linux.dev-tools 2>&1 | tee "$RUNNER_TEMP/nix.log"
+
+      - if: failure() && steps.build.outcome == 'failure'
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@9092f7d6dc77bad77697d84c89ec53a2b4698344 # python-devops-nix main, #26 (no release yet)
+        with:
+          log: ${{ runner.temp }}/nix.log
+          title: canary-dev-tools
+          output: ${{ runner.temp }}/failures/canary.md
+
+      # A failed re-lock is an alert too: a fresh bench cannot lock its dev group either.
+      - name: Open, refresh or close the canary issue
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOCK: ${{ steps.lock.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="canary-dev-tools: the bench template's dev group fails with today's PyPI"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title canary-dev-tools" --json number,title \
+            | jq -r --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')"
+          if [ "$LOCK" = success ] && [ "$BUILD" = success ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --repo "$GITHUB_REPOSITORY" --comment "checks.dev-tools passes again on [this run]($RUN_URL), with tests/fixtures/dev-tools re-locked against PyPI as of $(date -u +%F)."
+            fi
+            exit 0
+          fi
+          body="$RUNNER_TEMP/issue.md"
+          {
+            if [ "$LOCK" != success ]; then
+              echo "\`uv lock --upgrade --project tests/fixtures/dev-tools\` failed on [the canary run]($RUN_URL) ($(date -u +%F)): a fresh bench cannot lock the template's dev group either."
+            else
+              echo "checks.dev-tools failed on [the canary run]($RUN_URL), with tests/fixtures/dev-tools re-locked against PyPI as of $(date -u +%F). A fresh bench resolves the same releases, so its dev shell most likely fails too."
+              echo
+              cat "$RUNNER_TEMP/moved.md"
+            fi
+            echo
+            if [ -f "$RUNNER_TEMP/failures/canary.md" ]; then
+              cat "$RUNNER_TEMP/failures/canary.md"
+              echo
+            fi
+            echo "Reproduce with \`uv lock --upgrade --project tests/fixtures/dev-tools\`, then \`nix build -L .#checks.x86_64-linux.dev-tools\`. The fix is usually an override in lib/overrides.nix (as semgrep has) or a cap in the template's dev group. Commit the re-locked fixture with it, so the check on every pull request keeps the fix covered. This issue closes itself on the first canary run that passes."
+          } > "$body"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$body"
+          fi
