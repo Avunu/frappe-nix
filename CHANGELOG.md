@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.1](https://github.com/Avunu/frappe-nix/compare/v2.2.0...v2.2.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** update Dependabot PRs without asking Dependabot to rebase ([#242](https://github.com/Avunu/frappe-nix/issues/242)) ([4f6067a](https://github.com/Avunu/frappe-nix/commit/4f6067abea11ea4f4e95ba5afdab0740092f5c5b))
+* **overrides:** patch semgrep-core in one patchelf call, so semgrep 1.183.0 builds ([#241](https://github.com/Avunu/frappe-nix/issues/241)) ([b7713d3](https://github.com/Avunu/frappe-nix/commit/b7713d30c2dbe14b118ddbdead817821660d35e8))
+
 ## [2.2.0](https://github.com/Avunu/frappe-nix/compare/v2.1.0...v2.2.0) (2026-10-31)
 
 
