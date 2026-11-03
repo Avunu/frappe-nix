@@ -36,10 +36,12 @@ chmod +x "$BIN/frappe-nix-node-locks"
 # The steps after the pull, each a stub that records itself, in order:
 # STEPS — one line per invocation: "<name> <args>"
 # <NAME>_FAIL=1 (dashes as underscores, upper case) — fail
+# UV_SAW=<file> — uv copies the pyproject.toml it was run against there
 for tool in bench-migrate bench-build uv frappe-nix-node-verify frappe-nix-node-modules; do
   var="$(printf '%s' "$tool" | tr 'a-z-' 'A-Z_')_FAIL"
   printf '#!%s\n' "$(command -v bash)" > "$BIN/$tool"
   printf 'printf "%%s %%s\\n" "%s" "$*" >> "$STEPS"\n' "$tool" >> "$BIN/$tool"
+  [ "$tool" = uv ] && printf '[ -n "${UV_SAW:-}" ] && cp pyproject.toml "$UV_SAW"\n' >> "$BIN/$tool"
   printf '[ "${%s:-}" = 1 ] && exit 1\nexit 0\n' "$var" >> "$BIN/$tool"
   chmod +x "$BIN/$tool"
 done
@@ -552,6 +554,19 @@ UV_FAIL=1 run_update pull-py-fail --pull
 check_eq "a failed re-lock fails the pull" 1 "$RC"
 check "…saying what that means" grep -q 'uv lock failed — the dev shell will not evaluate' "$ROOT/pull-py-fail.log"
 check "…and how to resolve it" grep -q 'override-dependencies' "$ROOT/pull-py-fail.log"
+check "…including a conflict in bench-dev, which is rewritten from the apps" \
+  grep -q 'pin the package in \[dependency-groups\].dev' "$ROOT/pull-py-fail.log"
+
+echo "── a pulled [tool.bench.dev-dependencies] reaches the lock ──────"
+# What frappe's own pyproject.toml lists for `bench setup requirements --dev`.
+printf '[project]\nname = "frappe"\ndynamic = ["version"]\ndependencies = ["left-pad"]\n\n[tool.bench.dev-dependencies]\nfreezegun = "~=1.5.5"\n' \
+  > "$SEED/pyproject.toml"
+up "frappe lists a dev dependency" > /dev/null
+UV_SAW="$ROOT/uv-saw.toml" run_update pull-dev --pull
+check_eq "--pull exits 0" 0 "$RC"
+check "the root's bench-dev group follows it" grep -qF '"freezegun~=1.5.5",' pyproject.toml
+check "…before uv lock ran, so the lock is written once, for it" grep -qF '"freezegun~=1.5.5",' "$ROOT/uv-saw.toml"
+check "…and it says so" grep -q 'bench-dev = freezegun~=1.5.5' "$ROOT/pull-dev.log"
 
 echo "── FRAPPE_NIX_BENCH_UPDATE_FORCE ────────────────────────────────"
 printf 'mine\n' > apps/frappe/FORCED

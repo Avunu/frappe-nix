@@ -207,45 +207,76 @@ def drop_app_pinned(dev, tools, group="dev"):
 BENCH_DEV = "bench-dev"
 
 
-def bench_dev_requirement(name, spec):
-	"""One [tool.bench.dev-dependencies] entry as a PEP 508 requirement.
+# A [tool.bench.dev-dependencies] key: a distribution name (PEP 508), with
+# extras or without (cloud_storage lists "moto[s3]"). Anything else — a direct
+# URL, a name lib/python.nix's name match cannot read — is skipped.
+_BENCH_DEV_KEY = re.compile(r"([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\s*(?:\[([^\]]*)\])?")
+_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
+# Its value's version part: PEP 440 clauses, comma-separated.
+_CLAUSE = r"(?:~=|===|==|!=|<=|>=|<|>)\s*[A-Za-z0-9][A-Za-z0-9.*+!_-]*"
+_SPECIFIER = re.compile(rf"{_CLAUSE}(?:\s*,\s*{_CLAUSE})*")
+
+
+def bench_dev_entry(key, value):
+	"""One [tool.bench.dev-dependencies] entry as ``(name, extras, specifier, marker)``, or None.
 
 	bench's own rule (bench/utils/bench.py, _generate_dev_deps_pattern) is
 	`op = "==" if "=" not in version else ""`: a bare version is an exact pin,
-	anything else a specifier as written. Read here as "a version that starts
-	with no operator", which agrees on every value bench can install and also
-	takes "<2"; an empty one or "*" is no constraint.
+	anything else a specifier as written, an environment marker after a `;`
+	included. Read here as "a version part that starts with no operator",
+	which agrees on every value bench can install and also takes "<2"; an
+	empty one or "*" is no constraint. The name and extras come back
+	normalized, the marker as written. None for an entry that is not a name
+	(extras allowed) and a string of specifiers: no requirement to write.
 	"""
-	spec = str(spec).strip()
+	key = _BENCH_DEV_KEY.fullmatch(str(key).strip())
+	if key is None or not isinstance(value, str):
+		return None
+	extras = [e.strip() for e in (key[2] or "").split(",") if e.strip()]
+	if not all(_NAME.fullmatch(e) for e in extras):
+		return None
+	spec, _, marker = value.partition(";")
+	spec = spec.strip()
 	if spec in ("", "*"):
-		return name
-	if spec[0] not in "<>=!~":
+		spec = ""
+	elif spec[0] not in "<>=!~":
 		spec = f"=={spec}"
-	return f"{name}{spec}"
+	if spec and not _SPECIFIER.fullmatch(spec):
+		return None
+	return normalize(key[1]), frozenset(normalize(e) for e in extras), spec, marker.strip()
+
+
+def warn(msg):
+	print(f"  ⚠  {msg}", file=sys.stderr)
 
 
 def app_bench_dev(app_dir):
-	"""``{normalized name: requirement}`` from an app's [tool.bench.dev-dependencies].
+	"""The entries of an app's [tool.bench.dev-dependencies], each as bench_dev_entry gives it.
 
-	Empty for an app with no pyproject.toml or no such table, the way bench
-	skips it; None when the pyproject.toml cannot be read, since then what the
-	app wants is unknown.
+	Empty for an app with no such table, the way bench skips it; an entry
+	bench_dev_entry cannot read is skipped with a warning. None when the app
+	has no readable pyproject.toml: a workspace member always has one, so
+	what that app wants is unknown (most often, a submodule not checked out).
 	"""
 	pyproject = Path(app_dir) / "pyproject.toml"
-	if not pyproject.is_file():
-		return {}
 	try:
 		table = tomllib.loads(pyproject.read_text()).get("tool", {}).get("bench", {})
 	except (OSError, ValueError):
 		return None
 	deps = table.get("dev-dependencies", {}) if isinstance(table, dict) else {}
 	if not isinstance(deps, dict):
-		return {}
-	return {normalize(name): bench_dev_requirement(normalize(name), spec) for name, spec in deps.items()}
-
-
-def warn(msg):
-	print(f"  ⚠  {msg}", file=sys.stderr)
+		return []
+	out = []
+	for key, value in deps.items():
+		entry = bench_dev_entry(key, value)
+		if entry is None:
+			warn(
+				f"apps/{Path(app_dir).name}: [tool.bench.dev-dependencies] {key!r} = {value!r}"
+				" is not a name and a version specifier — skipped"
+			)
+			continue
+		out.append(entry)
+	return out
 
 
 def member_dirs(doc):
@@ -273,31 +304,42 @@ def member_dirs(doc):
 def bench_dev_group(doc, root):
 	"""The BENCH_DEV group for the root ``doc`` at ``root``: sorted requirement strings.
 
-	Over the workspace members in order. Two apps naming the same package
-	are both held to theirs (the specifiers joined, which uv reads as both),
-	where bench would simply install twice; a package [dependency-groups].dev
-	already names is left to that pin (coverage, unittest-xml-reporting and
-	responses, which frappe lists too). None when a member is not on disk or
-	its pyproject.toml is unreadable: the group is then left as it is rather
-	than rewritten without that app's entries.
+	Over the workspace members in order, one entry per package and marker.
+	Two apps naming the same package are both held to theirs (the specifiers
+	joined, which uv reads as both, and the extras united), where bench would
+	simply install twice; under different markers they stay two entries. A
+	package [dependency-groups].dev already names is left to that pin
+	(coverage, unittest-xml-reporting and responses, which frappe lists too),
+	which is also how a bench settles two apps' pins that conflict. None, with
+	a warning, when a member is not on disk or has no readable pyproject.toml:
+	the group is then left as it is rather than rewritten without that app's
+	entries.
 	"""
 	dev = {requirement_name(r) for r in doc.get("dependency-groups", {}).get("dev", []) if isinstance(r, str)}
 	merged = {}
 	for app in member_dirs(doc):
 		app_dir = Path(root) / "apps" / app
-		if not app_dir.is_dir():
-			return None
-		deps = app_bench_dev(app_dir)
+		deps = app_bench_dev(app_dir) if app_dir.is_dir() else None
 		if deps is None:
+			why = (
+				"is not on disk"
+				if not app_dir.is_dir()
+				else "has no readable pyproject.toml (a submodule not checked out?)"
+			)
+			warn(f"workspace member apps/{app} {why}: [dependency-groups].{BENCH_DEV} left as it was")
 			return None
-		for name, requirement in deps.items():
+		for name, extras, spec, marker in deps:
 			if name in dev:
 				continue
-			have = merged.setdefault(name, [])
-			spec = requirement[len(name) :]
-			if spec not in have:
-				have.append(spec)
-	return [name + ",".join(s for s in specs if s) for name, specs in sorted(merged.items())]
+			have_extras, specs = merged.setdefault((name, marker), (set(), []))
+			have_extras |= extras
+			if spec and spec not in specs:
+				specs.append(spec)
+	out = []
+	for (name, marker), (extras, specs) in sorted(merged.items()):
+		extra = f"[{','.join(sorted(extras))}]" if extras else ""
+		out.append(name + extra + ",".join(specs) + (f"; {marker}" if marker else ""))
+	return out
 
 
 def sync_bench_dev(doc, root):
@@ -562,8 +604,13 @@ def cmd_remove_app(args):
 
 
 def cmd_sync_apps(args):
-	"""Register every eligible app, and report members pointing at nothing."""
-	doc = load(args.pyproject)
+	"""Register every eligible app, and report members pointing at nothing.
+
+	Written only when something changed: bench-update and update-deps run it
+	with no apps, ahead of a `uv lock`, for the BENCH_DEV group alone.
+	"""
+	original = Path(args.pyproject).read_text()
+	doc = tomlkit.parse(original)
 	members = table_at(doc, "tool", "uv", "workspace").setdefault("members", tomlkit.array())
 	sources = table_at(doc, "tool", "uv", "sources")
 	root = Path(args.pyproject).parent
@@ -588,7 +635,9 @@ def cmd_sync_apps(args):
 
 	for line in sync_bench_dev(doc, root):
 		print(f"  + {line}")
-	save(doc, args.pyproject)
+	rendered = tomlkit.dumps(doc)
+	if rendered != original:
+		Path(args.pyproject).write_text(rendered)
 	return 0
 
 

@@ -44,6 +44,8 @@ for tool in yarn uv frappe-nix-node-locks; do
   # has no /usr/bin/env.
   printf '#!%s\n' "$(command -v bash)" > "$BIN/$tool"
   printf 'printf "%%s %%s %%s\\n" "%s" "$PWD" "$*" >> "$CALLS"\n' "$tool" >> "$BIN/$tool"
+  # UV_SAW=<file>: uv copies the pyproject.toml it was run against there.
+  [ "$tool" = uv ] && printf '[ -n "${UV_SAW:-}" ] && cp pyproject.toml "$UV_SAW"\n' >> "$BIN/$tool"
   # STUB_FAIL="<tool> <cwd>": that call fails.
   printf '[ "${STUB_FAIL:-}" = "%s $PWD" ] && exit 3\nexit 0\n' "$tool" >> "$BIN/$tool"
   chmod +x "$BIN/$tool"
@@ -55,12 +57,21 @@ export FRAPPE_BENCH_ROOT="$ROOT/bench"
 mkdir -p "$FRAPPE_BENCH_ROOT/apps/alpha" "$FRAPPE_BENCH_ROOT/apps/beta"
 ALPHA="$FRAPPE_BENCH_ROOT/apps/alpha"
 BETA="$FRAPPE_BENCH_ROOT/apps/beta"
+# The workspace root, and an app that lists what `bench setup requirements
+# --dev` would install.
+printf '[project]\nname = "fixture-bench"\n\n[tool.uv.workspace]\nmembers = ["apps/alpha", "apps/beta"]\n' \
+  > "$FRAPPE_BENCH_ROOT/pyproject.toml"
+printf '[project]\nname = "alpha"\n\n[tool.bench.dev-dependencies]\nfreezegun = "~=1.5.5"\n' > "$ALPHA/pyproject.toml"
+printf '[project]\nname = "beta"\n' > "$BETA/pyproject.toml"
 calls() { cut -d' ' -f1,3- "$CALLS" | tr '\n' '|'; }
 
 echo "── in a bench ───────────────────────────────────────────────────"
 : > "$CALLS"
-bash "$BENCH_SCRIPT" > "$ROOT/bench.log" 2>&1 \
+UV_SAW="$ROOT/uv-saw.toml" bash "$BENCH_SCRIPT" > "$ROOT/bench.log" 2>&1 \
   && ok "update-deps exits 0" || { no "update-deps exits 0"; cat "$ROOT/bench.log"; }
+check "the root's bench-dev group follows the apps' [tool.bench.dev-dependencies]" \
+  grep -qF '"freezegun~=1.5.5",' "$FRAPPE_BENCH_ROOT/pyproject.toml"
+check "…before uv lock ran, so the lock is written for it" grep -qF '"freezegun~=1.5.5",' "$ROOT/uv-saw.toml"
 check "yarn runs in the app, without writing its lock" \
   grep -qxF "yarn $ALPHA install --pure-lockfile" "$CALLS"
 check_not "and never as a plain install" grep -qxF "yarn $ALPHA install" "$CALLS"

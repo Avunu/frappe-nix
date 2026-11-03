@@ -621,9 +621,10 @@
         # The bench template's dev group, built with the overrides a bench gets
         # and each tool run; the canary workflow builds it against that day's PyPI.
         // import ./tests/dev-tools.nix { inherit pkgs checks inputs; }
-        # The stale-uv.lock preflight, over a fixture workspace.
+        # The stale-uv.lock preflight, over a fixture workspace, and which env
+        # it holds to the bench-dev group.
         // import ./tests/lock-audit.nix {
-          inherit pkgs checks;
+          inherit pkgs checks inputs;
           inherit (inputs) python-devops-nix;
         }
         # [tool.uv.extra-build-dependencies] from uv.lock: frappe-nix's always,

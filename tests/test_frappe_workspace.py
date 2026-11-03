@@ -78,7 +78,7 @@ def bench(apps):
 	"""A bench root in a fresh directory: the rendered template and apps/<name>/pyproject.toml each.
 
 	``apps`` maps a name to the text after [project], or None for a
-	directory without a pyproject.toml (a setup.py-only app).
+	directory without a pyproject.toml (a submodule not checked out).
 	"""
 	root = Path(tempfile.mkdtemp())
 	(root / "pyproject.toml").write_text(RENDERED)
@@ -90,13 +90,18 @@ def bench(apps):
 	return root
 
 
+ERR = io.StringIO()
+
+
 def run(*argv):
-	"""The tool's main() with ``argv``: (exit status, what it printed)."""
+	"""The tool's main() with ``argv``: (exit status, what it printed); its stderr in ERR."""
 	saved = sys.argv
 	out = io.StringIO()
+	ERR.seek(0)
+	ERR.truncate()
 	sys.argv = ["frappe-nix-workspace", *argv]
 	try:
-		with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+		with contextlib.redirect_stdout(out), contextlib.redirect_stderr(ERR):
 			fw.main()
 	except SystemExit as e:
 		return e.code or 0, out.getvalue()
@@ -122,19 +127,34 @@ def lock_with_root(path, dev=(), bench_dev=()):
 	return path
 
 
-# ── a specifier, as bench reads it ─────────────────────────────────────────
+# ── an entry, as bench reads it ────────────────────────────────────────────
 
-for name, spec, want in (
-	("freezegun", "~=1.5.5", "freezegun~=1.5.5"),
-	("responses", "==0.23.1", "responses==0.23.1"),
-	("hypothesis", "6.77.0", "hypothesis==6.77.0"),
-	("faker", ">=18,<19", "faker>=18,<19"),
-	("pyngrok", "<8", "pyngrok<8"),
-	("watchdog", "", "watchdog"),
-	("watchdog", "*", "watchdog"),
+for key, value, want in (
+	("freezegun", "~=1.5.5", ("freezegun", frozenset(), "~=1.5.5", "")),
+	("responses", "==0.23.1", ("responses", frozenset(), "==0.23.1", "")),
+	("hypothesis", "6.77.0", ("hypothesis", frozenset(), "==6.77.0", "")),
+	("Faker", ">=18,<19", ("faker", frozenset(), ">=18,<19", "")),
+	("pyngrok", "<8", ("pyngrok", frozenset(), "<8", "")),
+	("watchdog", "", ("watchdog", frozenset(), "", "")),
+	("watchdog", "*", ("watchdog", frozenset(), "", "")),
+	# A marker after the `;`, which bench passes to pip as written.
+	("z", "==1; python_version<'3.12'", ("z", frozenset(), "==1", "python_version<'3.12'")),
+	("z", "1 ; python_version<'3.12'", ("z", frozenset(), "==1", "python_version<'3.12'")),
+	# Extras in the name (cloud_storage's moto[s3]).
+	("moto[s3]", "~=4.1.6", ("moto", frozenset({"s3"}), "~=4.1.6", "")),
+	("Moto [S3, ec2]", "", ("moto", frozenset({"s3", "ec2"}), "", "")),
+	# Nothing a requirement can be written from.
+	("y", {"version": "1"}, None),
+	("y", 1, None),
+	("x @ https://example.invalid/x.whl", "", None),
+	("_private", "1", None),
+	("moto[s3", "1", None),
+	("moto[s/3]", "1", None),
+	("x", "@ https://example.invalid/x.whl", None),
+	("x", "1.0 || 2.0", None),
 ):
-	got = fw.bench_dev_requirement(name, spec)
-	check(f"bench_dev_requirement({name!r}, {spec!r}) is {want}", got == want, f"got {got!r}")
+	got = fw.bench_dev_entry(key, value)
+	check(f"bench_dev_entry({key!r}, {value!r}) is {want}", got == want, f"got {got!r}")
 
 
 # ── the group, from the members ────────────────────────────────────────────
@@ -143,13 +163,10 @@ root = bench(
 	{
 		"frappe": FRAPPE_DEV,
 		"erpnext": "",
-		"legacy": None,
 		"my_app": '[tool.bench.dev-dependencies]\nfreezegun = "1.5.5"\nfaker = "~=18.10.1"\ntime-machine = ""\n',
 	}
 )
-status, _ = run(
-	"sync-apps", "--pyproject", str(root / "pyproject.toml"), "frappe", "erpnext", "legacy", "my_app"
-)
+status, _ = run("sync-apps", "--pyproject", str(root / "pyproject.toml"), "frappe", "erpnext", "my_app")
 got = groups(root).get("bench-dev")
 check(
 	"sync-apps writes every member's [tool.bench.dev-dependencies], sorted, normalized",
@@ -198,6 +215,21 @@ check(
 	"a member not on disk leaves the group as it was",
 	(root / "pyproject.toml").read_text() == before,
 )
+check(
+	"…and says so",
+	"apps/my_app is not on disk" in ERR.getvalue() and ".bench-dev left as it was" in ERR.getvalue(),
+	ERR.getvalue(),
+)
+# A submodule registered but not checked out: its directory is there, empty.
+(root / "apps" / "my_app").mkdir()
+status, _ = run("ensure-root", "--pyproject", str(root / "pyproject.toml"))
+check(
+	"a member with no pyproject.toml (a submodule not checked out) leaves the group as it was",
+	(root / "pyproject.toml").read_text() == before
+	and "apps/my_app has no readable pyproject.toml" in ERR.getvalue(),
+	ERR.getvalue(),
+)
+(root / "apps" / "my_app").rmdir()
 
 # bench-remove-app takes the directory out first, then the member.
 status, out = run("remove-app", "--pyproject", str(root / "pyproject.toml"), "--app", "my_app")
@@ -222,6 +254,71 @@ status, out = run("add-app", "--pyproject", str(root / "pyproject.toml"), "--app
 check(
 	"add-app writes the new member's entries",
 	"freezegun~=1.5.5" in groups(root).get("bench-dev", []),
+	f"got {groups(root)!r}",
+)
+
+
+# ── two apps' entries for one package ─────────────────────────────────────
+
+root = bench(
+	{
+		"frappe": FRAPPE_DEV,
+		"one": """[tool.bench.dev-dependencies]
+z = "==1; python_version<'3.12'"
+"moto[s3]" = "~=4.1.6"
+"pytest[xdist]" = "*"
+y = { version = "1" }
+"x @ https://example.invalid/x.whl" = ""
+""",
+		"two": '[tool.bench.dev-dependencies]\nz = ">=0.5"\nmoto = "~=4.1"\n"Moto[EC2]" = ""\n',
+	}
+)
+status, _ = run("sync-apps", "--pyproject", str(root / "pyproject.toml"), "frappe", "one", "two")
+got = groups(root).get("bench-dev")
+check(
+	"one package under two markers stays two entries, each a valid requirement",
+	got is not None and "z>=0.5" in got and "z==1; python_version<'3.12'" in got,
+	f"got {got!r}",
+)
+check(
+	"one package with and without extras is one entry: the extras united, both pins kept",
+	got is not None and "moto[ec2,s3]~=4.1.6,~=4.1" in got and not any(r.startswith("moto~") for r in got),
+	f"got {got!r}",
+)
+check(
+	"a package the dev group names is left to it, extras or not (pytest[xdist])",
+	got is not None and not any(fw.requirement_name(r) == "pytest" for r in got),
+	f"got {got!r}",
+)
+check(
+	"an entry no requirement can be written from is skipped, with a warning naming it",
+	got is not None
+	and not any(fw.requirement_name(r) in ("x", "y") for r in got)
+	and "apps/one: [tool.bench.dev-dependencies] 'y'" in ERR.getvalue()
+	and "'x @ https://example.invalid/x.whl'" in ERR.getvalue(),
+	f"got {got!r}, stderr {ERR.getvalue()!r}",
+)
+
+# Two apps' pins that cannot both hold: a pin in the dev group settles it,
+# since bench-dev leaves a package dev names to that pin.
+root = bench({"frappe": FRAPPE_DEV, "old": '[tool.bench.dev-dependencies]\nfreezegun = "1.2.2"\n'})
+run("sync-apps", "--pyproject", str(root / "pyproject.toml"), "frappe", "old")
+check(
+	"two apps' conflicting pins are both kept (uv lock then says so)",
+	"freezegun~=1.5.5,==1.2.2" in groups(root).get("bench-dev", []),
+	f"got {groups(root)!r}",
+)
+text = (
+	(root / "pyproject.toml")
+	.read_text()
+	.replace('    "coverage>=7.10",', '    "coverage>=7.10",\n    "freezegun~=1.5",', 1)
+)
+(root / "pyproject.toml").write_text(text)
+run("ensure-root", "--pyproject", str(root / "pyproject.toml"))
+check(
+	"…and a pin in the dev group takes the package out of bench-dev",
+	"freezegun~=1.5" in groups(root)["dev"]
+	and not any(fw.requirement_name(r) == "freezegun" for r in groups(root).get("bench-dev", [])),
 	f"got {groups(root)!r}",
 )
 

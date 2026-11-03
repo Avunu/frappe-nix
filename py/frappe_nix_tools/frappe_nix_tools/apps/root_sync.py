@@ -209,6 +209,9 @@ def sync(config: dict[str, str | None]) -> int:
 				f"{NAME}: uv lock failed — pyproject.toml and uv.lock restored, so the",
 				"  shell keeps opening. Re-entering the shell retries. To resolve it by hand, make the",
 				"  additions listed above in pyproject.toml and run 'uv lock' here (uv is on PATH).",
+				"  [dependency-groups].bench-dev is rewritten from the apps' [tool.bench.dev-dependencies]:",
+				"  for two apps' pins there that conflict, pin the package in [dependency-groups].dev",
+				"  (bench-dev then leaves it out) or in [tool.uv] override-dependencies.",
 			)
 			return 1
 		sync_deps = config["buildDepsSync"]
