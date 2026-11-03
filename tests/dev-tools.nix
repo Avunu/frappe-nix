@@ -12,6 +12,12 @@
 # Against the committed lock it is a regression check, on every pull request
 # through check.yml. Against a lock re-made from that day's PyPI it is the
 # canary (.github/workflows/canary-dev-tools.yml).
+#
+# checks.semgrep-static: the same semgrep scan, over tests/fixtures/semgrep-static,
+# which pins semgrep 1.157.0. Up to that release the wheel's semgrep-core is
+# static, and benches whose lock predates 1.158.0 still build it; the semgrep
+# override has to leave it alone, which checks.dev-tools, always on the latest
+# release, cannot see.
 {
   pkgs,
   checks,
@@ -64,27 +70,45 @@ let
     '';
   };
 
-  envs = import ../lib/python.nix {
-    inherit pkgs lib;
-    python = pkgs.python314;
-    workspaceRoot = fixture;
-    name = "dev-tools";
-    inherit (inputs)
-      pyproject-nix
-      pyproject-build-systems
-      uv2nix
-      python-devops-nix
-      ;
-    extraOverrides = (import ../lib/overrides.nix).builtin {
-      inherit pkgs;
-      inherit (pkgs) mariadb;
-    };
-    lockAuditRelock = ''
-      tests/fixtures/dev-tools no longer matches its uv.lock:
+  # The dev virtualenv of tests/fixtures/<dir>, with the overrides a bench gets.
+  devEnv =
+    dir:
+    (import ../lib/python.nix {
+      inherit pkgs lib;
+      python = pkgs.python314;
+      workspaceRoot = ./fixtures + "/${dir}";
+      name = dir;
+      inherit (inputs)
+        pyproject-nix
+        pyproject-build-systems
+        uv2nix
+        python-devops-nix
+        ;
+      extraOverrides = (import ../lib/overrides.nix).builtin {
+        inherit pkgs;
+        inherit (pkgs) mariadb;
+      };
+      lockAuditRelock = ''
+        tests/fixtures/${dir} no longer matches its uv.lock:
 
-          uv lock --project tests/fixtures/dev-tools
-    '';
-  };
+            uv lock --project tests/fixtures/${dir}
+      '';
+    }).devPythonEnv;
+
+  # use.semgrep's input: one rule, and a file it finds once.
+  semgrepInputs = ''
+    cat > rule.yml <<'EOF'
+    rules:
+      - id: fstring-sql
+        languages: [python]
+        severity: ERROR
+        message: an f-string passed to frappe.db.sql
+        pattern: frappe.db.sql(f"...")
+    EOF
+    printf 'import frappe\n\n\ndef f(x):\n    frappe.db.sql(f"select name from tabUser where name = {x}")\n' > target.py
+  '';
+
+  staticEnv = devEnv "semgrep-static";
 in
 {
   dev-tools =
@@ -94,7 +118,7 @@ in
       "tests/dev-tools.nix runs ${toString (lib.attrNames use)}, but the template's dev group is ${toString (map reqName templateDev)}: give each tool a script";
     checks.script "dev-tools" { } ''
       set -euo pipefail
-      export PATH="${envs.devPythonEnv}/bin:$PATH"
+      export PATH="${devEnv "dev-tools"}/bin:$PATH"
 
       cat > test_sample.py <<'EOF'
       import unittest
@@ -127,16 +151,7 @@ in
       assert fetch() == {"ok": True}
       EOF
       printf 'import os\n' > unused.py
-      cat > rule.yml <<'EOF'
-      rules:
-        - id: fstring-sql
-          languages: [python]
-          severity: ERROR
-          message: an f-string passed to frappe.db.sql
-          pattern: frappe.db.sql(f"...")
-      EOF
-      printf 'import frappe\n\n\ndef f(x):\n    frappe.db.sql(f"select name from tabUser where name = {x}")\n' > target.py
-
+      ${semgrepInputs}
       failed=()
       ${lib.concatStrings (
         lib.mapAttrsToList (name: script: ''
@@ -153,4 +168,18 @@ in
         exit 1
       fi
     '';
+
+  # The pin is what this covers: a semgrep-core with an interpreter means the
+  # fixture moved past 1.157.0 and tests the dynamic case checks.dev-tools has.
+  semgrep-static = checks.script "semgrep-static" { } ''
+    set -euo pipefail
+    export PATH="${staticEnv}/bin:$PATH"
+    core=$(echo ${staticEnv}/lib/python*/site-packages/semgrep/bin/semgrep-core)
+    if ${pkgs.patchelf}/bin/patchelf --print-interpreter "$core" >/dev/null 2>&1; then
+      echo "FAIL tests/fixtures/semgrep-static's semgrep-core is dynamic: pin the fixture to a release whose semgrep-core is static" >&2
+      exit 1
+    fi
+    ${semgrepInputs}
+    bash -euo pipefail ${pkgs.writeText "semgrep-static-scan" use.semgrep}
+  '';
 }

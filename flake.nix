@@ -610,6 +610,7 @@
         }
         # The bench template's dev group, built with the overrides a bench gets
         # and each tool run; the canary workflow builds it against that day's PyPI.
+        # Also checks.semgrep-static: the last release with a static semgrep-core.
         // import ./tests/dev-tools.nix { inherit pkgs checks inputs; }
         # The stale-uv.lock preflight, over a fixture workspace.
         // import ./tests/lock-audit.nix {
