@@ -17,6 +17,8 @@ from pathlib import Path
 from unittest import mock
 
 from frappe_nix_tools.commands import gate
+from frappe_nix_tools.common import appgates
+from frappe_nix_tools.common.report import ConfigError
 from helpers import run_cli
 from scaffold_helpers import git
 
@@ -295,6 +297,108 @@ class TestGenRegistry(GateCase):
 	def test_test_only_siblings_are_left_out(self) -> None:
 		cmd = gate.gen_registry(self.app('["erpnext", "hrms"]', "[]"), Path("B"))
 		self.assertNotIn("--include-siblings", cmd)
+
+	def test_without_check_it_writes_the_same_file(self) -> None:
+		app = self.app('["erpnext", "hrms"]', '["erpnext"]')
+		self.assertEqual(
+			[*gate.gen_registry(app, Path("B"), check=False), "--check"], gate.gen_registry(app, Path("B"))
+		)
+
+
+class TestRelockDoctypes(GateCase):
+	"""``frappe-nix ci relock-doctypes``: relock-plan's doctypes step, the gate's without ``--check`` (§4.5)."""
+
+	def setUp(self) -> None:
+		super().setUp()
+		self.output = Path(self._tmp.name) / "github-output"
+		self.output.write_text("")
+		patcher = mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(self.output)})
+		patcher.start()
+		self.addCleanup(patcher.stop)
+		# minibench clones frappe from the network: here it is the logging stub too.
+		patcher = mock.patch.object(gate, "frappe_nix", side_effect=lambda *a: ["yarn", "frappe-nix", *a])
+		patcher.start()
+		self.addCleanup(patcher.stop)
+
+	def track(self) -> Path:
+		path = self.root / "types" / "doctypes.d.ts"
+		path.parent.mkdir(exist_ok=True)
+		path.write_text("// committed\n")
+		self.commit()
+		return path
+
+	def relock(self, *args: str) -> tuple[int, str]:
+		code, out, err = run_cli("ci", "relock-doctypes", *args, cwd=self.root)
+		return code, out + err
+
+	def test_untracked_is_a_no_op(self) -> None:
+		code, out = self.relock()
+		self.assertEqual(code, 0, out)
+		self.assertIn("types/doctypes.d.ts is not tracked", out)
+		self.assertEqual(self.output.read_text(), "doctypes=false\n")
+		self.assertEqual(self.calls(), [])
+
+	def test_untracked_loads_no_profile(self) -> None:
+		with mock.patch.object(appgates, "load", side_effect=ConfigError("profile unreachable")) as load:
+			code, out = self.relock("--probe")
+		self.assertEqual(code, 0, out)
+		self.assertEqual(self.output.read_text(), "doctypes=false\n")
+		load.assert_not_called()
+
+	def test_typescript_off_is_a_no_op(self) -> None:
+		self.track()
+		self.set_module("typescript", False)
+		code, out = self.relock("--probe")
+		self.assertEqual(code, 0, out)
+		self.assertIn("typescript is off", out)
+		self.assertEqual(self.output.read_text(), "doctypes=false\n")
+
+	def test_probe_runs_nothing(self) -> None:
+		self.track()
+		code, out = self.relock("--probe")
+		self.assertEqual((code, out.strip()), (0, "doctypes=true"))
+		self.assertEqual(self.output.read_text(), "doctypes=true\n")
+		self.assertEqual(self.calls(), [])
+
+	def test_regenerates_with_the_gates_command(self) -> None:
+		self.track()
+		code, out = self.relock()
+		self.assertEqual(code, 0, out)
+		_code, report, out = self.gate("typecheck")
+		self.assertEqual(self.steps(report)["doctypes"]["status"], "ok", out)
+		bench = self.root.resolve() / ".dev-dist" / "minibench"
+		minibench = f"yarn frappe-nix minibench --mode doctypes --dest {bench}"
+		gen = [c for c in self.calls() if " gen-registry " in c]
+		self.assertEqual(self.calls().count(minibench), 2, self.calls())
+		self.assertEqual(len(gen), 2, self.calls())
+		self.assertNotIn("--check", gen[0])
+		self.assertEqual(f"{gen[0]} --check", gen[1])
+
+	def test_a_failure_keeps_the_committed_file(self) -> None:
+		path = self.track()
+		partial = ["sh", "-c", "echo partial > types/doctypes.d.ts; exit 1"]
+		with mock.patch.object(gate, "gen_registry", return_value=partial):
+			code, out = self.relock()
+		self.assertEqual(code, 1, out)
+		self.assertIn("not regenerated", out)
+		self.assertEqual(path.read_text(), "// committed\n")
+
+	def test_a_config_error_leaves_the_file_alone(self) -> None:
+		path = self.track()
+		with mock.patch.object(gate, "gen_registry", side_effect=ConfigError("bad hooks.py")):
+			code, out = self.relock()
+		self.assertEqual(code, 2, out)
+		self.assertIn("bad hooks.py", out)
+		self.assertEqual(path.read_text(), "// committed\n")
+		self.assertEqual(self.output.read_text(), "")
+
+	def test_a_minibench_failure_runs_no_gen_registry(self) -> None:
+		self.track()
+		with mock.patch.dict(os.environ, {"STUB_FAIL": "minibench"}):
+			code, out = self.relock()
+		self.assertEqual(code, 1, out)
+		self.assertIn("minibench exit 1", out)
+		self.assertFalse(any("gen-registry" in c for c in self.calls()))
 
 
 class TestMarketplace(GateCase):
