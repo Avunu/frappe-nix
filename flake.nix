@@ -274,6 +274,16 @@
             ${pkgs.python3}/bin/python ${./tests/test_offline_migrate.py} ${./lib/offline-migrate.py} | tee "$out"
           '';
 
+          # The bench root's bench-dev group (what `bench setup requirements
+          # --dev` installs) over fixture benches: what each specifier becomes,
+          # what add-app, remove-app and sync-apps write, and the root an app
+          # that has not opted in keeps (S35). lib/frappe-workspace.py, with the
+          # interpreter lib/workspace-tool.nix runs it under.
+          frappe-workspace = checks.script "frappe-workspace" { } ''
+            ${pkgs.python3.withPackages (ps: [ ps.tomlkit ])}/bin/python ${./tests/test_frappe_workspace.py} \
+              ${./lib/frappe-workspace.py} ${./templates/bench/pyproject.toml} | tee "$out"
+          '';
+
           # Frappe- and node-independent: a stub frappe.build stands in, and the
           # assertions are about the NODE_OPTIONS frappe's build hands node.
           nodebuild = checks.script "nodebuild" { } ''
@@ -611,9 +621,10 @@
         # The bench template's dev group, built with the overrides a bench gets
         # and each tool run; the canary workflow builds it against that day's PyPI.
         // import ./tests/dev-tools.nix { inherit pkgs checks inputs; }
-        # The stale-uv.lock preflight, over a fixture workspace.
+        # The stale-uv.lock preflight, over a fixture workspace, and which env
+        # it holds to the bench-dev group.
         // import ./tests/lock-audit.nix {
-          inherit pkgs checks;
+          inherit pkgs checks inputs;
           inherit (inputs) python-devops-nix;
         }
         # [tool.uv.extra-build-dependencies] from uv.lock: frappe-nix's always,

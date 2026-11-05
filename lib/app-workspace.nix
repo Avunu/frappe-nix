@@ -75,9 +75,12 @@
   # the app, byte for byte (spec S35): its dev env does not change and its
   # committed lock stays current. Not "where the lock has a package of that
   # name": every version-16 lock does, through frappe's `test` extra, and
-  # keeping them on that ground would make main's lock stale. With the lock
-  # seeded into `nix run .#relock`'s workspace too, a relock keeps whatever
-  # this decided.
+  # keeping them on that ground would make main's lock stale. The bench-dev
+  # group (every app's [tool.bench.dev-dependencies], lib/frappe-workspace.py)
+  # is held to the same rule as a whole: it keeps only what that lock's root
+  # lists in it, so with main's lock, or none, the root has no such group. With
+  # the lock seeded into `nix run .#relock`'s workspace too, a relock keeps
+  # whatever this decided.
   testToolsLock ? null,
   # lib/build-deps.nix's `command` (frappe-nix-build-deps), or null. With a
   # lock, the generated root's managed [tool.uv.extra-build-dependencies] block
@@ -147,6 +150,13 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
       --replace-fail '@PYVER@'           ${lib.escapeShellArg pyver}
 
     cd "$out"
+    # The same call reconcile_workspace makes (frappe_init/apps.py): sync-apps keys
+    # [tool.uv.sources] on each app's own distribution name, and writes the
+    # bench-dev group from the apps' [tool.bench.dev-dependencies]. No sites/
+    # here — the registry (sites/apps.txt, sites/apps.json) is generated from
+    # these members by lib/bench.nix, and by modules/devenv.nix for the dev
+    # bench. Before ensure-root, whose rules below apply to that group too.
+    frappe-nix-workspace sync-apps --pyproject pyproject.toml ${lib.escapeShellArgs memberNames}
     ${lib.optionalString (appTools != null && builtins.pathExists appTools) ''
       frappe-nix-workspace ensure-root --pyproject pyproject.toml --app-tools ${lib.escapeShellArg "${appTools}"}
     ''}
@@ -160,12 +170,6 @@ pkgs.runCommandLocal "frappe-app-workspace-${projectName}"
           frappe-nix-workspace ensure-root --pyproject pyproject.toml --test-tools-unlocked
         ''
     )}
-    # The same call reconcile_workspace makes (frappe_init/apps.py): sync-apps keys
-    # [tool.uv.sources] on each app's own distribution name. No sites/ here —
-    # the registry (sites/apps.txt, sites/apps.json) is generated from these
-    # members by lib/bench.nix, and by modules/devenv.nix for the dev bench.
-    frappe-nix-workspace sync-apps --pyproject pyproject.toml ${lib.escapeShellArgs memberNames}
-
     ${lib.optionalString (lockFile != null) ''
       install -m 0644 ${lockFile} "$out/uv.lock"
     ''}

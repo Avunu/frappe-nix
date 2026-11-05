@@ -1,0 +1,18 @@
+# Fixture for tests/lock-audit.nix: a root whose bench-dev group names a package
+# its uv.lock lacks, as after an app bump adds one to its
+# [tool.bench.dev-dependencies] and before the relock. The dev env, which
+# installs the group, stops with the audit's sentence; the production env,
+# which does not, evaluates. The lock is uv's for this file without the
+# group; do not re-lock.
+[project]
+name = "lock-audit-bench-dev-stale"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = []
+bench-dev = ["freezegun~=1.5.5"]
+
+[tool.uv]
+package = false
