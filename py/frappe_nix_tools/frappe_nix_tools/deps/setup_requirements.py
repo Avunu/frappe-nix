@@ -48,8 +48,9 @@ def parse(argv: Sequence[str]) -> tuple[bool, bool, bool]:
 		elif arg == "--check":
 			check = True
 		elif arg == "--dev":
-			# Upstream's flag for the dev-only requirements; the workspace's are
-			# already part of the environment.
+			# Upstream's flag for each app's [tool.bench.dev-dependencies]: here
+			# the root's bench-dev group (lib/frappe-workspace.py), already part
+			# of the dev environment.
 			pass
 		elif arg in ("-h", "--help"):
 			print(HELP)

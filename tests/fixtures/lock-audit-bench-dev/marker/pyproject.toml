@@ -1,0 +1,17 @@
+# Fixture for tests/lock-audit.nix: a bench-dev entry behind an environment
+# marker that does not hold for the interpreter (an app's
+# [tool.bench.dev-dependencies] can carry one). The lock resolves nothing for
+# it, and the dev env evaluates without it. The lock is uv's for this file
+# without the group; do not re-lock.
+[project]
+name = "lock-audit-bench-dev-marker"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = []
+bench-dev = ["never-here==1; python_version < '3.0'"]
+
+[tool.uv]
+package = false

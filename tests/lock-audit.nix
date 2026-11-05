@@ -6,10 +6,16 @@
 #
 # The audit is pure evaluation, so the answers are computed here at eval time and
 # the derivation only has to compare them against what was expected.
+#
+# Also which env lib/python.nix holds to the bench-dev group (each app's
+# [tool.bench.dev-dependencies]): the dev env, which installs it, and not the
+# production env, which does not; and a marker there that does not hold is no
+# package to install.
 {
   pkgs,
   checks,
   python-devops-nix,
+  inputs,
 }:
 
 let
@@ -68,6 +74,19 @@ let
   };
 
   found = map (d: "${d.where}\t${d.name}") result.missing;
+
+  envsOf =
+    dir:
+    import ../lib/python.nix {
+      inherit pkgs lib python-devops-nix;
+      python = pkgs.python314;
+      workspaceRoot = dir;
+      name = "lock-audit-bench-dev";
+      inherit (inputs) pyproject-nix pyproject-build-systems uv2nix;
+    };
+  stale = envsOf ./fixtures/lock-audit-bench-dev/stale;
+  marker = envsOf ./fixtures/lock-audit-bench-dev/marker;
+  evaluates = env: (builtins.tryEval env.drvPath).success;
 
   # Every gap, and only the gaps: the marker-gated and direct-URL requirements
   # stay out (they can legitimately sit outside a resolution), extras stay out
@@ -132,6 +151,13 @@ in
           )
         }
     ''}
+
+    eq "a bench-dev name the lock lacks stops the dev env" \
+      false ${lib.boolToString (evaluates stale.devPythonEnv)}
+    eq "…but not the production env, which does not install the group" \
+      true ${lib.boolToString (evaluates stale.prodPythonEnv)}
+    eq "a bench-dev entry whose marker does not hold is left out of the dev env" \
+      true ${lib.boolToString (evaluates marker.devPythonEnv)}
 
     echo ""
     if [ "$fails" -eq 0 ]; then

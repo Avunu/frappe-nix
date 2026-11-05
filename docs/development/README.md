@@ -4,7 +4,7 @@ description: What devenv up runs, how several benches share one machine over uni
 nav_title: Development
 order: 4
 tags: [devenv, development, ports, sockets]
-updated: 2026-10-29
+updated: 2026-11-03
 ---
 
 `devenv up` runs the full stack through process-compose. **Several benches can run at once**: everything that can be is on a unix socket under `$DEVENV_RUNTIME`, which devenv gives each project uniquely, and the ports that remain are per bench.
@@ -94,6 +94,8 @@ bench setup requirements --check    # report only; exit 1 if anything is wrong
 bench setup requirements --node     # only the Node half
 bench setup requirements --python   # only the Python half
 ```
+
+`--dev` is accepted and adds nothing. What upstream installs with it, each app's `[tool.bench.dev-dependencies]`, is the bench root's `bench-dev` dependency group here, so it is already in the dev environment (see [Apps' dev dependencies](locks.md#apps-dev-dependencies)).
 
 It always does the full scan, and lists lockfiles that differ from their commit: yours, or left over from before the install learned to put them back. Then it checks the Python side: every requirement an app declares is in `uv.lock`, and every app in `sites/apps.txt` imports. The environment is built by Nix from the lock, so Python findings are reported with their fix (`uv lock`, then re-enter the shell), not repaired. The rest of `bench setup` (nginx, supervisor, production) still goes to upstream.
 

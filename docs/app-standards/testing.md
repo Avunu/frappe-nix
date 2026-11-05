@@ -3,7 +3,7 @@ title: Testing
 description: "frappe-test: the app's tests with coverage, the whitelist and hook test map, the composition check and CI mode."
 order: 3
 tags: [app-standards, testing, coverage, frappe-test]
-updated: 2026-10-28
+updated: 2026-11-03
 ---
 
 `frappe-test` runs an app's tests the way CI's `ci / test` job does, from the app's dev shell. It brings the bench up, prepares a site, runs the tests with coverage measured on the app alone, and then checks what the coverage cannot: that every whitelisted function and hook target ran, and that the app's controller extensions compose with other apps'. The same command, with `--ci`, is the whole test job.
@@ -18,6 +18,8 @@ frappe-test --down          # stop a bench --keep-up left running
 ```
 
 It is a dev-shell command for every app in app mode, whether or not it has opted in to the app standards. The reports land in `.dev-dist/test/` (`--out` moves them).
+
+The tests run in the dev environment. For an app that has opted in, that environment includes every app's `[tool.bench.dev-dependencies]`: frappe's `freezegun`, `Faker`, `hypothesis` and the rest, which a conventional bench installs with `bench setup requirements --dev`. A test that imports a frappe or ERPNext test module then finds what that module imports. See [Apps' dev dependencies](../development/locks.md#apps-dev-dependencies).
 
 > [!WARNING]
 > The site is the dev shell's own (`$FRAPPE_SITE`) unless you pass `--site`. Recreating it runs `bench new-site --force`, which **drops the site's database** and sets Administrator's password to `$FRAPPE_NIX_TEST_ADMIN_PASSWORD` (`admin` by default). So when the site exists, `frappe-test` without `--ci` does nothing until you choose: `--reuse-site` tests on it as it is, `--recreate-site` drops and recreates it, and on a terminal it asks. `--ci` recreates it, as CI's fresh runner needs.
