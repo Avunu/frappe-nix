@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.0](https://github.com/Avunu/frappe-nix/compare/v2.2.1...v2.3.0) (2026-11-05)
+
+
+### Features
+
+* **relock:** regenerate types/doctypes.d.ts in relock-plan after a nix bump ([#246](https://github.com/Avunu/frappe-nix/issues/246)) ([b4213b9](https://github.com/Avunu/frappe-nix/commit/b4213b9e3520cc9309603b7ff891d0bab4c12ca5))
+
+
+### Bug Fixes
+
+* **deps:** bump astral-sh/setup-uv ([#248](https://github.com/Avunu/frappe-nix/issues/248)) ([88857a8](https://github.com/Avunu/frappe-nix/commit/88857a8a55d8dc18c70cf19d2048cd4250d43527))
+* **deps:** bump the pre-commit-hooks group with 2 updates ([#250](https://github.com/Avunu/frappe-nix/issues/250)) ([72fc7d8](https://github.com/Avunu/frappe-nix/commit/72fc7d804c598be89980c9a961fc7f2313e93a59))
+* **overrides:** leave a static semgrep-core unpatched, so semgrep before 1.158.0 builds again ([#245](https://github.com/Avunu/frappe-nix/issues/245)) ([cb40958](https://github.com/Avunu/frappe-nix/commit/cb40958ca3f8a82d61a503609f937a0c8d23840e))
+* **python:** lock and install every app's [tool.bench.dev-dependencies] in the dev env ([#247](https://github.com/Avunu/frappe-nix/issues/247)) ([f7f00cc](https://github.com/Avunu/frappe-nix/commit/f7f00cce15d0cf64a6f41494911efb8359f5343d))
+
 ## [2.2.1](https://github.com/Avunu/frappe-nix/compare/v2.2.0...v2.2.1) (2026-11-03)
 
 
