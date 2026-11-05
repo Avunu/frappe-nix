@@ -51,6 +51,16 @@ rec {
   # interpreter and a RUNPATH of just `$ORIGIN/libs`. That is no longer than the
   # wheel's own (which also carries a leaked build path), so it is written in
   # place and the file grows once.
+  #
+  # That holds for the dynamic semgrep-core of 1.158.0 on. Up to 1.157.0 the
+  # wheel's semgrep-core is static, with no interpreter and no bin/libs/: there
+  # is nothing to patch, and `--set-interpreter` fails on it (`cannot find
+  # section '.interp'`), so only a binary that has an interpreter is patched.
+  # checks.semgrep-static builds the last static release.
+  #
+  # The `-version` run fails the build if semgrep-core cannot start. Some
+  # releases load a trust store at start-up even for that, and the sandbox's
+  # SSL_CERT_FILE is /no-cert-file.crt, so the run gets cacert's bundle.
   semgrep =
     { pkgs }:
     _final: prev:
@@ -59,9 +69,11 @@ rec {
         dontAutoPatchelf = true;
         postFixup = (old.postFixup or "") + ''
           core=$(echo "$out"/lib/python*/site-packages/semgrep/bin/semgrep-core)
-          patchelf --set-interpreter "$(< "$NIX_CC/nix-support/dynamic-linker")" \
-            --set-rpath '$ORIGIN/libs' "$core"
-          "$core" -version
+          if patchelf --print-interpreter "$core" >/dev/null 2>&1; then
+            patchelf --set-interpreter "$(< "$NIX_CC/nix-support/dynamic-linker")" \
+              --set-rpath '$ORIGIN/libs' "$core"
+          fi
+          SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt "$core" -version
         '';
       });
     };
