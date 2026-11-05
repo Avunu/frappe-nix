@@ -14,6 +14,7 @@ step                   prints                                                   
 ``automerge``          what it did                                                   ``result``
 ``enable-automerge``   what it did                                                   ``result``
 ``relock-inputs``      ``ok`` | ``rollout-input-moved``                              ``state``, ``moved``
+``relock-doctypes``    ``doctypes=true|false`` (``--probe``), or what it did         ``doctypes``
 ``relock-patch``       ``empty=true|false``                                          ``empty``
 ``refuse-workflows``   the workflow paths (exit 1) or nothing                        —
 ``dispatch-ci``        each dispatch                                                 ``dispatched``
@@ -23,8 +24,14 @@ step                   prints                                                   
 ``drift``              one line per issue                                            —
 =====================  ============================================================  ==========================
 
-Exit codes: 0, or 1 when a refusal or the fast-forward guard fails; 2 for a bad argument;
-3 when GitHub or git cannot be reached.
+``relock-doctypes`` is the typecheck gate's doctypes step without ``--check`` (``gate.doctypes``,
+one command for both): it rewrites ``types/doctypes.d.ts``, which a nix bump leaves stale, so
+relock-plan's patch carries it. It does nothing for an app that does not track the file (which
+it checks before it loads the profile), or whose ``typescript`` module is off. When it fails it
+restores the file from ``HEAD`` and exits 1; relock-plan then pushes the lock without it (§4.5).
+
+Exit codes: 0, or 1 when a refusal, the fast-forward guard or ``relock-doctypes`` fails; 2 for
+a bad argument; 3 when GitHub or git cannot be reached.
 """
 
 import argparse
@@ -33,7 +40,8 @@ import os
 from pathlib import Path
 
 from frappe_nix_tools.ci import automerge, branches, drift, error, output, release, relock, verdict
-from frappe_nix_tools.common import appgates
+from frappe_nix_tools.commands import gate
+from frappe_nix_tools.common import appgates, repo
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError
 
 
@@ -119,6 +127,35 @@ def run_relock_inputs(args: argparse.Namespace) -> int:
 	if moved:
 		print(f"moved: {', '.join(moved)} (these move through frappe-nix repo rollout)")
 	output(state=state, moved=",".join(moved))
+	return CLEAN
+
+
+def _no_doctypes(why: str) -> int:
+	print(f"doctypes=false ({why})")
+	output(doctypes="false")
+	return CLEAN
+
+
+def run_relock_doctypes(args: argparse.Namespace) -> int:
+	root = repo.find_up("pyproject.toml").parent
+	tracked = repo.ls_files(root)
+	# Before the profile is loaded: an app without the file has nothing here that can fail.
+	if gate.DOCTYPES not in tracked:
+		return _no_doctypes(f"{gate.DOCTYPES} is not tracked")
+	app = appgates.load(root)
+	if why := gate.doctypes_off(app, tracked):
+		return _no_doctypes(why)
+	if args.probe:
+		print("doctypes=true")
+		output(doctypes="true")
+		return CLEAN
+	status, reason = gate.doctypes(gate.Gate(app, "text", None, ""), check=False)
+	if status != "ok":
+		# gen-registry may have written part of the file: the patch keeps the committed one.
+		repo.git(root, "checkout", "HEAD", "--", gate.DOCTYPES)
+		print(f"{gate.DOCTYPES} not regenerated: {reason}")
+		return DRIFT
+	print(f"{gate.DOCTYPES} regenerated")
 	return CLEAN
 
 
@@ -265,6 +302,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 	q = sub.add_parser("relock-inputs", help="whether a nix PR moves frappe-nix or standards-profile")
 	q.add_argument("--base", required=True, help="the PR's base SHA (the merge-base with HEAD is used)")
 	q.set_defaults(func=run_relock_inputs)
+
+	q = sub.add_parser(
+		"relock-doctypes", help="regenerate types/doctypes.d.ts as the typecheck gate checks it (§4.5)"
+	)
+	q.add_argument("--probe", action="store_true", help="only say whether the app has the file to regenerate")
+	q.set_defaults(func=run_relock_doctypes)
 
 	q = sub.add_parser("relock-patch", help="stage everything and write the patch, refusing workflows")
 	q.add_argument("--out", required=True)

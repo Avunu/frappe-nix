@@ -13,7 +13,10 @@
 #                           triggered by workflow_call only; and frappe-nix's own release
 #                           wiring (§4.10, §7 N6): pr-policy.yml has one job, `pr-policy`, and
 #                           re-runs on a retitle that check.yml ignores; check.yml's VM tests
-#                           run on a dispatch only with `vm-tests: true`
+#                           run on a dispatch only with `vm-tests: true`; app-deps.yml's
+#                           relock-plan keeps `contents: read`, only restores the node_modules
+#                           cache, and runs its continue-on-error doctypes steps before
+#                           relock-patch (§7 N4 "relock-doctypes")
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -98,6 +101,22 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         doc, _ = load("release.yml")
         steps = " ".join(s.get("run", "") for s in doc["jobs"]["dispatch-ci"]["steps"])
         assert "--context lint=check.yml --context pr-policy=pr-policy.yml" in steps, steps
+
+        doc, _ = load("app-deps.yml")
+        plan = doc["jobs"]["relock-plan"]
+        assert plan["permissions"] == {"contents": "read"}, plan["permissions"]
+        uses = [s.get("uses", "") for job in doc["jobs"].values() for s in job.get("steps", [])]
+        assert not any(u.startswith("actions/cache@") or u.startswith("actions/cache/save@") for u in uses), uses
+        steps = plan["steps"]
+        runs = [s.get("run", "") for s in steps]
+        patch = next(i for i, r in enumerate(runs) if "frappe-nix ci relock-patch" in r)
+        probe = next(i for i, r in enumerate(runs) if "frappe-nix ci relock-doctypes --probe" in r)
+        notice = next(i for i, s in enumerate(steps) if "not regenerated" in s.get("run", ""))
+        assert probe < notice < patch, (probe, notice, patch)
+        for s in steps[probe:notice]:
+            assert s.get("continue-on-error") is True, s
+        assert any(s.get("uses", "").startswith("actions/cache/restore@") for s in steps[probe:notice]), steps
+        assert any("frappe-nix ci relock-doctypes\n" in s.get("run", "") for s in steps[probe:notice]), steps
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout
