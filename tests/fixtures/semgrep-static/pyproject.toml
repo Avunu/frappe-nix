@@ -1,0 +1,24 @@
+# semgrep 1.157.0, the last release whose Linux wheel ships a static
+# semgrep-core, which lib/overrides.nix's semgrep override must leave alone (it
+# patches only a dynamic one). checks.semgrep-static (tests/dev-tools.nix)
+# builds it with the overrides a bench gets and runs a scan. The pin is the
+# point, so no Dependabot entry moves it; re-lock only after changing it:
+#
+#   uv lock --project tests/fixtures/semgrep-static
+[project]
+name = "semgrep-static"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["semgrep==1.157.0"]
+
+[tool.uv]
+package = false
+
+# What `frappe-nix-build-deps` writes into a bench that locks this semgrep:
+# ruamel.yaml.clib 0.2.14 ships only an sdist that builds with setuptools but
+# does not declare it.
+[tool.uv.extra-build-dependencies]
+"ruamel-yaml-clib" = ["setuptools"]
