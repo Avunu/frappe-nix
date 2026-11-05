@@ -1,12 +1,12 @@
 name: app-deps
 
 # Dependency PRs (docs/app-standards/ci.md, spec §4.5), reusable. A Dependabot nix PR is
-# relocked and synced (relock-plan runs the PR's code with no write token; relock-push only
-# applies its patch); every Dependabot PR gets the decision table's verdict (auto-merge or
-# needs-review), or auto-merge under the `all` policy; the sweep re-dispatches CI for bot PRs;
-# update-branches brings bot PRs that are behind the integration branch up to date;
-# relock-upgrade refreshes nix/uv.lock weekly. Auto-merge is enabled only where required
-# checks protect the integration branch.
+# relocked and synced, and its types/doctypes.d.ts regenerated (relock-plan runs the PR's code
+# with no write token; relock-push only applies its patch); every Dependabot PR gets the
+# decision table's verdict (auto-merge or needs-review), or auto-merge under the `all` policy;
+# the sweep re-dispatches CI for bot PRs; update-branches brings bot PRs that are behind the
+# integration branch up to date; relock-upgrade refreshes nix/uv.lock weekly. Auto-merge is
+# enabled only where required checks protect the integration branch.
 # With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) the pushes, PRs, labels and
 # auto-merges use the App's token, so they start CI and the release flow by themselves; without
 # one, GITHUB_TOKEN, and CI is dispatched.
@@ -107,7 +107,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -218,6 +218,65 @@ jobs:
             nix run --no-pure-eval "${override[@]}" .#relock
           fi
 
+      # types/doctypes.d.ts follows the DocType JSON of frappe and the siblings, which a nix bump
+      # moves: regenerated here with the typecheck gate's own gen-registry command, so the
+      # PR's ci / typecheck is not red on a registry the bump made stale. Only for an app that
+      # tracks the file; node is set up as the typecheck job does it. Every step of it may fail
+      # (continue-on-error): the lock is right without the file, so a failure keeps the
+      # committed one and is a notice, and ci / typecheck on the pushed head still names it.
+      - if: steps.inputs.outputs.state == 'ok'
+        id: doctypes
+        name: Does the app commit types/doctypes.d.ts?
+        continue-on-error: true
+        run: frappe-nix ci relock-doctypes --probe
+
+      - if: steps.doctypes.outputs.doctypes == 'true'
+        id: node
+        continue-on-error: true
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: package.json
+
+      - if: steps.doctypes.outputs.doctypes == 'true'
+        name: Hash yarn.lock for the node_modules cache key
+        id: yarn-lock
+        continue-on-error: true
+        # Not hashFiles(): the runner evaluates it with its own externals/node20,
+        # which nixpkgs' github-runner does not ship (it has node24 only).
+        run: echo "sha256=$(sha256sum yarn.lock | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      # The typecheck job's node_modules, restored only: this job runs the PR's code.
+      - if: steps.yarn-lock.outcome == 'success'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ./node_modules
+          key: node-modules-${{ runner.os }}-${{ steps.yarn-lock.outputs.sha256 }}
+
+      # GitHub-hosted images ship yarn classic; a self-hosted runner may not.
+      - if: steps.doctypes.outputs.doctypes == 'true' && runner.environment != 'github-hosted'
+        name: yarn classic, when the runner has none
+        id: yarn
+        continue-on-error: true
+        run: command -v yarn > /dev/null || npm install --global yarn@1.22.22 # zizmor: ignore[adhoc-packages]
+
+      - if: >-
+          steps.doctypes.outputs.doctypes == 'true' && steps.node.outcome == 'success'
+          && steps.yarn-lock.outcome == 'success' && steps.yarn.outcome != 'failure'
+        name: Regenerate types/doctypes.d.ts
+        id: regenerate
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          yarn install --frozen-lockfile --non-interactive
+          frappe-nix ci relock-doctypes
+
+      - if: >-
+          steps.doctypes.outcome == 'failure'
+          || (steps.doctypes.outputs.doctypes == 'true' && steps.regenerate.outcome != 'success')
+        name: Say that types/doctypes.d.ts was not regenerated
+        run: echo "::notice::types/doctypes.d.ts was not regenerated (a step above failed); the relock is pushed without it, and ci / typecheck reports it"
+
       - if: steps.inputs.outputs.state == 'ok'
         id: patch
         run: frappe-nix ci relock-patch --out "$RUNNER_TEMP/relock.patch"
@@ -311,7 +370,7 @@ jobs:
           fi
 
       - if: inputs.auto-merge
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -389,7 +448,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -494,7 +553,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -556,7 +615,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
@@ -652,7 +711,7 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir

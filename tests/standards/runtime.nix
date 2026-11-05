@@ -28,10 +28,16 @@
 #                            unittest-xml-reporting only where its committed
 #                            lock's own root lists them (no lock: neither), so
 #                            a lock main produced, version-15 or version-16,
-#                            gets main's root.
+#                            gets main's root. The bench-dev group (every
+#                            app's [tool.bench.dev-dependencies]) follows the
+#                            same rule as a whole: an opted-in root keeps it,
+#                            one that has not opted in keeps only what its
+#                            lock's root lists there (main's lock: nothing).
 #   standards-relock-main-lock a version-16 app that has not opted in, with the
 #                            nix/uv.lock frappe-nix main's relock wrote for it:
-#                            its generated root is main's, `uv lock --check`
+#                            its generated root is main's (its
+#                            [tool.bench.dev-dependencies] add no bench-dev
+#                            group), `uv lock --check`
 #                            passes, and a relock leaves the lock byte for
 #                            byte (S35). The template's root, with both test
 #                            tools, fails the same check.
@@ -464,8 +470,12 @@ let
     {
       appTools ? null,
       testToolsLock ? null,
+      app ? null,
     }:
-    appWorkspaceWith { inherit appTools testToolsLock; } + "/pyproject.toml";
+    appWorkspaceWith (
+      { inherit appTools testToolsLock; } // lib.optionalAttrs (app != null) { inherit app; }
+    )
+    + "/pyproject.toml";
   appWorkspaceWith =
     {
       appTools ? null,
@@ -653,6 +663,33 @@ in
           appRootWith { testToolsLock = noLock; }
         } || fail "the no-lock root differs from the version-15 one"
         echo "ok   no lock, a version-15 lock and main's version-16 lock: the same root, main's"
+        # The bench-dev group (each app's [tool.bench.dev-dependencies]), for
+        # lock-check-app, which lists coverage and watchdog: kept by an opted-in
+        # root, less what the dev group already pins (coverage); gone from one
+        # that has not opted in, with no lock or with main's.
+        bench_dev() { python3 -c 'import sys, tomllib; print(" ".join(tomllib.load(open(sys.argv[1], "rb"))["dependency-groups"].get("bench-dev", [])))' "$1"; }
+        got="$(bench_dev ${
+          appRootWith {
+            app = lockCheckApp;
+            appTools = toolsAll;
+          }
+        })"
+        [ "$got" = "watchdog~=6.0.0" ] || fail "an opted-in root's bench-dev group is [$got]"
+        for root in ${
+          appRootWith {
+            app = lockCheckApp;
+            testToolsLock = noLock;
+          }
+        } ${
+          appRootWith {
+            app = lockCheckApp;
+            testToolsLock = mainV16Lock;
+          }
+        }; do
+          ! grep -q '^bench-dev' "$root" || fail "a root that has not opted in has a bench-dev group: $root"
+        done
+        echo "ok   bench-dev: an opted-in root keeps it, one that has not opted in has none"
+
         expect "an opted-in root whose tools/pyproject.toml lists ruff, semgrep and prek" ${appRoot toolsAll} \
           coverage unittest-xml-reporting pydantic -- ruff pre-commit semgrep
         expect "an opted-in root whose tools/pyproject.toml lists only ruff" ${appRoot toolsRuff} \
@@ -717,11 +754,16 @@ in
           UV_PYTHON=${lib.getExe pkgs.python314} UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
         unset SSL_CERT_FILE NIX_SSL_CERT_FILE
 
-        # main's root: the template's, byte for byte, without the two test tools.
+        # main's root: the template's, byte for byte, without the two test tools
+        # and without the bench-dev group the app's [tool.bench.dev-dependencies]
+        # gives the template's root.
+        grep -qx '    "watchdog~=6.0.0",' ${templateLockWorkspace}/pyproject.toml \
+          || fail "the template's root has no bench-dev group: this check cannot see one leak"
         diff ${mainLockWorkspace}/pyproject.toml \
-          <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' ${templateLockWorkspace}/pyproject.toml) \
+          <(sed -e '/"coverage>=/d' -e '/"unittest-xml-reporting>=/d' -e '/^bench-dev = \[/,/^\]/d' \
+            ${templateLockWorkspace}/pyproject.toml) \
           || fail "the root of an app that has not opted in, with main's version-16 lock, is not main's"
-        echo "ok   the generated root is main's, byte for byte"
+        echo "ok   the generated root is main's, byte for byte (no bench-dev group)"
 
         # `nix run .#relock`'s steps (modules/devenv.nix), offline: a writable
         # copy of the workspace, the committed lock seeded, `uv lock`.

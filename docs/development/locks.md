@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-10-29
+updated: 2026-11-03
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -36,7 +36,7 @@ at …/uv2nix/build/lib/resolvers.nix:123:23
 Three things keep that from being a puzzle:
 
 - **`bench-update --pull` re-locks.** It runs `uv lock` when any app's `pyproject.toml` moved, and regenerates the fallback lock of any app without a `yarn.lock` whose `package.json` moved.
-- **The error says so.** Before uv2nix resolves anything, frappe-nix audits every declared requirement against the set the resolver will index ([`lib/python.nix`](../../lib/python.nix), on python-devops-nix's `lib.python.lockAudit`) and names the app, the requirement and the fix. Marker-gated and direct-URL requirements are left alone, because they can sit outside a resolution legitimately and a false alarm would be worse than the raw error it replaces.
+- **The error says so.** Before uv2nix resolves anything, frappe-nix audits every declared requirement against the set the resolver will index ([`lib/python.nix`](../../lib/python.nix), on python-devops-nix's `lib.python.lockAudit`) and names the app, the requirement and the fix. Marker-gated and direct-URL requirements are left alone, because they can sit outside a resolution legitimately and a false alarm would be worse than the raw error it replaces. The production environment is audited without the root's `bench-dev` group, which it does not install (see [Apps' dev dependencies](#apps-dev-dependencies)).
 - **`nix run .#relock` works when nothing else does.** This class of failure blocks evaluation, so the dev shell that carries `uv` is exactly what you cannot open. The `relock` app is deliberately outside every other output's dependency graph and takes its `uv` from nixpkgs, so it still runs.
 
 ### relock
@@ -62,6 +62,28 @@ In app mode the cause is `nix flake update` and not a submodule bump, and the fi
 When a published package declares requirements that cannot be met alongside Frappe, the bench template carries a `[[tool.uv.dependency-metadata]]` entry that corrects them, and the reconcile adds it to existing benches by package name. If a bench has its own entry for the same package, that entry wins. App mode renders its root from the same template.
 
 There is one entry today, for `pypika-stubs`. It is reached through frappe's `dev` extra, which uv locks for every workspace member. Its only release caps `pypika<0.49`, and Frappe 16.53 moved its PyPika fork to 0.51.1. The entry drops the cap and keeps the package, which holds only type hints. Without it, `uv lock` fails with "frappe[dev] depends on pypika>=0.48.9,<0.49.0".
+
+### Apps' dev dependencies
+
+An app lists what its tests need beyond its runtime requirements under `[tool.bench.dev-dependencies]`, a table of `name = "specifier"`. Frappe lists `freezegun`, `Faker`, `hypothesis`, `responses` and a few more, and ERPNext's tests import `freezegun`, so an app whose tests import theirs needs them too. A conventional bench installs them with `bench setup requirements --dev`. Here a package has to be in `uv.lock` to be in the environment, so the bench root declares them as a dependency group of its own, `bench-dev`, and uv resolves them with everything else:
+
+```toml
+[dependency-groups]
+dev = [ … ]          # yours, and frappe-nix's dev tools
+bench-dev = [        # derived from the apps; do not edit
+    "faker~=18.10.1",
+    "freezegun~=1.5.5",
+    "hypothesis~=6.77.0",
+]
+```
+
+Each specifier is read the way bench reads it: a bare version is an exact pin (`"1.5.5"` is `==1.5.5`), anything else is used as written, an environment marker after a `;` included. A name may carry extras (`"moto[s3]"`). When two apps name the same package, the entry carries both specifiers and the extras of both. Under different markers they stay two entries. A package the `dev` group already names (`coverage`, `responses`, `unittest-xml-reporting`) is left to that group's pin. An entry that is not a package name and a string of version specifiers, such as a direct URL or a table, is skipped with a warning that names the app. The dev environment installs every group of the root, an entry behind a marker only where the marker holds, and the production environment installs none.
+
+When two apps pin a package in ways no version satisfies, `uv lock` fails. In a bench the shell-entry reconcile then puts `pyproject.toml` and `uv.lock` back on every entry, so nothing else it would change lands either. Editing `bench-dev` does not help, because the next reconcile rewrites it. Pin the package in `dev` instead: `bench-dev` leaves out any package that `dev` names. An entry in `[tool.uv].override-dependencies` works too, and also reaches the apps' own requirements.
+
+The group is rewritten from the apps whenever they change: by `bench-get-app`, `bench-new-app` and `bench-remove-app`, before the lock in `bench-update --pull`, `update-deps` and `nix run .#relock`, and otherwise by the shell-entry reconcile, which re-locks when it moved. Keep a bench's own dev tools in `dev`, which nothing rewrites. While an app registered in the workspace is missing from `apps/`, or has no `pyproject.toml` there (a submodule that is not checked out), the group is left as it is, with a warning naming the app.
+
+In app mode the generated root has the group when the app has opted in to the [app standards](../app-standards/README.md). The root of an app that has not opted in keeps only the entries its committed `nix/uv.lock` already lists in that group, which for any lock frappe-nix wrote before the group existed is none (spec S35). That app's root and lock stay as they were.
 
 ### Build dependencies
 
