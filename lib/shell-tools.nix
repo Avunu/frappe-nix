@@ -18,6 +18,10 @@
 #                        evaluates the bench's flake, which reads apps/*. A
 #                        bench's .envrc runs it on a fresh clone
 #                        (`nix run github:Avunu/frappe-nix/release-1#bootstrap`).
+#   frappe-nix-repair    `frappe-nix-sources repair`: what it takes for Nix to
+#                        read a bench's flake when it cannot. From this flake,
+#                        since the bench's cannot be evaluated in that state
+#                        (`nix run github:Avunu/frappe-nix/release-1#repair`).
 #   frappe-nix-db-nocow  lib.dbNocow: the dev MariaDB datadir off btrfs
 #                        copy-on-write, created and marked before the server
 #                        writes to it; a running server is a process with
@@ -80,6 +84,14 @@ rec {
     ''
     + builtins.readFile ./bootstrap.sh;
     meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
+  };
+
+  repair = pkgs.writeShellApplication {
+    name = "frappe-nix-repair";
+    text = ''
+      exec ${pkgs.lib.getExe sources} repair "$@"
+    '';
+    meta.description = "Settle a bench's apps so that Nix can read its flake";
   };
 
   dbNocow = base.dbNocow {

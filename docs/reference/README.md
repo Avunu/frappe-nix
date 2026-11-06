@@ -29,6 +29,7 @@ The `frappe-nix` flake itself provides:
 | `lib.overrides`                            | Composable Python package overrides for native dependencies.                                                                                      |
 | `packages.<system>.default`, `frappe-init` | The scaffolder, run by `nix run github:Avunu/frappe-nix`.                                                                                         |
 | `packages.<system>.backup-fetch`           | The object-store half of `bench restore`, standalone, for a production host that restores too. It prints a JSON manifest and touches no database. |
+| `packages.<system>.repair`, `apps.<system>.repair` | `frappe-nix-repair [ROOT]`: a bench's apps, settled, when Nix cannot read its flake: `nix run github:Avunu/frappe-nix/release-1#repair`. See [Nix cannot read the flake](troubleshooting.md#nix-cannot-read-the-flake-shallow-or-missing-submodules). |
 | `apps.<system>.default`, `frappe-init`     | The scaffolder as a flake app.                                                                                                                    |
 
 In a consuming bench that declares [secrets](../development/secrets.md), the bench flake also exposes `lib.secrets`: the declared `.age` paths and recipients, so a deployment can read the same ciphertext.
