@@ -162,8 +162,9 @@
           # The apps/ checkout, outside the dev shell: a bench's .envrc runs
           # bootstrap on a fresh clone, before Nix evaluates the bench's flake
           # (lib/bootstrap.sh), and bootstrap runs sources from the revision
-          # the bench's flake.lock pins.
-          inherit (shellTools pkgs) sources bootstrap;
+          # the bench's flake.lock pins. repair is for a person, when Nix cannot
+          # read a bench's flake.
+          inherit (shellTools pkgs) sources bootstrap repair;
 
           # The object-store half of `bench restore`, standalone. Exposed because
           # a production host restores too, and its NixOS module otherwise keeps
@@ -198,6 +199,14 @@
             type = "app";
             program = pkgs.lib.getExe (shellTools pkgs).bootstrap;
             meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
+          };
+          # `nix run github:Avunu/frappe-nix/release-1#repair`, from a bench: its
+          # apps, settled, when Nix cannot read its flake. Here and not in the
+          # bench's flake, which Nix cannot evaluate in that state.
+          repair = {
+            type = "app";
+            program = pkgs.lib.getExe (shellTools pkgs).repair;
+            meta.description = "Settle a bench's apps so that Nix can read its flake";
           };
           # `nix run github:Avunu/frappe-nix/<rev>#sources -- enter ROOT`: the
           # dev shell's apps/ checkout, outside it.
@@ -380,6 +389,22 @@
                 export HOME="$PWD"
                 bash ${./tests/sources.sh} \
                   ${lib.getExe tools.sources} \
+                  2>&1 | tee "$out"
+              '';
+
+          # frappe-nix-repair: python-devops-nix's lib.sources repair, as this
+          # flake configures it (tests/repair.sh).
+          repair =
+            checks.script "repair"
+              {
+                tools = [
+                  pkgs.git
+                ];
+              }
+              ''
+                export HOME="$PWD" GIT_CONFIG_GLOBAL=/dev/null
+                bash ${./tests/repair.sh} \
+                  ${lib.getExe tools.repair} \
                   2>&1 | tee "$out"
               '';
 

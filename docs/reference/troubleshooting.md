@@ -38,6 +38,21 @@ The `.envrc` the scaffolder writes handles it: when an app under `apps/` is not 
 
 To check the fix by hand: clone a bench, change any tracked file, `direnv allow`; the apps are checked out first, and `nix eval .#packages.x86_64-linux.default.name` (or the shell itself) evaluates.
 
+### Nix cannot read the flake: shallow or missing submodules
+
+```text
+error: '…/apps/hrms' is a shallow Git repository, so 'revCount' is not available
+fatal: '…/apps/hrms' does not appear to be a git repository
+```
+
+A bench's flake sets `self.submodules = true`. With any change in the tree (an updated `flake.lock` counts) Nix reads each submodule from its checkout, so it stops at one with no checkout, a nested one included, and under Determinate Nix at a shallow one too. A plain `git submodule update --init` makes shallow clones when `.gitmodules` says `shallow = true`. This happens before any flake output exists, so neither the dev shell nor `nix run .#…` can get as far as fixing it. Run this from the bench, from outside its flake:
+
+```bash
+nix run github:Avunu/frappe-nix/release-1#repair
+```
+
+It checks out what is missing, brings back a submodule removed by hand, gives a shallow clone its history without moving its checkout, and then asks Nix to read the flake. It exits 0 only if Nix can. It changes no tracked file and overwrites nothing: a directory in a submodule's way is named and left for you to move.
+
 ### `attribute '<NAME>' missing`, from uv2nix
 
 ```text
