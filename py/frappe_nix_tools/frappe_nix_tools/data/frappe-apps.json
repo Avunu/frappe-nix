@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-28",
+ "generated": "2026-11-02",
  "sources": [
   "github.com/frappe/marketplace",
   "github.com/frappe"
@@ -268,9 +268,9 @@
    "listed": true,
    "releases": [
     {
-     "version": "1.35.1",
+     "version": "1.36.5",
      "branch": "master",
-     "frappe_core": ">=15.0.0,<18.0.0",
+     "frappe_core": ">=15.121.3,<18.0.0",
      "dependencies": {},
      "channel": "stable"
     },
@@ -594,7 +594,7 @@
      "channel": "nightly"
     },
     {
-     "version": "1.86.0",
+     "version": "1.90.0",
      "branch": "main",
      "frappe_core": ">=15.0.0,<17.0.0",
      "dependencies": {},
@@ -928,7 +928,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 9,
+   "stars": 10,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -1180,7 +1180,8 @@
    ],
    "default_branch": "main",
    "branches": [
-    "version-16"
+    "version-16",
+    "version-15"
    ]
   },
   {
@@ -1807,7 +1808,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 55,
+   "stars": 57,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2188,6 +2189,20 @@
    "logo": "https://cloud.frappe.io/files/tg_image_1025626910.jpeg",
    "listed": true,
    "releases": [
+    {
+     "version": "0.1.20",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.19",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "0.1.18",
      "branch": "develop",
@@ -2602,7 +2617,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 25,
+   "stars": 26,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -3859,6 +3874,20 @@
    "listed": true,
    "releases": [
     {
+     "version": "3.2.0",
+     "branch": "develop",
+     "frappe_core": ">=15.111.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "nightly"
+    },
+    {
+     "version": "3.2.0",
+     "branch": "main",
+     "frappe_core": ">=15.111.0,<=17.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "3.1.0",
      "branch": "develop",
      "frappe_core": ">=15.111.0,<=17.0.0-dev",
@@ -4540,7 +4569,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 209,
+   "stars": 210,
    "website": "",
    "documentation": "",
    "logo": "",
