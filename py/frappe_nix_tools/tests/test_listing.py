@@ -69,6 +69,19 @@ app_description = "A demo app for the frappe-listing tests, with a long enough t
 app_email = "apps@example.org"
 app_license = "MIT"
 required_apps = []
+add_to_apps_screen = [
+	{
+		"name": "demo_app",
+		"logo": "/assets/demo_app/images/demo_app-logo.svg",
+		"title": "Demo App",
+		"route": "/desk",
+		"has_permission": "demo_app.apps_screen.not_listed",
+	}
+]
+"""
+
+HIDDEN = """def not_listed() -> bool:
+	return False
 """
 
 SYMBOLIC = (
@@ -118,6 +131,7 @@ class ListingCase(AppCase):
 		self.write(".standards-profile/profile.toml", self.profile_text)
 		self.write("marketplace/listing.toml", LISTING)
 		self.write("demo_app/hooks.py", HOOKS)
+		self.write("demo_app/apps_screen.py", HIDDEN)
 		self.write("demo_app/public/images/demo_app-symbolic.svg", SYMBOLIC)
 		self.write("demo_app/public/images/demo_app-logo.svg", LOGO)
 		self.write("README.md", README)
@@ -192,6 +206,57 @@ class TestCheck(ListingCase):
 		self.commit()
 		found = self.errors(self.run_check(), "L2")
 		self.assertTrue(any("app_publisher must be set" in m for m in found), found)
+
+	def test_l2_a_hidden_app_passes(self):
+		self.assertFalse(self.errors(self.run_check(), "L2"))
+
+	def test_l2_every_app_needs_an_entry_for_the_about_dialog(self):
+		start = HOOKS.index("add_to_apps_screen")
+		self.write("demo_app/hooks.py", HOOKS[:start])
+		self.commit()
+		found = self.errors(self.run_check(), "L2")
+		self.assertTrue(any("About dialog" in r for r in found), found)
+
+	def test_l2_a_hidden_app_is_really_hidden(self):
+		self.write(
+			"demo_app/hooks.py", HOOKS.replace("demo_app.apps_screen.not_listed", "demo_app.api.allowed")
+		)
+		self.commit()
+		found = self.errors(self.run_check(), "L2")
+		self.assertTrue(any("has_permission" in r for r in found), found)
+
+	def test_l2_a_hidden_app_defines_the_function(self):
+		self.write("demo_app/apps_screen.py", "def something_else():\n\treturn False\n")
+		self.commit()
+		found = self.errors(self.run_check(), "L2")
+		self.assertTrue(any("must define not_listed" in r for r in found), found)
+
+	def test_l2_a_hidden_app_needs_a_route(self):
+		self.write("demo_app/hooks.py", HOOKS.replace('\t\t"route": "/desk",\n', ""))
+		self.commit()
+		found = self.errors(self.run_check(), "L2")
+		self.assertTrue(any("needs a route" in r for r in found), found)
+
+	def test_l2_the_entry_carries_the_logo(self):
+		self.write("demo_app/hooks.py", HOOKS.replace("demo_app-logo.svg", "other.svg"))
+		self.commit()
+		found = self.errors(self.run_check(), "L2")
+		self.assertTrue(any(".logo is" in r for r in found), found)
+
+	def test_l2_an_app_on_the_apps_screen_takes_its_entry_from_the_listing(self):
+		self.write(
+			"marketplace/listing.toml",
+			LISTING.replace("apps_screen = false", "apps_screen = true")
+			+ '\n[apps_screen_entry]\nroute = "/app/demo"\nhas_permission = "demo_app.api.allowed"\n',
+		)
+		self.write(
+			"demo_app/hooks.py",
+			HOOKS.replace('"/desk"', '"/app/demo"').replace(
+				"demo_app.apps_screen.not_listed", "demo_app.api.allowed"
+			),
+		)
+		self.commit()
+		self.assertFalse(self.errors(self.run_check(), "L2"))
 
 	def test_l2_conditional_assignment_warns(self):
 		self.write("demo_app/hooks.py", HOOKS + 'if True:\n\tapp_color = "blue"\n')

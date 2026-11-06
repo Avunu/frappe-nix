@@ -10,6 +10,17 @@ app_license = "MIT"
 
 required_apps = []
 
+# For the logo in the About dialog; apps_screen.not_listed keeps it off the apps screen.
+add_to_apps_screen = [
+	{
+		"name": "standards_fixture",
+		"logo": "/assets/standards_fixture/images/standards_fixture-logo.svg",
+		"title": "Standards Fixture",
+		"route": "/desk",
+		"has_permission": "standards_fixture.apps_screen.not_listed",
+	}
+]
+
 # T3: a doc_events handler.
 doc_events = {
 	"ToDo": {
