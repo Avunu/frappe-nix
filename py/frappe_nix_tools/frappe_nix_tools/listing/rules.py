@@ -157,6 +157,11 @@ def l1(listing: dict) -> list[Result]:
 # --- L2 -----------------------------------------------------------------------------------
 
 
+# The has_permission of an app that isn't on the apps screen: <app>.apps_screen.not_listed.
+HIDDEN_MODULE = "apps_screen"
+HIDDEN_FUNCTION = "not_listed"
+
+
 def hook_values(path: Path) -> tuple[dict[str, Any], list[str]]:
 	"""``hooks.py``'s top-level literal assignments, and the names assigned conditionally (inside
 	an ``if``, ``try``, ``with`` or loop at module level), which the registry may read differently."""
@@ -174,6 +179,15 @@ def hook_values(path: Path) -> tuple[dict[str, Any], list[str]]:
 				elif isinstance(child, ast.AnnAssign | ast.AugAssign) and isinstance(child.target, ast.Name):
 					conditional.add(child.target.id)
 	return values, sorted(conditional)
+
+
+def _defines(path: Path, function: str) -> bool:
+	"""Whether ``path`` defines ``function`` at module level; a missing or unparsable file does not."""
+	try:
+		tree = ast.parse(path.read_text(), filename=str(path))
+	except (OSError, UnicodeDecodeError, SyntaxError):
+		return False
+	return any(isinstance(node, ast.FunctionDef) and node.name == function for node in tree.body)
 
 
 def l2(t: Target) -> list[Result]:
@@ -211,26 +225,47 @@ def l2(t: Target) -> list[Result]:
 		err('app_icon is bench new-app\'s placeholder "octicon octicon-file-directory": remove it')
 	if values.get("app_color") == "grey":
 		err('app_color is bench new-app\'s placeholder "grey": remove it')
+	# Frappe's About dialog takes an app's logo from add_to_apps_screen or app_logo_url, and
+	# app_logo_url also decides the site's own logo. So an app that isn't on the apps screen still
+	# has an entry there, which a has_permission that always says no keeps off the screen.
 	screen = bool(listing.get("apps_screen"))
 	entries = values.get("add_to_apps_screen")
-	if screen and not entries:
-		err("apps_screen = true, but hooks.py has no add_to_apps_screen")
-	elif not screen and entries is not None:
-		err("hooks.py has add_to_apps_screen, but apps_screen is false in marketplace/listing.toml")
-	elif screen:
-		entry = listing.get("apps_screen_entry") or {}
-		if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
-			err("add_to_apps_screen must be a list of tables")
+	hidden = f"{t.name}.{HIDDEN_MODULE}.{HIDDEN_FUNCTION}"
+	if not entries:
+		if screen:
+			err("apps_screen = true, but hooks.py has no add_to_apps_screen")
 		else:
-			logo = f"/assets/{t.name}/images/{t.name}-logo.svg"
-			for i, e in enumerate(entries):
-				if e.get("logo") != logo:
-					err(f"add_to_apps_screen[{i}].logo is {e.get('logo')!r}, expected {logo!r}")
+			err(
+				"hooks.py has no add_to_apps_screen, so Frappe's About dialog shows a letter instead of"
+				f" the logo: add an entry with has_permission = {hidden!r} (see docs: Icons)"
+			)
+	elif not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+		err("add_to_apps_screen must be a list of tables")
+	else:
+		logo = f"/assets/{t.name}/images/{t.name}-logo.svg"
+		for i, e in enumerate(entries):
+			if e.get("logo") != logo:
+				err(f"add_to_apps_screen[{i}].logo is {e.get('logo')!r}, expected {logo!r}")
+			if screen:
+				entry = listing.get("apps_screen_entry") or {}
 				for key in ("route", "has_permission"):
 					if e.get(key) != entry.get(key):
 						err(
 							f"add_to_apps_screen[{i}].{key} is {e.get(key)!r}, expected {entry.get(key)!r} ([apps_screen_entry])"
 						)
+				continue
+			if e.get("has_permission") != hidden:
+				err(
+					f"add_to_apps_screen[{i}].has_permission is {e.get('has_permission')!r}, expected {hidden!r},"
+					" because apps_screen is false in marketplace/listing.toml"
+				)
+			# Frappe's desktop icon seeding reads this key without a default.
+			if not e.get("route"):
+				err(f"add_to_apps_screen[{i}] needs a route, though nothing links to it")
+		if not screen and not _defines(t.root / t.name / f"{HIDDEN_MODULE}.py", HIDDEN_FUNCTION):
+			err(
+				f"{t.name}/{HIDDEN_MODULE}.py must define {HIDDEN_FUNCTION}(), for add_to_apps_screen's has_permission"
+			)
 	return out
 
 
