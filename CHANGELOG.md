@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.1](https://github.com/Avunu/frappe-nix/compare/v2.4.0...v2.4.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **standards:** let frappe-shots' quiet network ignore a Web Worker's script ([#258](https://github.com/Avunu/frappe-nix/issues/258)) ([3c91b80](https://github.com/Avunu/frappe-nix/commit/3c91b805e0350ea7624974e645467e27d01c1524))
+
 ## [2.4.0](https://github.com/Avunu/frappe-nix/compare/v2.3.0...v2.4.0) (2026-11-06)
 
 
