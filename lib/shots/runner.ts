@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { launch, login, newPage } from "./cdp.ts";
+import { inflight, launch, login, newPage } from "./cdp.ts";
 import { clockShim, zonedTime } from "./clock.ts";
 import type { Page } from "./cdp.ts";
 import { compare, judge, readPng, readWebp, writePng, writeWebp } from "./diff.ts";
@@ -202,18 +202,11 @@ async function networkIdle(page: Page, quietMs = 500, timeoutMs = 30000): Promis
 	let seen = -1;
 	let quietSince = Date.now();
 	while (Date.now() < deadline) {
-		const inflight = new Set<string>();
-		for (const e of page.events) {
-			const params = isRecord(e.params) ? e.params : {};
-			const id = typeof params["requestId"] === "string" ? params["requestId"] : "";
-			if (e.method === "Network.requestWillBeSent") inflight.add(id);
-			else if (e.method === "Network.loadingFinished" || e.method === "Network.loadingFailed") inflight.delete(id);
-		}
 		if (page.events.length !== seen) {
 			seen = page.events.length;
 			quietSince = Date.now();
 		}
-		if (inflight.size === 0 && Date.now() - quietSince >= quietMs) return;
+		if (inflight(page.events).size === 0 && Date.now() - quietSince >= quietMs) return;
 		await new Promise((wake) => setTimeout(wake, 100));
 	}
 	throw new ExitError(CAPTURE_ERROR, `the network did not go quiet within ${timeoutMs / 1000} s`);
