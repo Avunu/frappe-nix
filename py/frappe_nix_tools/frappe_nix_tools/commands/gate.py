@@ -35,7 +35,8 @@ typecheck
                  tracked, then ``yarn -s test:unit``
   nested         each nested frontend with a ``typecheck`` script: install and typecheck it
   doctypes       [typescript, ``types/doctypes.d.ts`` tracked] minibench doctypes, then
-                 ``frappe-types gen-registry … --check`` (siblings in ``required_apps`` typed in full)
+                 ``frappe-types gen-registry … --check`` (siblings in ``required_apps`` typed in full);
+                 relock-plan runs the same step without ``--check`` (``frappe-nix ci relock-doctypes``)
   audit-consumer [typescript] ``frappe-types audit-consumer``: ``--strict`` with
                  ``typescript.audit-consumer``, else advisory when the subcommand exists
   ci-typecheck   ``yarn -s ci:typecheck`` when present
@@ -75,6 +76,7 @@ from frappe_nix_tools.scaffold import hooks as app_hooks
 
 GATES = ("lint", "typecheck", "marketplace")
 TOOLS_PYTHON = "3.14"
+DOCTYPES = "types/doctypes.d.ts"
 CUSTOMIZATION_HOOKS = ("validate_customizations", "clean_customized_doctypes")
 
 
@@ -161,8 +163,9 @@ def frappe_nix(*args: str) -> list[str]:
 	return [sys.executable, "-I", "-c", boot, *args]
 
 
-def gen_registry(app: AppConfig, bench: Path) -> list[str]:
-	"""The doctypes step's ``frappe-types gen-registry … --check`` over the mini-bench ``bench``.
+def gen_registry(app: AppConfig, bench: Path, *, check: bool = True) -> list[str]:
+	"""The doctypes step's ``frappe-types gen-registry … --check`` over the mini-bench ``bench``;
+	without ``check``, the same command writes ``types/doctypes.d.ts`` (relock-plan, §4.5).
 
 	Only the siblings ``hooks.required_apps`` names are typed in full: those are the apps the
 	app's code runs against. A sibling that is there for the tests' sake alone (fixtures in
@@ -175,11 +178,30 @@ def gen_registry(app: AppConfig, bench: Path) -> list[str]:
 	cmd = ["yarn", "-s", "frappe-types", "gen-registry", "--bench", str(bench), "--app", app.app]
 	if siblings:
 		cmd += ["--include-siblings", ",".join(siblings)]
-	return [*cmd, "--out", "types/doctypes.d.ts", "--check"]
+	return [*cmd, "--out", DOCTYPES, *(["--check"] if check else [])]
+
+
+def doctypes_off(app: AppConfig, tracked: list[str]) -> str:
+	"""Why the doctypes step does not run for ``app``; empty when it does."""
+	if not app.modules.get("typescript"):
+		return "module typescript is off"
+	if DOCTYPES not in tracked:
+		return f"{DOCTYPES} is not tracked"
+	return ""
 
 
 def ok(code: int, what: str = "") -> tuple[str, str]:
 	return ("ok", "") if code == 0 else ("failed", f"{what or 'exit'} {code}".strip())
+
+
+def doctypes(g: Gate, *, check: bool = True) -> tuple[str, str]:
+	"""The doctypes step: the doctypes mini-bench in ``.dev-dist/minibench``, then
+	``gen_registry`` over it."""
+	dest = g.root / ".dev-dist" / "minibench"
+	code = g.run(*frappe_nix("minibench", "--mode", "doctypes", "--dest", str(dest)))
+	if code != 0:
+		return "failed", f"minibench exit {code}"
+	return ok(g.run(*gen_registry(g.app, dest, check=check)))
 
 
 def scripts(root: Path) -> dict:
@@ -443,20 +465,10 @@ def typecheck(g: Gate) -> None:
 
 		g.step("nested", "", nested_step)
 
-	if not ts_on:
-		g.skip("doctypes", "typescript", "module typescript is off")
-	elif "types/doctypes.d.ts" not in tracked:
-		g.skip("doctypes", "typescript", "types/doctypes.d.ts is not tracked")
+	if why := doctypes_off(g.app, tracked):
+		g.skip("doctypes", "typescript", why)
 	else:
-
-		def doctypes() -> tuple[str, str]:
-			dest = root / ".dev-dist" / "minibench"
-			code = g.run(*frappe_nix("minibench", "--mode", "doctypes", "--dest", str(dest)))
-			if code != 0:
-				return "failed", f"minibench exit {code}"
-			return ok(g.run(*gen_registry(g.app, dest)))
-
-		g.step("doctypes", "typescript", doctypes)
+		g.step("doctypes", "typescript", lambda: doctypes(g))
 
 	if not ts_on:
 		g.skip("audit-consumer", "typescript", "module typescript is off")

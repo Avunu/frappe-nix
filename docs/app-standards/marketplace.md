@@ -54,7 +54,7 @@ apps_screen = false                        # true needs [apps_screen_entry] rout
 | Rule | What | Severity |
 |---|---|---|
 | L1 | `listing.toml` against its schema | error |
-| L2 | `hooks.py` against the listing and the org values (`app_publisher`, `app_email`, `app_license`); no `app_logo_url` or `bench new-app` placeholders; `add_to_apps_screen` matches `apps_screen` | error |
+| L2 | `hooks.py` against the listing and the org values (`app_publisher`, `app_email`, `app_license`); no `app_logo_url` or `bench new-app` placeholders; `add_to_apps_screen` carries the logo, and matches `[apps_screen_entry]`, or `<app>.apps_screen.not_listed` with `apps_screen = false` ([Icons](icons.md)) | error |
 | L3 | `[tool.bench.frappe-dependencies]`: exactly frappe and the required apps, each with its sibling's range, in the comma form | error |
 | L4 | one version in the version block, `package.json` and the release-please manifest; with `--release --tag`, the tag's | error |
 | L5 | no side effects in `__init__.py`; no tracked symlink leaving the repository | error |

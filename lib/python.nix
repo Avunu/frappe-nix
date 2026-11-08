@@ -73,11 +73,27 @@ let
   ) (rootPyproject.project.dependencies or [ ]);
   rootDepsAttr = lib.genAttrs rootDepNames (_: [ ]);
 
-  # Extract dev-group packages from [dependency-groups]
+  # Extract dev-group packages from [dependency-groups]: every group, so dev and
+  # bench-dev (each app's [tool.bench.dev-dependencies], what `bench setup
+  # requirements --dev` installs; lib/frappe-workspace.py). The dev env only:
+  # prodPythonEnv takes [project].dependencies alone. bench-dev carries an
+  # app's environment marker as written, so a requirement with one is kept only
+  # where it holds for this interpreter; where it does not, the lock resolves
+  # nothing for it here. One without a marker is not parsed at all.
+  devEnviron = pyproject-nix.lib.pep508.mkEnviron python;
+  devReqHolds =
+    req:
+    !(lib.hasInfix ";" req)
+    || (
+      let
+        parsed = pyproject-nix.lib.pep508.parseString req;
+      in
+      parsed.markers == null || pyproject-nix.lib.pep508.evalMarkers devEnviron parsed.markers
+    );
   rootDevDepNames =
     map (dep: lib.strings.toLower (builtins.head (builtins.match "([A-Za-z0-9_-]+).*" dep)))
       (
-        lib.filter builtins.isString (
+        lib.filter (req: builtins.isString req && devReqHolds req) (
           lib.flatten (lib.attrValues (rootPyproject."dependency-groups" or { }))
         )
       );
@@ -131,16 +147,32 @@ let
   # Turn a stale uv.lock into a sentence instead of an "attribute 'x' missing"
   # deep inside uv2nix's resolver. Membership is tested against `pythonSet`
   # because that is precisely the set resolvers.nix indexes.
-  lockAudit = python-devops-nix.lib.python.lockAudit {
-    inherit workspaceRoot rootPyproject;
-    label = "frappe-nix";
-    hasPackage = name: pythonSet ? ${name};
-    relock = if lockAuditRelock != null then lockAuditRelock else import ./relock-advice.nix;
-  };
+  lockAuditFor =
+    root:
+    python-devops-nix.lib.python.lockAudit {
+      inherit workspaceRoot;
+      rootPyproject = root;
+      label = "frappe-nix";
+      hasPackage = name: pythonSet ? ${name};
+      relock = if lockAuditRelock != null then lockAuditRelock else import ./relock-advice.nix;
+    };
+  lockAudit = lockAuditFor rootPyproject;
 
   # Wraps both virtualenvs: every consumer — the dev shell, benchRoot, the
   # containers, the NixOS module — reaches uv2nix's resolver through one of them.
   assertLockCurrent = lockAudit.assertCurrent;
+  # The production one audits the root without its bench-dev group, which it
+  # never installs: that group follows the apps' [tool.bench.dev-dependencies],
+  # so an app bump can add a name the committed lock lacks, and that has to stop
+  # the dev shell (which installs it) until the relock, not a container or
+  # NixOS build (which does not).
+  assertProdLockCurrent =
+    (lockAuditFor (
+      rootPyproject
+      // lib.optionalAttrs (rootPyproject ? dependency-groups) {
+        dependency-groups = removeAttrs rootPyproject.dependency-groups [ "bench-dev" ];
+      }
+    )).assertCurrent;
 
   # Packages grafted into a virtualenv's site-packages with a `.pth` bootstrap
   # (python-devops-nix's lib.python.withGrafts, which writes
@@ -188,7 +220,7 @@ let
     };
 
   # Production: workspace members + runtime deps, no dev tools
-  prodPythonEnv = assertLockCurrent (
+  prodPythonEnv = assertProdLockCurrent (
     withGrafts "prod" (
       pythonSet.mkVirtualEnv "${name}-bench-prod-env" (
         lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr

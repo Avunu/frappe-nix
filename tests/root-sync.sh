@@ -66,6 +66,8 @@ uv_calls() { wc -l < "$UV_CALLS" | tr -d ' '; }
 # else is deliberately *not* the template's value, so "left alone" is testable.
 BENCH="$ROOT/bench"
 mkdir -p "$BENCH/apps/frappe"
+# A workspace member always has one; this one declares no dev-dependencies yet.
+printf '[project]\nname = "frappe"\n' > "$BENCH/apps/frappe/pyproject.toml"
 cat > "$BENCH/pyproject.toml" <<'EOF'
 [project]
 name = "old-bench"
@@ -161,6 +163,41 @@ check "pyproject.toml byte-identical" cmp -s "$BENCH/pyproject.toml" "$ROOT/pypr
 check_eq "…and not even rewritten (mtime kept)" "$EPOCH" "$(mtime "$BENCH/pyproject.toml")"
 check_eq "uv not called again" 1 "$(uv_calls)"
 
+echo "── an app's [tool.bench.dev-dependencies] become the bench-dev group ──"
+# What `bench setup requirements --dev` installs, frappe's shape: a table of
+# name = "specifier". apps/frappe declared none above, so no group yet.
+printf '[project]\nname = "frappe"\n\n[tool.bench.dev-dependencies]\nfreezegun = "~=1.5.5"\nFaker = "18.10.1"\n' \
+  > "$BENCH/apps/frappe/pyproject.toml"
+: > "$UV_CALLS"
+out="$("$TOOL" "$BENCH" 2>&1)" && rc=0 || rc=$?
+check_eq "exits 0" 0 "$rc"
+check_eq "the group holds them, read as bench reads them (a bare version is ==)" \
+  "['faker==18.10.1', 'freezegun~=1.5.5']" \
+  "$(toml_get "$BENCH/pyproject.toml" "d['dependency-groups']['bench-dev']")"
+check_eq "the bench's own dev group is still untouched" \
+  "['ruff>=0.15.0', 'mypy', 'pre-commit>=4.5.1', 'semgrep']" \
+  "$(toml_get "$BENCH/pyproject.toml" "d['dependency-groups']['dev']")"
+check_eq "the lock was regenerated, once" 1 "$(uv_calls)"
+check "it lists the group" grep -q 'bench-dev = faker==18.10.1, freezegun~=1.5.5' <<< "$out"
+: > "$UV_CALLS"
+out="$("$TOOL" "$BENCH" 2>&1)" && rc=0 || rc=$?
+check_eq "a second run says nothing" "" "$out"
+check_eq "…and does not re-lock" 0 "$(uv_calls)"
+# A submodule not checked out: its directory is there, its pyproject.toml is
+# not. What it declares is unknown, so the group is left, and it says so.
+mv "$BENCH/apps/frappe/pyproject.toml" "$ROOT/frappe-pyproject.toml"
+cp "$BENCH/pyproject.toml" "$ROOT/pyproject.with-group"
+: > "$UV_CALLS"
+out="$("$TOOL" "$BENCH" 2>&1)" && rc=0 || rc=$?
+check_eq "a member with no pyproject.toml: exits 0" 0 "$rc"
+check "…leaves the group as it was" cmp -s "$BENCH/pyproject.toml" "$ROOT/pyproject.with-group"
+check_eq "…does not re-lock" 0 "$(uv_calls)"
+check "…and says why" grep -q 'apps/frappe has no readable pyproject.toml.*bench-dev left as it was' <<< "$out"
+printf '[project]\nname = "frappe"\n' > "$BENCH/apps/frappe/pyproject.toml"
+check "the app dropping its table" "$TOOL" "$BENCH"
+check_eq "…takes the group with it" False \
+  "$(toml_get "$BENCH/pyproject.toml" "'bench-dev' in d['dependency-groups']")"
+
 echo "── a root with no dev group gets the template's ──"
 NODEV="$ROOT/nodev"
 mkdir -p "$NODEV"
@@ -216,6 +253,8 @@ check "uv.lock is byte-identical to before" cmp -s "$FAIL/uv.lock" "$ROOT/uv.loc
 check_eq "…with its mtime" "$EPOCH" "$(mtime "$FAIL/uv.lock")"
 check "it says the files were restored" grep -q 'restored' <<< "$out"
 check "…and how to do it by hand" grep -q "'uv lock'" <<< "$out"
+check "…and how to settle two apps' bench-dev pins, which a hand edit there cannot" \
+  grep -q 'pin the package in \[dependency-groups\].dev' <<< "$out"
 check "uv's own diagnosis is passed through" grep -q 'No solution found' <<< "$out"
 
 echo "── a failed lock on a bench with no lock yet leaves none behind ──"

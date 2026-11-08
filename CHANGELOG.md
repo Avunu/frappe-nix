@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.4.0](https://github.com/Avunu/frappe-nix/compare/v2.3.0...v2.4.0) (2026-11-06)
+
+
+### Features
+
+* **app-standards:** require an add_to_apps_screen entry, so the About dialog shows the logo ([#254](https://github.com/Avunu/frappe-nix/issues/254)) ([988c9b3](https://github.com/Avunu/frappe-nix/commit/988c9b3543373140173d5a00145318d4055e0b43))
+
+## [2.3.0](https://github.com/Avunu/frappe-nix/compare/v2.2.1...v2.3.0) (2026-11-05)
+
+
+### Features
+
+* **relock:** regenerate types/doctypes.d.ts in relock-plan after a nix bump ([#246](https://github.com/Avunu/frappe-nix/issues/246)) ([b4213b9](https://github.com/Avunu/frappe-nix/commit/b4213b9e3520cc9309603b7ff891d0bab4c12ca5))
+
+
+### Bug Fixes
+
+* **deps:** bump astral-sh/setup-uv ([#248](https://github.com/Avunu/frappe-nix/issues/248)) ([88857a8](https://github.com/Avunu/frappe-nix/commit/88857a8a55d8dc18c70cf19d2048cd4250d43527))
+* **deps:** bump the pre-commit-hooks group with 2 updates ([#250](https://github.com/Avunu/frappe-nix/issues/250)) ([72fc7d8](https://github.com/Avunu/frappe-nix/commit/72fc7d804c598be89980c9a961fc7f2313e93a59))
+* **overrides:** leave a static semgrep-core unpatched, so semgrep before 1.158.0 builds again ([#245](https://github.com/Avunu/frappe-nix/issues/245)) ([cb40958](https://github.com/Avunu/frappe-nix/commit/cb40958ca3f8a82d61a503609f937a0c8d23840e))
+* **python:** lock and install every app's [tool.bench.dev-dependencies] in the dev env ([#247](https://github.com/Avunu/frappe-nix/issues/247)) ([f7f00cc](https://github.com/Avunu/frappe-nix/commit/f7f00cce15d0cf64a6f41494911efb8359f5343d))
+
+## [2.2.1](https://github.com/Avunu/frappe-nix/compare/v2.2.0...v2.2.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** update Dependabot PRs without asking Dependabot to rebase ([#242](https://github.com/Avunu/frappe-nix/issues/242)) ([4f6067a](https://github.com/Avunu/frappe-nix/commit/4f6067abea11ea4f4e95ba5afdab0740092f5c5b))
+* **overrides:** patch semgrep-core in one patchelf call, so semgrep 1.183.0 builds ([#241](https://github.com/Avunu/frappe-nix/issues/241)) ([b7713d3](https://github.com/Avunu/frappe-nix/commit/b7713d30c2dbe14b118ddbdead817821660d35e8))
+
 ## [2.2.0](https://github.com/Avunu/frappe-nix/compare/v2.1.0...v2.2.0) (2026-10-31)
 
 

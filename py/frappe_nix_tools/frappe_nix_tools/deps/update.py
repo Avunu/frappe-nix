@@ -40,6 +40,17 @@ REGEN_LOCKS = ("yarn.lock", "package-lock.json")
 #: flake.lock pins rather than on frappe-nix's branch head.
 UV_LOCK = ("uv", "lock", "--upgrade-package", "frappe-runtime")
 
+#: What to do when that lock fails to resolve. The bench-dev group is
+#: rewritten from the apps' [tool.bench.dev-dependencies] (lib/frappe-workspace.py),
+#: so two apps' pins that conflict there are settled outside it: a pin in the
+#: dev group, which takes the package out of bench-dev, or an override.
+LOCK_CONFLICT_HINT = (
+	"     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;",
+	"     for one in [dependency-groups].bench-dev (the apps' [tool.bench.dev-dependencies],",
+	"     rewritten from them), pin the package in [dependency-groups].dev instead;",
+	"     for one against [dependency-groups].dev, relax the pin there. Then re-run 'uv lock'.",
+)
+
 BENCH_HELP = """\
 Usage: bench-update [--pull | --migrate | --build | --node-locks [<app>[/<subdir>]…]]
 
@@ -366,6 +377,15 @@ def build_deps_sync(config: "CliConfig") -> None:
 		proc.run([config.apps.build_deps_sync])
 
 
+def bench_dev_sync(config: "CliConfig") -> None:
+	"""The root's bench-dev group in step with the apps' [tool.bench.dev-dependencies]
+	as they now are, ahead of a `uv lock`: `sync-apps` over the members already
+	registered, which writes pyproject.toml only when the group moved. Otherwise
+	the lock is written for the group as it was, and the next shell entry
+	rewrites the group and locks a second time."""
+	proc.run([config.apps.workspace, "sync-apps", "--pyproject", "pyproject.toml"])
+
+
 def pull(config: "CliConfig") -> list[str]:
 	"""The --pull half: every submodule to its branch's tip, then the registry,
 	the fallback locks and the Python lock in step. The apps left behind."""
@@ -459,13 +479,15 @@ def pull(config: "CliConfig") -> list[str]:
 	moved = [Path(p).parent.name for p, h in after.items() if before.get(p, "none") != h]
 	if moved:
 		say(f"── Re-locking the Python workspace (pyproject.toml changed: {' '.join(moved)}) ──")
+		# The pull is when an app's [tool.bench.dev-dependencies] move: the root's
+		# bench-dev group follows them first, so the lock is written once, for it.
+		bench_dev_sync(config)
 		with runtime_at_pin():
 			status = proc.attempt(UV_LOCK)
 		if status != 0:
 			fail(
 				"  ⚠  uv lock failed — the dev shell will not evaluate until this resolves.",
-				"     For a conflict between two apps, add a pin to [tool.uv] override-dependencies;",
-				"     for one against [dependency-groups], relax the pin there. Then re-run 'uv lock'.",
+				*LOCK_CONFLICT_HINT,
 			)
 		build_deps_sync(config)
 		say("  commit uv.lock (and pyproject.toml) along with the submodule bumps", "")
