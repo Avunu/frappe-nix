@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-02",
+ "generated": "2026-11-09",
  "sources": [
   "github.com/frappe/marketplace",
   "github.com/frappe"
@@ -268,6 +268,41 @@
    "listed": true,
    "releases": [
     {
+     "version": "1.37.5",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.4",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.3",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.2",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.1",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "1.36.5",
      "branch": "master",
      "frappe_core": ">=15.121.3,<18.0.0",
@@ -511,7 +546,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 95,
+   "stars": 96,
    "website": "https://frappe.io/products/changemakers",
    "documentation": "",
    "logo": "",
@@ -567,6 +602,38 @@
    ]
   },
   {
+   "name": "churchit",
+   "repo": "meichthys/churchit",
+   "title": "Churchit",
+   "description": "A free and open-source church management application",
+   "category": "Applications",
+   "categories": [
+    "Church",
+    "Non-Profit"
+   ],
+   "stars": 0,
+   "website": "https://churchit.app",
+   "documentation": "https://churchit.app",
+   "logo": "https://raw.githubusercontent.com/meichthys/churchit/version-16/churchit/public/icons/pwa/icon-512.png",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.8.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "version-16",
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
+  },
+  {
    "name": "crm",
    "repo": "frappe/crm",
    "title": "CRM",
@@ -585,6 +652,20 @@
    "listed": true,
    "releases": [
     {
+     "version": "16.0.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "2.0.0-dev",
      "branch": "develop",
      "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
@@ -599,10 +680,20 @@
      "frappe_core": ">=15.0.0,<17.0.0",
      "dependencies": {},
      "channel": "stable"
+    },
+    {
+     "version": "0.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
     }
    ],
    "default_branch": "develop",
-   "branches": []
+   "branches": [
+    "version-16",
+    "version-15"
+   ]
   },
   {
    "name": "csf_ke",
@@ -1782,6 +1873,13 @@
    "listed": true,
    "releases": [
     {
+     "version": "3.3.0",
+     "branch": "main",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "3.2.0",
      "branch": "main",
      "frappe_core": ">=15.0.0,<17.0.0",
@@ -1808,7 +1906,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 57,
+   "stars": 61,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2190,6 +2288,13 @@
    "listed": true,
    "releases": [
     {
+     "version": "0.1.24",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "0.1.20",
      "branch": "develop",
      "frappe_core": ">=16.0.0-dev",
@@ -2454,9 +2559,27 @@
    "listed": true,
    "releases": [
     {
-     "version": "1.30.1",
+     "version": "16.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "1.32.0",
      "branch": "main",
-     "frappe_core": ">=15.116.1,<17.0.0",
+     "frappe_core": ">=15.123.1,<17.0.0",
      "dependencies": {
       "telephony": ">=0.0.1,<1.0.0"
      },
@@ -2465,7 +2588,7 @@
     {
      "version": "1.22.2",
      "branch": "develop",
-     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
      "dependencies": {
       "telephony": ">=0.0.1,<1.0.0"
      },
@@ -2474,6 +2597,8 @@
    ],
    "default_branch": "develop",
    "branches": [
+    "version-16",
+    "version-15",
     "version-14"
    ]
   },
@@ -2617,7 +2742,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 26,
+   "stars": 27,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2912,6 +3037,33 @@
    "logo": "https://cloud.frappe.io/files/learning.png",
    "listed": true,
    "releases": [
+    {
+     "version": "16.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "2.69.0",
+     "branch": "main",
+     "frappe_core": ">=15.121.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
     {
      "version": "2.67.1",
      "branch": "main",
@@ -3345,9 +3497,23 @@
    "listed": true,
    "releases": [
     {
+     "version": "16.0.7",
+     "branch": "version-16",
+     "frappe_core": ">=16.18.3,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "16.0.6",
      "branch": "version-16",
      "frappe_core": ">=16.18.3,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.0.7",
+     "branch": "version-15",
+     "frappe_core": ">=15.108.0,<16.0.0",
      "dependencies": {},
      "channel": "stable"
     },
@@ -3409,12 +3575,13 @@
    "description": "Payment gateway integrations for Stripe, Razorpay, PayPal, Braintree, and more.",
    "category": "Extensions",
    "categories": [
+    "Integrations",
     "Official"
    ],
    "stars": 165,
-   "website": null,
-   "documentation": null,
-   "logo": null,
+   "website": "https://github.com/frappe/payments",
+   "documentation": "https://github.com/frappe/payments/blob/develop/README.md",
+   "logo": "https://avatars.githubusercontent.com/u/836974?v=4",
    "listed": true,
    "releases": [
     {
@@ -4327,6 +4494,7 @@
    "releases": [],
    "default_branch": "develop",
    "branches": [
+    "version-16",
     "version-15"
    ]
   },
