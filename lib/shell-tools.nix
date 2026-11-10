@@ -10,6 +10,8 @@
 #                        (`enter ROOT`: a fresh clone's apps/* submodules,
 #                        once, as partial clones of the paired branch; a report
 #                        on the rest) and the first clone of an app (`clone`).
+#                        `pull` is what bench-update moves each app with: onto
+#                        the tip of its .gitmodules branch, as that branch.
 #                        Its scope is apps/, and a checkout does not recurse:
 #                        Frappe apps ship nested submodules with broken refs
 #                        that have no role in production.
@@ -57,6 +59,14 @@ rec {
     scope = [ "apps" ];
     updateCommand = "bench update --pull";
     removeCommand = "bench remove-app {base}";
+    # `bench-update` moves each app with `frappe-nix-sources pull`. A postinstall's
+    # or a manual `yarn install` rewrites these, and the install after the pull
+    # regenerates them from the commit's own, so they never stop it.
+    regenLocks = [
+      "yarn.lock"
+      "package-lock.json"
+    ];
+    forceEnv = "FRAPPE_NIX_BENCH_UPDATE_FORCE";
     nestedHint = [
       "  'nix build' will not see it. Vendor it (frappe-init --migrate) or push it"
       "  and re-add it with bench-get-app; see README, 'Local apps'."
