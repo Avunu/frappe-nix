@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.5.0](https://github.com/Avunu/frappe-nix/compare/v2.4.1...v2.5.0) (2026-11-10)
+
+
+### Features
+
+* **scaffold:** take oxlint desk and web globals from frappe-types' lint JSON ([#264](https://github.com/Avunu/frappe-nix/issues/264)) ([01ecc28](https://github.com/Avunu/frappe-nix/commit/01ecc287591717369bdb6fe772a1ec831c149207))
+
+
+### Bug Fixes
+
+* **gate:** replace a doctypes-mode copy in customizations mode ([#261](https://github.com/Avunu/frappe-nix/issues/261)) ([0c177bc](https://github.com/Avunu/frappe-nix/commit/0c177bc1716821514d4f2eb3543b6edf3b0378b4))
+
 ## [2.4.1](https://github.com/Avunu/frappe-nix/compare/v2.4.0...v2.4.1) (2026-11-08)
 
 
