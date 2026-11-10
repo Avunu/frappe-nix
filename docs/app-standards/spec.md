@@ -487,7 +487,7 @@ check = "node scripts/vue-tsc.cjs --noEmit -p portal/tsconfig.json"   # run by `
 
 [tool.frappe-nix.js.oxlint]
 ignore = []                                  # appended to ignorePatterns
-globals = {}                                 # merged into the desk-JS override's globals
+globals = {}                                 # merged into the desk- and web-JS globals
 overrides = []                               # appended; each {files=[…], rules={…}, globals={…}}.
                                              # While js.locked-rules is true it MUST NOT name the locked rules
                                              # (typescript/no-explicit-any, typescript/ban-ts-comment,
@@ -980,6 +980,7 @@ Module `js` with `js.tool = "oxc"` (`"none"` renders neither file and no `format
 - `<desk-files>` is `discover.desk_js` rendered as a sorted list of paths (oxlint matches literal paths as globs). A new desk file is therefore drift until sync runs, which is the same rule tsconfig already follows.
 - `<web-files>` is `discover.web_js`, likewise.
 - Files in `spa_globs` get neither override; their globals come from their own imports.
+- `<desk-globals>` and `<web-globals>` are the `globals` of the installed frappe-types' `lint/desk-globals.json` and `lint/web-globals.json` (frappe-types 16.7.1 and later), generated from its declarations; they leave out `moment`, which the desk override adds. oxlint's `extends` drops top-level `globals`, so the config cannot import them and sync copies them. Without those files (a clone without `node_modules`, or the `inline` preset) sync keeps the globals of the committed override for the same files, so such a clone reports no drift; with no committed override either (the first sync, before `yarn install`), it renders `frappe`, `__`, `cur_frm`, `cur_list`, `locals`, `$` and `jQuery` for desk and `frappe`, `__`, `$` and `jQuery` for web, which the next sync after the install widens.
 
 ```json
 {
@@ -1003,11 +1004,9 @@ Module `js` with `js.tool = "oxc"` (`"none"` renders neither file and no `format
 		{ "files": ["scripts/**", "marketplace/**", "ci/**", "test/**"], "env": { "node": true },
 		  "rules": { "no-console": "off", "no-await-in-loop": "off", "import/no-unassigned-import": "off" } },
 		{ "files": ["<app>/public/js/*.bundle.ts", "<app>/public/js/*.bundle.js"], "rules": { "import/no-unassigned-import": "off" } },
-		{ "files": <desk-files>, "globals": { "frappe": "readonly", "__": "readonly", "cur_frm": "readonly",
-		  "cur_list": "readonly", "locals": "readonly", "$": "readonly", "jQuery": "readonly", "moment": "readonly"
+		{ "files": <desk-files>, "globals": { /* <desk-globals> */ "moment": "readonly"
 		  /* + "<desk_global>": "readonly" for each sibling with one, + [tool.frappe-nix.js.oxlint].globals */ } },
-		{ "files": <web-files>, "globals": { "frappe": "readonly", "__": "readonly", "$": "readonly",
-		  "jQuery": "readonly" /* + [tool.frappe-nix.js.oxlint].globals */ } }
+		{ "files": <web-files>, "globals": { /* <web-globals> + [tool.frappe-nix.js.oxlint].globals */ } }
 		/* + [tool.frappe-nix.js.oxlint].overrides */
 	]
 }
