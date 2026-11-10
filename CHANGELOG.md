@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/Avunu/frappe-nix/compare/v2.5.0...v2.6.0) (2026-11-10)
+
+
+### Features
+
+* **update:** bench-update moves apps with the shared sources pull ([#265](https://github.com/Avunu/frappe-nix/issues/265)) ([a94c76a](https://github.com/Avunu/frappe-nix/commit/a94c76abd778434e7e8521f715aa0eb4c8d9e107))
+
 ## [2.5.0](https://github.com/Avunu/frappe-nix/compare/v2.4.1...v2.5.0) (2026-11-10)
 
 
