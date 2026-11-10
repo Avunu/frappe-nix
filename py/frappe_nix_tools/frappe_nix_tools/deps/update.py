@@ -222,7 +222,7 @@ def pull(config: "CliConfig") -> list[str]:
 	skipped: list[str] = []
 	listing = proc.output([config.apps.workspace, "apps", "--apps-dir", "apps"])
 	for line in listing.splitlines():
-		app, kind, branch, url = [*line.split("\t", 3), "", "", "", ""][:4]
+		app, kind, branch, _url = [*line.split("\t", 3), "", "", "", ""][:4]
 		if kind == "local":
 			say(f"  · {app}: local app (source committed with the bench) — nothing to pull")
 			continue
