@@ -1,6 +1,9 @@
 # services.frappe-nix.chromium and services.frappe-nix.wkhtmltopdf, checked at
 # evaluation: what the units and the `bench` wrapper get with each on, and with
-# both off, and the fonts that come with them.
+# both off, and the fonts that come with them. And the dev shell's link to the
+# same browser (lib/chrome-headless-shell.nix), which keeps Print Designer's
+# install from downloading one: the link snippet is run against a bench
+# directory, and the shell's enterShell is shown to carry it.
 #
 # Pure evaluation of three NixOS configurations against a stub bench, like
 # tests/offline-migrate-unit.nix. Stubs stand in for both packages so this check
@@ -96,6 +99,22 @@ let
   off = eval { };
 
   link = "chromium/chrome-linux/headless_shell";
+
+  chrome = import ../lib/chrome-headless-shell.nix { inherit pkgs; };
+  plain = builtins.unsafeDiscardStringContext;
+
+  # The dev shell of a bench flake, as tests/ide.nix builds one. Its enterShell is
+  # read as a value, without its context: the real browser is not built here.
+  devShell =
+    (import ./standards/fixtures/bench-flake.nix { inherit self pkgs; } (_: {
+      frappe-nix = {
+        enable = true;
+        name = "pdf-bench";
+        workspaceRoot = ./fixtures/ide-bench;
+        python = pkgs.python314;
+      };
+    })).devenv.shells.default;
+  devEnterShell = pkgs.writeText "dev-enterShell" (plain devShell.enterShell);
 in
 {
   pdf-renderers-unit = checks.script "pdf-renderers-unit" { } ''
@@ -130,6 +149,33 @@ in
     lacks "…" "${builtins.unsafeDiscardStringContext "${pkgs.wkhtmltopdf}"}/bin" ${benchOf off}
     is "no wkhtmltopdf on the units' PATH" "${onPathOf off "wkhtmltopdf"}" false
     is "no fonts added" "${fontsOf off}" false
+
+    echo "the dev shell (lib/chrome-headless-shell.nix):"
+    has "enterShell links the headless shell into the bench, where Print Designer looks" \
+      'ln -sfn ${plain (lib.getExe chrome.package)} "$FRAPPE_BENCH_ROOT/${link}"' ${devEnterShell}
+    has "…clearing what an earlier download left, only when it is not a link" \
+      'if [ ! -L "$FRAPPE_BENCH_ROOT/${link}" ]; then' ${devEnterShell}
+
+    echo "the link, run against a bench directory:"
+    bench=$PWD/bench
+    mkdir -p "$bench"
+    run_link() { ( export bench; bash -euc ${lib.escapeShellArg (chrome.link stubChromium "$bench")} ); }
+    run_link
+    is "a fresh bench gets the link" "$(readlink "$bench/${link}")" "${plain (lib.getExe stubChromium)}"
+    # What Print Designer's own download leaves: a real directory with an ELF in it.
+    rm -r "$bench/chromium"
+    mkdir -p "$bench/chromium/chrome-linux"
+    printf 'ELF' > "$bench/chromium/chrome-linux/headless_shell"
+    printf 'zip' > "$bench/chromium/chrome-headless-shell-linux64.zip"
+    run_link
+    is "a download is replaced by the link" "$(readlink "$bench/${link}")" "${plain (lib.getExe stubChromium)}"
+    if [ -e "$bench/chromium/chrome-headless-shell-linux64.zip" ]; then no "…with its leftovers gone"; else ok "…with its leftovers gone"; fi
+    # A second run must not take the path away: remove nothing when it is a link.
+    touch "$bench/chromium/marker"
+    run_link
+    if [ -e "$bench/chromium/marker" ]; then ok "a second run leaves the directory alone"; else no "a second run leaves the directory alone"; fi
+    is "…and the link still points at the package" "$(readlink "$bench/${link}")" "${plain (lib.getExe stubChromium)}"
+    if [ -x "$bench/${link}" ]; then ok "the link resolves to an executable"; else no "the link resolves to an executable"; fi
 
     if [ "$fails" -ne 0 ]; then
       echo "$fails check(s) failed" >&2
