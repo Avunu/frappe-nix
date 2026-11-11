@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1](https://github.com/Avunu/frappe-nix/compare/v2.6.0...v2.6.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **frappe-test:** link the nix headless shell into the dev bench before apps install ([#268](https://github.com/Avunu/frappe-nix/issues/268)) ([e23cb4e](https://github.com/Avunu/frappe-nix/commit/e23cb4e36dfb19fff943dfbc6bbb4f9a566d06b4))
+
 ## [2.6.0](https://github.com/Avunu/frappe-nix/compare/v2.5.0...v2.6.0) (2026-11-10)
 
 
