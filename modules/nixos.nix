@@ -385,53 +385,13 @@ let
     done
   '';
 
-  # Chromium, for Frappe's "chrome" PDF generator and Print Designer. Both look
-  # for it at <bench>/chromium/chrome-linux/headless_shell, where `bench
-  # setup-chrome` downloads Google's chrome-headless-shell, unless
-  # common_site_config.json names a `chromium_path`. Left to themselves they
-  # download it, and that build does not run on NixOS: it expects an FHS dynamic
-  # loader. Print Designer retries the download from a scheduler event that
-  # fires every few minutes.
-  #
-  # So link a NixOS build of it where they look. This needs nothing in
-  # common_site_config.json, which is the operator's, and an operator's own
-  # `chromium_path` still wins, since both check it first. The link is re-made
-  # on every run, so it follows the package. The directory is removed only when
-  # the binary is not already a link, which is the leftover of an earlier
-  # download, so a routine run never leaves the path missing while a running
-  # process could be looking for it.
-  #
-  # The default is the same chrome-headless-shell, patched for NixOS by nixpkgs'
-  # Playwright packaging, not pkgs.chromium. Frappe starts a browser for every
-  # PDF and stops it with SIGTERM. Full Chromium's headless mode makes a profile
-  # under ~/.config for each start, which fails outright under this module's
-  # root-owned home and, where it can write, leaves about 2 MB behind every
-  # time, since SIGTERM skips the cleanup. The headless shell writes no profile,
-  # and its closure is a quarter of the size.
-  #
-  # bin/ is added so lib.getExe finds it, as for any other chromium.package.
-  # Chromium finds its resources through /proc/self/exe, which resolves the
-  # link to the real directory.
-  chromeHeadlessShell =
-    let
-      shell = pkgs.playwright-driver.components.chromium-headless-shell;
-    in
-    pkgs.runCommand "chrome-headless-shell" { meta.mainProgram = "chrome-headless-shell"; } ''
-      mkdir -p $out/bin
-      # The directory is named for the platform: -linux64, -linux-arm64.
-      ln -s ${shell}/chrome-headless-shell-*/chrome-headless-shell $out/bin/chrome-headless-shell
-      test -x $out/bin/chrome-headless-shell
-    '';
+  # Chromium for PDFs and Print Designer, linked where Frappe looks for it
+  # (lib/chrome-headless-shell.nix, which the dev shell links the same way).
+  chrome = import ../lib/chrome-headless-shell.nix { inherit pkgs; };
+  chromeHeadlessShell = chrome.package;
 
   linkChromium =
-    benchRoot:
-    optionalString cfg.chromium.enable ''
-      if [ ! -L "${benchRoot}/chromium/chrome-linux/headless_shell" ]; then
-        rm -rf "${benchRoot}/chromium"
-      fi
-      mkdir -p "${benchRoot}/chromium/chrome-linux"
-      ln -sfn ${lib.getExe cfg.chromium.package} "${benchRoot}/chromium/chrome-linux/headless_shell"
-    '';
+    benchRoot: optionalString cfg.chromium.enable (chrome.link cfg.chromium.package benchRoot);
 
   # Per-site init script: assemble runtime bench tree, link the registry and
   # assets, seed sites dir, and synthesize site_config.json (merging secrets).
