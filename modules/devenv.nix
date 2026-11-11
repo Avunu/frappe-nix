@@ -2311,6 +2311,14 @@ in
         );
         sassEmbedded = import ../lib/sass-embedded.nix { inherit pkgs; };
 
+        # The browser Print Designer's install looks for in the bench, linked on
+        # shell entry (lib/chrome-headless-shell.nix). Linux only, as nixpkgs'
+        # build is: elsewhere the download it would have made still runs.
+        chromeHeadlessShell = import ../lib/chrome-headless-shell.nix { inherit pkgs; };
+        linkChromium = lib.optionalString pkgs.stdenv.hostPlatform.isLinux (
+          chromeHeadlessShell.link chromeHeadlessShell.package "$FRAPPE_BENCH_ROOT"
+        );
+
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python name;
@@ -3615,6 +3623,11 @@ in
               if [ "$(readlink "$FRAPPE_BENCH_ROOT/env" 2>/dev/null)" != "${pythonEnvs.devPythonEnv}" ]; then
                 ln -sfn "${pythonEnvs.devPythonEnv}" "$FRAPPE_BENCH_ROOT/env"
               fi
+
+              # The headless shell Print Designer's install wants at chromium/,
+              # so that no app install downloads one: the egress guard refuses
+              # the download, and the build it fetches does not run on NixOS.
+              ${linkChromium}
 
               ${lib.optionalString cfg.ide.enable ideSetup}
 
