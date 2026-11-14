@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.2](https://github.com/Avunu/frappe-nix/compare/v2.6.1...v2.6.2) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#270](https://github.com/Avunu/frappe-nix/issues/270)) ([89cce12](https://github.com/Avunu/frappe-nix/commit/89cce122150dd3d206169eb2f35660e819bf0fdc))
+
 ## [2.6.1](https://github.com/Avunu/frappe-nix/compare/v2.6.0...v2.6.1) (2026-11-11)
 
 
