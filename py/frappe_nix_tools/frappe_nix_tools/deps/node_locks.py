@@ -166,6 +166,29 @@ def unbuildable(lock: str) -> list[str]:
 	return bad
 
 
+def uncovered(lock: str, manifest: str) -> list[str]:
+	"""``name@range`` for each dependency of MANIFEST (package.json text) that no
+	entry of LOCK (yarn v1 text) resolves. A stamp only says the manifest has
+	not moved since the lock was written; this says the lock still covers it,
+	which a hand edit or a manifest bump that was never relocked does not."""
+	try:
+		pkg = json.loads(manifest)
+	except ValueError:
+		return []
+	keys: set[str] = set()
+	for line in lock.split("\n"):
+		if _KEY.match(line) and not line.startswith("#"):
+			for part in re.sub(r":[ \t]*$", "", line).split(", "):
+				keys.add(part.strip().strip('"'))
+	gap: list[str] = []
+	for field_name in ("dependencies", "devDependencies", "optionalDependencies"):
+		for name, rng in (pkg.get(field_name) or {}).items():
+			want = f"{name}@{rng}"
+			if want not in keys and want not in gap:
+				gap.append(want)
+	return gap
+
+
 def _sha256(path: str) -> str:
 	with open(path, "rb") as f:
 		return hashlib.sha256(f.read()).hexdigest()
@@ -345,7 +368,15 @@ class Generator:
 
 		want = stamp(src, forced)
 		if os.path.isfile(f"{dst}/yarn.lock") and _read_stamp(f"{dst}/source.json") == want:
-			return
+			with open(f"{dst}/yarn.lock", errors="surrogateescape") as f:
+				lock = f.read()
+			with open(f"{src}/package.json", errors="surrogateescape") as f:
+				gap = uncovered(lock, f.read())
+			if not gap:
+				return
+			# The stamp matches but the lock does not cover the manifest (a hand
+			# edit, or a bump that was never relocked): resolve again, seeded from it.
+			_out(f"  ~ {self.label}/{key} does not cover {', '.join(gap)}; re-resolving")
 
 		work = tempfile.mkdtemp()
 		try:

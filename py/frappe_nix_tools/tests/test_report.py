@@ -18,6 +18,15 @@ class TestReport(unittest.TestCase):
 		self.assertTrue(out.endswith("frappe-nix: 1 file(s) drifted — run `frappe-init --sync`\n"))
 		self.assertEqual(report.render([], "text", 0), "frappe-nix: clean\n")
 
+	def test_drifted_counts_files_not_findings(self):
+		# A file with two findings (differs and skew) is one drifted file.
+		findings = [Finding("ci.yml", "whole", "differs"), Finding("ci.yml", "skew", "skew")]
+		self.assertTrue(
+			report.render(findings, "text", 1).endswith(
+				"frappe-nix: 1 file(s) drifted — run `frappe-init --sync`\n"
+			)
+		)
+
 	def test_github(self):
 		self.assertIn("::error file=ci.yml::differs", report.render(FINDINGS, "github", 1))
 		self.assertEqual(report.render([], "github", 0), "frappe-nix: clean\n")
