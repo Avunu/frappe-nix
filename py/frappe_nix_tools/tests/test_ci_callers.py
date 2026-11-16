@@ -403,10 +403,7 @@ class TestDependabot(CallerCase):
 			"a built-in-free org profile is in-repo",
 		)
 		actions = next(e for e in updates if e["package-ecosystem"] == "github-actions")
-		self.assertEqual(
-			actions["ignore"],
-			[{"dependency-name": "Avunu/frappe-nix"}, {"dependency-name": "Avunu/frappe-nix/*"}],
-		)
+		self.assertEqual(actions["ignore"], [{"dependency-name": "Avunu/frappe-nix"}])
 		self.assertEqual(actions["groups"]["pilot"]["patterns"], ["frappe/pilot*"])
 
 	def test_zizmor_cooldown_follows_the_profile(self) -> None:
@@ -441,7 +438,6 @@ class TestDependabot(CallerCase):
 			entry["github-actions", "/"]["ignore"],
 			[
 				{"dependency-name": "Avunu/frappe-nix"},
-				{"dependency-name": "Avunu/frappe-nix/*"},
 				{"dependency-name": "actions/checkout", "versions": [">=5", "<7"]},
 			],
 		)
