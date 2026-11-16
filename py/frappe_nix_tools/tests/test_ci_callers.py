@@ -133,7 +133,7 @@ class TestGates(CallerCase):
 				"[tool.frappe-nix.releases]\nenable = false\n[tool.frappe-nix.pilot-assets]\nenable = false\n",
 				["release.yml", "assets.yml"],
 			),
-			("[tool.frappe-nix.dependabot]\nenable = false\n", ["deps.yml", "../dependabot.yml"]),
+			("[tool.frappe-nix.dependabot]\nenable = false\n", ["deps.yml", "deps-apply.yml", "../dependabot.yml"]),
 			("[tool.frappe-nix.ci]\nnightly = false\n", ["nightly.yml"]),
 		)
 		full = set(self.render())
@@ -190,7 +190,8 @@ FRAPPE_NIX_CALLERS = {
 	"ci": None,
 	"pr-policy": ["ci"],
 	"release": ["release"],
-	"deps": ["deps"],
+	"deps": None,
+	"deps-apply": None,
 	"nightly": ["nightly"],
 }
 SELF_HOSTED = '[tool.frappe-nix.ci]\nruns-on = ["self-hosted", "nixos"]\n'
@@ -252,8 +253,9 @@ APP_SECRETS = {
 	"APP_ID": "${{ vars.ORG_CI_APP_ID || secrets.ORG_CI_APP_ID }}",
 	"APP_PRIVATE_KEY": "${{ secrets.ORG_CI_PRIVATE_KEY }}",
 }
-# The callers whose reusable workflow pushes, opens PRs or enables auto-merge (nightly: `shots`).
-APP_CALLERS = {"release": "release", "deps": "deps", "nightly": "nightly"}
+# The jobs whose reusable workflow pushes, opens PRs or enables auto-merge (nightly: `shots`). deps
+# passes the App to its trusted job only: a pull_request run gets no secret (deps-apply pushes).
+APP_CALLERS = {"release": "release", "deps": "deps-trusted", "deps-apply": "apply", "nightly": "nightly"}
 
 
 class TestGitHubApp(CallerCase):
@@ -283,14 +285,41 @@ class TestGitHubApp(CallerCase):
 				self.assertNotEqual(job.get("secrets"), "inherit", path)
 				for key in APP_SECRETS:
 					(job.get("secrets") or {}).pop(key, None)
+				if job.get("secrets") == {}:
+					del job["secrets"]
 			self.assertEqual(doc, unset[path], path)
 
 	def test_nightly_passes_it_only_for_screenshots(self) -> None:
 		files = self.render(GITHUB_APP)
+		expected = {
+			f"{WORKFLOWS}/release.yml:release",
+			f"{WORKFLOWS}/deps.yml:deps-trusted",
+			f"{WORKFLOWS}/deps-apply.yml:apply",
+		}
+		self.assertEqual(set(self.app_secrets(files)), expected)
+
+	def test_a_pull_request_run_gets_no_secret(self) -> None:
+		# A Dependabot run sees only Dependabot secrets, and the plan runs the PR's own code (§4.5).
+		for files in (self.render(), self.render(GITHUB_APP)):
+			plan = files[f"{WORKFLOWS}/deps.yml"]["jobs"]["deps"]
+			self.assertEqual(plan["if"], "github.event_name == 'pull_request'")
+			self.assertNotIn("secrets", plan)
+
+	def test_trusted_events_keep_the_secrets(self) -> None:
+		files = self.render(GITHUB_APP)
+		trusted = files[f"{WORKFLOWS}/deps.yml"]["jobs"]["deps-trusted"]
+		self.assertEqual(trusted["if"], "github.event_name != 'pull_request'")
 		self.assertEqual(
-			set(self.app_secrets(files)),
-			{f"{WORKFLOWS}/release.yml:release", f"{WORKFLOWS}/deps.yml:deps"},
+			set(trusted["secrets"]), {"NIX_CACHE_TOKEN", "NIX_CACHE_READ_TOKEN", "FETCH_TOKEN"} | set(APP_SECRETS)
 		)
+
+	def test_apply_follows_the_deps_run_of_a_pull_request(self) -> None:
+		apply = self.render()[f"{WORKFLOWS}/deps-apply.yml"]
+		self.assertEqual(on(apply), {"workflow_run": {"workflows": ["deps"], "types": ["completed"]}})
+		job = apply["jobs"]["apply"]
+		self.assertEqual(job["if"], "github.event.workflow_run.event == 'pull_request'")
+		self.assertIn("/.github/workflows/app-deps-apply.yml@", job["uses"])
+		self.assertNotIn("secrets", job)
 
 	def test_a_profile_sets_it(self) -> None:
 		self.write(
@@ -345,9 +374,10 @@ class TestBotPRs(CallerCase):
 		self.assertEqual(on(deps)["push"], {"branches": ["develop"]})
 		self.assertEqual(self.nightly_with(files)["auto-merge"], True)
 		self.assertEqual(self.nightly_with(files)["merge-method"], "squash")
-		# Nothing else moves.
-		self.deps_with(files).pop("auto-merge-policy")
-		self.deps_with(files).pop("update-branches")
+		# Nothing else moves. Both deps jobs (the plan and the trusted one) carry the inputs.
+		for job in deps["jobs"].values():
+			job["with"].pop("auto-merge-policy")
+			job["with"].pop("update-branches")
 		on(deps).pop("push")
 		self.nightly_with(files).pop("auto-merge")
 		self.nightly_with(files).pop("merge-method")

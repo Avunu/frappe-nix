@@ -1,0 +1,47 @@
+# Applies a Dependabot dependency PR's relock (docs: ci.md §4.5). deps plans it on the PR with no
+# secret and uploads the patch; this runs after deps, from the default branch, and pushes only a
+# validated patch of the lock and sync-owned files (with the App's token, when ci.github-app is set).
+name: deps-apply
+on:
+  # The trigger is the deps run of a Dependabot PR. The code run is the default branch's
+  # (app-deps-apply.yml), never the PR's: the apply checks the plan's artifact before it pushes.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [deps]
+    types: [completed]
+{# The locked frappe-nix revision. A lock without one (a path: override, as frappe-nix's own self-tests
+   lock it) keeps the file's pin: this workflow's, else the one the file's lint job calls. #}
+{% macro uses(workflow) %}
+{% set at = frappe_nix.owner ~ "/" ~ frappe_nix.name ~ "/.github/workflows/" %}
+{% if frappe_nix.rev %}
+{{ at ~ workflow }}@{{ frappe_nix.rev }} # v{{ frappe_nix.version }}
+{%- else %}
+{% set kept = pin(at ~ workflow, "", "v" ~ frappe_nix.version) %}
+{% if "@ #" in kept %}
+{% set kept = pin(at ~ "app-lint.yml", "", "v" ~ frappe_nix.version).replace("app-lint.yml", workflow) %}
+{% endif %}
+{{ kept }}
+{%- endif %}
+{% endmacro %}
+permissions: {}
+jobs:
+  apply:
+    # A Dependabot PR's plan from this repository; a fork's head is not this repository's to push.
+    if: github.event.workflow_run.event == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    uses: {{ uses("app-deps-apply.yml") }}
+    with:
+      integration-branch: {{ branches.integration }}
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
+{% endif %}
+      auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}
+      merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
+{% if cfg.ci["github-app"] is defined %}
+{% set gh_app = cfg.ci["github-app"] %}
+    secrets:
+      APP_ID: {{ "${{ vars." ~ gh_app["app-id"] ~ " || secrets." ~ gh_app["app-id"] ~ " }}" }}
+      APP_PRIVATE_KEY: {{ "${{ secrets." ~ gh_app["private-key"] ~ " }}" }}
+{% endif %}

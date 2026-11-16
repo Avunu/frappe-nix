@@ -21,7 +21,7 @@ from scaffold_helpers import AppCase, git
 # nothing else shipped.
 with_vite_register = mock.patch.object(manifest, "ships", lambda path: path == manifest.VITE_REGISTER)
 # N4's CI callers, which the workflow retire rules wait for.
-CI_CALLERS = (".github/workflows/release.yml", ".github/workflows/deps.yml")
+CI_CALLERS = (".github/workflows/release.yml", ".github/workflows/deps.yml", ".github/workflows/deps-apply.yml")
 with_ci_callers = mock.patch.object(manifest, "ships", lambda path: path in CI_CALLERS)
 
 

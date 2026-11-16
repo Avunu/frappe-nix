@@ -18,6 +18,26 @@
 {{ kept }}
 {%- endif %}
 {% endmacro %}
+{# The reusable's inputs, the same for both jobs below. #}
+{% macro inputs() %}
+    with:
+      app: {{ app }}
+      integration-branch: {{ branches.integration }}
+{% if cfg.ci["runs-on"] is defined %}
+      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
+{% endif %}
+      nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
+
+      auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}
+{% if policy != "decision-table" %}
+      auto-merge-policy: {{ policy }}
+{% endif %}
+{% if update_branches %}
+      update-branches: true
+{% endif %}
+      merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
+      relock-cron: "{{ relock }}"
+{%- endmacro %}
 name: deps
 on:
   pull_request:
@@ -40,30 +60,26 @@ on:
   workflow_dispatch:
 permissions: {}
 jobs:
+  # The pull_request run: no secret at all. A Dependabot run sees only Dependabot secrets, and this
+  # reusable runs the PR's own code. Its relock is pushed by deps-apply.yml, from the default branch.
   deps:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: {{ uses("app-deps.yml") }}
+{{ inputs() }}
+  # Pushes, schedules and dispatches: update-branches, the sweep and relock-upgrade. They hold the
+  # cache and App secrets, which no pull_request run gets.
+  deps-trusted:
+    if: github.event_name != 'pull_request'
     permissions:
       contents: write
       pull-requests: write
       actions: write
       checks: read
     uses: {{ uses("app-deps.yml") }}
-    with:
-      app: {{ app }}
-      integration-branch: {{ branches.integration }}
-{% if cfg.ci["runs-on"] is defined %}
-      runs-on: {{ cfg.ci["runs-on"] | yaml_json }}
-{% endif %}
-      nix-cache: {% raw %}${{ vars.FRAPPE_NIX_CACHE || '' }}{% endraw %}
-
-      auto-merge: {{ "true" if cfg.dependabot["auto-merge"] else "false" }}
-{% if policy != "decision-table" %}
-      auto-merge-policy: {{ policy }}
-{% endif %}
-{% if update_branches %}
-      update-branches: true
-{% endif %}
-      merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
-      relock-cron: "{{ relock }}"
+{{ inputs() }}
     secrets:
       NIX_CACHE_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}{% endraw %}
 

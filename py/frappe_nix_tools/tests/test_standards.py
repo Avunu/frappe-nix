@@ -647,7 +647,8 @@ class TestRetireByFunction(AppCase):
 		with mock.patch.object(
 			manifest,
 			"ships",
-			lambda path: path in (".github/workflows/release.yml", ".github/workflows/deps.yml"),
+			lambda path: path
+			in (".github/workflows/release.yml", ".github/workflows/deps.yml", ".github/workflows/deps-apply.yml"),
 		):
 			self._rules_follow_their_module()
 

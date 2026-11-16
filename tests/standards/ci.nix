@@ -118,7 +118,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert any(s.get("uses", "").startswith("actions/cache/restore@") for s in steps[probe:notice]), steps
         assert any("frappe-nix ci relock-doctypes\n" in s.get("run", "") for s in steps[probe:notice]), steps
         # The actions kind (classify) runs a frappe-nix revision a PR chose: it gets no secret, and
-        # the plan never holds the App key (relock-push does, and only applies the patch).
+        # the plan never holds the App key (app-deps-apply.yml does, and only applies the patch).
         classify = doc["jobs"]["classify"]
         assert classify["permissions"] == {"contents": "read"}, classify["permissions"]
         assert "secrets." not in str(classify), classify
@@ -126,6 +126,30 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         cache = next(s for s in steps if s.get("id") == "cache")
         assert "classify.outputs.kind == 'nix'" in cache["env"]["FETCH_TOKEN"], cache["env"]
         assert "APP_PRIVATE_KEY" not in str(plan) and "secrets.APP_ID" not in str(plan), "plan holds the App key"
+        # The plan's push moved to the apply, which never checks out the PR's code.
+        assert "relock-push" not in doc["jobs"], list(doc["jobs"])
+        assert "create-github-app-token" not in str(doc["jobs"]["auto-merge"]), "auto-merge holds an App token"
+        upload = next(s for s in steps if s.get("uses", "").startswith("actions/upload-artifact@"))
+        assert "relock-meta.json" in upload["with"]["path"], upload
+        apply_doc, apply_triggers = load("app-deps-apply.yml")
+        assert list(apply_triggers) == ["workflow_call"], list(apply_triggers)
+        apply = apply_doc["jobs"]["apply"]
+        assert apply["permissions"]["contents"] == "write", apply["permissions"]
+        steps = apply["steps"]
+        for s in steps:
+            if s.get("uses", "").startswith("actions/checkout@"):
+                assert s["with"]["ref"] == "''${{ inputs.integration-branch }}", s
+        check = next(i for i, s in enumerate(steps) if "git apply --cached --check" in s.get("run", ""))
+        token = next(i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/create-github-app-token@"))
+        push = next(i for i, s in enumerate(steps) if s.get("id") == "push")
+        assert check < token < push, (check, token, push)
+        assert "--force-with-lease=refs/heads/" in next(s["run"] for s in steps if s.get("id") == "push"), steps
+        # The plan's caller passes no secret; the trusted events' caller passes the App and the caches.
+        with open("${fixture}/.github/workflows/deps.yml") as f:
+            callers = yaml.safe_load(f)
+        pull = callers["jobs"]["deps"]
+        assert pull["if"] == "github.event_name == 'pull_request'" and "secrets" not in pull, pull
+        assert "workflow_run" in str(yaml.safe_load(open("${fixture}/.github/workflows/deps-apply.yml"))), "no apply caller"
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout

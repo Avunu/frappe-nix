@@ -12,7 +12,25 @@ on:
   workflow_dispatch:
 permissions: {}
 jobs:
+  # The pull_request run: no secret at all. A Dependabot run sees only Dependabot secrets, and this
+  # reusable runs the PR's own code. Its relock is pushed by deps-apply.yml, from the default branch.
   deps:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: Avunu/frappe-nix/.github/workflows/app-deps.yml@e97d588cf5805dfb382b210379fafa0223013285 # v2.6.1
+    with:
+      app: standards_fixture
+      integration-branch: develop
+      nix-cache: ${{ vars.FRAPPE_NIX_CACHE || '' }}
+      auto-merge: true
+      merge-method: squash
+      relock-cron: "0 8 * * 1"
+  # Pushes, schedules and dispatches: update-branches, the sweep and relock-upgrade. They hold the
+  # cache and App secrets, which no pull_request run gets.
+  deps-trusted:
+    if: github.event_name != 'pull_request'
     permissions:
       contents: write
       pull-requests: write

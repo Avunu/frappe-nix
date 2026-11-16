@@ -58,6 +58,20 @@
 			"header": "yaml"
 		},
 		{
+			"path": ".github/workflows/deps-apply.yml",
+			"template": ".github/workflows/deps-apply.yml.j2",
+			"strategy": "whole",
+			"module": "ci",
+			"when": "modules.dependabot",
+			"uses": [
+				"dependabot.auto-merge",
+				"ci.runs-on",
+				"ci.github-app",
+				"repo-policy.merge-methods"
+			],
+			"header": "yaml"
+		},
+		{
 			"path": ".github/workflows/nightly.yml",
 			"template": ".github/workflows/nightly.yml.j2",
 			"strategy": "whole",

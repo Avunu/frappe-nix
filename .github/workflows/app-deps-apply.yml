@@ -1,0 +1,271 @@
+name: app-deps-apply
+
+# The apply half of a Dependabot dependency PR's relock (docs/app-standards/ci.md, spec §4.5),
+# reusable and called from the consumer's deps-apply caller on a workflow_run of its deps workflow.
+# This code therefore comes from the default branch at the integration pin, never from the PR. The
+# PR's own deps run planned the relock with no secret and uploaded a patch and its metadata
+# (app-deps.yml, relock-plan). This job downloads them, checks them against the run that triggered
+# it, and pushes only a patch that touches the lock and sync-owned files. It never checks out PR
+# code: the head commit is fetched as objects, and the patch is applied to a temporary index.
+# A GitHub App's token (ci.github-app) is minted only after those checks pass.
+#
+# The push is a fast-forward of the PR branch from the planned head, with --force-with-lease pinned
+# to that head, so a head that moved since is refused. The relock commit's subject is the one
+# app-deps.yml's classify step recognises, so the run it starts stops there (no loop).
+
+on:
+  workflow_call:
+    inputs:
+      integration-branch:
+        type: string
+        default: develop
+      auto-merge:
+        description: dependabot.auto-merge
+        type: boolean
+        default: true
+      merge-method:
+        description: the first of repo-policy.merge-methods
+        type: string
+        default: squash
+      runs-on:
+        description: "The runner, as JSON: a label or a list of labels."
+        type: string
+        default: '["ubuntu-latest"]'
+    secrets:
+      APP_ID:
+        description: >-
+          ci.github-app: the GitHub App's ID (or client ID). A workflow_run sees the repository's
+          secrets, so the caller passes `vars.<name> || secrets.<name>`.
+        required: false
+      APP_PRIVATE_KEY:
+        description: "ci.github-app: the GitHub App's private key (PEM)"
+        required: false
+
+permissions: {}
+
+jobs:
+  apply:
+    # The trigger is the caller's workflow_run of deps. This job runs no code from the triggering
+    # run: it downloads the plan's artifact, checks it, and applies a patch with git alone. The
+    # deps run's conclusion is not checked: its decision table may fail while the relock is sound,
+    # and the artifact exists only once the plan's patch step has run.
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'pull_request'
+      && startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    # The same group as app-deps.yml's relock-plan, so a plan and an apply for one branch never overlap.
+    concurrency:
+      group: app-deps-relock-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: write # push the relock commit to the Dependabot branch
+      actions: write # read the plan's artifact; dispatch ci.yml and pr-policy.yml on the new head
+      pull-requests: write # enable auto-merge
+    steps:
+      - id: plan
+        name: Whether the deps run left a relock to apply
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          names="$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.expired == false) | .name')"
+          if grep -qx relock-patch <<< "$names"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::the deps run left no relock to apply (its plan skipped or found nothing to relock)"
+          fi
+
+      - if: steps.plan.outputs.found == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relock-patch
+          path: ${{ runner.temp }}/relock
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      # The integration branch, for git and for the auto-merge gates. Its working tree is never
+      # built or run from here; the PR's head is only fetched as objects below.
+      - if: steps.plan.outputs.found == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          path: .base
+          persist-credentials: false
+
+      - id: check
+        if: steps.plan.outputs.found == 'true'
+        name: Check the plan's metadata against the run that triggered this one
+        env:
+          META: ${{ runner.temp }}/relock/relock-meta.json
+          PULL_REQUESTS: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          want="$(jq -r 'if length == 1 then .[0].number | tostring else "" end' <<< "$PULL_REQUESTS")"
+          got_pr="$(jq -r '.pr | tostring' "$META")"
+          got_sha="$(jq -r '.head_sha' "$META")"
+          kind="$(jq -r '.kind' "$META")"
+          empty="$(jq -r '.empty' "$META")"
+          if ! [[ "$want" =~ ^[0-9]+$ ]] || [ "$got_pr" != "$want" ]; then
+            echo "::error::the plan is for PR '$got_pr', the run's pull request is '$want'; nothing is pushed"
+            exit 1
+          fi
+          if [ "$got_sha" != "$HEAD_SHA" ] || ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the plan is for head $got_sha, the run's head is $HEAD_SHA; nothing is pushed"
+            exit 1
+          fi
+          case "$kind" in
+            nix | actions) ;;
+            *) echo "::error::the plan's kind is '$kind', which is never relocked; nothing is pushed"; exit 1 ;;
+          esac
+          case "$empty" in
+            true | false) ;;
+            *) echo "::error::the plan's empty flag is '$empty'"; exit 1 ;;
+          esac
+          echo "pr=$got_pr" >> "$GITHUB_OUTPUT"
+          echo "empty=$empty" >> "$GITHUB_OUTPUT"
+
+      # Paths only: the patch must touch the lock and sync-owned files, and nothing under .github/.
+      # A rename, a copy, a mode change or a symlink is refused, so the paths are the whole story.
+      - id: paths
+        if: steps.check.outputs.empty == 'false'
+        name: Check the patch's paths
+        working-directory: .base
+        env:
+          PATCH: ${{ runner.temp }}/relock/relock.patch
+        run: |
+          set -euo pipefail
+          allowed() {
+            case "$1" in
+              flake.lock | nix/uv.lock | types/doctypes.d.ts | pyproject.toml | tools/uv.lock | package.json | yarn.lock) return 0 ;;
+              nix/node-locks/*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          mapfile -t paths < <(git apply --numstat "$PATCH" | cut -f3-)
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "::error::the patch changes no file"
+            exit 1
+          fi
+          for path in "${paths[@]}"; do
+            case "$path" in
+              .github/* | */.github/*) echo "::error::the patch touches $path; the apply never pushes .github/"; exit 1 ;;
+            esac
+            if ! allowed "$path"; then
+              echo "::error::the patch touches $path, which is not a lock or sync-owned file; nothing is pushed"
+              exit 1
+            fi
+          done
+          if git apply --summary "$PATCH" | grep -E 'mode change|rename |copy |symlink' > /dev/null; then
+            echo "::error::the patch renames, copies, changes a mode or adds a symlink; nothing is pushed"
+            exit 1
+          fi
+          echo "${#paths[@]} path(s) checked"
+
+      # The head commit, as objects only, and the patch applied to its tree in a temporary index:
+      # no working tree of the PR is written, and nothing from the PR runs.
+      - id: stage
+        if: steps.check.outputs.empty == 'false'
+        name: Stage the relock on the planned head, without a checkout
+        working-directory: .base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PATCH: ${{ runner.temp }}/relock/relock.patch
+          GIT_INDEX_FILE: ${{ runner.temp }}/apply.index
+          SUBJECT: "chore(deps): relock and sync after flake bump [dependabot skip]"
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --no-write-fetch-head --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$HEAD_SHA"
+          git read-tree "$HEAD_SHA"
+          git apply --cached --check "$PATCH"
+          git apply --cached "$PATCH"
+          tree="$(git write-tree)"
+          commit="$(git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "$tree" -p "$HEAD_SHA" -m "$SUBJECT")"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens or
+      # merges starts workflows like any other push. Minted here, after every check above.
+      - id: app
+        if: steps.check.outputs.empty == 'false'
+        name: Whether the caller passes a GitHub App
+        env:
+          ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
+        run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - if: steps.app.outputs.enabled == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - id: push
+        if: steps.check.outputs.empty == 'false'
+        name: Push the relock commit, if the branch is still at the planned head
+        working-directory: .base
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT: ${{ steps.stage.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
+            "$COMMIT:refs/heads/$HEAD_REF" "--force-with-lease=refs/heads/$HEAD_REF:$HEAD_SHA"
+
+      - if: steps.check.outputs.empty == 'false' && steps.app.outputs.enabled != 'true'
+        name: CI on the new head (a GITHUB_TOKEN push raises no event)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --repo "$REPO" --ref "$HEAD_REF"
+          if gh api "repos/$REPO/contents/.github/workflows/pr-policy.yml?ref=$HEAD_REF" > /dev/null 2>&1; then
+            gh workflow run pr-policy.yml --repo "$REPO" --ref "$HEAD_REF"
+          fi
+
+      - if: steps.check.outputs.empty == 'false' && inputs.auto-merge
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+
+      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      - if: steps.check.outputs.empty == 'false' && inputs.auto-merge
+        name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        env:
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        working-directory: .base
+        run: |
+          set -euo pipefail
+          lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
+          node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
+          rev="$(jq -r .rev <<<"$node")"
+          src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+          uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+
+      - if: steps.check.outputs.empty == 'false' && inputs.auto-merge
+        name: Auto-merge, where required checks protect the integration branch
+        working-directory: .base
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          PR_URL: ${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.check.outputs.pr }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          METHOD: ${{ inputs.merge-method }}
+        run: frappe-nix ci enable-automerge --pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
