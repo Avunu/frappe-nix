@@ -484,8 +484,47 @@ cmd_down_check() {
   endgroup
 }
 
+# The rename and reconcile processes, with the kernel's view of each: its state,
+# what it sleeps in (wchan) and the syscall it is in. A Python process's own stack
+# is not readable from outside it, so this is the next best thing.
+rename_procs() {
+  local d cmd
+  for d in /proc/[0-9]*; do
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2> /dev/null || true)"
+    case "$cmd" in
+      *frappe_rename_app.py* | *reconcile-apps*)
+        echo "  pid ${d#/proc/} $(awk '/^State/ {print $2, $3}' "$d/status" 2> /dev/null) wchan=$(cat "$d/wchan" 2> /dev/null) syscall=[$(cat "$d/syscall" 2> /dev/null)]"
+        echo "    ${cmd:0:240}"
+        ;;
+    esac
+  done
+  return 0
+}
+
+# MariaDB's view while the rename is stuck: the process list, the open transactions
+# and what they wait on, the InnoDB transactions section, and the metadata locks.
+# Read-only; a failure is printed and the rest still runs.
+db_state() {
+  local client sock="$DEVENV_RUNTIME/mysql.sock"
+  client="$(command -v mariadb || command -v mysql || true)"
+  if [ -z "$client" ]; then
+    echo "  no mariadb client in the dev shell"
+    return 0
+  fi
+  q() { MYSQL_PWD="" timeout 30 "$client" --socket="$sock" -uroot "$@" 2>&1 || true; }
+  echo "  SHOW FULL PROCESSLIST:"
+  q -e "SHOW FULL PROCESSLIST"
+  echo "  information_schema.innodb_trx:"
+  q -e "SELECT trx_id, trx_state, trx_started, trx_mysql_thread_id, trx_requested_lock_id, trx_wait_started, trx_tables_locked, trx_rows_locked, LEFT(trx_query, 200) AS trx_query FROM information_schema.innodb_trx"
+  echo "  InnoDB status, TRANSACTIONS section:"
+  q -e "SHOW ENGINE INNODB STATUS\G" | sed -n '/^TRANSACTIONS/,/^FILE I\/O/p' | head -n 150
+  echo "  metadata locks not granted, or outside the system schemas:"
+  q -e "SELECT OBJECT_TYPE, OBJECT_SCHEMA, OBJECT_NAME, LOCK_TYPE, LOCK_STATUS, OWNER_THREAD_ID FROM performance_schema.metadata_locks WHERE LOCK_STATUS <> 'GRANTED' OR OBJECT_SCHEMA NOT IN ('mysql', 'performance_schema', 'information_schema') LIMIT 200"
+}
+
 # Inside a dev shell, after a bench did not come up: what its reconcile-apps was
-# waiting on, what process-compose has, and what else runs in this directory.
+# waiting on, what process-compose has, what else runs in this directory, and what
+# the database is doing.
 diagnose_no_bench() {
   local lock="$FRAPPE_BENCH_ROOT/sites/$SITE/locks/reconcile-apps.lock"
   group "diagnostics: the bench that did not come up"
@@ -495,6 +534,10 @@ diagnose_no_bench() {
   else
     echo "site lock: $lock does not exist (reconcile-apps never reached it)"
   fi
+  echo "rename and reconcile processes:"
+  rename_procs
+  echo "database:"
+  db_state
   echo "process-compose:"
   timeout 10 process-compose -U -u "$PC_SOCKET_PATH" process list -o wide 2>&1 || echo "  no process-compose answers on $PC_SOCKET_PATH"
   echo "processes under $DEVENV_ROOT:"
