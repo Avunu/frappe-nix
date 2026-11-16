@@ -117,6 +117,15 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             assert s.get("continue-on-error") is True, s
         assert any(s.get("uses", "").startswith("actions/cache/restore@") for s in steps[probe:notice]), steps
         assert any("frappe-nix ci relock-doctypes\n" in s.get("run", "") for s in steps[probe:notice]), steps
+        # The actions kind (classify) runs a frappe-nix revision a PR chose: it gets no secret, and
+        # the plan never holds the App key (relock-push does, and only applies the patch).
+        classify = doc["jobs"]["classify"]
+        assert classify["permissions"] == {"contents": "read"}, classify["permissions"]
+        assert "secrets." not in str(classify), classify
+        assert plan["needs"] == "classify", plan.get("needs")
+        cache = next(s for s in steps if s.get("id") == "cache")
+        assert "classify.outputs.kind == 'nix'" in cache["env"]["FETCH_TOKEN"], cache["env"]
+        assert "APP_PRIVATE_KEY" not in str(plan) and "secrets.APP_ID" not in str(plan), "plan holds the App key"
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout

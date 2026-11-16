@@ -1,9 +1,11 @@
 name: app-deps
 
 # Dependency PRs (docs/app-standards/ci.md, spec §4.5), reusable. A Dependabot nix PR is
-# relocked and synced, and its types/doctypes.d.ts regenerated (relock-plan runs the PR's code
-# with no write token; relock-push only applies its patch); every Dependabot PR gets the
-# decision table's verdict (auto-merge or needs-review), or auto-merge under the `all` policy;
+# relocked and synced, and its types/doctypes.d.ts regenerated; so is a Dependabot github-actions
+# PR that moves a frappe-nix reusable-workflow pin, with frappe-nix locked to that pin (classify
+# picks the kind). relock-plan runs the PR's code with no write token and no secret; relock-push
+# only applies its patch. Every Dependabot PR gets the decision table's verdict (auto-merge or
+# needs-review), or auto-merge under the `all` policy;
 # the sweep re-dispatches CI for bot PRs; update-branches brings bot PRs that are behind the
 # integration branch up to date; relock-upgrade refreshes nix/uv.lock weekly. Auto-merge is
 # enabled only where required checks protect the integration branch.
@@ -76,13 +78,69 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
+  # Which relock a Dependabot PR gets, from its own checkout (read only, no secrets): nix for a
+  # nix PR; actions for a github-actions PR whose diff adds a pin of a frappe-nix reusable
+  # workflow (the pin is the source of truth: relock-plan locks frappe-nix to it); none otherwise.
+  # The relock commit the App pushes (RELOCK_SUBJECT) is none, so the run it starts stops here.
+  classify:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && (startsWith(github.head_ref, 'dependabot/nix/') || startsWith(github.head_ref, 'dependabot/github_actions/'))
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      kind: ${{ steps.kind.outputs.kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - id: kind
+        name: What kind of Dependabot PR this is
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          RELOCK_SUBJECT: "chore(deps): relock and sync after flake bump [dependabot skip]"
+        run: |
+          set -euo pipefail
+          kind=none
+          case "$HEAD_REF" in
+            dependabot/nix/*) kind=nix ;;
+            dependabot/github_actions/*)
+              # frappe-nix's own self-test (OVERRIDE) has no pin to lock.
+              node=""
+              if [ -z "$OVERRIDE" ] && [ -f flake.lock ]; then
+                node=$(jq -r '.nodes.root.inputs["frappe-nix"] | strings' flake.lock)
+              fi
+              if [ -n "$node" ]; then
+                slug=$(jq -r --arg n "$node" '"\(.nodes[$n].locked.owner)/\(.nodes[$n].locked.repo)"' flake.lock)
+                # The diff's added lines: a frappe-nix reusable workflow named in a uses: line.
+                if git diff --unified=0 "$BASE_SHA" HEAD -- .github/workflows | grep -E "^\+.*uses: *['\"]?${slug}/\.github/workflows/" > /dev/null; then
+                  kind=actions
+                fi
+              fi
+              if [ "$kind" = actions ] && [ "$(git log -1 --format=%s HEAD)" = "$RELOCK_SUBJECT" ]; then
+                kind=none
+              fi
+              ;;
+          esac
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
   relock-plan:
-    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/')
+    needs: classify
+    if: needs.classify.outputs.kind == 'nix' || needs.classify.outputs.kind == 'actions'
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
+    concurrency:
+      group: app-deps-relock-${{ github.head_ref }}
+      cancel-in-progress: false
     permissions:
       contents: read # the checkout; this job runs the PR's code and holds no write token
     outputs:
+      kind: ${{ needs.classify.outputs.kind }}
       state: ${{ steps.inputs.outputs.state }}
       moved: ${{ steps.inputs.outputs.moved }}
       empty: ${{ steps.patch.outputs.empty }}
@@ -132,6 +190,7 @@ jobs:
           fi
 
       - id: inputs
+        if: needs.classify.outputs.kind == 'nix'
         name: Does the PR move frappe-nix or the standards profile?
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -148,14 +207,18 @@ jobs:
 
       # The binary cache (spec S15): none, cachix:<name> or attic:<endpoint>/<cache>. Only a
       # push or schedule on the integration branch ever sees the write token.
+      # The actions kind runs the frappe-nix revision a Dependabot PR chose, so it gets no secret
+      # at all: no cache and no fetch token (a private fork is an intended failure there).
       - id: cache
         name: Binary cache and private sources
         env:
           CACHE: ${{ inputs.nix-cache }}
           OVERRIDE: ${{ inputs.frappe-nix-override }}
-          FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+          SECRETS_OK: ${{ needs.classify.outputs.kind == 'nix' }}
+          FETCH_TOKEN: ${{ needs.classify.outputs.kind == 'nix' && secrets.FETCH_TOKEN || '' }}
         run: |
           set -euo pipefail
+          if [ "$SECRETS_OK" != true ]; then CACHE=""; fi
           case "$CACHE" in
             "") echo "kind=none" >> "$GITHUB_OUTPUT" ;;
             cachix:*) echo "kind=cachix" >> "$GITHUB_OUTPUT"; echo "name=${CACHE#cachix:}" >> "$GITHUB_OUTPUT" ;;
@@ -205,7 +268,52 @@ jobs:
           attic login ci "$ENDPOINT" ${TOKEN:+"$TOKEN"}
           attic use "ci:$NAME"
 
-      - if: steps.inputs.outputs.state == 'ok'
+      # The actions kind (classify) locks frappe-nix to the revision its pinned workflows name,
+      # from the head's pins and the head's flake.lock, never the merge-base: a run after the
+      # relock commit finds the lock at the pin and changes nothing. Only flake.lock's frappe-nix
+      # node moves, through jq, with the narHash and lastModified nix reads for that revision.
+      # Shell and jq, not frappe-nix ci: the tools are the integration branch's, which predate
+      # any new subcommand. Several pinned revisions in one head refuse the PR.
+      - id: pin
+        if: needs.classify.outputs.kind == 'actions'
+        name: Lock frappe-nix to the revision its pinned workflows name
+        run: |
+          set -euo pipefail
+          node=$(jq -r '.nodes.root.inputs["frappe-nix"] | strings' flake.lock)
+          if [ -z "$node" ]; then
+            echo "::error::flake.lock has no frappe-nix input to lock to its pin"
+            exit 1
+          fi
+          owner=$(jq -r --arg n "$node" '.nodes[$n].locked.owner' flake.lock)
+          repo=$(jq -r --arg n "$node" '.nodes[$n].locked.repo' flake.lock)
+          lock_rev=$(jq -r --arg n "$node" '.nodes[$n].locked.rev // empty' flake.lock)
+          pins=$(grep -rhoE "uses: *['\"]?${owner}/${repo}/\.github/workflows/[^@[:space:]'\"]+@[0-9a-f]{40}" .github/workflows | grep -oE '[0-9a-f]{40}$' | sort -u || true)
+          count=$(printf '%s' "$pins" | grep -c . || true)
+          if [ "$count" != 1 ]; then
+            echo "::error::the workflows pin $count frappe-nix revisions (${pins//$'\n'/ }); one is expected, so the PR is not relocked"
+            exit 1
+          fi
+          if [ "$pins" = "$lock_rev" ]; then
+            echo "flake.lock already locks frappe-nix $pins"
+          else
+            meta=$(nix flake prefetch --json "github:$owner/$repo/$pins")
+            if [ "$(jq -r '.locked.rev' <<<"$meta")" != "$pins" ]; then
+              echo "::error::github:$owner/$repo/$pins does not resolve to that revision"
+              exit 1
+            fi
+            nar=$(jq -r '.locked.narHash' <<<"$meta")
+            last=$(jq -r '.locked.lastModified' <<<"$meta")
+            jq --arg n "$node" --arg rev "$pins" --arg nar "$nar" --argjson last "$last" \
+              '.nodes[$n].locked.rev = $rev | .nodes[$n].locked.narHash = $nar | .nodes[$n].locked.lastModified = $last' \
+              flake.lock > "$RUNNER_TEMP/flake.lock"
+            mv "$RUNNER_TEMP/flake.lock" flake.lock
+            # Adds only the nodes the revision's own inputs need; every node already locked stays.
+            nix flake lock
+            echo "locked frappe-nix from $lock_rev to $pins"
+          fi
+          echo "state=ok" >> "$GITHUB_OUTPUT"
+
+      - if: steps.inputs.outputs.state == 'ok' || steps.pin.outputs.state == 'ok'
         name: Relock and sync
         env:
           FRAPPE_NIX_CI: "1"
@@ -224,7 +332,7 @@ jobs:
       # tracks the file; node is set up as the typecheck job does it. Every step of it may fail
       # (continue-on-error): the lock is right without the file, so a failure keeps the
       # committed one and is a notice, and ci / typecheck on the pushed head still names it.
-      - if: steps.inputs.outputs.state == 'ok'
+      - if: steps.inputs.outputs.state == 'ok' || steps.pin.outputs.state == 'ok'
         id: doctypes
         name: Does the app commit types/doctypes.d.ts?
         continue-on-error: true
@@ -277,7 +385,7 @@ jobs:
         name: Say that types/doctypes.d.ts was not regenerated
         run: echo "::notice::types/doctypes.d.ts was not regenerated (a step above failed); the relock is pushed without it, and ci / typecheck reports it"
 
-      - if: steps.inputs.outputs.state == 'ok'
+      - if: steps.inputs.outputs.state == 'ok' || steps.pin.outputs.state == 'ok'
         id: patch
         run: frappe-nix ci relock-patch --out "$RUNNER_TEMP/relock.patch"
 
@@ -292,6 +400,9 @@ jobs:
     if: needs.relock-plan.outputs.empty == 'false'
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
+    concurrency:
+      group: app-deps-relock-${{ github.head_ref }}
+      cancel-in-progress: false
     permissions:
       contents: write # push the relock commit to the Dependabot branch
       actions: write # dispatch ci.yml and pr-policy.yml on it
@@ -311,9 +422,10 @@ jobs:
             find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
           fi
 
+      # The head the patch was made for, not the branch: a head that moved since is a rejected push.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -322,11 +434,18 @@ jobs:
           path: ${{ runner.temp }}/relock
 
       - name: Apply the relock patch (nothing else runs)
+        env:
+          KIND: ${{ needs.relock-plan.outputs.kind }}
         run: |
           set -euo pipefail
           git apply --index "$RUNNER_TEMP/relock/relock.patch"
           if git diff --cached --name-only | grep -E '(^|/)\.github/workflows/'; then
             echo "::error::relock would change a workflow; run frappe-nix repo rollout"
+            exit 1
+          fi
+          # A frappe-nix pin's relock moves flake.lock and the files sync owns, never .github/ (S29).
+          if [ "$KIND" = actions ] && git diff --cached --name-only | grep -E '^\.github/' > /dev/null; then
+            echo "::error::the relock of a frappe-nix pin would change .github/; it is not pushed"
             exit 1
           fi
 
