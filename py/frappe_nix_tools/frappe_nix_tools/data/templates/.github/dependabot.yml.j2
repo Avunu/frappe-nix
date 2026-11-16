@@ -61,6 +61,8 @@ updates:
     # frappe-nix's reusable workflows move only through `frappe-nix repo rollout` and `frappe-init --sync`.
     ignore:
       - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
+      # Dependabot names reusable workflows by file path, so the exact name above matches nothing.
+      - dependency-name: {{ frappe_nix.owner }}/{{ frappe_nix.name }}/*
 {{ ignore_items("github-actions", "/") }}    groups:
 {% if docs_actions %}
       # needs-review: a merge publishes the docs site with the new workflow code
