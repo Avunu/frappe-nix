@@ -648,7 +648,11 @@ class TestRetireByFunction(AppCase):
 			manifest,
 			"ships",
 			lambda path: path
-			in (".github/workflows/release.yml", ".github/workflows/deps.yml", ".github/workflows/deps-apply.yml"),
+			in (
+				".github/workflows/release.yml",
+				".github/workflows/deps.yml",
+				".github/workflows/deps-apply.yml",
+			),
 		):
 			self._rules_follow_their_module()
 

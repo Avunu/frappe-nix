@@ -133,7 +133,10 @@ class TestGates(CallerCase):
 				"[tool.frappe-nix.releases]\nenable = false\n[tool.frappe-nix.pilot-assets]\nenable = false\n",
 				["release.yml", "assets.yml"],
 			),
-			("[tool.frappe-nix.dependabot]\nenable = false\n", ["deps.yml", "deps-apply.yml", "../dependabot.yml"]),
+			(
+				"[tool.frappe-nix.dependabot]\nenable = false\n",
+				["deps.yml", "deps-apply.yml", "../dependabot.yml"],
+			),
 			("[tool.frappe-nix.ci]\nnightly = false\n", ["nightly.yml"]),
 		)
 		full = set(self.render())
@@ -310,7 +313,8 @@ class TestGitHubApp(CallerCase):
 		trusted = files[f"{WORKFLOWS}/deps.yml"]["jobs"]["deps-trusted"]
 		self.assertEqual(trusted["if"], "github.event_name != 'pull_request'")
 		self.assertEqual(
-			set(trusted["secrets"]), {"NIX_CACHE_TOKEN", "NIX_CACHE_READ_TOKEN", "FETCH_TOKEN"} | set(APP_SECRETS)
+			set(trusted["secrets"]),
+			{"NIX_CACHE_TOKEN", "NIX_CACHE_READ_TOKEN", "FETCH_TOKEN"} | set(APP_SECRETS),
 		)
 
 	def test_apply_follows_the_deps_run_of_a_pull_request(self) -> None:
