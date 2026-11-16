@@ -77,6 +77,11 @@ left-pad@^1.3.0:
   version "2.2.3"
   resolved "git+https://github.com/example/air-datepicker#ed37b94d95c68d8544357e330be0c89d044a3eea"
 LOCK
+  # Yarn covers every range of the manifest: an entry for each one the canned lock lacks.
+  jq -r '(.dependencies // {}) + (.devDependencies // {}) + (.optionalDependencies // {}) | to_entries[] | "\(.key)@\(.value)"' package.json |
+    while IFS= read -r k; do
+      grep -qF "\"$k\":" yarn.lock || printf '\n"%s":\n  version "0.0.0"\n  resolved "https://registry.yarnpkg.com/stub/-/stub-0.0.0.tgz#0000000000000000000000000000000000000000"\n' "$k" >> yarn.lock
+    done
 fi
 mkdir -p node_modules
 exit 0
@@ -158,6 +163,14 @@ check "…seeded from the previous fallback, so only what must move does" test -
 rm "$LOCKS/beta/yarn.lock"
 "$TOOL" "$BENCH" node-locks > /dev/null 2>&1 || no "run after a deleted lock exits 0"
 check "a deleted lock is regenerated even though the stamp matched" test -f "$LOCKS/beta/yarn.lock"
+# A stamp that matches is not enough: a lock that no longer covers the manifest is resolved again.
+printf '# yarn lockfile v1\n\n\n' > "$LOCKS/beta/yarn.lock"
+jq -n --arg h "$(sha256sum "$BENCH/apps/beta/package.json" | cut -d' ' -f1)" '{"package.json": $h}' > "$LOCKS/beta/source.json"
+before="$(calls)"
+"$TOOL" "$BENCH" node-locks > "$ROOT/gap.log" 2>&1 || no "run over a lock with a gap exits 0"
+check_eq "a matching stamp over a lock missing a manifest range is resolved again" "$((before + 1))" "$(calls)"
+check "…and the run says what is missing" grep -q 'does not cover onscan.js@^1.5.2' "$ROOT/gap.log"
+check "…and the lock covers it" grep -qF '"onscan.js@^1.5.2":' "$LOCKS/beta/yarn.lock"
 
 echo "── a fallback beside an upstream lock ─────────────────────────"
 mkdir -p "$LOCKS/alpha/desk"
