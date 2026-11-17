@@ -28,8 +28,10 @@ the rollout (a ``chore(deps): frappe-nix`` commit by you, or by the bot rollout.
 as: its ``env.BOT``, read from the locked frappe-nix repository at ``--to``) is left alone, with a comment on its pull request, while that pull request is open or no pull request
 holds those commits. Once its latest pull request is merged or closed and the branch is still
 that pull request's head, the branch is stale and the next rollout replaces it (with
-``--force-with-lease``). With ``--no-auto-merge``, or when the safety rule fails, an
-auto-merge an earlier run enabled is turned off. A repository whose ``profile`` is a
+``--force-with-lease``). An auto-merge an earlier run enabled is turned off before the push
+(GitHub keeps it on across one), and auto-merge is enabled only for the commit pushed
+(``gh pr merge --match-head-commit``); with ``--no-auto-merge``, or when the safety rule
+fails, it stays off. A repository whose ``profile`` is a
 built-in is skipped by ``--profile-to``. ``--dry-run`` prints each repository's plan and
 runs nothing.
 
@@ -435,6 +437,12 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 	sh(git_safe("checkout", "-q", "-B", head), root)
 	sh(git_safe("add", "-A"), root)
 	sh(git_safe("commit", "-q", "-m", f"chore(deps): {subject}"), root)
+	pushed = sh(git_safe("rev-parse", "HEAD"), root).strip()
+	# GitHub keeps an earlier run's auto-merge on across this push: off first, so the new head
+	# starts without it until enable() arms it for this commit (--match-head-commit).
+	earlier = open_pr(r, head)
+	if earlier and earlier.get("html_url"):
+		automerge.disarm(str(earlier["html_url"]))
 	sh(
 		git_safe(
 			"push",
@@ -463,7 +471,7 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 		if closed:
 			print(f"{r}: closed {', '.join(f'#{n}' for n in closed)} ({LEGACY_PREFIX}*)", file=sys.stderr)
 	if not args.no_auto_merge and url:
-		automerge.enable(url, r, integration, app.gates, method)
+		automerge.enable(url, r, integration, app.gates, method, pushed)
 	elif url:
 		automerge.disarm(url)
 	return f"{r}: {url or head}"

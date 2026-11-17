@@ -56,7 +56,8 @@
 #                           the verify and re-derive steps, from the environment's own
 #                           FRAPPE_NIX_ROLLOUT_* variable and secret, which no other job or
 #                           workflow names; publish turns an earlier auto-merge off before it
-#                           pushes a head that cannot auto-merge, and before it labels
+#                           pushes, enables auto-merge only for the commit it pushed
+#                           (--head-sha), and turns it off again before it labels
 #                           needs-review; report has issues write and no secret
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
@@ -217,16 +218,22 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert mint["with"]["owner"] == "Avunu" and "matrix.name" in mint["with"]["repositories"], mint["with"]
         assert mint["with"]["private-key"] == "''${{ " + key + " }}", mint["with"]
         assert mint["with"]["client-id"] == "''${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}", mint["with"]
-        # needs-review never keeps an auto-merge an earlier run enabled: a run that cannot end
-        # pr-open turns it off before it pushes, and again after enable-automerge or the head
-        # check failed, before the label; publish drops the label.
+        # needs-review never keeps an auto-merge an earlier run enabled: publish turns it off
+        # (disarm, which fails the step when it stays on) before every push and before keeping
+        # a head that cannot end pr-open, and again after enable-automerge or the head check
+        # failed, before the label; enable-automerge names the commit it pushed (--head-sha);
+        # publish drops the label.
         act = next(s["run"] for s in steps if "--add-label needs-review" in s.get("run", ""))
         off = "gh pr merge --disable-auto"
-        assert act.count(off) == 2, act
-        gate = act.index('if [ -n "$pr_url" ] && [ "$can_merge" = false ]; then')
-        assert gate < act.index(off) < act.index(" push -q "), act
-        assert act.rindex(off) < act.index("--add-label needs-review"), act
-        assert act.index('[ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]') < gate, act
+        assert act.count(off) == 1 and act.index("disarm() {") < act.index(off), act
+        gate = act.index('if [ -n "$pr_url" ] && { [ "$can_merge" = false ] || [ "$same_tree" = false ]; }; then\n')
+        before_push = act.index('disarm "$pr_url"', gate)
+        assert act.index('[ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]') < gate < before_push < act.index(" push -q "), act
+        label = act.index("--add-label needs-review")
+        assert act.rindex('disarm "$pr_url"', 0, label) > act.index(" push -q "), act
+        enable = act.index("ci enable-automerge")
+        assert act.index('want="''${commit:-$observed}"') < enable, act
+        assert '--merge-method "$method" --head-sha "$want")' in act[enable:act.index("\n", enable)], act
         assert "--remove-label needs-review" in act and "autoMergeRequest" in act, act
         # A branch its merged or closed PR left behind is replaced, in resolve and in publish.
         resolve = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])

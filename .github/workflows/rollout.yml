@@ -21,9 +21,10 @@ name: rollout
 #   publish  (environment frappe-nix-rollout) checks the patch with the tag's own
 #            `frappe-nix ci verify-rollout-patch` before any token exists, re-derives its tree
 #            in shell, and only then mints the avunu-rollout App token for that one
-#            repository, commits the verified tree as avunu-rollout[bot], pushes, opens or
-#            edits the PR, closes the per-release standards/frappe-nix-v* PRs and enables
-#            auto-merge, or turns an earlier run's auto-merge off and labels needs-review.
+#            repository, turns an earlier run's auto-merge off, commits the verified tree as
+#            avunu-rollout[bot], pushes, opens or edits the PR, closes the per-release
+#            standards/frappe-nix-v* PRs and enables auto-merge for the commit it pushed
+#            (--head-sha), or turns auto-merge off and labels needs-review.
 #            The App's id and key are the environment's own variable and secret
 #            (FRAPPE_NIX_ROLLOUT_APP_ID, FRAPPE_NIX_ROLLOUT_PRIVATE_KEY): no other job, branch
 #            or workflow can read them. This workflow uses no other App's key. avunu-ci still
@@ -686,9 +687,24 @@ jobs:
             fi
           fi
 
-          # Whether this run can end pr-open. When it cannot, an auto-merge an earlier run
-          # enabled comes off before the push, so GitHub never holds one for a head no run
-          # verified for publish; a failure to turn it off fails the step.
+          # Auto-merge off, or fail the step: GitHub keeps an earlier run's auto-merge on across
+          # a push by anyone with write access.
+          disarm() {
+            if ! gh pr merge --disable-auto "$1"; then
+              on="$(gh pr view "$1" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+              if [ "$on" != false ]; then
+                echo "::error::could not turn off the auto-merge an earlier run enabled on $1"
+                exit 1
+              fi
+            fi
+            echo "auto-merge is off on $1"
+          }
+
+          # Whether this run can end pr-open, and whether it pushes. Before a push, and before
+          # keeping a head that cannot end pr-open, an auto-merge an earlier run enabled comes
+          # off: every head this run pushes starts with it off until enable-automerge arms it
+          # for that commit (--head-sha), and GitHub never holds one for a head no run verified
+          # for publish.
           method="$(jq -r .merge_method "$decision")"
           case "$method" in squash | merge | rebase) ;; *) method=squash ;; esac
           automerge="$(jq -r .automerge "$decision")"
@@ -697,20 +713,17 @@ jobs:
           if [ "$DECISION" = publish ] && [ "$automerge" = true ] && [ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]; then
             can_merge=true
           fi
-          if [ -n "$pr_url" ] && [ "$can_merge" = false ]; then
-            armed="$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')"
-            if [ "$armed" = true ]; then
-              if ! gh pr merge --disable-auto "$pr_url"; then
-                echo "::error::could not turn off the auto-merge an earlier run enabled on $pr_url"
-                exit 1
-              fi
-              echo "turned off the auto-merge an earlier run enabled on $pr_url before pushing"
-            fi
+          same_tree=false
+          if [ -n "$observed" ] && [ "$(gh api "repos/$REPO/git/commits/$observed" --jq .tree.sha)" = "$TREE_ID" ]; then
+            same_tree=true
+          fi
+          if [ -n "$pr_url" ] && { [ "$can_merge" = false ] || [ "$same_tree" = false ]; }; then
+            disarm "$pr_url"
           fi
 
           pushed=false
           commit=""
-          if [ -n "$observed" ] && [ "$(gh api "repos/$REPO/git/commits/$observed" --jq .tree.sha)" = "$TREE_ID" ]; then
+          if [ "$same_tree" = true ]; then
             echo "$head already holds tree $TREE_ID: not pushing"
           else
             id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
@@ -749,7 +762,7 @@ jobs:
             # it labels needs-review itself when either fails.
             out="$RUNNER_TEMP/automerge.out"
             (cd "$GITHUB_WORKSPACE/consumer" && GITHUB_OUTPUT="$out" nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- \
-              ci enable-automerge --pr-url "$pr_url" --repo "$REPO" --integration "$INTEGRATION" --merge-method "$method")
+              ci enable-automerge --pr-url "$pr_url" --repo "$REPO" --integration "$INTEGRATION" --merge-method "$method" --head-sha "$want")
             if grep -q '^result=merging$' "$out"; then
               # PR open only once GitHub holds auto-merge for the head this run verified (or merged it).
               got="$(gh pr view "$pr_url" --json headRefOid,autoMergeRequest,state \
@@ -763,12 +776,8 @@ jobs:
           fi
           if [ "$result" = needs-review ]; then
             # enable-automerge or the head check failed after the push, or GitHub kept an
-            # auto-merge on anyway: turn it off, or fail.
-            armed="$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')"
-            if [ "$armed" = true ]; then
-              gh pr merge --disable-auto "$pr_url"
-              echo "turned off the auto-merge an earlier run enabled on $pr_url"
-            fi
+            # auto-merge on anyway: turn it off, or fail, before the label.
+            disarm "$pr_url"
             gh label create needs-review -R "$REPO" --color d93f0b --description "Not merged automatically; a person reviews it" --force
             gh pr edit "$pr_url" --add-label needs-review
           else

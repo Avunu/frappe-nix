@@ -389,6 +389,39 @@ class TestRolloutByHand(RolloutRepoCase):
 		self.assertFalse(any(c[:3] == ("pr", "merge", "--auto") for c in self.gh.cli_calls))
 		self.assertTrue(any("needs-review" in c for c in self.gh.cli_calls))
 
+	def test_auto_merge_names_the_commit_it_pushed(self):
+		"""``gh pr merge --auto --match-head-commit``: GitHub arms it only for the rollout's commit."""
+		with mock.patch.object(github, "gates_protected", return_value=True):
+			code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		pushed = git(self.origin, "rev-parse", "standards/frappe-nix").strip()
+		url = "https://github.com/example/demo_app/pull/9"
+		self.assertIn(
+			("pr", "merge", "--auto", "--squash", "--match-head-commit", pushed, url), self.gh.cli_calls
+		)
+
+	def test_turns_off_an_earlier_auto_merge_before_the_push(self):
+		"""GitHub keeps auto-merge on across a push: the open PR's comes off while the branch is
+		still at the earlier rollout's commit."""
+		before = push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", f"{rollout.SUBJECT} v1.1.0")
+		url = "https://github.com/example/demo_app/pull/5"
+		self.gh.routes[("GET", f"repos/{R}/pulls?state=open&head=example:standards/frappe-nix")] = [
+			{"number": 5, "html_url": url}
+		]
+		seen = []
+		cli = self.gh.cli
+
+		def record(*args):
+			if args[:3] == ("pr", "merge", "--disable-auto"):
+				seen.append(git(self.origin, "rev-parse", "standards/frappe-nix").strip())
+			return cli(*args)
+
+		with mock.patch.object(self.gh, "cli", side_effect=record):
+			code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertTrue(seen and seen[0] == before, (seen, before))
+		self.assertNotEqual(git(self.origin, "rev-parse", "standards/frappe-nix").strip(), before)
+
 	def test_runs_again_over_its_own_commit(self):
 		code, text = self.run_rollout()
 		self.assertEqual(code, 0, text)
