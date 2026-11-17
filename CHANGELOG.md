@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.7.0](https://github.com/Avunu/frappe-nix/compare/v2.6.2...v2.7.0) (2026-11-17)
+
+
+### Features
+
+* **ci:** release-driven frappe-nix rollout (rollout.yml) ([#281](https://github.com/Avunu/frappe-nix/issues/281)) ([4e6cb32](https://github.com/Avunu/frappe-nix/commit/4e6cb32672d0a23b2dd741c0ba73f21c40c851fb))
+
+
+### Bug Fixes
+
+* **ci:** keep the GitHub App's key off shared runners and away from app code ([#279](https://github.com/Avunu/frappe-nix/issues/279)) ([4968f02](https://github.com/Avunu/frappe-nix/commit/4968f0258fbc185bed379d1be3c0a3bd05b045a4))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#285](https://github.com/Avunu/frappe-nix/issues/285)) ([ab86dcc](https://github.com/Avunu/frappe-nix/commit/ab86dcce4eb36c145ed6fb16d4c4539d08fc68e2))
+
 ## [2.6.2](https://github.com/Avunu/frappe-nix/compare/v2.6.1...v2.6.2) (2026-11-17)
 
 
