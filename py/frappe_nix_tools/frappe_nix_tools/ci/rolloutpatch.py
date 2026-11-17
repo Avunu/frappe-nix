@@ -436,6 +436,34 @@ def _source_key(source: dict) -> list[str]:
 	return [f"{kind}={source[kind]}" for kind in sorted(source) if isinstance(source[kind], str)]
 
 
+def _versions(doc: dict) -> dict[str, list[str]]:
+	out: dict[str, list[str]] = {}
+	for pkg in _packages(doc):
+		out.setdefault(str(pkg.get("name", "")), []).append(str(pkg.get("version", "")))
+	return {k: sorted(v) for k, v in out.items()}
+
+
+def _closure(doc: dict, name: str) -> set[str]:
+	deps: dict[str, set[str]] = {}
+	for pkg in _packages(doc):
+		names = deps.setdefault(str(pkg.get("name", "")), set())
+		groups = [pkg.get("dependencies") or []]
+		for table in ("optional-dependencies", "dev-dependencies"):
+			groups += list((pkg.get(table) or {}).values()) if isinstance(pkg.get(table), dict) else []
+		for group in groups:
+			for dep in group if isinstance(group, list) else []:
+				if isinstance(dep, dict) and isinstance(dep.get("name"), str):
+					names.add(dep["name"])
+	seen: set[str] = set()
+	todo = [name]
+	while todo:
+		n = todo.pop()
+		if n not in seen:
+			seen.add(n)
+			todo += deps.get(n, ())
+	return seen
+
+
 def uv_problems(
 	path: str, base_text: str | None, new_text: str, tag_sha: str, trusted: BaseLocks
 ) -> tuple[list[str], list[str]]:
@@ -485,34 +513,6 @@ def uv_problems(
 		if moved:
 			reviews.append(f"{path} moves {', '.join(moved[:10])}, outside {RUNTIME}'s dependencies")
 	return rejects, reviews
-
-
-def _versions(doc: dict) -> dict[str, list[str]]:
-	out: dict[str, list[str]] = {}
-	for pkg in _packages(doc):
-		out.setdefault(str(pkg.get("name", "")), []).append(str(pkg.get("version", "")))
-	return {k: sorted(v) for k, v in out.items()}
-
-
-def _closure(doc: dict, name: str) -> set[str]:
-	deps: dict[str, set[str]] = {}
-	for pkg in _packages(doc):
-		names = deps.setdefault(str(pkg.get("name", "")), set())
-		groups = [pkg.get("dependencies") or []]
-		for table in ("optional-dependencies", "dev-dependencies"):
-			groups += list((pkg.get(table) or {}).values()) if isinstance(pkg.get(table), dict) else []
-		for group in groups:
-			for dep in group if isinstance(group, list) else []:
-				if isinstance(dep, dict) and isinstance(dep.get("name"), str):
-					names.add(dep["name"])
-	seen: set[str] = set()
-	todo = [name]
-	while todo:
-		n = todo.pop()
-		if n not in seen:
-			seen.add(n)
-			todo += deps.get(n, ())
-	return seen
 
 
 _YARN_KEY = re.compile(r"^(?![\s#])(?P<keys>.+):\s*$")
@@ -730,66 +730,15 @@ def _materialize(root: Path, tree: str) -> None:
 	_git(root, "read-tree", "-m", "-u", "HEAD", tree)
 
 
-def verify(req: Request, fn_lock: dict | None = None) -> tuple[Result, dict]:
-	"""Check ``req``'s patch; returns the result and the facts the decision carries."""
-	req.validate()
-	res = Result()
-	facts: dict[str, Any] = {"patch_sha256": "", "tree_id": "", "merge_method": "squash", "automerge": False}
-	patch = req.patch.read_bytes()
-	facts["patch_sha256"] = hashlib.sha256(patch).hexdigest()
-	repo_dir = req.worktree.resolve()
-	head = _git(repo_dir, "rev-parse", "HEAD").stdout.decode().strip()
-	if head != req.base_sha:
-		res.rejects.append(f"the checkout is at {head[:12]}, not the base {req.base_sha[:12]}")
-		return res, facts
-	if not patch.strip():
-		res.empty = True
-		return res, facts
-	if not frappe_nix_tools.__version__ or req.tag != f"v{frappe_nix_tools.__version__}":
-		res.rejects.append(f"this frappe-nix-tools is v{frappe_nix_tools.__version__}, not {req.tag}'s")
-	res.rejects += header_problems(patch)
-	with tempfile.TemporaryDirectory(prefix="frappe-nix-verify-") as tmp_name, _safe_env():
-		tmp = Path(tmp_name)
-		(tmp / "patch").write_bytes(patch)
-		env = {**os.environ, "GIT_INDEX_FILE": str(tmp / "index")}
-		_git(repo_dir, "read-tree", req.base_sha, env=env)
-		applied = _git(
-			repo_dir, "apply", "--cached", "--whitespace=nowarn", str(tmp / "patch"), env=env, check=False
-		)
-		if applied.returncode != 0:
-			res.rejects.append(
-				f"the patch does not apply to the base: {applied.stderr.decode(errors='replace').strip()[:300]}"
-			)
-			return res, facts
-		raw = _git(
-			repo_dir,
-			"diff-index",
-			"--cached",
-			"--raw",
-			"-z",
-			"--no-renames",
-			"--full-index",
-			req.base_sha,
-			env=env,
-		).stdout
-		entries = parse_raw(raw)
-		facts["tree_id"] = _git(repo_dir, "write-tree", env=env).stdout.decode().strip()
-		if not entries:
-			res.empty = True
-			return res, facts
-		for old_mode, new_mode, status, path in entries:
-			if problem := path_problem(path) or entry_problem(old_mode, new_mode, status, path):
-				res.rejects.append(problem)
-		if res.rejects:
-			return res, facts
-		changes = {path: status for _o, _n, status, path in entries}
-		with (
-			_worktree(repo_dir, req.base_sha, tmp, "result") as result_root,
-			_worktree(repo_dir, req.base_sha, tmp, "expected") as expected_root,
-		):
-			_materialize(result_root, facts["tree_id"])
-			_verify_trees(req, res, facts, changes, repo_dir, result_root, expected_root, fn_lock)
-	return res, facts
+def _same_json(path: str, a: str, b: str) -> bool:
+	from frappe_nix_tools.scaffold import semantic
+
+	if semantic.kind(path) != "json":
+		return False
+	try:
+		return semantic.parse(a, "json") == semantic.parse(b, "json")
+	except ValueError:
+		return False
 
 
 def _verify_trees(
@@ -929,15 +878,66 @@ def _verify_trees(
 		facts["automerge"] = False
 
 
-def _same_json(path: str, a: str, b: str) -> bool:
-	from frappe_nix_tools.scaffold import semantic
-
-	if semantic.kind(path) != "json":
-		return False
-	try:
-		return semantic.parse(a, "json") == semantic.parse(b, "json")
-	except ValueError:
-		return False
+def verify(req: Request, fn_lock: dict | None = None) -> tuple[Result, dict]:
+	"""Check ``req``'s patch; returns the result and the facts the decision carries."""
+	req.validate()
+	res = Result()
+	facts: dict[str, Any] = {"patch_sha256": "", "tree_id": "", "merge_method": "squash", "automerge": False}
+	patch = req.patch.read_bytes()
+	facts["patch_sha256"] = hashlib.sha256(patch).hexdigest()
+	repo_dir = req.worktree.resolve()
+	head = _git(repo_dir, "rev-parse", "HEAD").stdout.decode().strip()
+	if head != req.base_sha:
+		res.rejects.append(f"the checkout is at {head[:12]}, not the base {req.base_sha[:12]}")
+		return res, facts
+	if not patch.strip():
+		res.empty = True
+		return res, facts
+	if not frappe_nix_tools.__version__ or req.tag != f"v{frappe_nix_tools.__version__}":
+		res.rejects.append(f"this frappe-nix-tools is v{frappe_nix_tools.__version__}, not {req.tag}'s")
+	res.rejects += header_problems(patch)
+	with tempfile.TemporaryDirectory(prefix="frappe-nix-verify-") as tmp_name, _safe_env():
+		tmp = Path(tmp_name)
+		(tmp / "patch").write_bytes(patch)
+		env = {**os.environ, "GIT_INDEX_FILE": str(tmp / "index")}
+		_git(repo_dir, "read-tree", req.base_sha, env=env)
+		applied = _git(
+			repo_dir, "apply", "--cached", "--whitespace=nowarn", str(tmp / "patch"), env=env, check=False
+		)
+		if applied.returncode != 0:
+			res.rejects.append(
+				f"the patch does not apply to the base: {applied.stderr.decode(errors='replace').strip()[:300]}"
+			)
+			return res, facts
+		raw = _git(
+			repo_dir,
+			"diff-index",
+			"--cached",
+			"--raw",
+			"-z",
+			"--no-renames",
+			"--full-index",
+			req.base_sha,
+			env=env,
+		).stdout
+		entries = parse_raw(raw)
+		facts["tree_id"] = _git(repo_dir, "write-tree", env=env).stdout.decode().strip()
+		if not entries:
+			res.empty = True
+			return res, facts
+		for old_mode, new_mode, status, path in entries:
+			if problem := path_problem(path) or entry_problem(old_mode, new_mode, status, path):
+				res.rejects.append(problem)
+		if res.rejects:
+			return res, facts
+		changes = {path: status for _o, _n, status, path in entries}
+		with (
+			_worktree(repo_dir, req.base_sha, tmp, "result") as result_root,
+			_worktree(repo_dir, req.base_sha, tmp, "expected") as expected_root,
+		):
+			_materialize(result_root, facts["tree_id"])
+			_verify_trees(req, res, facts, changes, repo_dir, result_root, expected_root, fn_lock)
+	return res, facts
 
 
 def body(req: Request, res: Result, integration: str) -> str:

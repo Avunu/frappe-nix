@@ -316,6 +316,15 @@ def close_legacy(r: str, url: str) -> list[int]:
 	return closed
 
 
+def _own_email(root: Path) -> str:
+	"""The email this run commits as (``git var GIT_AUTHOR_IDENT``), or ""."""
+	proc = subprocess.run(
+		git_safe("var", "GIT_AUTHOR_IDENT"), cwd=root, capture_output=True, text=True, check=False
+	)
+	m = re.search(r"<([^<>]*)>", proc.stdout) if proc.returncode == 0 else None
+	return m[1] if m else ""
+
+
 def rollout_one(r: str, args: argparse.Namespace) -> str:
 	root = targets.clone(r, depth=None)
 	if root is None:
@@ -411,15 +420,6 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 	if not args.no_auto_merge and url:
 		automerge.enable(url, r, integration, app.gates, method)
 	return f"{r}: {url or head}"
-
-
-def _own_email(root: Path) -> str:
-	"""The email this run commits as (``git var GIT_AUTHOR_IDENT``), or ""."""
-	proc = subprocess.run(
-		git_safe("var", "GIT_AUTHOR_IDENT"), cwd=root, capture_output=True, text=True, check=False
-	)
-	m = re.search(r"<([^<>]*)>", proc.stdout) if proc.returncode == 0 else None
-	return m[1] if m else ""
 
 
 def run(args: argparse.Namespace) -> int:
