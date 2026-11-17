@@ -22,7 +22,13 @@ LOCKED_RULES = (
 	"typescript/consistent-type-imports",
 )
 
-DESK_GLOBALS = ("frappe", "__", "cur_frm", "cur_list", "locals", "$", "jQuery", "moment")
+# The desk-JS and web-JS globals come from the installed frappe-types'
+# lint/{desk,web}-globals.json (context.lint_globals), which leaves out moment: Frappe's
+# desk loads it, frappe-types declares no global for it. Without that JSON (a clone
+# without node_modules) the committed override's globals are kept, so such a clone reports
+# no drift, and the first sync of an app without either renders these.
+DESK_EXTRA = ("moment",)
+DESK_GLOBALS = ("frappe", "__", "cur_frm", "cur_list", "locals", "$", "jQuery")
 WEB_GLOBALS = ("frappe", "__", "$", "jQuery")
 
 
@@ -49,6 +55,20 @@ def _oxlint(ctx: Any) -> dict:
 	return _js(ctx).get("oxlint") or {}
 
 
+def _base_globals(ctx: Any, kind: str, files: list[str], fallback: tuple[str, ...]) -> dict:
+	"""The globals frappe-types declares for ``kind`` JS; without its lint JSON, those of the
+	committed override for any of ``files``, else ``fallback``."""
+	installed = (ctx.get("lint_globals") or {}).get(kind)
+	if installed is not None:
+		return dict(installed)
+	for override in (ctx.get("committed_oxlintrc") or {}).get("overrides") or []:
+		if isinstance(override, dict) and set(override.get("files") or []) & set(files):
+			found = override.get("globals")
+			if isinstance(found, dict):
+				return dict(found)
+	return {g: "readonly" for g in fallback}
+
+
 def oxlintrc(ctx: Any) -> dict:
 	app, cfg, d = ctx.app, ctx.cfg, ctx.discover
 	ox = _oxlint(ctx)
@@ -67,12 +87,13 @@ def oxlintrc(ctx: Any) -> dict:
 			raise ConfigError(
 				f"[tool.frappe-nix.js.oxlint].overrides[{i}] may not change {', '.join(named)} while js.locked-rules is on"
 			)
-	desk_globals = {g: "readonly" for g in DESK_GLOBALS}
+	desk_globals = _base_globals(ctx, "desk", d.desk_js, DESK_GLOBALS)
+	desk_globals.update({g: "readonly" for g in DESK_EXTRA})
 	for s in ctx.siblings:
 		if s.desk_global:
 			desk_globals[s.desk_global] = "readonly"
 	desk_globals.update(ox.get("globals", {}))
-	web_globals = {g: "readonly" for g in WEB_GLOBALS}
+	web_globals = _base_globals(ctx, "web", d.web_js, WEB_GLOBALS)
 	web_globals.update(ox.get("globals", {}))
 	overrides: list[dict] = [
 		{

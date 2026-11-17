@@ -15,7 +15,9 @@
 #                            marketplace/shots.d.ts are the same file
 #   standards-shots-cdp      tests/standards/shots-cdp.ts: the engine's launch starts the real
 #                            chromium under a TMPDIR too long for its singleton socket, in a
-#                            short run directory it removes again
+#                            short run directory it removes again; on a page that starts a
+#                            Web Worker, the in-flight requests frappe-shots waits on leave
+#                            out the worker's script and keep the page's own fetch
 #   standards-shots-diff     tests/standards/shots-diff.ts: the engine's comparison (pixelmatch's
 #                            tolerance, a new size), the change threshold's verdict and the
 #                            lossless WebP round trip

@@ -328,16 +328,6 @@ class TestUpdateArgs(unittest.TestCase):
 			update.parse(["--node-locks"], app_mode=True, lock_dir="locks")
 		self.assertIn("locks/node-locks/ is generated", err.getvalue())
 
-	def test_remote_for_url(self):
-		with tempfile.TemporaryDirectory() as tmp:
-			subprocess.run(["git", "init", "-q", tmp], check=True)
-			subprocess.run(["git", "-C", tmp, "remote", "add", "origin", "https://x/fork.git"], check=True)
-			subprocess.run(["git", "-C", tmp, "remote", "add", "upstream", "https://x/app/"], check=True)
-			self.assertEqual(update.remote_for_url("https://x/app.git", tmp), "upstream")
-			self.assertEqual(update.remote_for_url("https://x/fork/", tmp), "origin")
-			self.assertIsNone(update.remote_for_url("https://x/other", tmp))
-			self.assertIsNone(update.remote_for_url("", tmp))
-
 
 class TestRelock(unittest.TestCase):
 	def test_parse(self):

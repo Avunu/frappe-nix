@@ -135,6 +135,8 @@ Both cover the bench's Python and nothing else. Outside them are:
 - UDP sent with `sendto` rather than through a connected socket;
 - the browser, whose scripts reach whatever the page tells them to.
 
+One of those subprocesses is not left to download. Print Designer's install fetches Google's `chrome-headless-shell` into the bench's `chromium/` unless one is there, which `egress` refuses and which would not run on NixOS anyway. So entering the dev shell on Linux links the same NixOS build that `services.frappe-nix.chromium` uses at `chromium/chrome-linux/headless_shell` in the bench, before any app installs (`frappe-test`, `bench provision` and `devenv up` all install into that bench). A `chromium` directory an earlier download left is replaced by the link.
+
 Every other guard patches Frappe and app APIs, and is therefore one refactor or one unknown app away from being bypassed. The `jobs` denylist (`frappe_devguard[scheduler]` in the log) covers exactly the dotted paths in it. What slips past an API-level guard, such as a document event in an app nobody has looked at, still meets `egress` at the socket, only with a less readable error.
 
 Two related notes for a restored bench. Frappe's telemetry is inert here only because `developer_mode: 1` is set, so re-check it if you ever clear that flag. And `check_for_update` and `fetch_changelog_feed` now fail as they would offline, because egress refuses github.com and frappe.io. Add those hosts to `egress.allowHosts` if you want the update notices back.

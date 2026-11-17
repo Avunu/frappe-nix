@@ -4,14 +4,15 @@ Every template, every manifest ``when`` and every entry ``path`` sees the same n
 ``app``, ``app_hyphen``, ``dist``, ``repo``, ``title``, ``tagline``, ``frappe``,
 ``siblings``, ``site``, ``cfg``, ``modules``, ``org``, ``profile``, ``branches``,
 ``gates``, ``discover``, ``frappe_nix``, ``floors``, ``app_type``, plus ``version`` (the
-app's ``__version__``), ``required_apps``, ``first_commit_year``, ``options`` (the sync
-flags a ``when`` may read, such as ``init_listing``) and the facts the shared files are
-gated on (``precommit_live``, ``tools_deps``, ``package_json_live``, ``profile_input``).
+app's ``__version__``), ``required_apps``, ``first_commit_year``, ``lint_globals`` and
+``committed_oxlintrc`` (where the oxlintrc's globals come from), ``options`` (the sync flags
+a ``when`` may read, such as ``init_listing``) and the facts the shared files are gated on (``precommit_live``, ``tools_deps``, ``package_json_live``, ``profile_input``).
 
 Nothing here reads the clock: the only date is the year of the first commit (§3.4).
 """
 
 import importlib.util
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +95,31 @@ def app_version(root: Path, app: str) -> str | None:
 		return None
 	m = VERSION_LINE.search(text)
 	return m["v"] if m else None
+
+
+def lint_globals(root: Path) -> dict[str, dict | None]:
+	"""The globals frappe-types declares for desk and web JS, from the installed package's
+	``lint/{desk,web}-globals.json`` (frappe-types 16.7.1 and later); ``None`` for a file that
+	is not installed or does not parse, and the oxlintrc keeps the globals it has."""
+	out: dict[str, dict | None] = {}
+	for kind in ("desk", "web"):
+		path = root / "node_modules" / "frappe-types" / "lint" / f"{kind}-globals.json"
+		try:
+			found = json.loads(path.read_text()).get("globals")
+		except (OSError, ValueError, AttributeError):
+			found = None
+		out[kind] = dict(found) if isinstance(found, dict) else None
+	return out
+
+
+def committed_oxlintrc(root: Path) -> dict:
+	"""The committed ``.oxlintrc.json``, or ``{}``: the globals sync keeps when frappe-types'
+	lint JSON is not installed (a clone without ``node_modules``)."""
+	try:
+		doc = json.loads((root / ".oxlintrc.json").read_text())
+	except (OSError, ValueError):
+		return {}
+	return doc if isinstance(doc, dict) else {}
 
 
 class ShallowHistory:
@@ -323,6 +349,8 @@ def build(
 			"app_type": facts["app_type"],
 			"version": app_version(app.root, app.name),
 			"first_commit_year": first_commit_year(app.root),
+			"lint_globals": lint_globals(app.root),
+			"committed_oxlintrc": committed_oxlintrc(app.root),
 			"options": options or {},
 			"precommit_live": precommit_live,
 			"unmanaged_dirs": list(UNMANAGED_DIRS),

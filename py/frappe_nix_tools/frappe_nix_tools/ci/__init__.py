@@ -8,6 +8,7 @@ tested, rather than in YAML. Every GitHub call goes through ``common.github``.
   ``all`` policy;
 - ``automerge``: applies a verdict under the auto-merge safety rule (§4.5);
 - ``relock``: the relock-plan input check, the relock patch and the workflow-path refusal (S29);
+- ``lockcheck``: what a relock's lock files may say before a job with the App's key pushes them;
 - ``release``: ``dispatch-ci``, the sweep and the release-branch fast-forward with its guard (§4.4);
 - ``branches``: ``update-branches``, which keeps bot PRs up to date with the integration branch (§4.5);
 - ``drift``: the nightly reminders that frappe-nix or the org profile moved (§4.6).

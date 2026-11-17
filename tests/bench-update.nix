@@ -16,6 +16,8 @@ let
   inherit (pkgs) lib;
   base = python-devops-nix.lib;
   inherit (import ../lib/standards/outputs.nix { inherit pkgs base; }) frappeNixTools;
+  # What bench-update moves each app with (frappe-nix-sources pull).
+  inherit (import ../lib/shell-tools.nix { inherit pkgs base; }) sources;
 
   render =
     appMode:
@@ -45,6 +47,7 @@ in
           jq
           coreutils
           shellcheck
+          sources
         ];
         drvArgs = {
           script = render false;

@@ -1,5 +1,49 @@
 # Changelog
 
+## [2.6.2](https://github.com/Avunu/frappe-nix/compare/v2.6.1...v2.6.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **app-standards:** keep Dependabot off frappe-nix reusable-workflow pins ([#278](https://github.com/Avunu/frappe-nix/issues/278)) ([66415f4](https://github.com/Avunu/frappe-nix/commit/66415f472e3cd24805b06b2bb3062e45cc160ea7))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#274](https://github.com/Avunu/frappe-nix/issues/274)) ([95597aa](https://github.com/Avunu/frappe-nix/commit/95597aa6070c001e2a6c9c21340e0b28983975a5))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#280](https://github.com/Avunu/frappe-nix/issues/280)) ([d7cb2d3](https://github.com/Avunu/frappe-nix/commit/d7cb2d367c19752eb6ba1055c7c3a33804eb6a29))
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#270](https://github.com/Avunu/frappe-nix/issues/270)) ([89cce12](https://github.com/Avunu/frappe-nix/commit/89cce122150dd3d206169eb2f35660e819bf0fdc))
+* unblock frappe-nix-tools, cover stale node locks, fix Dependabot drift report ([#276](https://github.com/Avunu/frappe-nix/issues/276)) ([b426566](https://github.com/Avunu/frappe-nix/commit/b426566fd5b97da06e4975b0265d1fdc3abb0498))
+
+## [2.6.1](https://github.com/Avunu/frappe-nix/compare/v2.6.0...v2.6.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **frappe-test:** link the nix headless shell into the dev bench before apps install ([#268](https://github.com/Avunu/frappe-nix/issues/268)) ([e23cb4e](https://github.com/Avunu/frappe-nix/commit/e23cb4e36dfb19fff943dfbc6bbb4f9a566d06b4))
+
+## [2.6.0](https://github.com/Avunu/frappe-nix/compare/v2.5.0...v2.6.0) (2026-11-10)
+
+
+### Features
+
+* **update:** bench-update moves apps with the shared sources pull ([#265](https://github.com/Avunu/frappe-nix/issues/265)) ([a94c76a](https://github.com/Avunu/frappe-nix/commit/a94c76abd778434e7e8521f715aa0eb4c8d9e107))
+
+## [2.5.0](https://github.com/Avunu/frappe-nix/compare/v2.4.1...v2.5.0) (2026-11-10)
+
+
+### Features
+
+* **scaffold:** take oxlint desk and web globals from frappe-types' lint JSON ([#264](https://github.com/Avunu/frappe-nix/issues/264)) ([01ecc28](https://github.com/Avunu/frappe-nix/commit/01ecc287591717369bdb6fe772a1ec831c149207))
+
+
+### Bug Fixes
+
+* **gate:** replace a doctypes-mode copy in customizations mode ([#261](https://github.com/Avunu/frappe-nix/issues/261)) ([0c177bc](https://github.com/Avunu/frappe-nix/commit/0c177bc1716821514d4f2eb3543b6edf3b0378b4))
+
+## [2.4.1](https://github.com/Avunu/frappe-nix/compare/v2.4.0...v2.4.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **standards:** let frappe-shots' quiet network ignore a Web Worker's script ([#258](https://github.com/Avunu/frappe-nix/issues/258)) ([3c91b80](https://github.com/Avunu/frappe-nix/commit/3c91b805e0350ea7624974e645467e27d01c1524))
+
 ## [2.4.0](https://github.com/Avunu/frappe-nix/compare/v2.3.0...v2.4.0) (2026-11-06)
 
 

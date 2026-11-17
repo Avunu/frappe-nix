@@ -110,7 +110,7 @@ def render(findings: list[Finding], fmt: str, code: int, frappe_nix: dict | None
 		out += [annotation(f) for f in findings]
 	else:
 		out += text
-	drifted = len(findings)
+	drifted = len({f.path for f in findings})
 	if drifted:
 		out.append(f"frappe-nix: {drifted} file(s) drifted — run `frappe-init --sync`")
 	else:

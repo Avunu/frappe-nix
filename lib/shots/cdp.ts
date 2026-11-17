@@ -147,6 +147,26 @@ function isLogEntryAdded(event: CdpEvent): event is CdpLogEntryAddedEvent {
 }
 
 /**
+ * The page's requests still in flight, by request id: each `Network.requestWillBeSent` not yet
+ * closed by a `Network.loadingFinished` or `Network.loadingFailed`.
+ *
+ * A worker's main script is left out. Chromium announces it to the page's session with an
+ * empty `loaderId` (every request of a document carries its loader's), but reports its end
+ * only to the worker's own target, so it would stay in flight forever; the worker's own
+ * requests never reach the page's session at all.
+ */
+export function inflight(events: readonly CdpEvent[]): Set<string> {
+	const open = new Set<string>();
+	for (const e of events) {
+		const params = isRecord(e.params) ? e.params : {};
+		const id = typeof params["requestId"] === "string" ? params["requestId"] : "";
+		if (e.method === "Network.requestWillBeSent" && params["loaderId"] !== "") open.add(id);
+		else if (e.method === "Network.loadingFinished" || e.method === "Network.loadingFailed") open.delete(id);
+	}
+	return open;
+}
+
+/**
  * The message for a page-side throw: CDP's own `description` when it has one
  * ("TypeError: x is not a function\n    at ..."), else the raw details.
  */

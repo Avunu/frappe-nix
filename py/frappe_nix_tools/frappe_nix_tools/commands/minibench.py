@@ -97,11 +97,12 @@ def build(root: Path, mode: str, dest: Path, lock_path: Path | None = None) -> l
 		sparse_clone(flakelock.locked_pin(lock, s["input"]), dest / "apps" / s["name"])
 		names.append(s["name"])
 	target = dest / "apps" / app
+	# The last run may have left either mode's app: a worktree, or doctypes mode's copy,
+	# which is no worktree for git to remove.
+	if (target / ".git").is_file():
+		repo.git(root, "worktree", "remove", "--force", str(target))
 	if target.exists():
-		if mode == "customizations":
-			repo.git(root, "worktree", "remove", "--force", str(target))
-		if target.exists():
-			shutil.rmtree(target)
+		shutil.rmtree(target)
 	if mode == "customizations":
 		repo.git(root, "worktree", "prune")
 		repo.git(root, "worktree", "add", "--detach", str(target), "HEAD")

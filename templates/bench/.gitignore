@@ -7,6 +7,10 @@ result
 env
 node_modules
 
+# the headless shell the dev shell links for Print Designer and the chrome PDF
+# generator (lib/chrome-headless-shell.nix)
+chromium
+
 # caches / package managers
 .cache
 .npm

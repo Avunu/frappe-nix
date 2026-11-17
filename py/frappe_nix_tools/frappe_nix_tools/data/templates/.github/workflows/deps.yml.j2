@@ -64,6 +64,9 @@ jobs:
 {% endif %}
       merge-method: {{ cfg["repo-policy"]["merge-methods"][0] }}
       relock-cron: "{{ relock }}"
+{% if (frappe_nix.owner ~ "/" ~ frappe_nix.name) | lower != "avunu/frappe-nix" %}
+      frappe-nix-repo: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
+{% endif %}
     secrets:
       NIX_CACHE_TOKEN: {% raw %}${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}{% endraw %}
 

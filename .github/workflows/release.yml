@@ -24,6 +24,9 @@ name: release
 #                   fails unless it then equals the tag. The release-* ruleset
 #                   (repo-policy/self/rulesets/release.json) lets only GitHub Actions move it.
 #
+# release-please, fixture and fast-forward can hold AVUNU_CI_PRIVATE_KEY, so they run on
+# ubuntu-latest, never on the shared self-hosted runners other repositories' jobs use.
+#
 # The daily cron catches merges that raise no push (an auto-merge enabled with GITHUB_TOKEN)
 # and retries a dispatch that failed or a concurrency group cancelled. frappe-nix's flake.lock
 # has no frappe-nix node, so the tools come from this checkout.
@@ -47,7 +50,7 @@ env:
 jobs:
   release-please:
     if: github.ref == 'refs/heads/main'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -58,20 +61,6 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       app: ${{ steps.app.outputs.enabled }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       # The org's GitHub App when this repository can read it: the release PR it opens, updates
       # or pushes to then starts check.yml, pr-policy.yml and docs.yml. Else GITHUB_TOKEN.
       - id: app
@@ -106,26 +95,12 @@ jobs:
   fixture:
     needs: release-please
     if: needs.release-please.result == 'success'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # push the re-rendered fixture to the release PR branch
       pull-requests: read # the open release PR
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - name: Find the open release PR
         id: pr
         env:
@@ -146,14 +121,38 @@ jobs:
       - if: steps.pr.outputs.head != ''
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
+
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from this checkout, every dependency from its
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself
+      # built, against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - if: steps.pr.outputs.head != ''
+        name: Install frappe-nix-tools, hash-locked, from this checkout
+        env:
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          project="$GITHUB_WORKSPACE/py/frappe_nix_tools"
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       - if: steps.pr.outputs.head != ''
         name: Re-render the fixtures with the release PR's frappe-nix-tools
         run: |
           set -euo pipefail
-          uv tool install --python 3.14 ./py/frappe_nix_tools
           major="$(cut -d. -f1 version.txt)"
           for fixture in standards-app spa-app; do
             app="$RUNNER_TEMP/$fixture"
@@ -258,36 +257,43 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # move release-<major> without the App (the ruleset's bypass actor is GitHub Actions)
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      - name: Install frappe-nix-tools from this checkout
-        run: uv tool install --python 3.14 ./py/frappe_nix_tools
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from this checkout, every dependency from its
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself
+      # built, against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, from this checkout
+        env:
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          project="$GITHUB_WORKSPACE/py/frappe_nix_tools"
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
       # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the

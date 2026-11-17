@@ -61,7 +61,7 @@ buildPythonPackage {
     unittestCheckHook
     git
   ];
-  unittestFlagsArray = [
+  unittestFlags = [
     "-s"
     "tests"
     "-v"

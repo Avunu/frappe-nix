@@ -86,6 +86,20 @@ class TestBuild(AppCase):
 		code, out, err = self.fn("minibench", "--mode", "customizations", "--dest", str(self.dest))
 		self.assertEqual(code, 0, out + err)
 
+	def test_modes_replace_each_other(self) -> None:
+		# gate typecheck builds doctypes mode into .dev-dist/minibench, then gate lint
+		# builds customizations mode into the same place, and back.
+		for mode in ("doctypes", "customizations", "doctypes", "customizations"):
+			code, out, err = self.fn("minibench", "--mode", mode, "--dest", str(self.dest))
+			self.assertEqual(code, 0, f"{mode}: {out}{err}")
+			app = self.dest / "apps/demo_app"
+			self.assertEqual((app / ".git").is_file(), mode == "customizations")
+			self.assertEqual(
+				(app / "demo_app/demo_app/doctype/note/note.py").is_file(), mode == "customizations"
+			)
+		worktrees = git(self.root, "worktree", "list", "--porcelain")
+		self.assertEqual(worktrees.count("worktree "), 2, worktrees)
+
 
 if __name__ == "__main__":
 	unittest.main()

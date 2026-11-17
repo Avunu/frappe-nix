@@ -485,6 +485,49 @@ class TestDiscovery(AppCase):
 		self.assertIn("demo_app/public/js/web/form.js", web_files)
 		self.assertIn("demo_app/www/page.js", web_files)
 
+	def test_js_globals_come_from_frappe_types_lint_json(self):
+		self.table('js.oxlint.globals = { app_thing = "readonly" }\n')
+		self.write("demo_app/demo_app/doctype/thing/thing.js", "frappe.ui.form.on('Thing', {});\n")
+		self.write("demo_app/www/page.js", "frappe.ready(() => {});\n")
+		self.commit()
+		self.synced()
+
+		def globals_() -> tuple[dict, dict]:
+			ox = json.loads(self.read(".oxlintrc.json"))
+			return ox["overrides"][2]["globals"], ox["overrides"][3]["globals"]
+
+		# The first sync, before frappe-types is installed: the minimal lists.
+		desk, web = globals_()
+		self.assertEqual(
+			sorted(desk),
+			sorted(["frappe", "__", "cur_frm", "cur_list", "locals", "$", "jQuery", "moment", "app_thing"]),
+		)
+		self.assertEqual(sorted(web), sorted(["frappe", "__", "$", "jQuery", "app_thing"]))
+
+		lint = "node_modules/frappe-types/lint"
+		self.write(
+			f"{lint}/desk-globals.json",
+			json.dumps({"globals": {"frappe": "readonly", "msgprint": "readonly"}}),
+		)
+		self.write(
+			f"{lint}/web-globals.json",
+			json.dumps({"globals": {"frappe": "readonly", "valid_email": "readonly"}}),
+		)
+		self.assertEqual(self.fn("sync", "--write")[0], 0)
+		self.commit()
+		desk, web = globals_()
+		self.assertEqual(
+			desk,
+			{"frappe": "readonly", "msgprint": "readonly", "moment": "readonly", "app_thing": "readonly"},
+		)
+		self.assertEqual(web, {"frappe": "readonly", "valid_email": "readonly", "app_thing": "readonly"})
+		self.assertNotIn("node_modules/frappe-types/lint/desk-globals.json", git(self.root, "ls-files"))
+
+		# A clone without node_modules keeps the committed globals: no drift.
+		shutil.rmtree(self.root / "node_modules")
+		code, out = self.check()
+		self.assertEqual(code, 0, out)
+
 	def test_untracked_unchecked_js_is_c9(self):
 		self.table("typescript.check-js = true\n")
 		self.write(
