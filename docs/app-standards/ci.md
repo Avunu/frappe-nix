@@ -3,7 +3,7 @@ title: CI
 description: "The gate commands and the reusable workflows behind ci / lint, typecheck, test, marketplace and pr-policy, and the files that call them."
 order: 5
 tags: [app-standards, ci, workflows]
-updated: 2026-10-31
+updated: 2026-11-16
 ---
 
 An opted-in app with the `ci` module on gets small caller workflows in `.github/workflows/`, rendered by `frappe-init --sync`. Each one calls a reusable workflow in frappe-nix, pinned to the frappe-nix revision the app's `flake.lock` locks. The gates are commands, not YAML: every step of `lint`, `typecheck` and `marketplace` is `frappe-nix gate <gate>`, and `test` is `frappe-test --ci`, so any CI, or a laptop, runs exactly what GitHub runs.
@@ -93,7 +93,7 @@ Each gate writes `.dev-dist/gate/<gate>.json` with every step's status. `--forma
 
 Dependabot opens the PRs; `deps.yml` decides what happens to them.
 
-- **A nix bump** (frappe and the siblings) changes `flake.lock`, and usually needs `nix/uv.lock` and `nix/node-locks/**` regenerated. `relock-plan` runs the PR's code with no write token, makes the relock and sync patch, and refuses one that touches `.github/workflows/`. In an app that tracks `types/doctypes.d.ts`, the new pins' DocTypes make it stale, so `relock-plan` also regenerates it with the doctypes check's own `gen-registry` command, less `--check` (`frappe-nix ci relock-doctypes`), and the patch carries it. If any step of that fails, the relock is pushed without it and the run has a notice; `ci / typecheck` then reports the stale file as before. `relock-push` only applies that patch, commits it to the PR branch and re-runs CI there. A PR that moves `frappe-nix` or the standards profile is closed: those move only with `frappe-nix repo rollout` (see [Versioning](versioning.md)).
+- **A nix bump** (frappe and the siblings) changes `flake.lock`, and usually needs `nix/uv.lock` and `nix/node-locks/**` regenerated. `relock-plan` runs the PR's code with no write token, makes the relock and sync patch, and refuses one that touches `.github/workflows/`. In an app that tracks `types/doctypes.d.ts`, the new pins' DocTypes make it stale, so `relock-plan` also regenerates it with the doctypes check's own `gen-registry` command, less `--check` (`frappe-nix ci relock-doctypes`), and the patch carries it. If any step of that fails, the relock is pushed without it and the run has a notice; `ci / typecheck` then reports the stale file as before. `relock-push` only applies that patch, commits it to the PR branch and re-runs CI there. A PR that moves `frappe-nix` or the standards profile is closed: frappe-nix moves with frappe-nix's `rollout.yml`, the profile with `frappe-nix repo rollout --profile-to` (see [Versioning](versioning.md) and [GitHub settings](github.md#rollout-how-a-frappe-nix-release-reaches-the-apps)); `frappe-nix repo rollout` is the manual fallback for both.
 - **Auto-merge** follows this table. It is enabled only when the integration branch requires every enabled gate's `ci / <gate>` check, and the repository allows auto-merge. Otherwise the PR is labelled `needs-review` and the log names `frappe-nix repo doctor`.
 
   | Ecosystem | Merged automatically | Labelled `needs-review` |
@@ -105,7 +105,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | nix | after the relock lands, or when there was nothing to relock | a move of `frappe-nix` or `standards-profile` is closed instead |
   | git submodules | always | |
 
-  That table is the default, `dependabot.auto-merge-policy = "decision-table"`. With `"all"`, every Dependabot PR gets auto-merge, majors and the `needs-review` column included, and so does the nightly screenshots PR: the required checks alone decide what merges, and a PR whose checks fail stays open for a person. Two rows don't change: a nix bump still waits for its relock, and one that moves `frappe-nix` or `standards-profile` is still closed. A bump of the `frappe-nix` pin in the callers is never merged either (Dependabot ignores it; it moves only with `frappe-nix repo rollout`).
+  That table is the default, `dependabot.auto-merge-policy = "decision-table"`. With `"all"`, every Dependabot PR gets auto-merge, majors and the `needs-review` column included, and so does the nightly screenshots PR: the required checks alone decide what merges, and a PR whose checks fail stays open for a person. Two rows don't change: a nix bump still waits for its relock, and one that moves `frappe-nix` or `standards-profile` is still closed. A bump of the `frappe-nix` pin in the callers is never merged either (Dependabot ignores it; it moves only with frappe-nix's `rollout.yml`, or `frappe-nix repo rollout` by hand).
 
   ```toml
   [dependabot]
@@ -201,7 +201,7 @@ What a workflow pushes, opens or merges with `GITHUB_TOKEN` starts no workflow o
 
 An organisation that has a GitHub App can hand it to these workflows instead. Bot branches and PRs then start CI the normal way, with nothing waiting for approval and nothing to dispatch, and an auto-merged PR raises a `push`, so CI and release-please run on the integration branch at once.
 
-1. Create a GitHub App owned by the organisation, with the repository permissions Contents and Pull requests set to read and write, and install it on the app repositories (or all of them). It needs no webhook. The workflows mint tokens that ask for Contents and Pull requests write only; they never push a workflow file, so the App needs no Workflows permission for them.
+1. Create a GitHub App owned by the organisation, with the repository permissions Contents and Pull requests set to read and write, and install it on the app repositories (or all of them). It needs no webhook. The app workflows mint tokens that ask for Contents and Pull requests write only; they never push a workflow file, so the App needs no Workflows permission for them. frappe-nix's own `rollout.yml` does push one, the caller rewrite of a frappe-nix release, so for it the App also needs Workflows and Issues write (see [Rollout](github.md#rollout-how-a-frappe-nix-release-reaches-the-apps)).
 2. Store its ID (the App ID or its client ID) in an organisation Actions **variable**, and generate a private key and store the PEM in an organisation Actions **secret**. With the `dependabot` module on, also store the key as an organisation **Dependabot secret** of the same name, and the ID too if Dependabot's runs can't read the variable: the callers read `vars.<name> || secrets.<name>`.
 3. Name them in the org profile's `[ci]` (or an app's `[tool.frappe-nix.ci]`), and roll the profile out:
 
@@ -239,4 +239,5 @@ Unset (the default), or with the variable or the secret empty in a run, every jo
 - Every checkout uses `persist-credentials: false`. The three jobs that push (relock-push, relock-upgrade and nightly shots) push to an explicit token URL from that step alone.
 - A [GitHub App](#a-github-app)'s token is minted only in the jobs that push, open PRs, label or enable auto-merge, after any step that runs the app's or third-party code, for the current repository alone and with Contents and Pull requests write only (`update-branches` asks for Workflows write too, and without it falls back to those two). It is revoked when the job ends.
 - Every workflow starts from `permissions: {}`, and each job asks for exactly what it uses.
+- frappe-nix's `rollout.yml` is the one workflow that changes another repository's workflow files. The app's code (its flake, relock, uv, yarn, sync) runs only in its `plan` job, which holds a read-only token, no secret, no cache and no environment, as an unprivileged user on a GitHub-hosted runner. The App token (that one repository; Contents, Pull requests, Workflows and Issues write) is minted only in `publish`, inside the `frappe-nix-rollout` environment, after the tag's `frappe-nix ci verify-rollout-patch` accepted the patch and the job re-derived its tree. The user's own `gh` token is used only by `frappe-nix repo rollout` run by hand.
 - The jobs that hold a write token never install frappe-nix-tools from the PR's `flake.lock`: they read the integration branch's.

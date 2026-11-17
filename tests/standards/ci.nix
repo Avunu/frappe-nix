@@ -16,7 +16,13 @@
 #                           run on a dispatch only with `vm-tests: true`; app-deps.yml's
 #                           relock-plan keeps `contents: read`, only restores the node_modules
 #                           cache, and runs its continue-on-error doctypes steps before
-#                           relock-patch (§7 N4 "relock-doctypes")
+#                           relock-patch (§7 N4 "relock-doctypes"); rollout.yml (§5.8) runs
+#                           every job on ubuntu-latest with minimal permissions, its resolve
+#                           and plan jobs hold no secret, environment or cache, its plan runs
+#                           the app's code as an unprivileged user, and publish (in the
+#                           frappe-nix-rollout environment) mints the App token only after
+#                           the verify and re-derive steps
+
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -117,6 +123,50 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             assert s.get("continue-on-error") is True, s
         assert any(s.get("uses", "").startswith("actions/cache/restore@") for s in steps[probe:notice]), steps
         assert any("frappe-nix ci relock-doctypes\n" in s.get("run", "") for s in steps[probe:notice]), steps
+
+        # rollout.yml (§5.8, S5): the app's code runs only where no secret and no write token is.
+        doc, triggers = load("rollout.yml")
+        assert doc["permissions"] == {}, doc["permissions"]
+        assert doc["concurrency"] == {"group": "frappe-nix-rollout", "cancel-in-progress": False}, doc["concurrency"]
+        wr = triggers["workflow_run"]
+        assert wr == {"workflows": ["release"], "types": ["completed"], "branches": ["main"]}, wr
+        assert {"schedule", "workflow_dispatch"} <= set(triggers), list(triggers)
+        jobs = doc["jobs"]
+        assert list(jobs) == ["resolve", "plan", "publish", "report"], list(jobs)
+        for name, job in jobs.items():
+            assert job["runs-on"] == "ubuntu-latest", (name, job["runs-on"])
+        assert "workflow_run.conclusion == 'success'" in jobs["resolve"]["if"], jobs["resolve"]["if"]
+        assert jobs["resolve"]["permissions"] == {"contents": "read", "pull-requests": "read"}, jobs["resolve"]
+        assert jobs["plan"]["permissions"] == {"contents": "read"}, jobs["plan"]["permissions"]
+        assert jobs["publish"]["permissions"] == {"contents": "read"}, jobs["publish"]["permissions"]
+        assert jobs["report"]["permissions"] == {}, jobs["report"]["permissions"]
+        caches = ("actions/cache", "DeterminateSystems/magic-nix-cache", "cachix/")
+        for name in ("resolve", "plan"):
+            job = jobs[name]
+            assert "secrets." not in yaml.safe_dump(job), name
+            assert "environment" not in job, name
+            uses = [s.get("uses", "") for s in job["steps"]]
+            assert not any(u.startswith(caches) or u.startswith("actions/create-github-app-token@") for u in uses), uses
+        plan_runs = " ".join(s.get("run", "") for s in jobs["plan"]["steps"])
+        assert "sudo -u rollout" in plan_runs and "--emit-patch" in plan_runs, plan_runs
+        assert any(s.get("env", {}).get("FRAPPE_NIX_YARN_IGNORE_SCRIPTS") == "1" for s in jobs["plan"]["steps"])
+        for name in ("publish", "report"):
+            assert jobs[name]["environment"] == "frappe-nix-rollout", (name, jobs[name].get("environment"))
+        steps = jobs["publish"]["steps"]
+        verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
+        recheck = next(i for i, s in enumerate(steps) if "write-tree" in s.get("run", ""))
+        token = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/create-github-app-token@")]
+        assert len(token) == 1 and verify < recheck < token[0], (verify, recheck, token)
+        for s in steps[: token[0]]:
+            assert "secrets." not in yaml.safe_dump(s), s
+            assert "app-token" not in yaml.safe_dump(s), s
+        mint = steps[token[0]]
+        assert "env.DRY_RUN != 'true'" in mint["if"] and "steps.recheck.outputs.go" in mint["if"], mint["if"]
+        assert mint["with"]["owner"] == "Avunu" and "matrix.name" in mint["with"]["repositories"], mint["with"]
+        report = [s for s in jobs["report"]["steps"] if s.get("uses", "").startswith("actions/create-github-app-token@")]
+        assert len(report) == 1, report
+        perms = {k for k in report[0]["with"] if k.startswith("permission-")}
+        assert perms == {"permission-issues"} and report[0]["with"]["repositories"] == "frappe-nix", report[0]["with"]
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout

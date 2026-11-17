@@ -1,0 +1,853 @@
+name: rollout
+
+# The frappe-nix mover (spec S5, §5.8, docs/app-standards/github.md "Rollout"): after each
+# release, every consumer the variable FRAPPE_NIX_ROLLOUT_REPOS names (a subset of
+# Avunu/frappe-standards-profile's fleet.json) gets one pull request on `standards/frappe-nix`
+# that moves the flake.lock `frappe-nix` node, the relock and the `frappe-init --sync` render
+# together, and auto-merges once the app's required checks pass.
+#
+#   resolve  (contents/pull-requests read, no secret) the release: `release-2`'s head, the v*
+#            tag at exactly that commit, the release PR it merged from; the targets, and per
+#            repository its integration branch, that branch's head (base_sha) and the
+#            frappe-nix it locks. A repository at the tag, or whose branch a person took over
+#            or whose PR for this tag was closed unmerged (paused), is not planned.
+#   plan     (contents read, no secret, no cache) runs the consumer's own code (its flake,
+#            relock, uv, yarn without scripts, sync phase B) through `frappe-nix repo rollout
+#            --emit-patch`, as a separate user without sudo, so it can read neither the
+#            runner's token for artifacts and caches nor anything else of the runner's. The
+#            artifact is the patch and meta.json.
+#   publish  (environment frappe-nix-rollout) checks the patch with the tag's own
+#            `frappe-nix ci verify-rollout-patch` before any token exists, re-derives its tree
+#            in shell, and only then mints the avunu-ci App token for that one repository,
+#            commits the verified tree as avunu-ci[bot], pushes, opens or edits the PR, closes
+#            the per-release standards/frappe-nix-v* PRs and enables auto-merge (or labels
+#            needs-review).
+#   report   a per-repository table in the job summary and the pinned issue "frappe-nix
+#            rollout status"; fails the run when a patch was rejected.
+#
+# repo, tag, tag sha and base sha come from resolve's matrix only; the artifact must agree.
+# Every job runs on a GitHub-hosted runner: the plan runs code no person reviewed for this.
+
+on:
+  # Only release.yml's own runs on main (push, schedule, dispatch; never a pull request), and
+  # nothing of that run is used: no artifact, ref or output, only that it succeeded.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [release]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "30 6 * * *" # an hour after release.yml's
+  workflow_dispatch:
+    inputs:
+      repos:
+        description: "Comma-separated owner/repo (a subset of fleet.json), or `all`; empty uses FRAPPE_NIX_ROLLOUT_REPOS"
+        type: string
+        default: ""
+      dry-run:
+        description: "Plan and verify, but mint no token and write nothing"
+        type: boolean
+        default: false
+      auto-merge:
+        description: "Enable auto-merge on a verified PR when the app's required checks protect its branch"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: frappe-nix-rollout
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: "1"
+  # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release-2).
+  RELEASE_BRANCH: release-2
+  # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app.
+  BOT: avunu-ci[bot]
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+  AUTO_MERGE: ${{ github.event_name != 'workflow_dispatch' || inputs.auto-merge }}
+
+jobs:
+  resolve:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # the release branch, tags and compare
+      pull-requests: read # the release PR, and each app's standards/frappe-nix PR
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      tag_sha: ${{ steps.release.outputs.sha }}
+      contract: ${{ steps.contract.outputs.ok }}
+      matrix: ${{ steps.targets.outputs.matrix }}
+      count: ${{ steps.targets.outputs.count }}
+      skipped: ${{ steps.targets.outputs.skipped }}
+    steps:
+      - name: Find the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/$REPO/branches/$RELEASE_BRANCH" --jq .commit.sha)"
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::$RELEASE_BRANCH has no head commit"
+            exit 1
+          fi
+          # The v* tag at exactly that commit (a lightweight tag's line, or an annotated one's ^{}).
+          tag="$(git ls-remote --tags "https://github.com/$REPO.git" 'v*' \
+            | awk -v sha="$sha" '$1 == sha { ref = $2; sub(/\^\{\}$/, "", ref); sub(/^refs\/tags\//, "", ref); print ref }' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV | tail -n 1 || true)"
+          if [ -z "$tag" ]; then
+            echo "::error::no v* tag points at $RELEASE_BRANCH's head $sha"
+            exit 1
+          fi
+          major="${RELEASE_BRANCH#release-}"
+          if [[ "$tag" != "v$major."* ]]; then
+            echo "::error::$tag is not a v$major.* release, but $RELEASE_BRANCH points at it"
+            exit 1
+          fi
+          # A release commit is release-please's PR merged into main, nothing else.
+          merged="$(gh api "repos/$REPO/commits/$sha/pulls" \
+            | jq --arg sha "$sha" '[.[] | select(.merged_at != null and .base.ref == "main" and .merge_commit_sha == $sha)] | length')"
+          if [ "$merged" = 0 ]; then
+            echo "::error::$sha ($tag) is not the merge commit of a pull request merged into main"
+            exit 1
+          fi
+          echo "release $tag at $sha"
+          {
+            echo "tag=$tag"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          path: tools-src
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          tool-dir: ${{ runner.temp }}/uv-tool-dir
+          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          enable-cache: false
+
+      # The tag's own tools: `ci rollout-contract` says they plan and verify a rollout the way
+      # this workflow expects; `config` reads each app's integration branch below.
+      - name: Install the release's frappe-nix-tools, and check its rollout contract
+        id: contract
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          uv tool install --python 3.14 "$GITHUB_WORKSPACE/tools-src/py/frappe_nix_tools"
+          contract="$(frappe-nix ci rollout-contract 2> /dev/null || true)"
+          if [ "$contract" = 1 ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG's frappe-nix-tools has no rollout contract 1 (got ${contract:-none}): nothing is rolled out until a release that has it"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Choose the repositories, and what each one locks
+        id: targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_TERMINAL_PROMPT: "0"
+          TAG: ${{ steps.release.outputs.tag }}
+          TAG_SHA: ${{ steps.release.outputs.sha }}
+          CONTRACT: ${{ steps.contract.outputs.ok }}
+          EVENT: ${{ github.event_name }}
+          INPUT_REPOS: ${{ inputs.repos }}
+          VAR_REPOS: ${{ vars.FRAPPE_NIX_ROLLOUT_REPOS }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'EOF'
+          import json, os, re, shutil, subprocess, sys, urllib.request
+          from pathlib import Path
+
+          FLEET = "https://raw.githubusercontent.com/Avunu/frappe-standards-profile/main/fleet.json"
+          OWNER, BRANCH = "Avunu", "standards/frappe-nix"
+          TAG, TAG_SHA, BOT = os.environ["TAG"], os.environ["TAG_SHA"], os.environ["BOT"]
+          REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+          BRANCH_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*")
+          SHA_RE = re.compile(r"[0-9a-f]{40}")
+          BAD_CHECKS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
+          work = Path(os.environ["RUNNER_TEMP"]) / "resolve"
+          work.mkdir(parents=True, exist_ok=True)
+
+
+          def out(**values):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  for k, v in values.items():
+                      f.write(f"{k}={v}\n")
+
+
+          def api(path):
+              p = subprocess.run(["gh", "api", path], capture_output=True, text=True)
+              if p.returncode:
+                  if "HTTP 404" in p.stderr:
+                      return None
+                  raise RuntimeError(f"gh api {path}: {p.stderr.strip()[-300:]}")
+              return json.loads(p.stdout) if p.stdout.strip() else None
+
+
+          def git(*args, cwd=None, check=True):
+              p = subprocess.run(
+                  ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *args],
+                  cwd=cwd, capture_output=True, text=True,
+              )
+              if check and p.returncode:
+                  raise RuntimeError(f"git {' '.join(args)}: {p.stderr.strip()[-300:]}")
+              return p
+
+
+          def integration(cwd):
+              p = subprocess.run(["frappe-nix", "config", "integration-branch"], cwd=cwd, capture_output=True, text=True)
+              value = p.stdout.strip()
+              if p.returncode or not BRANCH_RE.fullmatch(value):
+                  return None, (p.stderr.strip().splitlines() or ["no integration branch"])[-1]
+              return value, ""
+
+
+          def failing(full, sha):
+              runs = (api(f"repos/{full}/commits/{sha}/check-runs?per_page=100") or {}).get("check_runs", [])
+              status = (api(f"repos/{full}/commits/{sha}/status") or {}).get("state", "")
+              return any(r.get("conclusion") in BAD_CHECKS for r in runs) or status in ("failure", "error")
+
+
+          def consider(repo):
+              info = api(f"repos/{repo}")
+              if not info:
+                  return "skipped", "not found"
+              full, name = info["full_name"], info["name"]
+              if info["owner"]["login"] != OWNER or info.get("private") or info.get("visibility") != "public":
+                  return "skipped", f"not a public {OWNER} repository"
+              if info.get("archived"):
+                  return "skipped", "archived"
+              d = work / full.replace("/", "__")
+              shutil.rmtree(d, ignore_errors=True)
+              git("clone", "-q", "--depth", "1", "--no-tags", f"https://github.com/{full}.git", str(d))
+              try:
+                  integ, why = integration(d)
+                  if not integ:
+                      return "skipped", f"no [tool.frappe-nix] on {info['default_branch']}: {why}"
+                  if integ != info["default_branch"]:
+                      ref = f"+refs/heads/{integ}:refs/remotes/origin/{integ}"
+                      if git("fetch", "-q", "--depth", "1", "--no-tags", "origin", ref, cwd=d, check=False).returncode:
+                          return "skipped", f"its integration branch {integ} does not exist"
+                      git("checkout", "-q", "--detach", f"refs/remotes/origin/{integ}", cwd=d)
+                  base = git("rev-parse", "HEAD", cwd=d).stdout.strip()
+                  again, why = integration(d)
+                  if again != integ:
+                      return "skipped", f"no [tool.frappe-nix] naming {integ} on {integ}: {why or again}"
+                  lock = json.loads((d / "flake.lock").read_text())
+              finally:
+                  shutil.rmtree(d, ignore_errors=True)
+              node = lock["nodes"]["root"].get("inputs", {}).get("frappe-nix")
+              locked = lock["nodes"].get(node, {}).get("locked", {}) if isinstance(node, str) else {}
+              if (str(locked.get("owner")).lower(), str(locked.get("repo")).lower()) != ("avunu", "frappe-nix"):
+                  return "skipped", "its flake.lock does not lock Avunu/frappe-nix as frappe-nix"
+              rev = str(locked.get("rev", ""))
+              if rev == TAG_SHA:
+                  return "at-tag", f"{TAG} ({rev[:12]})"
+              cmp = api(f"repos/{OWNER}/frappe-nix/compare/{rev}...{TAG_SHA}") if SHA_RE.fullmatch(rev) else None
+              if not cmp or cmp.get("status") != "ahead":
+                  return "skipped", f"locks frappe-nix {rev[:12]}, which {TAG} does not descend from"
+              pulls = api(f"repos/{full}/pulls?state=all&head={OWNER}:{BRANCH}&sort=created&direction=desc&per_page=1") or []
+              pr = pulls[0] if pulls else None
+              if pr and pr["state"] == "closed" and not pr.get("merged_at") and re.search(rf"(^|\s){re.escape(TAG)}$", pr["title"]):
+                  return "paused", f"#{pr['number']} ({TAG}) was closed without merging: paused until the next release"
+              branch = api(f"repos/{full}/branches/{BRANCH}")
+              if branch:
+                  head = branch["commit"]["sha"]
+                  commits = (api(f"repos/{full}/compare/{base}...{head}") or {}).get("commits", [])
+                  others = sorted({
+                      (c.get("author") or {}).get("login") or c["commit"]["author"]["name"]
+                      for c in commits if (c.get("author") or {}).get("login") != BOT
+                  })
+                  if others:
+                      return "paused", f"{BRANCH} has commits by {', '.join(others)}"
+                  # Already published for this tag on this base: nothing to plan.
+                  if pr and pr["state"] == "open" and pr["title"] == f"chore(deps): frappe-nix {TAG}":
+                      parents = [p["sha"] for c in commits[-1:] for p in c.get("parents", [])]
+                      if len(commits) == 1 and parents == [base]:
+                          state = "failing" if failing(full, head) else "pr-open"
+                          return state, pr["html_url"]
+              slug = full.replace("/", "__")
+              return "target", {
+                  "repo": full,
+                  "name": name,
+                  "integration": integ,
+                  "base_sha": base,
+                  "current_rev": rev,
+                  "artifact": f"rollout-{slug}",
+                  "status": f"status-{slug}",
+              }
+
+
+          targets, skipped = [], []
+          if os.environ["CONTRACT"] != "true":
+              out(matrix=json.dumps({"include": []}), count=0, skipped="[]")
+              sys.exit(0)
+          with urllib.request.urlopen(FLEET, timeout=60) as r:
+              fleet = json.load(r)
+          known = {
+              str(a.get("repo")).lower(): str(a.get("repo"))
+              for a in fleet.get("apps", [])
+              if isinstance(a, dict) and REPO_RE.fullmatch(str(a.get("repo", "")))
+          }
+          dispatch = os.environ["EVENT"] == "workflow_dispatch" and os.environ["INPUT_REPOS"].strip()
+          requested = (os.environ["INPUT_REPOS"] if dispatch else os.environ["VAR_REPOS"]).strip()
+          if not requested:
+              print("::notice::no repositories: FRAPPE_NIX_ROLLOUT_REPOS is unset or empty")
+              names = []
+          elif requested.lower() == "all":
+              names = sorted(known.values())
+          else:
+              asked = [x for x in re.split(r"[,\s]+", requested) if x]
+              unknown = [x for x in asked if x.lower() not in known]
+              if unknown:
+                  print(f"::error::not in fleet.json: {', '.join(unknown)}")
+                  sys.exit(1)
+              names = list(dict.fromkeys(known[x.lower()] for x in asked))
+          for repo in names:
+              try:
+                  state, detail = consider(repo)
+              except (RuntimeError, KeyError, ValueError, OSError) as e:
+                  state, detail = "failing", f"resolve: {e}"
+              if state == "target":
+                  targets.append(detail)
+                  print(f"{repo}: plan from {detail['base_sha'][:12]} on {detail['integration']}")
+              else:
+                  skipped.append({"repo": repo, "state": state, "detail": detail})
+                  print(f"{repo}: {state}, {detail}")
+          out(
+              matrix=json.dumps({"include": targets}, separators=(",", ":")),
+              count=len(targets),
+              skipped=json.dumps(skipped, separators=(",", ":")),
+          )
+          EOF
+
+  plan:
+    needs: resolve
+    if: fromJSON(needs.resolve.outputs.count || '0') > 0
+    name: plan (${{ matrix.repo }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # frappe-nix at the tag, and the read-only API calls of the plan
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - name: Whether the release branch is still at the tag
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ matrix.repo }}
+          INTEGRATION: ${{ matrix.integration }}
+          BASE: ${{ matrix.base_sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG_SHA: ${{ needs.resolve.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/artifact"
+          head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH" --jq .commit.sha)"
+          if [ "$head" != "$TAG_SHA" ]; then
+            echo "::notice::$RELEASE_BRANCH moved past $TAG: superseded, the next release's run moves $REPO"
+            jq -n --arg repo "$REPO" --arg integration "$INTEGRATION" --arg base "$BASE" --arg tag "$TAG" \
+              --arg sha "$TAG_SHA" --arg version "${TAG#v}" \
+              '{repo: $repo, integration: $integration, base_sha: $base, tag: $tag, tag_sha: $sha, state: "superseded", tools_version: $version}' \
+              > "$RUNNER_TEMP/artifact/meta.json"
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.current.outputs.superseded == 'false'
+        name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - if: steps.current.outputs.superseded == 'false'
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The app's own code runs as `rollout`: no sudo, no docker, and another uid than the
+      # runner's, so it can read neither the runner process's memory and environment (the
+      # token that uploads artifacts and writes the Actions cache) nor change the runner.
+      - if: steps.current.outputs.superseded == 'false'
+        name: Plan the rollout as an unprivileged user
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FRAPPE_NIX_YARN_IGNORE_SCRIPTS: "1"
+          REPO: ${{ matrix.repo }}
+          BASE: ${{ matrix.base_sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG_SHA: ${{ needs.resolve.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          sudo useradd --create-home --shell /bin/bash rollout
+          code=0
+          sudo -u rollout -H --preserve-env=GH_TOKEN,FRAPPE_NIX_YARN_IGNORE_SCRIPTS,REPO,BASE,TAG,TAG_SHA \
+            bash -c 'set -euo pipefail
+              export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+              cd "$HOME"
+              nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- repo rollout \
+                --repo "$REPO" --to "$TAG" --base "$BASE" --emit-patch "$HOME/out"' || code=$?
+          # Nothing of the app's keeps running, then only regular files leave its home.
+          sudo pkill -KILL -u rollout || true
+          for f in meta.json patch; do
+            if [ -n "$(sudo find /home/rollout/out -maxdepth 1 -name "$f" -type f -size -100M 2> /dev/null)" ]; then
+              sudo cat "/home/rollout/out/$f" | tee "$RUNNER_TEMP/artifact/$f" > /dev/null
+            fi
+          done
+          if [ "$code" != 0 ]; then
+            echo "::error::frappe-nix repo rollout --emit-patch failed for $REPO (exit $code)"
+            exit "$code"
+          fi
+          if [ ! -s "$RUNNER_TEMP/artifact/meta.json" ]; then
+            echo "::error::the plan wrote no meta.json"
+            exit 1
+          fi
+          jq . "$RUNNER_TEMP/artifact/meta.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/artifact
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, plan]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && fromJSON(needs.resolve.outputs.count || '0') > 0 }}
+    name: publish (${{ matrix.repo }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: frappe-nix-rollout
+    permissions:
+      contents: read # the consumer at base_sha, and the verify step's reads
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    env:
+      REPO: ${{ matrix.repo }}
+      INTEGRATION: ${{ matrix.integration }}
+      BASE: ${{ matrix.base_sha }}
+      TAG: ${{ needs.resolve.outputs.tag }}
+      TAG_SHA: ${{ needs.resolve.outputs.tag_sha }}
+      STATUS_NAME: ${{ matrix.status }}
+    steps:
+      - name: Start this repository's status
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/status"
+          STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
+          jq -n --arg repo "$REPO" '{repo: $repo, state: "failing", detail: "the publish job stopped before it finished"}' > "$STATUS"
+
+      - id: download
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/plan
+
+      - name: Check the plan against resolve's matrix
+        id: plan
+        env:
+          DOWNLOADED: ${{ steps.download.outcome }}
+        run: |
+          set -euo pipefail
+          STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
+          status() { jq -n --arg repo "$REPO" --arg state "$1" --arg detail "$2" '{repo: $repo, state: $state, detail: $detail}' > "$STATUS"; }
+          meta="$RUNNER_TEMP/plan/meta.json"
+          if [ "$DOWNLOADED" != success ] || [ ! -f "$meta" ]; then
+            status failing "no plan: the plan job failed"
+            echo "::error::no plan for $REPO"
+            exit 1
+          fi
+          want="$(jq -cn --arg repo "$REPO" --arg integration "$INTEGRATION" --arg base "$BASE" --arg tag "$TAG" \
+            --arg sha "$TAG_SHA" --arg version "${TAG#v}" \
+            '{repo: $repo, integration: $integration, base_sha: $base, tag: $tag, tag_sha: $sha, tools_version: $version}')"
+          got="$(jq -c '{repo, integration, base_sha, tag, tag_sha, tools_version}' "$meta")"
+          if [ "$got" != "$want" ]; then
+            status rejected "the plan's meta.json does not match resolve: $got"
+            echo "::error::meta.json $got is not $want"
+            exit 1
+          fi
+          state="$(jq -r .state "$meta")"
+          case "$state" in
+            patch) ;;
+            noop) status at-tag "the plan changed nothing" ;;
+            superseded) status superseded "$RELEASE_BRANCH moved past $TAG" ;;
+            *)
+              status rejected "the plan's state is ${state@Q}"
+              exit 1
+              ;;
+          esac
+          if [ "$state" = patch ] && [ ! -f "$RUNNER_TEMP/plan/patch" ]; then
+            status rejected "the plan has no patch"
+            exit 1
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+
+      - if: steps.plan.outputs.state == 'patch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.base_sha }}
+          path: consumer
+          fetch-depth: 0
+          persist-credentials: false
+
+      - if: steps.plan.outputs.state == 'patch'
+        uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+        with:
+          determinate: false
+
+      # The tag's own frappe-nix-tools; no token that can write exists yet.
+      - if: steps.plan.outputs.state == 'patch'
+        name: Verify the patch
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- ci verify-rollout-patch \
+            --repo "$REPO" --base-sha "$BASE" --tag "$TAG" --tag-sha "$TAG_SHA" \
+            --patch "$RUNNER_TEMP/plan/patch" --worktree "$GITHUB_WORKSPACE/consumer" \
+            --out "$RUNNER_TEMP/decision.json"
+
+      # Before the token: the patch is the one verified, and it gives the same tree in a fresh
+      # clone at base_sha, checked again here for modes and paths. That tree is what is pushed.
+      - if: steps.plan.outputs.state == 'patch'
+        name: Act on the decision, and re-derive the tree
+        id: recheck
+        env:
+          DECISION: ${{ steps.verify.outputs.decision }}
+          TREE_ID: ${{ steps.verify.outputs.tree_id }}
+          PATCH_SHA256: ${{ steps.verify.outputs.patch_sha256 }}
+        run: |
+          set -euo pipefail
+          STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
+          status() { jq -n --arg repo "$REPO" --arg state "$1" --arg detail "$2" '{repo: $repo, state: $state, detail: $detail}' > "$STATUS"; }
+          decision="$RUNNER_TEMP/decision.json"
+          if [ "$DECISION" != "$(jq -r .decision "$decision")" ]; then
+            status failing "the step output and decision.json disagree"
+            exit 1
+          fi
+          case "$DECISION" in
+            publish | needs-review) ;;
+            noop)
+              status at-tag "the patch is empty"
+              exit 0
+              ;;
+            reject)
+              status rejected "$(jq -r '.reasons | join("; ")' "$decision")"
+              echo "::error::$REPO: the plan's patch was rejected"
+              jq -r '.reasons[]' "$decision"
+              exit 0
+              ;;
+            *)
+              status failing "unknown decision ${DECISION@Q}"
+              exit 1
+              ;;
+          esac
+          patch="$RUNNER_TEMP/plan/patch"
+          sum="$(sha256sum "$patch" | cut -d' ' -f1)"
+          if [ "$sum" != "$PATCH_SHA256" ] || [ "$sum" != "$(jq -r .patch_sha256 "$decision")" ]; then
+            status rejected "the patch is not the one verified"
+            exit 1
+          fi
+          if grep -aqE '^(rename from|rename to|copy from|copy to|similarity index|dissimilarity index|old mode|new mode|Subproject commit) ' "$patch"; then
+            status rejected "the patch renames, copies, changes a mode or touches a submodule"
+            exit 1
+          fi
+          fresh="$RUNNER_TEMP/fresh"
+          git init -q "$fresh"
+          g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$fresh" "$@"; }
+          g fetch -q --depth 1 --no-tags "https://github.com/$REPO.git" "$BASE"
+          [ "$(g rev-parse FETCH_HEAD)" = "$BASE" ]
+          export GIT_INDEX_FILE="$RUNNER_TEMP/rollout.index"
+          g read-tree "$BASE"
+          g apply --cached --whitespace=nowarn "$patch"
+          tree="$(g write-tree)"
+          if [ "$tree" != "$TREE_ID" ] || [ "$tree" != "$(jq -r .tree_id "$decision")" ]; then
+            status rejected "the patch gives tree $tree in a fresh clone, not the verified $TREE_ID"
+            exit 1
+          fi
+          g diff-index --cached --raw -z --no-renames --full-index "$BASE" > "$RUNNER_TEMP/raw"
+          bad=""
+          while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            read -r old new _ _ st <<< "${meta#:}"
+            case "$st" in
+              A) [ "$new" = 100644 ] || bad+="$path: created as $new; " ;;
+              M) [ "$old $new" = "100644 100644" ] || bad+="$path: $old -> $new; " ;;
+              D) [ "$old" = 100644 ] || [ "$old" = 120000 ] || bad+="$path: deletes a $old; " ;;
+              *) bad+="$path: change of type $st; " ;;
+            esac
+            if [[ "$path" == /* || "$path" =~ [[:cntrl:]] ]]; then
+              bad+="$path: unsafe path; "
+            fi
+            IFS=/ read -r -a parts <<< "$path"
+            for part in "${parts[@]}"; do
+              lower="${part,,}"
+              lower="${lower%"${lower##*[!. ]}"}"
+              if [ -z "$part" ] || [ "$part" = . ] || [ "$part" = .. ] || [ "$lower" = .git ]; then
+                bad+="$path: unsafe path; "
+              fi
+            done
+          done < "$RUNNER_TEMP/raw"
+          if [ -n "$bad" ]; then
+            status rejected "$bad"
+            exit 1
+          fi
+          echo "re-derived tree $tree from $BASE"
+          echo "go=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.recheck.outputs.go == 'true' && env.DRY_RUN != 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          owner: Avunu
+          repositories: ${{ matrix.name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+          permission-issues: write
+
+      - if: steps.recheck.outputs.go == 'true'
+        name: Commit, push and open or update the pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          TREE_ID: ${{ steps.verify.outputs.tree_id }}
+          DECISION: ${{ steps.verify.outputs.decision }}
+        run: |
+          set -euo pipefail
+          STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
+          status() { jq -n --arg repo "$REPO" --arg state "$1" --arg detail "$2" --arg pr "${3:-}" '{repo: $repo, state: $state, detail: $detail, pr: $pr}' > "$STATUS"; }
+          decision="$RUNNER_TEMP/decision.json"
+          head=standards/frappe-nix
+          title="chore(deps): frappe-nix $TAG"
+          if [ "$DRY_RUN" = true ]; then
+            echo "dry run: would push $TREE_ID on $BASE to $head and open \"$title\" ($DECISION)"
+            status dry-run "verified ($DECISION); nothing pushed"
+            exit 0
+          fi
+          if [ "${APP_SLUG}[bot]" != "$BOT" ]; then
+            echo "::error::the App token is ${APP_SLUG}[bot]'s, not $BOT's"
+            exit 1
+          fi
+          fresh="$RUNNER_TEMP/fresh"
+          g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$fresh" "$@"; }
+
+          observed="$(git ls-remote "https://github.com/$REPO.git" "refs/heads/$head" | cut -f1)"
+          pr_url="$(gh pr list -R "$REPO" --head "$head" --state open --json url,isCrossRepository \
+            --jq 'map(select(.isCrossRepository | not))[0].url // ""')"
+          if [ -n "$observed" ]; then
+            others="$(gh api "repos/$REPO/compare/$BASE...$observed" \
+              | jq -r --arg bot "$BOT" '[.commits[] | select(.author.login != $bot) | (.author.login // .commit.author.name)] | unique | join(", ")')"
+            if [ -n "$others" ]; then
+              if [ -n "$pr_url" ]; then
+                gh pr comment "$pr_url" --body "The frappe-nix rollout did not move \`$head\` to $TAG: it has commits by $others. Merge or close this pull request, or delete the branch, and the next rollout moves it."
+              fi
+              status paused "$head has commits by $others" "$pr_url"
+              exit 0
+            fi
+          fi
+
+          pushed=false
+          if [ -n "$observed" ] && [ "$(gh api "repos/$REPO/git/commits/$observed" --jq .tree.sha)" = "$TREE_ID" ]; then
+            echo "$head already holds tree $TREE_ID: not pushing"
+          else
+            id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+            export GIT_AUTHOR_NAME="$BOT" GIT_COMMITTER_NAME="$BOT"
+            export GIT_AUTHOR_EMAIL="$id+$BOT@users.noreply.github.com" GIT_COMMITTER_EMAIL="$id+$BOT@users.noreply.github.com"
+            commit="$(g commit-tree "$TREE_ID" -p "$BASE" -m "$title")"
+            auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            echo "::add-mask::$auth"
+            GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+              GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+              g push -q "--force-with-lease=refs/heads/$head:$observed" "https://github.com/$REPO.git" "$commit:refs/heads/$head"
+            echo "pushed $commit to $head (was ${observed:-absent})"
+            pushed=true
+          fi
+
+          body="$RUNNER_TEMP/body.md"
+          jq -r .body "$decision" > "$body"
+          if [ -n "$pr_url" ]; then
+            gh pr edit "$pr_url" --title "$title" --body-file "$body"
+          else
+            pr_url="$(gh pr create -R "$REPO" --base "$INTEGRATION" --head "$head" --title "$title" --body-file "$body" | tail -n 1)"
+          fi
+          echo "pull request: $pr_url"
+          status failing "$TAG: the pull request is open, but the job stopped before auto-merge or the label" "$pr_url"
+
+          for n in $(jq -r '.legacy_prs[]' "$decision"); do
+            if [[ "$n" =~ ^[0-9]+$ ]]; then
+              gh pr close "$n" -R "$REPO" --comment "Superseded by $pr_url: frappe-nix releases now move on the one branch \`$head\`." || true
+            fi
+          done
+
+          method="$(jq -r .merge_method "$decision")"
+          case "$method" in squash | merge | rebase) ;; *) method=squash ;; esac
+          automerge="$(jq -r .automerge "$decision")"
+          allowed="$(gh api "repos/$REPO" --jq .allow_auto_merge)"
+          result=needs-review
+          if [ "$DECISION" = publish ] && [ "$automerge" = true ] && [ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]; then
+            # The safety rule again (gates_protected on the branch now), then gh pr merge --auto;
+            # it labels needs-review itself when either fails.
+            out="$RUNNER_TEMP/automerge.out"
+            (cd "$GITHUB_WORKSPACE/consumer" && GITHUB_OUTPUT="$out" nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- \
+              ci enable-automerge --pr-url "$pr_url" --repo "$REPO" --integration "$INTEGRATION" --merge-method "$method")
+            grep -q '^result=merging$' "$out" && result=pr-open
+          else
+            gh label create needs-review -R "$REPO" --color d93f0b --description "Not merged automatically; a person reviews it" --force
+            gh pr edit "$pr_url" --add-label needs-review
+          fi
+
+          detail="$TAG"
+          if [ "$pushed" = false ] && [ "$result" = pr-open ]; then
+            sha="$(gh api "repos/$REPO/pulls/${pr_url##*/}" --jq .head.sha)"
+            bad="$( { gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "startup_failure")] | length' || echo 0; } )"
+            if [ "$bad" != 0 ]; then
+              result=failing
+              detail="$TAG: $bad failing checks"
+            fi
+          fi
+          status "$result" "$detail" "$pr_url"
+
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.status }}
+          path: ${{ runner.temp }}/status
+          retention-days: 3
+
+  report:
+    needs: [resolve, publish]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: frappe-nix-rollout
+    permissions: {}
+    steps:
+      - continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: status-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/status
+
+      - name: Summarise the rollout
+        id: table
+        env:
+          RESOLVE: ${{ needs.resolve.result }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          TAG_SHA: ${{ needs.resolve.outputs.tag_sha }}
+          CONTRACT: ${{ needs.resolve.outputs.contract }}
+          MATRIX: ${{ needs.resolve.outputs.matrix }}
+          SKIPPED: ${{ needs.resolve.outputs.skipped }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'EOF'
+          import json, os
+          from pathlib import Path
+
+          env = os.environ
+          rows = {r["repo"]: r for r in json.loads(env.get("SKIPPED") or "[]")}
+          planned = [t["repo"] for t in (json.loads(env.get("MATRIX") or "{}").get("include") or [])]
+          for repo in planned:
+              rows[repo] = {"repo": repo, "state": "failing", "detail": "no status: the publish job did not run"}
+          status_dir = Path(env["RUNNER_TEMP"]) / "status"
+          for f in sorted(status_dir.glob("*.json")) if status_dir.is_dir() else []:
+              try:
+                  r = json.loads(f.read_text())
+              except ValueError:
+                  continue
+              if r.get("repo") in planned:
+                  rows[r["repo"]] = r
+          order = ["rejected", "failing", "needs-review", "paused", "pr-open", "dry-run", "superseded", "at-tag", "skipped"]
+          label = {
+              "at-tag": "at tag", "pr-open": "PR open", "failing": "failing", "needs-review": "needs-review",
+              "rejected": "rejected", "paused": "paused", "superseded": "superseded", "skipped": "skipped",
+              "dry-run": "dry run",
+          }
+          tag = env.get("TAG") or "?"
+          lines = [f"# frappe-nix rollout: {tag}", ""]
+          if env["RESOLVE"] != "success":
+              lines.append(f"The resolve job did not succeed ({env['RESOLVE']}): nothing was rolled out.")
+          elif env.get("CONTRACT") != "true":
+              lines.append(f"{tag}'s frappe-nix-tools has no rollout contract: nothing was rolled out.")
+          counts = {}
+          for r in rows.values():
+              counts[r["state"]] = counts.get(r["state"], 0) + 1
+          if rows:
+              lines += [
+                  " · ".join(f"{label.get(s, s)}: {counts[s]}" for s in order if s in counts),
+                  "",
+                  "| Repository | State | Detail |",
+                  "| --- | --- | --- |",
+              ]
+
+              def cell(text):
+                  return str(text).replace("|", "\\|").replace("\n", " ")[:400]
+
+              for r in sorted(rows.values(), key=lambda r: (order.index(r["state"]) if r["state"] in order else 99, r["repo"])):
+                  pr = f" ([PR]({r['pr']}))" if r.get("pr") else ""
+                  lines.append(f"| [{r['repo']}](https://github.com/{r['repo']}) | {label.get(r['state'], r['state'])} | {cell(r.get('detail', ''))}{pr} |")
+          elif env["RESOLVE"] == "success" and env.get("CONTRACT") == "true":
+              lines.append("No repository was considered (FRAPPE_NIX_ROLLOUT_REPOS is unset or empty).")
+          lines += ["", f"Run: {env['RUN_URL']} · release `{(env.get('TAG_SHA') or '')[:12]}`"]
+          text = "\n".join(lines) + "\n"
+          Path(env["GITHUB_STEP_SUMMARY"]).write_text(text)
+          Path(env["RUNNER_TEMP"], "report.md").write_text(text)
+          with open(env["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"rows={len(rows)}\nrejected={counts.get('rejected', 0)}\n")
+          EOF
+
+      - if: steps.table.outputs.rows != '0' && env.DRY_RUN != 'true'
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AVUNU_CI_APP_ID }}
+          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          owner: Avunu
+          repositories: frappe-nix
+          permission-issues: write
+
+      - if: steps.table.outputs.rows != '0' && env.DRY_RUN != 'true'
+        name: Update the pinned status issue
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="frappe-nix rollout status"
+          number="$(gh issue list -R "$REPO" --state open --search "in:title \"$title\"" --json number,title \
+            | jq -r --arg t "$title" 'map(select(.title == $t))[0].number // ""')"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" -R "$REPO" --body-file "$RUNNER_TEMP/report.md"
+          else
+            url="$(gh issue create -R "$REPO" --title "$title" --body-file "$RUNNER_TEMP/report.md" | tail -n 1)"
+            number="${url##*/}"
+          fi
+          gh issue pin "$number" -R "$REPO" 2> /dev/null || echo "::notice::could not pin #$number (it may be pinned already)"
+
+      - name: Fail when a patch was rejected
+        env:
+          REJECTED: ${{ steps.table.outputs.rejected }}
+        run: |
+          if [ "${REJECTED:-0}" != 0 ]; then
+            echo "::error::$REJECTED repositories' rollout patches were rejected; see the summary"
+            exit 1
+          fi
