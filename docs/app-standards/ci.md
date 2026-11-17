@@ -105,7 +105,7 @@ Dependabot opens the PRs; `deps.yml` decides what happens to them.
   | nix | after the relock lands, or when there was nothing to relock | a move of `frappe-nix` or `standards-profile` is closed instead |
   | git submodules | always | |
 
-  That table is the default, `dependabot.auto-merge-policy = "decision-table"`. With `"all"`, every Dependabot PR gets auto-merge, majors and the `needs-review` column included, and so does the nightly screenshots PR: the required checks alone decide what merges, and a PR whose checks fail stays open for a person. Two rows don't change: a nix bump still waits for its relock, and one that moves `frappe-nix` or `standards-profile` is still closed. A bump of the `frappe-nix` pin in the callers is never merged either (Dependabot ignores it; it moves only with `frappe-nix repo rollout`).
+  That table is the default, `dependabot.auto-merge-policy = "decision-table"`. With `"all"`, every Dependabot PR gets auto-merge, majors and the `needs-review` column included, and so does the nightly screenshots PR: the required checks alone decide what merges, and a PR whose checks fail stays open for a person. Two rows don't change: a nix bump still waits for its relock, and one that moves `frappe-nix` or `standards-profile` is still closed. A bump of the `frappe-nix` pins in the callers is never merged either: Dependabot ignores them (as `Avunu/frappe-nix` and `Avunu/frappe-nix/*`, since it names a reusable workflow by its path), and a PR that moves only those pins is closed, because frappe-nix moves only with its release rollout (`frappe-nix repo rollout`).
 
   ```toml
   [dependabot]

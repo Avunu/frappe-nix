@@ -80,6 +80,19 @@ def close(pr_url: str, moved: list[str]) -> None:
 	print(f"closed {pr_url}: {what} moves through frappe-nix repo rollout")
 
 
+def close_pins(pr_url: str, pins: list[str]) -> None:
+	"""A github-actions PR that moves only frappe-nix's reusable-workflow pins (S5)."""
+	what = ", ".join(pins) or "frappe-nix's reusable workflows"
+	body = (
+		f"This PR moves only frappe-nix pins ({what}). frappe-nix moves through its release rollout"
+		" (`frappe-nix repo rollout`), which moves flake.lock, the pins and the rendered files"
+		" together; a pin edited on its own never passes `ci / lint`'s sync check. Closing."
+	)
+	github.cli("pr", "comment", pr_url, "--body", body)
+	github.cli("pr", "close", pr_url)
+	print(f"closed {pr_url}: frappe-nix pins move through frappe-nix repo rollout")
+
+
 def apply(
 	decision: str,
 	*,
@@ -90,15 +103,20 @@ def apply(
 	merge_method: str,
 	relock_state: str = "",
 	moved: list[str] | None = None,
+	ecosystem: str = "",
 ) -> str:
-	"""Act on ``decision`` (a ``verdict`` value); returns what was done."""
+	"""Act on ``decision`` (a ``verdict`` value); returns what was done. ``moved`` names the
+	rollout inputs a nix PR moves, or the frappe-nix pins a github-actions PR moves."""
 	if decision == verdict.RELOCK:
 		decision = verdict.nix_verdict(relock_state)
 		if decision == "wait":
 			print("nix: relock-push enables auto-merge after it pushes the relock")
 			return "wait"
 	if decision == verdict.CLOSE:
-		close(pr_url, moved or [])
+		if ecosystem == "github_actions":
+			close_pins(pr_url, moved or [])
+		else:
+			close(pr_url, moved or [])
 		return "closed"
 	if decision == verdict.AUTO:
 		return enable(pr_url, repo, integration, gates, merge_method)
