@@ -1738,8 +1738,10 @@ let
             migrate unit runs `frappe-rename-app --site` on this site right
             after maintenance mode goes on and before the offline migrate and
             `bench migrate`, inside the same snapshot and rollback. A no-op once
-            the site names NEW. Pause the scheduler and drain the job queues
-            before the deploy that ships the rename.
+            the site names NEW. Also for an OLD that NEW has absorbed, both
+            installed (Frappe's `flow = "frappe"`): the site then drops OLD and
+            hands its modules to NEW. Pause the scheduler and drain the job
+            queues before the deploy that ships the rename.
           '';
         };
 
