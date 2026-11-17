@@ -6,8 +6,8 @@ name: app-nightly
 # (test-utils) and the registry refresh (listing.publish). `drift` always runs: it keeps the
 # "frappe-nix vX.Y.Z available" and "standards profile update available" issues. `shots` runs
 # frappe-shots with no write token and uploads the screenshot patch; `shots-push`, on
-# ubuntu-latest whatever `runs-on` says and running no app code, checks that patch and pushes
-# it and opens its PR. With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) it does so
+# ubuntu-latest whatever `runs-on` says and running no app code, checks that patch and that the
+# integration branch holds the commit it was made on, and pushes it and opens its PR. With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) it does so
 # with the App's token, which starts CI by itself; without one, GITHUB_TOKEN, and CI is
 # dispatched. `auto-merge` (dependabot.auto-merge-policy = "all") enables auto-merge on that PR.
 
@@ -376,11 +376,32 @@ jobs:
       pull-requests: write # open or update its PR
       actions: write # dispatch ci.yml and pr-policy.yml on it
     steps:
-      # The commit the shots job ran on, not the branch's head now: the patch is its.
+      # The integration branch with its history, then the commit the plan job ran on, which that
+      # job names itself: only a full SHA the integration branch already holds, so this job never
+      # builds on a commit the branch has not taken (a fork PR's head can be fetched from this
+      # repository by its SHA). The branch's head stays in $RUNNER_TEMP/base, where
+      # enable-automerge reads the gates.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.shots.outputs.sha }}
+          ref: ${{ inputs.integration-branch }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Check out the plan job's commit, only if it is on the integration branch
+        env:
+          SHA: ${{ needs.shots.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the plan job's commit ${SHA@Q} is not a full SHA"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "::error::the plan job's commit $SHA is not on the integration branch"
+            exit 1
+          fi
+          git worktree add -q --detach "$RUNNER_TEMP/base" HEAD
+          git switch -q --detach "$SHA"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -442,30 +463,53 @@ jobs:
       - if: inputs.auto-merge
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      # For the auto-merge safety rule (spec §4.5). From the integration branch's flake.lock, as
-      # every job that holds a write token installs it, and not through the app's dev shell.
-      # Before the App's token is minted.
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the integration branch's
+      # flake.lock pins (never the PR's), every dependency from that revision's
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
+      # against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
       - if: inputs.auto-merge
-        name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+        name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision the integration branch pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           INTEGRATION: ${{ inputs.integration-branch }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
           if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
           else
-            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
-            rev="$(jq -r .rev <<<"$node")"
+            node="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" \
+              | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            rev="$(jq -r .rev <<<"$node")"
+            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
           fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # A GitHub App's token when the caller passes one (ci.github-app), minted in this job
       # alone, which runs no app code: the PR it pushes then starts CI like any other push.
@@ -520,7 +564,8 @@ jobs:
             fi
           fi
           if [ "$AUTO_MERGE" = true ]; then
-            frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD"
+            # The gates the integration branch's head requires, not the plan job's commit's.
+            (cd "$RUNNER_TEMP/base" && frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD")
           fi
           echo "Screenshots changed: $url (diff images: ${DIFFS:-the screenshot-diffs artifact})" >> "$GITHUB_STEP_SUMMARY"
 
