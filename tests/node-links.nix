@@ -97,9 +97,9 @@ let
   escaping = errorOf (
     pkgs.writeText "x" (
       show (
-        linksOf "alpha/panel" (
-          pkgs.writeTextDir "package.json" (builtins.toJSON { dependencies.out = "link:../../../elsewhere"; })
-        )
+        # A file in the tree, not one written at evaluation: `nix flake check
+        # --no-build` cannot realise a derivation to read it.
+        linksOf "alpha/panel" ./fixtures/node-links-escaping
       )
     )
   );
