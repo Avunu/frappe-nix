@@ -19,6 +19,9 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      tag's commit; every node reachable from the root other than through ``frappe-nix`` is
      the base's (``standards-profile`` included); the nodes under ``frappe-nix`` are
      frappe-nix's own ``flake.lock`` at the tag, except a ``follows`` the base already had.
+     The node's ``original`` is the base's, or, when the base followed a frozen
+     ``release-<N>`` branch, the same with ``ref = "release"`` (the rollout's one-time move
+     off it).
    - ``uv.lock`` sources: pypi.org (files from files.pythonhosted.org), a git source, URL or
      registry the base's locks already have, and a relative workspace or editable path.
      ``frappe-runtime`` is only ever ``nix/uv.lock``'s, once, and exactly the tag's:
@@ -405,11 +408,17 @@ def flake_lock_problems(
 			f"flake.lock: frappe-nix is locked as {json.dumps(locked, sort_keys=True)[:200]}, not"
 			f" github:Avunu/frappe-nix at {tag_sha}"
 		)
-	if (
-		set(node) - _NODE
-		or node.get("original") != bnode.get("original")
-		or node.get("flake") != bnode.get("flake")
-	):
+
+	from frappe_nix_tools.scaffold import context
+
+	original, borig = node.get("original"), bnode.get("original")
+	# The one change of `original` allowed: off a frozen release-<N> branch onto `release`
+	# (repo rollout points flake.nix there first, and the render checks that edit).
+	off_frozen = flakelock.frozen_release_original(borig) and original == {
+		**borig,
+		"ref": context.RELEASE_BRANCH,
+	}
+	if set(node) - _NODE or (original != borig and not off_frozen) or node.get("flake") != bnode.get("flake"):
 		out.append("flake.lock: frappe-nix's original or flake attribute differs from the base's")
 	fn_root = fn_lock["nodes"].get(fn_lock["root"]) or {}
 	out += _fn_subtree(new, node, fn_lock, fn_root, base, ["frappe-nix"], [4096])

@@ -114,8 +114,8 @@ def git(root: Path, *args: str) -> str:
 
 
 REV = "a" * 40
-# The branch a rendered flake.nix tracks: release-<major> of this frappe-nix-tools.
-RELEASE = context.default_frappe_nix_url().rpartition("/")[2]
+# The branch a rendered flake.nix tracks.
+RELEASE = context.RELEASE_BRANCH
 
 
 def _github(owner: str, repo: str, ref: str, rev: str = REV) -> dict:

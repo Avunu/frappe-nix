@@ -18,7 +18,7 @@ bench provision              # (first run, another shell) create the site + inst
 
 Nix reads `apps/*` while it evaluates `flake.nix`, so a fresh clone needs them
 checked out first; `.envrc` does that with frappe-nix's own tool, as partial
-clones. Without direnv, run `nix run github:Avunu/frappe-nix/release-1#bootstrap`
+clones. Without direnv, run `nix run github:Avunu/frappe-nix/release#bootstrap`
 before `nix develop --no-pure-eval`.
 
 ## Day-to-day

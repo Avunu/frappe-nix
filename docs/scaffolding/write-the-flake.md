@@ -64,7 +64,7 @@ The `.envrc` checks out a fresh clone's apps, then loads the shell:
 
 ```bash
 if git submodule status -- apps 2> /dev/null | grep '^-' > /dev/null; then
-  nix run github:Avunu/frappe-nix/release-1#bootstrap -- "$PWD" || true
+  nix run github:Avunu/frappe-nix/release#bootstrap -- "$PWD" || true
 fi
 use flake . --no-pure-eval
 ```
