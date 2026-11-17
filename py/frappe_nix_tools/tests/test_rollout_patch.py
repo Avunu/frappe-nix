@@ -738,6 +738,69 @@ class TestLockChecks(unittest.TestCase):
 		reviews = self.uv_reviews("nix/uv.lock", base, uv_lock(TS, orjson="3.9.0", requests="2.31.0"))
 		self.assertTrue(any("moves orjson to an older version" in r for r in reviews), reviews)
 		self.assertFalse(rolloutpatch._lower(["1.26.4", "2.1.0"], ["1.26.0", "2.0.0"]), "a fork moving up")
+
+	def test_a_new_version_brings_no_edge_outside_the_closure(self):
+		"""The review's scenario: an entry under a new version string of a name the base has
+		(here one PEP 440 reads as the base's, its files kept) gains an edge to a base package
+		the closure does not install, such as a dev group's."""
+		base = uv_lock(REV)
+		relabelled = uv_lock(TS).replace(
+			'version = "3.10.0"\n', 'version = "3.10.0.0"\ndependencies = [{ name = "requests" }]\n'
+		)
+		rejects, reviews = self.uv_problems("nix/uv.lock", base, relabelled)
+		self.assertEqual(rejects, [])
+		self.assertTrue(
+			any("orjson 3.10.0.0 depends on requests, outside frappe-runtime" in r for r in reviews), reviews
+		)
+		# An edge to a name the plan adds is that name's review, and one inside the closure none.
+		added = (
+			uv_lock(TS, orjson="3.11.0").replace(
+				'version = "3.11.0"\n',
+				'version = "3.11.0"\ndependencies = [{ name = "newdep" }, { name = "orjson" }]\n',
+			)
+			+ '\n[[package]]\nname = "newdep"\nversion = "1.0"\nsource = { registry = "https://pypi.org/simple" }\n'
+		)
+		reviews = self.uv_reviews("nix/uv.lock", base, added)
+		self.assertEqual(reviews, ["nix/uv.lock adds newdep"], reviews)
+
+	def test_a_marked_runtime_dependency_may_be_left_out(self):
+		"""uv leaves out of the lock a dependency whose marker cannot hold under its
+		requires-python: the tag's other dependencies are still exactly the lock's."""
+		spec = rolloutpatch.parse_runtime(
+			RUNTIME_PYPROJECT.replace(
+				'dependencies = ["orjson>=3.10"]',
+				'dependencies = ["orjson>=3.10", "tomli; python_version < \'3.11\'"]\n'
+				"[project.optional-dependencies]\nwin = [\"pywin32; sys_platform == 'win32'\"]\n"
+				'fast = ["uvloop"]',
+			)
+		)
+		git = {"git": rolloutpatch.RUNTIME_GIT.format(rev=TS)}
+
+		def problems(deps: list[str], optional: dict[str, list[str]]) -> list[str]:
+			pkg = {"name": "frappe-runtime", "version": "0.1.0", "source": git}
+			pkg["dependencies"] = [{"name": n} for n in deps]
+			pkg["optional-dependencies"] = {k: [{"name": n} for n in v] for k, v in optional.items()}
+			return rolloutpatch.runtime_problems("nix/uv.lock", [pkg], TS, spec)
+
+		self.assertEqual(problems(["orjson"], {"fast": ["uvloop"]}), [])
+		self.assertEqual(problems(["orjson", "tomli"], {"fast": ["uvloop"], "win": ["pywin32"]}), [])
+		self.assertEqual(problems(["orjson"], {"fast": ["uvloop"], "win": []}), [])
+		for deps, optional in (
+			([], {"fast": ["uvloop"]}),  # an unmarked dependency left out
+			(["orjson", "requests"], {"fast": ["uvloop"]}),  # one the tag does not declare
+			(["orjson"], {}),  # an extra with an unmarked dependency left out
+			(["orjson"], {"fast": ["uvloop"], "evil": ["requests"]}),  # an extra the tag does not declare
+		):
+			with self.subTest(deps=deps, optional=optional):
+				self.assertTrue(any("dependencies are not the ones" in p for p in problems(deps, optional)))
+
+	def test_parse_runtime_refuses_an_extra_that_is_not_a_list(self):
+		for value in ('"uvloop"', "1"):
+			with self.subTest(value=value):
+				with self.assertRaisesRegex(ValueError, "not a list"):
+					rolloutpatch.parse_runtime(
+						f"{RUNTIME_PYPROJECT}[project.optional-dependencies]\nfast = {value}\n"
+					)
 		self.assertTrue(rolloutpatch._lower(["1.26.4", "1.9.0"], ["1.26.0", "2.0.0"]))
 
 	def yarn(self, base: str | bytes, new: str | bytes, path: str = "yarn.lock", seed: bool = False):

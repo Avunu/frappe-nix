@@ -405,18 +405,21 @@ jobs:
         name: Free disk space
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
+      # github-token is empty: the installer otherwise writes this job's token into
+      # /etc/nix/nix.conf as access-tokens, which every user, `rollout` too, can read.
       - if: steps.current.outputs.superseded == 'false'
         uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
         with:
           determinate: false
+          github-token: ""
 
       # The app's own code runs as `rollout`: no sudo, no docker, and another uid than the
       # runner's, so it can read neither the runner process's memory and environment (the
       # token that uploads artifacts and writes the Actions cache) nor change the runner. That
-      # user gets no token at all, not even this job's read-only one: the app's code runs as
-      # the same uid as frappe-nix-tools there and could read its environment. --tag-sha
-      # spares the tool its GitHub reads; the repositories are public, and git and nix fetch
-      # them anonymously.
+      # user gets no token at all, not even this job's read-only one: not in its environment,
+      # where the app's code, the same uid as frappe-nix-tools there, could read it, and not
+      # in nix.conf (the installer's github-token above). --tag-sha spares the tool its GitHub
+      # reads; the repositories are public, and git and nix fetch them anonymously.
       - if: steps.current.outputs.superseded == 'false'
         name: Plan the rollout as an unprivileged user
         env:

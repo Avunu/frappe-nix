@@ -20,7 +20,8 @@ _PRE_ID = r"(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)"
 _PRE = rf"(?:-(?P<pre>{_PRE_ID}(?:\.{_PRE_ID})*))?"
 _BUILD = r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
 _VERSION = re.compile(rf"v?(?P<major>{_NUM})\.(?P<minor>{_NUM})\.(?P<patch>{_NUM}){_PRE}{_BUILD}")
-_PARTIAL = re.compile(rf"v?=?\s*(?P<major>{_X})(?:\.(?P<minor>{_X})(?:\.(?P<patch>{_X}){_PRE}{_BUILD})?)?")
+# A leading "=" is _COMPARATOR's: node-semver reads "v=1.2.3" and "==1.2.3" as invalid.
+_PARTIAL = re.compile(rf"v?(?P<major>{_X})(?:\.(?P<minor>{_X})(?:\.(?P<patch>{_X}){_PRE}{_BUILD})?)?")
 _COMPARATOR = re.compile(r"(?P<op><=|>=|<|>|=|~>|~|\^)?\s*(?P<v>\S+)")
 _HYPHEN = re.compile(r"^\s*(?P<a>\S+)\s+-\s+(?P<b>\S+)\s*$")
 
@@ -71,9 +72,18 @@ def _x(part: str | None) -> bool:
 	return part is None or part in ("x", "X", "*")
 
 
+def _partial(text: str) -> re.Match[str] | None:
+	"""``text`` as a partial version; ``None`` also for a number after an x (``*.1.0``,
+	``1.x.3``), which node-semver reads as an invalid range."""
+	m = _PARTIAL.fullmatch(text)
+	if not m or (_x(m["major"]) and not _x(m["minor"])) or (_x(m["minor"]) and not _x(m["patch"])):
+		return None
+	return m
+
+
 def _expand(op: str, text: str) -> list[_Cmp] | None:
 	"""One comparator (operator and partial version) as plain comparators; ``[]`` is any."""
-	m = _PARTIAL.fullmatch(text)
+	m = _partial(text)
 	if not m:
 		return None
 	ma, mi, pa = m["major"], m["minor"], m["patch"]
@@ -122,8 +132,8 @@ def _expand(op: str, text: str) -> list[_Cmp] | None:
 
 
 def _hyphen(a: str, b: str) -> list[_Cmp] | None:
-	lo = _PARTIAL.fullmatch(a)
-	hi = _PARTIAL.fullmatch(b)
+	lo = _partial(a)
+	hi = _partial(b)
 	if not lo or not hi:
 		return None
 	out: list[_Cmp] = []

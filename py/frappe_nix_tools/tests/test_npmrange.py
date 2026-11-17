@@ -36,6 +36,7 @@ class TestSatisfies(unittest.TestCase):
 			("<=1.2", ["1.2.9"], ["1.3.0"]),
 			("=1.2.3", ["1.2.3", "1.2.3+build"], ["1.2.4"]),
 			("v1.2.3", ["1.2.3"], ["1.2.4"]),
+			("=v1.2.3", ["1.2.3"], ["1.2.4"]),
 			("1.2.3 - 2.3.4", ["1.2.3", "2.3.4"], ["2.3.5", "1.2.2"]),
 			("1.2.3 - 2.3", ["2.3.9"], ["2.4.0"]),
 			("1.2 - 2", ["1.2.0", "2.9.9"], ["3.0.0", "1.1.9"]),
@@ -55,6 +56,13 @@ class TestSatisfies(unittest.TestCase):
 		for rng in ("latest", "next", "github:a/b", "file:../x", "https://x/y.tgz", "workspace:*", "1.2.3.4"):
 			with self.subTest(range=rng):
 				self.assertIsNone(npmrange.satisfies("1.0.0", rng))
+		# Ranges node-semver rejects as invalid (satisfies is false): a doubled operator, a "="
+		# after the "v", a number after an x.
+		# Not read either: a hyphen end or a caret with a number after an x, which node-semver
+		# 7.8.5 reads as if the number were an x.
+		for rng in ("==2.0.1", ">==1.2.3", "v=1.2.3", "*.1.0", "1.*.3", "x.x.3", "1.2.3 - x.1.0", "^1.x.3"):
+			with self.subTest(range=rng):
+				self.assertIsNone(npmrange.satisfies("2.0.1", rng))
 		for version in ("1.0", "latest", "01.0.0", ""):
 			with self.subTest(version=version):
 				self.assertIsNone(npmrange.satisfies(version, "*"))

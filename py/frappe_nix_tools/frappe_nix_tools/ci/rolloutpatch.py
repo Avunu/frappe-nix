@@ -440,23 +440,43 @@ Edges = frozenset[tuple[str, frozenset[str]]]
 
 
 @dataclass(frozen=True)
+class Group:
+	"""One dependency list as ``(name, extras)`` edges: ``required`` (no marker) the lock has
+	each of; ``marked`` (an environment marker) it may leave out, as uv does for a marker that
+	cannot hold under its ``requires-python`` or ``tool.uv.environments``."""
+
+	required: Edges = frozenset()
+	marked: Edges = frozenset()
+
+	def names(self) -> set[str]:
+		return {n for n, _x in self.required | self.marked}
+
+	def allows(self, edges: Edges | None) -> bool:
+		return edges is not None and self.required <= edges <= self.required | self.marked
+
+
+@dataclass(frozen=True)
 class RuntimeSpec:
 	"""``frappe-runtime`` as ``runtime/pyproject.toml`` at the tag declares it: its version, and
-	its dependencies (name and extras, markers aside) and optional ones, by extra."""
+	its dependencies (name and extras) and optional ones, by extra."""
 
 	version: str
-	deps: Edges
-	optional: tuple[tuple[str, Edges], ...] = ()
+	deps: Group
+	optional: tuple[tuple[str, Group], ...] = ()
 
 
-def _requirement(text: Any) -> tuple[str, frozenset[str]]:
+def _group(items: list) -> Group:
 	from packaging.requirements import InvalidRequirement, Requirement
 
-	try:
-		req = Requirement(str(text))
-	except InvalidRequirement as e:
-		raise ValueError(f"{text!r} is not a requirement: {e}") from e
-	return lockcheck._norm(req.name), frozenset(lockcheck._norm(x) for x in req.extras)
+	required, marked = set(), set()
+	for text in items:
+		try:
+			req = Requirement(str(text))
+		except InvalidRequirement as e:
+			raise ValueError(f"{text!r} is not a requirement: {e}") from e
+		edge = (lockcheck._norm(req.name), frozenset(lockcheck._norm(x) for x in req.extras))
+		(marked if req.marker is not None else required).add(edge)
+	return Group(frozenset(required), frozenset(marked))
 
 
 def parse_runtime(text: str) -> RuntimeSpec:
@@ -471,15 +491,12 @@ def parse_runtime(text: str) -> RuntimeSpec:
 	optional = project.get("optional-dependencies") or {}
 	if not isinstance(deps, list) or not isinstance(optional, dict):
 		raise ValueError("[project] dependencies are not a list, or optional-dependencies not a table")
+	if not all(isinstance(v, list) for v in optional.values()):
+		raise ValueError("[project] optional-dependencies has an extra that is not a list")
 	return RuntimeSpec(
 		project["version"],
-		frozenset(_requirement(d) for d in deps),
-		tuple(
-			sorted(
-				(lockcheck._norm(str(k)), frozenset(_requirement(d) for d in v if isinstance(v, list)))
-				for k, v in optional.items()
-			)
-		),
+		_group(deps),
+		tuple(sorted((lockcheck._norm(str(k)), _group(v)) for k, v in optional.items())),
 	)
 
 
@@ -507,7 +524,8 @@ def runtime_problems(path: str, pkgs: list[dict], tag_sha: str, spec: RuntimeSpe
 	"""Rejects for the ``frappe-runtime`` entries of one ``uv.lock``: only ``nix/uv.lock`` has
 	one, at most one, and it is exactly the tag's: ``source = { git = <frappe-nix at the tag,
 	subdirectory runtime> }``, no file to download, the version and the dependencies (names and
-	extras) ``runtime/pyproject.toml`` declares at the tag."""
+	extras) ``runtime/pyproject.toml`` declares at the tag: each one without a marker, and none it
+	does not declare (one with a marker uv may leave out, where the marker cannot hold)."""
 	if not pkgs:
 		return []
 	if path != lockcheck.UV_LOCK:
@@ -525,31 +543,40 @@ def runtime_problems(path: str, pkgs: list[dict], tag_sha: str, spec: RuntimeSpe
 	if pkg.get("version") != spec.version:
 		out.append(f"{path}: {RUNTIME} is {pkg.get('version')!r}, not {spec.version} as the tag declares")
 	optional = pkg.get("optional-dependencies") or {}
-	have = (
-		_edges(pkg.get("dependencies") or []),
-		{lockcheck._norm(str(k)): _edges(v) for k, v in optional.items()}
-		if isinstance(optional, dict)
-		else None,
-	)
-	if have != (spec.deps, dict(spec.optional)):
+	declared = dict(spec.optional)
+	if isinstance(optional, dict):
+		have = {lockcheck._norm(str(k)): _edges(v) for k, v in optional.items()}
+		# An extra uv leaves out is one whose every dependency has a marker that cannot hold.
+		same = set(have) <= set(declared) and all(
+			g.allows(have.get(k, frozenset())) for k, g in declared.items()
+		)
+	else:
+		same = False
+	if not same or not spec.deps.allows(_edges(pkg.get("dependencies") or [])):
 		out.append(
 			f"{path}: {RUNTIME}'s dependencies are not the ones runtime/pyproject.toml declares at the tag"
 		)
 	return out
 
 
+def _dep_names(pkg: dict) -> set[str]:
+	"""The names one uv package entry depends on, every group."""
+	names: set[str] = set()
+	groups = [pkg.get("dependencies") or []]
+	for table in ("optional-dependencies", "dev-dependencies"):
+		groups += list((pkg.get(table) or {}).values()) if isinstance(pkg.get(table), dict) else []
+	for group in groups:
+		for dep in group if isinstance(group, list) else []:
+			if isinstance(dep, dict) and isinstance(dep.get("name"), str):
+				names.add(lockcheck._norm(dep["name"]))
+	return names
+
+
 def _graph(doc: dict) -> dict[str, set[str]]:
 	"""A uv lock's dependency edges, every group: ``{name: {dependency names}}``."""
 	deps: dict[str, set[str]] = {}
 	for pkg in lockcheck._packages(doc):
-		names = deps.setdefault(lockcheck._norm(str(pkg.get("name", ""))), set())
-		groups = [pkg.get("dependencies") or []]
-		for table in ("optional-dependencies", "dev-dependencies"):
-			groups += list((pkg.get(table) or {}).values()) if isinstance(pkg.get(table), dict) else []
-		for group in groups:
-			for dep in group if isinstance(group, list) else []:
-				if isinstance(dep, dict) and isinstance(dep.get("name"), str):
-					names.add(lockcheck._norm(dep["name"]))
+		deps.setdefault(lockcheck._norm(str(pkg.get("name", ""))), set()).update(_dep_names(pkg))
 	return deps
 
 
@@ -589,8 +616,10 @@ def uv_problems(
 
 	Both closures are walked in trusted edges only: the base lock's, and for ``frappe-runtime``
 	the tag's ``runtime/pyproject.toml``. An entry the base has by name and version keeps its
-	source, files and edges (else a person looks), so the plan cannot widen a closure, and no
-	version goes down without a person seeing it."""
+	source, files and edges, and a new version of a name the base has depends only on names that
+	name's base entries, the closure or the plan's new names (which a person sees) do (else a
+	person looks), so the plan cannot widen a closure, and no version goes down without a person
+	seeing it."""
 	try:
 		new, base = lockcheck._uv(new_text), lockcheck._uv(base_text)
 	except tomllib.TOMLDecodeError as e:
@@ -600,6 +629,7 @@ def uv_problems(
 	packages = lockcheck._packages(new)
 	runtimes = [p for p in packages if lockcheck._norm(str(p.get("name", ""))) == RUNTIME]
 	rejects += runtime_problems(path, runtimes, tag_sha, runtime)
+	unknown: list[dict] = []  # entries the base has by name, not by name and version
 	for pkg in packages:
 		name = str(pkg.get("name", ""))
 		version = str(pkg.get("version", ""))
@@ -613,6 +643,7 @@ def uv_problems(
 					" dependencies than the base locks for it"
 				)
 		else:
+			unknown.append(pkg)
 			# verify-relock's rule: a new version's PyPI files are that package's and version's.
 			for url in lockcheck._uv_urls(pkg):
 				if (urllib.parse.urlsplit(url).hostname or "") in lockcheck.PYPI_FILES and (
@@ -646,13 +677,24 @@ def uv_problems(
 	graph = _graph(base)
 	if path == lockcheck.UV_LOCK:
 		if runtime is not None:
-			graph[RUNTIME] = {n for n, _x in runtime.deps} | {n for _e, g in runtime.optional for n, _x in g}
+			graph[RUNTIME] = runtime.deps.names().union(*(g.names() for _e, g in runtime.optional))
 		closure, why = _reach(graph, {RUNTIME}), f"outside {RUNTIME}'s dependencies"
 	else:
 		closure, why = (
 			_reach(graph, {lockcheck._norm(r) for r in explained}),
 			("outside the tools this release raises a floor for"),
 		)
+	# A new version of a base name (or one relabelled, such as 0.16.0.0 for 0.16.0) brings no
+	# edge to a base package the closure does not install, such as a dev group's.
+	for pkg in unknown:
+		n = lockcheck._norm(str(pkg.get("name", "")))
+		if n not in base_versions:
+			continue  # a new name: `added` above
+		if beyond := sorted(_dep_names(pkg) - closure - graph.get(n, set()) - set(added)):
+			reviews.append(
+				f"{path}: {pkg.get('name')} {pkg.get('version')} depends on {lockcheck._more(beyond)},"
+				f" {why}, which its base entries do not"
+			)
 	both = sorted(n for n in set(new_versions) & set(base_versions) if n != RUNTIME)
 	moved = [n for n in both if new_versions[n] != base_versions[n] and n not in closure]
 	if moved:
