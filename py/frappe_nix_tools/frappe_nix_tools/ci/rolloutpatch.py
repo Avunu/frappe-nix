@@ -20,9 +20,11 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      the base's (``standards-profile`` included); the nodes under ``frappe-nix`` are
      frappe-nix's own ``flake.lock`` at the tag, except a ``follows`` the base already had.
    - ``uv.lock`` sources: pypi.org (files from files.pythonhosted.org), a git source, URL or
-     registry the base's locks already have, a relative workspace or editable path, and one
-     new git source: ``frappe-runtime`` at
-     ``https://github.com/Avunu/frappe-nix?subdirectory=runtime#<tag sha>``.
+     registry the base's locks already have, and a relative workspace or editable path.
+     ``frappe-runtime`` is only ever ``nix/uv.lock``'s, once, and exactly the tag's:
+     ``source = { git = "https://github.com/Avunu/frappe-nix?subdirectory=runtime#<tag sha>" }``,
+     no file to download, and the version and dependencies (names and extras) frappe-nix's
+     ``runtime/pyproject.toml`` declares at the tag (read from GitHub); else ``reject``.
    - ``yarn.lock`` and ``nix/node-locks/**/yarn.lock`` are read the way ``frappe-nix ci
      verify-relock`` reads a relock's (ci/lockcheck.py, which this module shares): strictly,
      as exactly the shape yarn writes, and as lib/node/yarn-lock.nix reads them (the same
@@ -33,9 +35,9 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      own ``yarn.lock`` may be a berry lock (``needs-review``); under node-locks one is
      ``reject``.
    - Each entry is tied to what it names. A uv package whose name and version a base lock
-     has must have the same source and the same files (URL and hash) there; a new version's
-     files on files.pythonhosted.org must be named for that package and version (else
-     ``reject``). A node-lock ``source.json`` follows verify-relock's stamp rules (the base's,
+     has must have the same source, files (URL and hash) and dependency edges there; a new
+     version's files on files.pythonhosted.org must be named for that package and version
+     (else ``reject``). A node-lock ``source.json`` follows verify-relock's stamp rules (the base's,
      the seed's, or that stamp with other hashes, and ``forced`` unchanged, else ``reject``),
      and a ``nix/uv.lock`` deletion, or half of a forced node-lock target deleted, is
      ``reject``.
@@ -44,11 +46,14 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      alias, ``a`` and ``b`` both), a new yarn ``npm:`` alias, a new or changed yarn entry
      without a ``resolved`` URL or with a ``name`` or ``uid``, a yarn entry whose spec the base
      has with other fields or dependency lines, a uv entry that differs from the base's for
-     the same name and version, a stamp that is neither the base's nor the seed's, a whole
-     forced node-lock target pruned, a version change in ``nix/uv.lock`` outside
-     ``frappe-runtime``'s dependency closure, or in ``tools/uv.lock`` outside the closure of
-     the tools this release raises a floor for. A node-lock seed equal to the one this
-     frappe-nix-tools ships is explained.
+     the same name and version, a new or changed yarn entry whose ``version`` its spec's
+     range does not allow, a stamp that is neither the base's nor the seed's, a whole forced
+     node-lock target pruned, a uv version that goes down, a version change in
+     ``nix/uv.lock`` outside ``frappe-runtime``'s dependency closure, or in ``tools/uv.lock``
+     outside the closure of the tools this release raises a floor for. Both closures walk
+     trusted edges only: the base lock's, and ``frappe-runtime``'s as the tag declares them,
+     never the plan's. A node-lock seed equal to the one this frappe-nix-tools ships is
+     explained.
 c. **Every other path** is computed here with this (the tag's) sync engine, the plan
    ``sync --check`` builds, from the base tree plus the verified lock files. The patch's
    content for it must be those bytes; a path the engine does not change is ``reject``. A
@@ -68,8 +73,10 @@ integration branch, the auto-merge safety rule of §4.5, from the branch's rules
 ``standards/frappe-nix`` replaces). The step exits 0 with any decision, and writes
 ``decision``, ``tree_id`` and ``patch_sha256`` to ``$GITHUB_OUTPUT``; 2 is a bad argument
 and 3 an environment error. It runs no nix, uv or yarn, and makes no write call: its GitHub
-reads (frappe-nix's ``flake.lock`` at the tag, the branch rules, the open pull requests) go
-through ``gh`` with the job's read-only ``GH_TOKEN``.
+reads (frappe-nix's ``flake.lock`` and ``runtime/pyproject.toml`` at the tag, the branch
+rules, the open pull requests) go through ``gh`` with the job's read-only ``GH_TOKEN``. The
+``body`` shows each needs-review reason as inline code: reasons carry names and paths the plan
+chose.
 
 ``frappe-nix ci rollout-contract`` prints ``CONTRACT``: rollout.yml's resolve job skips a
 tag whose frappe-nix-tools lacks it (or prints another number).
@@ -91,6 +98,8 @@ from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from packaging.version import InvalidVersion, Version
 
 import frappe_nix_tools
 from frappe_nix_tools.ci import lockcheck, output
@@ -423,29 +432,146 @@ def flake_lock_problems(
 def _versions(doc: dict) -> dict[str, list[str]]:
 	out: dict[str, list[str]] = {}
 	for pkg in lockcheck._packages(doc):
-		out.setdefault(str(pkg.get("name", "")), []).append(str(pkg.get("version", "")))
+		out.setdefault(lockcheck._norm(str(pkg.get("name", ""))), []).append(str(pkg.get("version", "")))
 	return {k: sorted(v) for k, v in out.items()}
 
 
-def _closure(doc: dict, name: str) -> set[str]:
+Edges = frozenset[tuple[str, frozenset[str]]]
+
+
+@dataclass(frozen=True)
+class RuntimeSpec:
+	"""``frappe-runtime`` as ``runtime/pyproject.toml`` at the tag declares it: its version, and
+	its dependencies (name and extras, markers aside) and optional ones, by extra."""
+
+	version: str
+	deps: Edges
+	optional: tuple[tuple[str, Edges], ...] = ()
+
+
+def _requirement(text: Any) -> tuple[str, frozenset[str]]:
+	from packaging.requirements import InvalidRequirement, Requirement
+
+	try:
+		req = Requirement(str(text))
+	except InvalidRequirement as e:
+		raise ValueError(f"{text!r} is not a requirement: {e}") from e
+	return lockcheck._norm(req.name), frozenset(lockcheck._norm(x) for x in req.extras)
+
+
+def parse_runtime(text: str) -> RuntimeSpec:
+	"""``runtime/pyproject.toml``'s ``[project]`` as a ``RuntimeSpec``; ``ValueError`` if it is not one."""
+	try:
+		project = tomllib.loads(text).get("project")
+	except tomllib.TOMLDecodeError as e:
+		raise ValueError(f"not TOML: {e}") from e
+	if not isinstance(project, dict) or not isinstance(project.get("version"), str):
+		raise ValueError("no [project] with a static version")
+	deps = project.get("dependencies") or []
+	optional = project.get("optional-dependencies") or {}
+	if not isinstance(deps, list) or not isinstance(optional, dict):
+		raise ValueError("[project] dependencies are not a list, or optional-dependencies not a table")
+	return RuntimeSpec(
+		project["version"],
+		frozenset(_requirement(d) for d in deps),
+		tuple(
+			sorted(
+				(lockcheck._norm(str(k)), frozenset(_requirement(d) for d in v if isinstance(v, list)))
+				for k, v in optional.items()
+			)
+		),
+	)
+
+
+def _edges(group: Any) -> Edges | None:
+	"""A uv dependency list as ``{(name, extras)}``; ``None`` when it is not a list of tables."""
+	if not isinstance(group, list):
+		return None
+	out = set()
+	for dep in group:
+		if not isinstance(dep, dict) or not isinstance(dep.get("name"), str):
+			return None
+		extras = dep.get("extra") or []
+		if not isinstance(extras, list):
+			return None
+		out.add((lockcheck._norm(dep["name"]), frozenset(lockcheck._norm(str(x)) for x in extras)))
+	return frozenset(out)
+
+
+_RUNTIME_KEYS = frozenset(
+	{"name", "version", "source", "dependencies", "optional-dependencies", "resolution-markers"}
+)
+
+
+def runtime_problems(path: str, pkgs: list[dict], tag_sha: str, spec: RuntimeSpec | None) -> list[str]:
+	"""Rejects for the ``frappe-runtime`` entries of one ``uv.lock``: only ``nix/uv.lock`` has
+	one, at most one, and it is exactly the tag's: ``source = { git = <frappe-nix at the tag,
+	subdirectory runtime> }``, no file to download, the version and the dependencies (names and
+	extras) ``runtime/pyproject.toml`` declares at the tag."""
+	if not pkgs:
+		return []
+	if path != lockcheck.UV_LOCK:
+		return [f"{path}: has {RUNTIME}, which only nix/uv.lock locks"]
+	if len(pkgs) > 1:
+		return [f"{path}: locks {RUNTIME} {len(pkgs)} times"]
+	pkg = pkgs[0]
+	if spec is None:
+		return [f"{path}: {RUNTIME} is locked, but runtime/pyproject.toml at the tag was not read"]
+	out = []
+	if extra := sorted(set(pkg) - _RUNTIME_KEYS):
+		out.append(f"{path}: {RUNTIME} has {', '.join(extra)}, which its git source at the tag never has")
+	if pkg.get("source") != {"git": RUNTIME_GIT.format(rev=tag_sha)}:
+		out.append(f"{path}: {RUNTIME} comes from {pkg.get('source')!r}, not frappe-nix at {tag_sha}")
+	if pkg.get("version") != spec.version:
+		out.append(f"{path}: {RUNTIME} is {pkg.get('version')!r}, not {spec.version} as the tag declares")
+	optional = pkg.get("optional-dependencies") or {}
+	have = (
+		_edges(pkg.get("dependencies") or []),
+		{lockcheck._norm(str(k)): _edges(v) for k, v in optional.items()}
+		if isinstance(optional, dict)
+		else None,
+	)
+	if have != (spec.deps, dict(spec.optional)):
+		out.append(
+			f"{path}: {RUNTIME}'s dependencies are not the ones runtime/pyproject.toml declares at the tag"
+		)
+	return out
+
+
+def _graph(doc: dict) -> dict[str, set[str]]:
+	"""A uv lock's dependency edges, every group: ``{name: {dependency names}}``."""
 	deps: dict[str, set[str]] = {}
 	for pkg in lockcheck._packages(doc):
-		names = deps.setdefault(str(pkg.get("name", "")), set())
+		names = deps.setdefault(lockcheck._norm(str(pkg.get("name", ""))), set())
 		groups = [pkg.get("dependencies") or []]
 		for table in ("optional-dependencies", "dev-dependencies"):
 			groups += list((pkg.get(table) or {}).values()) if isinstance(pkg.get(table), dict) else []
 		for group in groups:
 			for dep in group if isinstance(group, list) else []:
 				if isinstance(dep, dict) and isinstance(dep.get("name"), str):
-					names.add(dep["name"])
+					names.add(lockcheck._norm(dep["name"]))
+	return deps
+
+
+def _reach(graph: dict[str, set[str]], roots: set[str]) -> set[str]:
 	seen: set[str] = set()
-	todo = [name]
+	todo = list(roots)
 	while todo:
 		n = todo.pop()
 		if n not in seen:
 			seen.add(n)
-			todo += deps.get(n, ())
+			todo += graph.get(n, ())
 	return seen
+
+
+def _lower(new: list[str], base: list[str]) -> bool:
+	"""Whether a package's versions went down: its lowest or its highest is below the base's
+	(several versions are a fork by marker). A version PEP 440 does not read counts as lower."""
+	try:
+		n, b = [Version(v) for v in new], [Version(v) for v in base]
+	except InvalidVersion:
+		return True
+	return min(n) < min(b) or max(n) < max(b)
 
 
 def uv_problems(
@@ -455,34 +581,44 @@ def uv_problems(
 	tag_sha: str,
 	trusted: lockcheck.BaseLocks,
 	explained: frozenset[str] = frozenset(),
+	runtime: RuntimeSpec | None = None,
 ) -> tuple[list[str], list[str]]:
 	"""``(rejects, reviews)`` for one ``uv.lock``. ``explained`` (``tools/uv.lock``): the tools
-	this release raises a floor for, whose dependency closure may move."""
+	this release raises a floor for, whose dependency closure may move. ``runtime``
+	(``nix/uv.lock``): what the tag declares for ``frappe-runtime``, whose closure may move.
+
+	Both closures are walked in trusted edges only: the base lock's, and for ``frappe-runtime``
+	the tag's ``runtime/pyproject.toml``. An entry the base has by name and version keeps its
+	source, files and edges (else a person looks), so the plan cannot widen a closure, and no
+	version goes down without a person seeing it."""
 	try:
 		new, base = lockcheck._uv(new_text), lockcheck._uv(base_text)
 	except tomllib.TOMLDecodeError as e:
 		return [f"{path}: not TOML: {e}"], []
 	rejects: list[str] = []
 	reviews: list[str] = []
-	runtime = RUNTIME_GIT.format(rev=tag_sha)
-	for pkg in lockcheck._packages(new):
+	packages = lockcheck._packages(new)
+	runtimes = [p for p in packages if lockcheck._norm(str(p.get("name", ""))) == RUNTIME]
+	rejects += runtime_problems(path, runtimes, tag_sha, runtime)
+	for pkg in packages:
 		name = str(pkg.get("name", ""))
 		version = str(pkg.get("version", ""))
-		if name != RUNTIME:
-			known = trusted.artifacts.get((lockcheck._norm(name), version))
-			if known is not None:
-				if lockcheck._artifacts(pkg) not in known:
-					reviews.append(
-						f"{path}: {name} {version} has another source or other files (URL or hash)"
-						" than the base locks for it"
-					)
-			else:
-				# verify-relock's rule: a new version's PyPI files are that package's and version's.
-				for url in lockcheck._uv_urls(pkg):
-					if (urllib.parse.urlsplit(url).hostname or "") in lockcheck.PYPI_FILES and (
-						problem := lockcheck.pypi_file_problem(name, version, url)
-					):
-						rejects.append(f"{path}: {problem}")
+		if lockcheck._norm(name) == RUNTIME:
+			continue  # runtime_problems: exactly the tag's, nothing else
+		known = trusted.artifacts.get((lockcheck._norm(name), version))
+		if known is not None:
+			if lockcheck._artifacts(pkg) not in known:
+				reviews.append(
+					f"{path}: {name} {version} has another source, other files (URL or hash) or other"
+					" dependencies than the base locks for it"
+				)
+		else:
+			# verify-relock's rule: a new version's PyPI files are that package's and version's.
+			for url in lockcheck._uv_urls(pkg):
+				if (urllib.parse.urlsplit(url).hostname or "") in lockcheck.PYPI_FILES and (
+					problem := lockcheck.pypi_file_problem(name, version, url)
+				):
+					rejects.append(f"{path}: {problem}")
 		source = pkg.get("source")
 		if not isinstance(source, dict) or not source:
 			rejects.append(f"{path}: {name} has no source")
@@ -492,8 +628,6 @@ def uv_problems(
 			if key in trusted.sources:
 				continue
 			if kind == "registry" and value == lockcheck.PYPI:
-				continue
-			if kind == "git" and name == RUNTIME and value == runtime:
 				continue
 			if kind in ("editable", "virtual", "directory", "path") and isinstance(value, str):
 				p = PurePosixPath(value)
@@ -506,22 +640,28 @@ def uv_problems(
 				rejects.append(f"{path}: {name} downloads {url}, which is not on PyPI")
 	new_versions = _versions(new)
 	base_versions = _versions(base)
-	added = sorted(set(new_versions) - set(base_versions) - {RUNTIME})
+	added = sorted(set(new_versions) - set(base_versions))
 	if added:
 		reviews.append(f"{path} adds {lockcheck._more(added)}")
-	if path == "nix/uv.lock":
-		closure, why = _closure(new, RUNTIME), f"outside {RUNTIME}'s dependencies"
+	graph = _graph(base)
+	if path == lockcheck.UV_LOCK:
+		if runtime is not None:
+			graph[RUNTIME] = {n for n, _x in runtime.deps} | {n for _e, g in runtime.optional for n, _x in g}
+		closure, why = _reach(graph, {RUNTIME}), f"outside {RUNTIME}'s dependencies"
 	else:
-		closure, why = set(), "outside the tools this release raises a floor for"
-		for root in sorted(explained):
-			closure |= _closure(new, root)
-	moved = sorted(
-		n
-		for n in set(new_versions) & set(base_versions)
-		if new_versions[n] != base_versions[n] and n not in closure
-	)
+		closure, why = (
+			_reach(graph, {lockcheck._norm(r) for r in explained}),
+			("outside the tools this release raises a floor for"),
+		)
+	both = sorted(n for n in set(new_versions) & set(base_versions) if n != RUNTIME)
+	moved = [n for n in both if new_versions[n] != base_versions[n] and n not in closure]
 	if moved:
 		reviews.append(f"{path} moves {lockcheck._more(moved)}, {why}")
+	lower = [
+		n for n in both if new_versions[n] != base_versions[n] and _lower(new_versions[n], base_versions[n])
+	]
+	if lower:
+		reviews.append(f"{path} moves {lockcheck._more(lower)} to an older version")
 	return rejects, list(dict.fromkeys(reviews))
 
 
@@ -682,6 +822,15 @@ def fetch_frappe_nix_lock(tag_sha: str) -> dict:
 	return flakelock.parse(text, f"frappe-nix's flake.lock at {tag_sha}")
 
 
+def fetch_runtime(tag_sha: str) -> RuntimeSpec:
+	"""``runtime/pyproject.toml`` at ``tag_sha``, as what ``frappe-runtime`` must lock."""
+	doc = github.get(f"repos/Avunu/frappe-nix/contents/runtime/pyproject.toml?ref={tag_sha}") or {}
+	try:
+		return parse_runtime(base64.b64decode(doc.get("content", "")).decode())
+	except (ValueError, UnicodeDecodeError) as e:
+		raise EnvError(f"frappe-nix's runtime/pyproject.toml at {tag_sha}: {e}") from e
+
+
 def legacy_prs(repo: str) -> list[int]:
 	"""The open pull requests of the per-release branches ``standards/frappe-nix-v*``."""
 	try:
@@ -744,6 +893,7 @@ def _verify_trees(
 	result_root: Path,
 	expected_root: Path,
 	fn_lock: dict | None,
+	runtime: RuntimeSpec | None,
 ) -> None:
 	def after(path: str) -> bytes | None:
 		return None if changes.get(path) == "D" else (result_root / path).read_bytes()
@@ -795,7 +945,9 @@ def _verify_trees(
 		before_text = before.decode(errors="replace") if before is not None else None
 		if path in UV_LOCKS:
 			explained = tools_floor_roots(repo_dir) if path == "tools/uv.lock" else frozenset()
-			rejects, reviews = uv_problems(path, before_text, text, req.tag_sha, trusted, explained)
+			if path == lockcheck.UV_LOCK and runtime is None:
+				runtime = fetch_runtime(req.tag_sha)
+			rejects, reviews = uv_problems(path, before_text, text, req.tag_sha, trusted, explained, runtime)
 		elif path == "yarn.lock" or (path.startswith(NODE_LOCKS) and path.endswith("/yarn.lock")):
 			seed = before is None and lockcheck.node_lock_seed(path, data, major)
 			rejects, reviews = yarn_problems(path, before_text, text, trusted, seed)
@@ -882,7 +1034,9 @@ def _verify_trees(
 		facts["automerge"] = False
 
 
-def verify(req: Request, fn_lock: dict | None = None) -> tuple[Result, dict]:
+def verify(
+	req: Request, fn_lock: dict | None = None, runtime: RuntimeSpec | None = None
+) -> tuple[Result, dict]:
 	"""Check ``req``'s patch; returns the result and the facts the decision carries."""
 	req.validate()
 	res = Result()
@@ -940,8 +1094,15 @@ def verify(req: Request, fn_lock: dict | None = None) -> tuple[Result, dict]:
 			_worktree(repo_dir, req.base_sha, tmp, "expected") as expected_root,
 		):
 			_materialize(result_root, facts["tree_id"])
-			_verify_trees(req, res, facts, changes, repo_dir, result_root, expected_root, fn_lock)
+			_verify_trees(req, res, facts, changes, repo_dir, result_root, expected_root, fn_lock, runtime)
 	return res, facts
+
+
+def code_span(text: str) -> str:
+	"""``text`` as one inline code span: a reason names packages and paths the plan chose, so no
+	link, mention, HTML or emphasis in it renders (backticks become ``'``, lines one line)."""
+	text = " ".join(text.replace("`", "'").split())
+	return f"`{text}`" if text else ""
 
 
 def body(req: Request, res: Result, integration: str) -> str:
@@ -954,7 +1115,7 @@ def body(req: Request, res: Result, integration: str) -> str:
 		f" the plan, and every other file is what {req.tag}'s `frappe-nix sync` renders.",
 	]
 	if res.reviews:
-		lines += ["", "**Needs review:**", *[f"- {r}" for r in res.reviews]]
+		lines += ["", "**Needs review:**", *[f"- {code_span(r)}" for r in res.reviews]]
 	lines += [
 		"",
 		f"`{BRANCH}` belongs to the rollout: a commit by anyone else pauses it on this repository.",

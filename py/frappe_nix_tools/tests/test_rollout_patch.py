@@ -32,6 +32,12 @@ NIXPKGS = {
 	"locked": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "rev": "9" * 40, "narHash": "sha256-n"},
 	"original": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "ref": "nixos-unstable"},
 }
+RUNTIME_PYPROJECT = """[project]
+name = "frappe-runtime"
+version = "0.1.0"
+dependencies = ["orjson>=3.10"]
+"""
+RUNTIME = rolloutpatch.parse_runtime(RUNTIME_PYPROJECT)
 FN_LOCK: dict = {
 	"nodes": {"nixpkgs": NIXPKGS, "root": {"inputs": {"nixpkgs": "nixpkgs"}}},
 	"root": "root",
@@ -84,6 +90,25 @@ source = {{ registry = "https://pypi.org/simple" }}
 {extra}"""
 
 
+def tools_lock(requests: str = "2.32.0", ruff_deps: str = "") -> str:
+	"""A ``tools/uv.lock``: ruff and requests from PyPI, no frappe-runtime."""
+	return f"""version = 1
+revision = 3
+requires-python = ">=3.14"
+
+[[package]]
+name = "ruff"
+version = "0.5.0"
+source = {{ registry = "https://pypi.org/simple" }}
+{ruff_deps}wheels = [{{ url = "https://files.pythonhosted.org/packages/ab/ruff-0.5.0-py3-none-any.whl", hash = "sha256:00" }}]
+
+[[package]]
+name = "requests"
+version = "{requests}"
+source = {{ registry = "https://pypi.org/simple" }}
+"""
+
+
 def npm(name: str, version: str, host: str = "registry.yarnpkg.com") -> str:
 	return f"https://{host}/{name}/-/{name.rsplit('/', 1)[-1]}-{version}.tgz#{'b' * 40}"
 
@@ -110,6 +135,10 @@ class VerifyCase(AppCase):
 		self.addCleanup(github.use, previous)
 		content = base64.b64encode(json.dumps(FN_LOCK).encode()).decode()
 		self.gh.routes[("GET", f"repos/Avunu/frappe-nix/contents/flake.lock?ref={TS}")] = {"content": content}
+		runtime = base64.b64encode(RUNTIME_PYPROJECT.encode()).decode()
+		self.gh.routes[("GET", f"repos/Avunu/frappe-nix/contents/runtime/pyproject.toml?ref={TS}")] = {
+			"content": runtime
+		}
 		self.synced()
 		self.write("flake.lock", app_lock(REV))
 		self.write("nix/uv.lock", uv_lock(REV))
@@ -248,6 +277,21 @@ class TestNeedsReview(VerifyCase):
 		self.assertFalse(doc["automerge"])
 		self.assertIn("leftpad", doc["body"])
 
+	def test_plan_chosen_names_render_as_code(self):
+		"""A package name is the plan's to choose: in the body it is code, never a link or a
+		mention."""
+		extra = (
+			'\n[[package]]\nname = "x](https://phish.example) @avunu/everyone `y`"\nversion = "1.0.0"\n'
+			'source = { registry = "https://pypi.org/simple" }\n'
+		)
+		doc = self.verify(self.plan(uv=uv_lock(TS, extra=extra)))
+		self.assertDecision(doc, "needs-review", "adds")
+		line = next(x for x in doc["body"].splitlines() if "phish" in x)
+		self.assertTrue(
+			line.startswith("- `nix/uv.lock adds x](https://phish-example) @avunu/everyone 'y'"), line
+		)
+		self.assertTrue(line.endswith("`") and line.count("`") == 2, line)
+
 	def test_a_move_outside_the_runtime_closure_needs_review(self):
 		doc = self.verify(self.plan(uv=uv_lock(TS, requests="2.33.0")))
 		self.assertDecision(doc, "needs-review", "moves requests")
@@ -259,7 +303,7 @@ class TestNeedsReview(VerifyCase):
 			'packages/evil-3.10.0.tar.gz", hash = "sha256:ff"',
 		)
 		doc = self.verify(self.plan(uv=uv))
-		self.assertDecision(doc, "needs-review", "orjson 3.10.0 has another source or other files")
+		self.assertDecision(doc, "needs-review", "orjson 3.10.0 has another source, other files")
 		self.assertFalse(doc["automerge"])
 
 	def test_a_node_lock_stamp_that_is_not_the_base_or_the_seed(self):
@@ -328,6 +372,18 @@ class TestReject(VerifyCase):
 	def test_a_foreign_uv_source(self):
 		extra = '\n[[package]]\nname = "evil"\nversion = "1.0.0"\nsource = { registry = "https://evil.example/simple" }\n'
 		self.assertDecision(self.verify(self.plan(uv=uv_lock(TS, extra=extra))), "reject", "evil.example")
+
+	def test_a_runtime_from_pypi(self):
+		"""The review's scenario in nix/uv.lock: frappe-runtime from the PyPI registry, with
+		another project's wheel."""
+		uv = uv_lock(TS).replace(
+			f'source = {{ git = "https://github.com/Avunu/frappe-nix?subdirectory=runtime#{TS}" }}',
+			'source = { registry = "https://pypi.org/simple" }\n'
+			'wheels = [{ url = "https://files.pythonhosted.org/packages/ab/evilpkg-1.0-py3-none-any.whl" }]',
+		)
+		doc = self.verify(self.plan(uv=uv))
+		self.assertDecision(doc, "reject", "frappe-runtime comes from")
+		self.assertFalse(doc["automerge"])
 
 	def test_a_foreign_git_source(self):
 		extra = (
@@ -521,7 +577,7 @@ class TestLockChecks(unittest.TestCase):
 		self, path: str, base: str, new: str, explained: frozenset[str] = frozenset()
 	) -> tuple[list[str], list[str]]:
 		trusted = lockcheck.trusted_locks({path: base.encode()})
-		return rolloutpatch.uv_problems(path, base, new, TS, trusted, explained)
+		return rolloutpatch.uv_problems(path, base, new, TS, trusted, explained, RUNTIME)
 
 	def test_uv_entries_are_tied_to_their_files(self):
 		wheel = (
@@ -586,10 +642,103 @@ class TestLockChecks(unittest.TestCase):
 		)
 
 	def test_tools_lock_moves_only_what_a_floor_explains(self):
-		base = uv_lock(REV)
-		new = uv_lock(REV, requests="2.33.0")
+		base = tools_lock()
+		new = tools_lock(requests="2.33.0")
 		self.assertTrue(any("moves requests" in r for r in self.uv_reviews("tools/uv.lock", base, new)))
 		self.assertEqual(self.uv_reviews("tools/uv.lock", base, new, frozenset({"requests"})), [])
+		# The floor's closure is the base's: an edge the plan adds to ruff does not explain a move.
+		edged = tools_lock(requests="2.33.0", ruff_deps='dependencies = [{ name = "requests" }]\n')
+		reviews = self.uv_reviews("tools/uv.lock", base, edged, frozenset({"ruff"}))
+		self.assertTrue(any("moves requests" in r for r in reviews), reviews)
+		self.assertTrue(any("ruff 0.5.0 has another source" in r for r in reviews), reviews)
+
+	def test_runtime_smuggled_through_tools_lock(self):
+		"""The review's scenario: ruff 0.5.0 keeps its files but gains an edge to a
+		``frappe-runtime`` from PyPI whose wheel is another project's."""
+		evil = (
+			'[[package]]\nname = "frappe-runtime"\nversion = "6.6.6"\n'
+			'source = { registry = "https://pypi.org/simple" }\n'
+			'wheels = [{ url = "https://files.pythonhosted.org/packages/ab/evilpkg-1.0-py3-none-any.whl" }]\n'
+		)
+		new = tools_lock(ruff_deps='dependencies = [{ name = "frappe-runtime" }]\n') + "\n" + evil
+		rejects, reviews = self.uv_problems("tools/uv.lock", tools_lock(), new)
+		self.assertTrue(any("frappe-runtime, which only nix/uv.lock locks" in r for r in rejects), rejects)
+		self.assertTrue(any("ruff 0.5.0 has another source" in r for r in reviews), reviews)
+		# The same entry under a spelling uv would normalise is the same package.
+		rejects, _ = self.uv_problems(
+			"tools/uv.lock", tools_lock(), new.replace("frappe-runtime", "Frappe_Runtime")
+		)
+		self.assertTrue(any("only nix/uv.lock locks" in r for r in rejects), rejects)
+
+	def test_runtime_is_exactly_the_tags(self):
+		base = uv_lock(REV)
+		self.assertEqual(self.uv_problems("nix/uv.lock", base, uv_lock(TS)), ([], []))
+		runtime_git = f'source = {{ git = "https://github.com/Avunu/frappe-nix?subdirectory=runtime#{TS}" }}'
+		wheel = 'wheels = [{ url = "https://files.pythonhosted.org/packages/ab/frappe_runtime-0.1.0-py3-none-any.whl" }]'
+		cases = {
+			"from PyPI": (runtime_git, 'source = { registry = "https://pypi.org/simple" }', "comes from"),
+			"from PyPI, another project's wheel": (
+				runtime_git,
+				'source = { registry = "https://pypi.org/simple" }\n'
+				'wheels = [{ url = "https://files.pythonhosted.org/packages/ab/evilpkg-1.0-py3-none-any.whl" }]',
+				"comes from",
+			),
+			"at the tag, with a file": (runtime_git, f"{runtime_git}\n{wheel}", "has wheels"),
+			"at another commit": (TS, OTHER, f"not frappe-nix at {TS}"),
+			"another version": (
+				'version = "0.1.0"\nsource = { git',
+				'version = "0.2.0"\nsource = { git',
+				"not 0.1.0",
+			),
+			"an edge the tag does not declare": (
+				'dependencies = [{ name = "orjson" }]',
+				'dependencies = [{ name = "orjson" }, { name = "requests" }]',
+				"dependencies are not the ones",
+			),
+			"an extra the tag does not declare": (
+				'dependencies = [{ name = "orjson" }]',
+				'dependencies = [{ name = "orjson", extra = ["evil"] }]',
+				"dependencies are not the ones",
+			),
+		}
+		for why, (old, new, reason) in cases.items():
+			with self.subTest(why=why):
+				text = uv_lock(TS)
+				self.assertIn(old, text)
+				rejects, _ = self.uv_problems("nix/uv.lock", base, text.replace(old, new, 1))
+				self.assertTrue(any(reason in r for r in rejects), rejects)
+		twice = (
+			uv_lock(TS) + "\n" + uv_lock(TS).split("\n\n", 1)[1].split('\n\n[[package]]\nname = "orjson"')[0]
+		)
+		rejects, _ = self.uv_problems("nix/uv.lock", base, twice)
+		self.assertTrue(any("2 times" in r for r in rejects), rejects)
+
+	def test_the_runtime_closure_is_the_tags_and_the_bases(self):
+		"""The review's scenario: an edge the plan adds (to frappe-runtime, which a reject now
+		stops, or to a package in its closure) does not explain a move, and a version that goes
+		down is a person's to look at, inside the closure too."""
+		base = uv_lock(REV, requests="2.31.0")
+		# orjson's new version brings an edge to requests; the closure walks the base's edges.
+		edged = uv_lock(TS, orjson="3.11.0", requests="2.0.0").replace(
+			'version = "3.11.0"\n', 'version = "3.11.0"\ndependencies = [{ name = "requests" }]\n'
+		)
+		reviews = self.uv_reviews("nix/uv.lock", base, edged)
+		self.assertTrue(any("moves requests, outside frappe-runtime" in r for r in reviews), reviews)
+		self.assertTrue(any("moves requests to an older version" in r for r in reviews), reviews)
+		# A base-known entry keeps its edges.
+		known = uv_lock(TS, requests="2.31.0").replace(
+			'version = "3.10.0"\n', 'version = "3.10.0"\ndependencies = [{ name = "requests" }]\n'
+		)
+		reviews = self.uv_reviews("nix/uv.lock", base, known)
+		self.assertTrue(any("orjson 3.10.0 has another source, other files" in r for r in reviews), reviews)
+		# Inside the closure, up is explained and down is not.
+		self.assertEqual(
+			self.uv_reviews("nix/uv.lock", base, uv_lock(TS, orjson="3.11.0", requests="2.31.0")), []
+		)
+		reviews = self.uv_reviews("nix/uv.lock", base, uv_lock(TS, orjson="3.9.0", requests="2.31.0"))
+		self.assertTrue(any("moves orjson to an older version" in r for r in reviews), reviews)
+		self.assertFalse(rolloutpatch._lower(["1.26.4", "2.1.0"], ["1.26.0", "2.0.0"]), "a fork moving up")
+		self.assertTrue(rolloutpatch._lower(["1.26.4", "1.9.0"], ["1.26.0", "2.0.0"]))
 
 	def yarn(self, base: str | bytes, new: str | bytes, path: str = "yarn.lock", seed: bool = False):
 		base = base.decode() if isinstance(base, bytes) else base
@@ -631,6 +780,37 @@ class TestLockChecks(unittest.TestCase):
 		self.assertEqual(reviews(more), [])
 		scoped = {"version": "7.24.0", "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.24.0.tgz"}
 		self.assertIsNone(lockcheck.npm_url_problem("@babel/core@^7.0.0", scoped))
+
+	def test_yarn_versions_in_their_range(self):
+		"""The review's scenario: a new spec (the release raises a floor) locked to a version its
+		range does not allow, under the package's own name and tarball."""
+		base = yarn_lock(("frappe-ui@^0.1.90", "0.1.95", npm("frappe-ui", "0.1.95")))
+		low = base + yarn_lock(("frappe-ui@^0.1.100", "0.0.1", npm("frappe-ui", "0.0.1")))[len(yarn_lock()) :]
+		for path in ("yarn.lock", "nix/node-locks/frappe/ui/yarn.lock"):
+			with self.subTest(path=path):
+				rejects, reviews = self.yarn(base, low, path)
+				self.assertEqual(rejects, [])
+				self.assertTrue(
+					any(
+						"frappe-ui@^0.1.100 (0.0.1) lock a version their range does not allow" in r
+						for r in reviews
+					),
+					reviews,
+				)
+		# A new range of a known package, locked inside it, is explained.
+		ok = base + yarn_lock(("frappe-ui@^0.1.0", "0.1.95", npm("frappe-ui", "0.1.95")))[len(yarn_lock()) :]
+		self.assertEqual(self.yarn(base, ok), ([], []))
+		# An npm: alias is read for its target's range; a dist-tag is not read at all.
+		alias = (
+			base
+			+ yarn_lock(
+				("ui@npm:frappe-ui@^0.2.0", "0.1.95", npm("frappe-ui", "0.1.95")),
+				("frappe-ui@latest", "0.1.95", npm("frappe-ui", "0.1.95")),
+			)[len(yarn_lock()) :]
+		)
+		found = " ".join(self.yarn(base, alias)[1])
+		self.assertIn("ui@npm:frappe-ui@^0.2.0 (0.1.95)", found)
+		self.assertIn("frappe-ui@latest (0.1.95)", found)
 
 	def test_yarn_read_as_the_build_reads_it(self):
 		"""#279's proof of concept and its variants, in a rollout's node-lock and the app's own
