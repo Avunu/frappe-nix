@@ -165,6 +165,33 @@ class TestGates(CallerCase):
 		self.assertIn("refs/tags/v", files[f"{WORKFLOWS}/assets.yml"]["jobs"]["assets"]["if"])
 
 
+class TestFork(CallerCase):
+	"""The callers whose workflows have jobs that can hold the App's key (deps, nightly, release)
+	name the frappe-nix repository those jobs install frappe-nix-tools from, when it is a fork:
+	the one the app locks, whose workflows they call (spec §2.5, §4.7)."""
+
+	KEY_CALLERS = (("deps", "deps"), ("nightly", "nightly"), ("release", "release"))
+
+	def test_avunu_passes_nothing(self) -> None:
+		files = self.render()
+		for name, job in self.KEY_CALLERS:
+			self.assertNotIn("frappe-nix-repo", files[f"{WORKFLOWS}/{name}.yml"]["jobs"][job]["with"], name)
+
+	def test_a_fork_is_passed_on(self) -> None:
+		lock = json.loads(self.read("flake.lock"))
+		for half in ("locked", "original"):
+			lock["nodes"]["frappe-nix"][half]["owner"] = "Someone"
+		self.write("flake.lock", json.dumps(lock))
+		ref = lock["nodes"]["frappe-nix"]["original"]["ref"]
+		files = self.render(
+			f'[tool.frappe-nix.dev-shell]\nfrappe-nix-url = "github:Someone/frappe-nix/{ref}"\n'
+		)
+		for name, job in self.KEY_CALLERS:
+			caller = files[f"{WORKFLOWS}/{name}.yml"]["jobs"][job]
+			self.assertTrue(caller["uses"].startswith("Someone/frappe-nix/"), caller["uses"])
+			self.assertEqual(caller["with"]["frappe-nix-repo"], "Someone/frappe-nix", name)
+
+
 class TestSchedules(CallerCase):
 	def test_empty_schedules_render_no_schedule(self) -> None:
 		files = self.render(
