@@ -1,13 +1,16 @@
 name: Dependabot auto-merge
 
 # frappe-nix's own Dependabot pull requests (docs/app-standards/spec.md §4.10), through
-# python-devops-nix's reusable workflows (its docs/conventions.md, CI) with their default
-# policy. Dependabot's github-actions entry moves the pins below.
+# python-devops-nix's reusable workflows (its docs/conventions.md, CI), with github_actions
+# excluded and the key jobs' actions under review-dependencies. Dependabot's github-actions
+# entry moves the pins below, and a PR that does is held.
 #
 #   auto-merge       every nix, uv and pre-commit one, whatever its update type, gets
-#                    auto-merge (squash): GitHub merges it once every check the main ruleset
-#                    requires passes, and one that fails stays open. The required checks are
-#                    the gate, so auto-merge is only as safe as they are.
+#                    auto-merge (squash) at the head it was decided on: GitHub merges it once
+#                    every check the main ruleset requires passes, and one that fails stays
+#                    open. The required checks are the gate, so auto-merge is only as safe as
+#                    they are. One the reusable workflow holds (a diff that touches a workflow
+#                    or an action, below) has auto-merge turned off there.
 #   hold             every other one, github-actions bumps above all, is labelled needs-review
 #                    and never auto-merged. An action or reusable workflow pin here runs in jobs
 #                    that hold the org's GitHub App key: this repository's own release.yml, and
@@ -20,13 +23,18 @@ name: Dependabot auto-merge
 #                    behind main is brought up to date through the update-branch API. A PR
 #                    that is not behind is left alone.
 #
-# Both use GITHUB_TOKEN, never the org's GitHub App (AVUNU_CI_PRIVATE_KEY): at the pin below,
-# python-devops-nix runs these jobs on its shared ["self-hosted","nixos"] runners, where another
-# repository's job could read what they leave behind, and the App's key must never be there.
-# So the merge raises no push (release.yml's daily cron catches up), and the workflows main
-# requires are dispatched on each updated branch. The App comes back (`APP_ID` and
-# `APP_PRIVATE_KEY` under `secrets:`) only with pins at or after python-devops-nix#72, which
-# moves both jobs to ubuntu-latest; tests/standards/ci.nix refuses the key at any other pin.
+# The org's GitHub App, when the repository can read it (the variable AVUNU_CI_APP_ID, or a
+# Dependabot secret of that name, and the secret AVUNU_CI_PRIVATE_KEY), enables the auto-merge
+# and updates the branches, so a merge raises a push that starts check.yml and release.yml on
+# main, and an updated branch starts its checks. Without it, GITHUB_TOKEN: the merge raises no
+# push (release.yml's daily cron catches up), and the workflows main requires are dispatched
+# on each updated branch. The key goes only to python-devops-nix at e76d5d8 (#72) or a later
+# pin that tests/standards/ci.nix names: there every job of both workflows runs on
+# GitHub-hosted ubuntu-latest, the job that mints the token checks nothing out and runs only
+# create-github-app-token and gh, and it runs only when two jobs without the key agree
+# (`policy`, from fetch-metadata, and `diff`, from the PR's diff read with gh alone). The
+# `with:` below makes `diff` hold a PR that changes a workflow or action file, or a reference
+# to an action a key job runs, even under an ecosystem the `if:` lets through.
 #
 # Requires (one-time, in repo settings):
 #   • Settings → General → Pull Requests → "Allow auto-merge"
@@ -52,7 +60,20 @@ jobs:
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # gh pr merge --auto
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@0c9a3a0dd9e45c99299029ae1baa5fdb3a2f6963 # python-devops-nix main, #57 (no release yet)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@e76d5d850b35e4d0abc58fae6617713764f3683a # python-devops-nix main, #72 (no release yet)
+    with:
+      # Backstops to the `if:` above: a github-actions bump never auto-merges, and a diff that
+      # touches a workflow or action file, or a `uses:` of an action or workflow that runs with
+      # the App's key (here, in release.yml, and in every app's app-*.yml), is held.
+      exclude-ecosystems: github_actions
+      review-dependencies: >-
+        actions/create-github-app-token actions/checkout actions/download-artifact
+        astral-sh/setup-uv dependabot/fetch-metadata googleapis/release-please-action
+        Avunu/python-devops-nix
+    # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID || secrets.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
 
   # Every other Dependabot PR: auto-merge off (an earlier run may have turned it on), and the
   # needs-review label. GITHUB_TOKEN only, and nothing checked out or installed.
@@ -91,7 +112,11 @@ jobs:
       contents: write # update-branch without the App
       pull-requests: write # update-branch
       actions: write # without the App, dispatch the required checks on the new head
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@0c9a3a0dd9e45c99299029ae1baa5fdb3a2f6963 # python-devops-nix main, #57 (no release yet)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@e76d5d850b35e4d0abc58fae6617713764f3683a # python-devops-nix main, #72 (no release yet)
     with:
-      # The workflows of the checks main requires ("flake", "build / Check"), and pr-policy.
+      # Without the App: the workflows of the checks main requires ("flake", "build / Check"),
+      # and pr-policy.
       dispatch: check.yml docs.yml pr-policy.yml
+    secrets:
+      APP_ID: ${{ vars.AVUNU_CI_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}

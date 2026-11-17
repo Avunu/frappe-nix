@@ -40,7 +40,9 @@
 #                           only nix, uv and pre-commit bumps and holds the rest
 #                           (github-actions above all); and no reusable workflow from
 #                           elsewhere gets the key at a pin that runs it on a self-hosted
-#                           runner (python-devops-nix 0c9a3a0)
+#                           runner (only python-devops-nix e76d5d8, #72, is named hosted),
+#                           and frappe-nix's own call excludes github_actions and lists the
+#                           key jobs' actions under review-dependencies
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -174,10 +176,12 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
 
         # A job that calls a reusable workflow from elsewhere passes the App's key only to a pin
         # whose jobs that hold it run on hosted runners, and never through `secrets: inherit`.
-        # python-devops-nix 0c9a3a0 runs its dependabot-* jobs on ["self-hosted","nixos"];
-        # python-devops-nix#72 moves them to ubuntu-latest: name its merge commit here when the
-        # pins move to it, and pass the key again.
-        HOSTED_PINS = set()
+        # python-devops-nix 0c9a3a0 ran its dependabot-* jobs on ["self-hosted","nixos"];
+        # python-devops-nix#72 (merged as e76d5d8) runs every job of both on ubuntu-latest, and
+        # its key job only after `policy` and `diff`, neither of which holds the key. A pin is
+        # named here only once its workflows have been read at that commit.
+        HOSTED_PINS = {"e76d5d850b35e4d0abc58fae6617713764f3683a"}
+        key_pins = set()
         for path in sorted(glob.glob(".github/workflows/*.yml")):
             for name, job in yaml.safe_load(open(path))["jobs"].items():
                 if "uses" not in job:
@@ -186,6 +190,13 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
                 if any(k in json.dumps(job.get("secrets", {})) for k in APP_KEY):
                     pin = job["uses"].rsplit("@", 1)[1]
                     assert pin in HOSTED_PINS and not pin.startswith("0c9a3a0"), (path, name, pin)
+                    key_pins.add((os.path.basename(path), name, job["uses"].split("@")[0], pin))
+        assert key_pins == {
+            ("dependabot-auto-merge.yml", "auto-merge",
+             "Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml", next(iter(HOSTED_PINS))),
+            ("dependabot-auto-merge.yml", "update-branches",
+             "Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml", next(iter(HOSTED_PINS))),
+        }, key_pins
 
         # Every job that can hold the App's key installs frappe-nix-tools with nothing resolved
         # at run time: uv pinned and without the Actions cache, every dependency from the
@@ -354,6 +365,19 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert own["hold"]["runs-on"] == "ubuntu-latest" and not secrets_of(own["hold"]) and "uses" not in json.dumps(own["hold"]["steps"])
         hold_run = own["hold"]["steps"][0]["run"]
         assert hold_run.index("gh pr merge --disable-auto") < hold_run.index("--add-label needs-review"), hold_run
+        # The reusable workflow holds what the `if:` lets through but changes what runs with the
+        # key: github_actions is excluded (its `diff` then holds a changed workflow or action
+        # file), and every action a key job runs here or in an app is a review-dependency.
+        assert own["auto-merge"]["with"]["exclude-ecosystems"].split() == ["github_actions"], own["auto-merge"]
+        reviewed = set(own["auto-merge"]["with"]["review-dependencies"].split())
+        key_actions = {"Avunu/python-devops-nix"}
+        for wf, names in holders.items():
+            jobs = yaml.safe_load(open(f".github/workflows/{wf}"))["jobs"]
+            for name in names:
+                key_actions |= {s["uses"].split("@")[0] for s in jobs[name]["steps"] if "uses" in s}
+        assert key_actions <= reviewed, key_actions - reviewed
+        for name in ("auto-merge", "update-branches"):
+            assert set(own[name]["secrets"]) == {"APP_ID", "APP_PRIVATE_KEY"}, own[name]
 
         from frappe_nix_tools.ci import relock as relock_mod
 
