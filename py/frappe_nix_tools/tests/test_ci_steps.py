@@ -11,6 +11,7 @@ from unittest import mock
 from frappe_nix_tools.ci import automerge, drift, release, verdict
 from frappe_nix_tools.common import github
 from frappe_nix_tools.common.github import GitHubError, Result
+from frappe_nix_tools.common.report import ConfigError, EnvError
 from helpers import run_cli
 
 REPO = "example/app"
@@ -27,7 +28,7 @@ METADATA = [
 			"dependency-names": "actions/checkout, actions/setup-node",
 			"directory": "/",
 		},
-		"auto",
+		"review",
 	),
 	(
 		{
@@ -237,6 +238,19 @@ class TestVerdict(FakeCase):
 				)
 				self.assertEqual(got, want)
 
+	def test_github_actions_always_review(self):
+		"""A bumped action runs next to the App's key: never merged without a person (§4.5)."""
+		for name in ("actions/create-github-app-token", "astral-sh/setup-uv", "actions/checkout",
+					 "actions/download-artifact", "example/tool/.github/workflows/x.yml"):  # fmt: skip
+			for update in ("version-update:semver-patch", "version-update:semver-minor", ""):
+				for policy in ("decision-table", "all"):
+					with self.subTest(name=name, update=update, policy=policy):
+						got = verdict.decide(
+							"github_actions", update_type=update, group="actions", dependency_names=name,
+							policy=policy,
+						)  # fmt: skip
+						self.assertEqual(got, "review")
+
 	def test_docs_patterns_and_frappe_nix(self):
 		self.assertEqual(
 			verdict.decide(
@@ -268,7 +282,8 @@ class TestVerdict(FakeCase):
 		self.assertEqual(out.read_text(), "verdict=auto\n")
 
 	def test_policy_all_merges_every_review(self):
-		"""``dependabot.auto-merge-policy = "all"``: every review row auto-merges; relock and close stay."""
+		"""``dependabot.auto-merge-policy = "all"``: every review row auto-merges but github_actions;
+		relock and close stay."""
 		for meta, table in METADATA:
 			with self.subTest(meta=meta):
 				got = verdict.decide(
@@ -279,14 +294,15 @@ class TestVerdict(FakeCase):
 					directory=meta["directory"],
 					policy="all",
 				)
-				self.assertEqual(got, "auto" if table == "review" else table)
+				held = meta["package-ecosystem"] == "github_actions"
+				self.assertEqual(got, "auto" if table == "review" and not held else table)
 		self.assertEqual(verdict.decide("cargo", dependency_names="x", policy="all"), "auto")
 		self.assertEqual(
 			verdict.decide(
 				"github_actions", dependency_names="example/docs-tool", docs_patterns=["example/docs-tool*"],
 				policy="all",
 			),
-			"auto",
+			"review",
 		)  # fmt: skip
 
 	def test_policy_all_never_merges_a_frappe_nix_pin(self):
@@ -329,6 +345,28 @@ class TestAutomerge(FakeCase):
 		fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
 		self.assertEqual(self.apply("auto"), "merging")
 		self.assertIn(("pr", "merge", "--auto", "--squash", PR), fake.clis)
+
+	def test_auto_matches_the_head_it_was_decided_on(self):
+		"""``gh pr merge --auto --match-head-commit``: GitHub refuses once the head has moved."""
+		fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+		sha = "c" * 40
+		self.assertEqual(self.apply("auto", head_sha=sha), "merging")
+		self.assertIn(("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR), fake.clis)
+		with self.assertRaises(ConfigError):
+			self.apply("auto", head_sha="c" * 12)
+
+	def test_cli_head_sha(self):
+		fake = self.use(Fake(protected(["ci / lint", "ci / test"])))
+		sha = "d" * 40
+		for step in (("automerge", "--ecosystem", "uv", "--update-type", "version-update:semver-patch"),
+					 ("enable-automerge",)):  # fmt: skip
+			fake.clis.clear()
+			code, _, err = run_cli(
+				"ci", step[0], "--pr-url", PR, "--repo", REPO, "--integration", "develop",
+				"--gates", "lint,test", "--head-sha", sha, *step[1:],
+			)  # fmt: skip
+			self.assertEqual(code, 0, err)
+			self.assertIn(("pr", "merge", "--auto", "--squash", "--match-head-commit", sha, PR), fake.clis)
 
 	def test_unprotected_labels_with_notice(self):
 		fake = self.use(Fake(protected(["ci / lint"])))  # lacks the other gates
@@ -374,7 +412,18 @@ class TestAutomerge(FakeCase):
 			self.assertEqual(self.apply("relock", relock_state="patch"), "wait")
 			self.assertEqual(self.apply("relock", relock_state=""), "wait")
 		self.assertEqual(fake.clis, [])
-		self.assertEqual(self.apply("relock", relock_state="empty"), "merging")
+		self.assertEqual(self.apply("relock", relock_state="empty", locks="ok"), "merging")
+
+	def test_nix_empty_relock_needs_its_lock_files_checked(self):
+		"""relock-plan's ``empty`` comes from a job that ran the PR's code: auto-merge only when
+		verify-relock found the PR's lock files ok, else the PR is held."""
+		for locks in ("", "needs-review"):
+			with self.subTest(locks=locks):
+				fake = self.use(Fake(protected([f"ci / {g}" for g in GATES])))
+				with mock.patch("builtins.print"):
+					self.assertEqual(self.apply("relock", relock_state="empty", locks=locks), "needs-review")
+				self.assertFalse(any(c[:3] == ("pr", "merge", "--auto") for c in fake.clis), fake.clis)
+				self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
 
 	def test_nix_rollout_input_closes(self):
 		fake = self.use(Fake())
@@ -408,10 +457,35 @@ class TestAutomerge(FakeCase):
 		self.assertIn(("pr", "merge", "--auto", "--squash", PR), fake.clis)
 
 	def test_review_labels(self):
+		"""A review verdict first turns off an auto-merge an earlier run enabled, then labels."""
 		fake = self.use(Fake())
 		with mock.patch("builtins.print"):
 			self.assertEqual(self.apply("review"), "needs-review")
-		self.assertEqual(fake.clis[0][:3], ("label", "create", "needs-review"))
+		self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
+		self.assertEqual(fake.clis[1][:3], ("label", "create", "needs-review"))
+
+	def test_hold_fails_when_auto_merge_stays_on(self):
+		refused = Result(1, "", "GraphQL: something went wrong")
+		on = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+		off = Result(0, json.dumps({"autoMergeRequest": None}))
+		for view, raises in ((on, True), (Result(1, "", "boom"), True), (off, False)):
+			with self.subTest(view=view):
+				fake = self.use(Fake(cli_answers={("pr", "merge"): refused, ("pr", "view"): view}))
+				with mock.patch("builtins.print"):
+					if raises:
+						with self.assertRaises(EnvError):
+							automerge.hold(PR, REPO)
+						self.assertFalse(any(c[:2] == ("pr", "edit") for c in fake.clis))
+					else:
+						self.assertEqual(automerge.hold(PR, REPO), "needs-review")
+						self.assertTrue(any(c[:2] == ("pr", "edit") for c in fake.clis))
+
+	def test_cli_hold(self):
+		fake = self.use(Fake())
+		code, out, err = run_cli("ci", "hold", "--pr-url", PR, "--repo", REPO, "--reason", "why")
+		self.assertEqual(code, 0, err)
+		self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
+		self.assertIn("::notice::why", out)
 
 	def test_cli_exit_0(self):
 		self.use(Fake(protected([])))

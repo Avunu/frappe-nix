@@ -544,6 +544,7 @@ jobs:
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "docs: refresh screenshots"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
+          sha="$(git rev-parse HEAD)"
           gh label create screenshots --repo "$GITHUB_REPOSITORY" --color c5def5 --description "Screenshot refresh from nightly" --force
           url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
           if [ -z "$url" ]; then
@@ -565,7 +566,7 @@ jobs:
           fi
           if [ "$AUTO_MERGE" = true ]; then
             # The gates the integration branch's head requires, not the plan job's commit's.
-            (cd "$RUNNER_TEMP/base" && frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD")
+            (cd "$RUNNER_TEMP/base" && frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD" --head-sha "$sha")
           fi
           echo "Screenshots changed: $url (diff images: ${DIFFS:-the screenshot-diffs artifact})" >> "$GITHUB_STEP_SUMMARY"
 

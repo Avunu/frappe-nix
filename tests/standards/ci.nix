@@ -30,9 +30,17 @@
 #                           whether a rollout input moved themselves, with one jq program
 #                           run here against relock.moved_inputs; every job that can hold
 #                           the App's key installs frappe-nix-tools hash-locked (from
-#                           Avunu/frappe-nix only), with a pinned uv and no uv cache; and
-#                           no reusable workflow from elsewhere gets the key at a pin that
-#                           runs it on a self-hosted runner (python-devops-nix 0c9a3a0)
+#                           Avunu/frappe-nix only), with a pinned uv and no uv cache; the
+#                           relock push jobs, and auto-merge on a nix PR with nothing to
+#                           relock, run `frappe-nix ci verify-relock` (what the lock files say,
+#                           ci/lockcheck.py) before the token is minted, hold the PR before a
+#                           push unless it says ok, and enable auto-merge only on ok; every
+#                           `gh pr merge --auto` names the head it was decided on
+#                           (--head-sha); frappe-nix's own dependabot-auto-merge.yml merges
+#                           only nix, uv and pre-commit bumps and holds the rest
+#                           (github-actions above all); and no reusable workflow from
+#                           elsewhere gets the key at a pin that runs it on a self-hosted
+#                           runner (python-devops-nix 0c9a3a0)
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -289,6 +297,63 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         decide = next(s for s in doc["jobs"]["auto-merge"]["steps"] if s.get("name") == "The decision table")
         assert decide["env"]["MOVED"] == "''${{ steps.moved.outputs.moved }}", decide["env"]
         program = re.search(r"--slurpfile head \S+ '\n(.*?)'\)\"\n", moved_runs.pop(), re.S).group(1)
+
+        # What the lock files say is checked in the job, before the token, by the integration
+        # branch's frappe-nix-tools: relock-push against the merge-base the moved step reads,
+        # relock-upgrade-push against the plan's commit, auto-merge (nix, nothing to relock)
+        # against the merge-base. Not ok: the PR is held (auto-merge off) before any push, and
+        # auto-merge is enabled only on ok.
+        for name in ("relock-push", "relock-upgrade-push", "auto-merge"):
+            steps = doc["jobs"][name]["steps"]
+            ids = [s.get("id") for s in steps]
+            locks = steps[ids.index("locks")]
+            assert locks["run"].startswith("frappe-nix ci verify-relock --base "), (name, locks)
+            assert ids.index("locks") < ids.index("app-token"), name
+        push = doc["jobs"]["relock-push"]["steps"]
+        ids = [s.get("id") for s in push]
+        assert push[0]["with"]["ref"] == "''${{ github.event.pull_request.head.sha }}", push[0]
+        assert push[ids.index("locks")]["env"]["MERGE_BASE"] == "''${{ steps.moved.outputs.merge-base }}"
+        hold = next(i for i, s in enumerate(push) if "frappe-nix ci hold" in s.get("run", ""))
+        assert push[hold]["if"] == "steps.locks.outputs.decision != 'ok'", push[hold]
+        assert ids.index("app-token") < hold < ids.index("push"), (ids, hold)
+        assert '"HEAD:refs/heads/$HEAD_REF"' in push[ids.index("push")]["run"] and "--force" not in push[ids.index("push")]["run"]
+        merge = next(s for s in push if "enable-automerge" in s.get("run", ""))
+        assert merge["if"] == "inputs.auto-merge && steps.locks.outputs.decision == 'ok'", merge
+        assert merge["env"]["SHA"] == "''${{ steps.push.outputs.sha }}", merge
+        upgrade_steps = doc["jobs"]["relock-upgrade-push"]["steps"]
+        upgrade_locks = next(s for s in upgrade_steps if s.get("id") == "locks")["run"]
+        assert upgrade_locks == 'frappe-nix ci verify-relock --base "$(git rev-parse HEAD)" --head "$(git write-tree)"', upgrade_locks
+        upgrade = upgrade_steps[-1]["run"]
+        assert upgrade.index("frappe-nix ci hold") < upgrade.index("git push --force"), upgrade
+        assert 'if [ "$LOCKS" != ok ]; then\n  frappe-nix ci hold' in upgrade, upgrade
+        auto = doc["jobs"]["auto-merge"]["steps"]
+        ids = [s.get("id") for s in auto]
+        assert auto[ids.index("locks")]["working-directory"] == ".head", auto[ids.index("locks")]
+        assert "needs.relock-plan.outputs.empty == 'true'" in auto[ids.index("locks")]["if"], auto[ids.index("locks")]
+        assert decide["env"]["LOCKS"] == "''${{ steps.locks.outputs.decision }}", decide["env"]
+        assert '--relock empty --locks "$LOCKS"' in decide["run"] and '--head-sha "$HEAD_SHA"' in decide["run"], decide["run"]
+
+        # Every `gh pr merge --auto` a workflow asks for names the head it was decided on.
+        for path in sorted(glob.glob(".github/workflows/*.yml")):
+            jobs = yaml.safe_load(open(path))["jobs"].values()
+            runs = [s.get("run", "") for job in jobs for s in job.get("steps", [])]
+            for line in "\n".join(runs).splitlines():
+                if re.search(r"frappe-nix ci (enable-automerge|automerge)\b", line):
+                    assert "--head-sha" in line or line.strip() == 'frappe-nix ci automerge "''${args[@]}"', (path, line)
+                assert not re.search(r"gh pr merge[^\n]*--auto", line) or "--match-head-commit" in line, (path, line)
+
+        # frappe-nix's own Dependabot PRs: only nix, uv and pre-commit bumps auto-merge; the
+        # rest (github-actions above all: they move what runs next to the App's key) are held.
+        own = yaml.safe_load(open(".github/workflows/dependabot-auto-merge.yml"))["jobs"]
+        merging = " ".join(own["auto-merge"]["if"].split())
+        allowed = "(startsWith(github.head_ref, 'dependabot/nix/') || startsWith(github.head_ref, 'dependabot/uv/') || startsWith(github.head_ref, 'dependabot/pre_commit/'))"
+        assert merging.endswith(f"&& {allowed}"), merging
+        assert "github_actions" not in merging, merging
+        held = " ".join(own["hold"]["if"].split())
+        assert held.endswith(f"&& !{allowed}"), held
+        assert own["hold"]["runs-on"] == "ubuntu-latest" and not secrets_of(own["hold"]) and "uses" not in json.dumps(own["hold"]["steps"])
+        hold_run = own["hold"]["steps"][0]["run"]
+        assert hold_run.index("gh pr merge --disable-auto") < hold_run.index("--add-label needs-review"), hold_run
 
         from frappe_nix_tools.ci import relock as relock_mod
 
