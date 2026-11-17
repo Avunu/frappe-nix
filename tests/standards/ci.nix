@@ -225,7 +225,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # `frappe-nix repo rollout` reads this env.BOT (rollout_bot) to know the rollout's commits.
         from frappe_nix_tools.commands.repo import rollout as repo_rollout
         assert repo_rollout.ROLLOUT_WORKFLOW == ".github/workflows/rollout.yml"
-        assert doc["env"]["BOT"] == "avunu-rollout[bot]", doc["env"]
+        assert doc["env"]["BOT"] == "avunu-release-manager[bot]", doc["env"]
         steps = jobs["publish"]["steps"]
         verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
         recheck = next(i for i, s in enumerate(steps) if "write-tree" in s.get("run", ""))

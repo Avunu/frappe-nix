@@ -359,6 +359,13 @@
                 } 2>&1 | tee "$out"
               '';
 
+          # frappe-rename-app's site half over an in-memory database: an app
+          # renamed in place, and one that the new app has absorbed (both
+          # installed, the new one declaring the old one's modules).
+          rename-absorb = checks.script "rename-absorb" { tools = [ pkgs.python3 ]; } ''
+            python3 -I ${./tests/rename-absorb.py} ${./lib/rename/frappe_rename_app.py} 2>&1 | tee "$out"
+          '';
+
           # Native Sass for the watcher: the packaged sass-embedded finds
           # nixpkgs' compiler and serves the legacy render() frappe's postcss
           # plugin calls — JS importer and includedFiles included. Linux and

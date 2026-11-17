@@ -64,7 +64,7 @@ In one transaction, it rewrites:
 - the columns that hold an app name: `Desktop Icon`, `Dock`, `Sidebar`, `Sidebar Item Group`, `Workspace Sidebar` and `Website Theme Ignore App` `.app`, `Notification Log.app`, `User.default_app`, `System Settings.default_app` and `User Invitation.app_name`;
 - `esign.<x>` dotted paths, where `<x>` is a module or name of the new package (the same rule as the code half, so a JavaScript namespace like `esign.accept(…)` is kept), and `/assets/esign/` URLs in what a site's users write: report and server and client scripts, print formats, web forms and pages, web templates, custom HTML blocks, letter heads, website route redirects, number cards, DocType actions and navbar items.
 
-After the commit it updates the `installed_apps` copy in `site_config.json` and drops the cached app and module maps. It refuses (exit 1) when both apps are installed, when the new app is not on the bench (`sites/apps.txt`), or when its `modules.txt` lacks a module the old app owns. A database error rolls everything back (exit 2); an argument that is not `OLD=NEW` exits 1. On a site without the old app it prints `esign not installed on <site>: nothing to do`, so it is safe to run on every deploy. `--scan` reports, read-only, every text column in every table that still names the old app, logs excepted.
+After the commit it updates the `installed_apps` copy in `site_config.json` and drops the cached app and module maps. It refuses (exit 1) when both apps are installed and the new one does not hold the old one's modules (see [When the new app absorbs the old one](#when-the-new-app-absorbs-the-old-one)), when the new app is not on the bench (`sites/apps.txt`), or when its `modules.txt` lacks a module the old app owns. A database error rolls everything back (exit 2); an argument that is not `OLD=NEW` exits 1. On a site without the old app it prints `esign not installed on <site>: nothing to do`, so it is safe to run on every deploy. `--scan` reports, read-only, every text column in every table that still names the old app, logs excepted.
 
 ## The bench half
 
@@ -91,6 +91,23 @@ You rarely run the site half by hand.
 - **The dev shell.** `frappe-nix.renamedApps` does the same in `reconcile-apps`, which `devenv up` runs on `defaultSite` before anything starts, ahead of installing whatever `sites/apps.txt` names: installing the new app beside the renamed old one would fail on the `Module Def` they share.
 
 Before the production deploy that ships a rename, pause the scheduler and let the job queues drain: a job already queued under an old dotted path fails once the code is gone. Run `--dry-run --scan` against a restored copy of the production database first and review what it lists.
+
+## When the new app absorbs the old one
+
+An app can also be folded into another: Frappe 16.60 took the standalone `flow` app into the framework, so its DocTypes, which belong to the `Flow` module, now ship in `frappe`. A site that had `flow` installed has both `flow` and `frappe` in `installed_apps`, `Module Def` `Flow` still names `flow`, and `bench migrate` fails on `No module named 'flow.hooks'`, because `flow` is no longer on the bench. Nothing about this is a rename (there is no `frappe.<x>` for each `flow.<x>`), and removing the old app would drop the tables the new one now owns.
+
+```nix
+frappe-nix.renamedApps = { flow = "frappe"; };   # services.frappe-nix.sites.<site>.renamedApps in production
+```
+
+The pair is taken for an absorption when both apps are installed, the new app's `modules.txt` declares every module the old app owns, and the old app owns at least one. Then `frappe-rename-app --site` hands over instead of renaming, in the same transaction:
+
+- `installed_apps` loses the old app; the rest keep their order;
+- `Module Def.app_name` and the other app-name columns listed above move to the new app, so the module, its DocTypes and their rows stay where they are.
+
+It leaves the Patch Log and every text that names `flow.` alone, and says which scheduled jobs, scripts, templates and pages still do, in the log it prints. The old app's code has no `frappe.<x>` to become, so the paths cannot be rewritten for you, and the new app's own patches and sync take it from there: `bench migrate` recreates the scheduled jobs the new hooks declare, and deletes the ones they no longer do, so a job that named `flow.` is replaced by the framework's. Read the list for anything of your own.
+
+Two installed apps that keep their own modules are two apps, not one absorbed into the other. That is still refused, with the missing module named, and is what `replacedApps` is for. A pair whose old app is not installed does nothing, as before, so the entry is safe to leave in place until every site has run it.
 
 ## Replacing an app instead
 

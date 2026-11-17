@@ -796,6 +796,9 @@ in
             on it, before it installs anything: installing NEW beside the
             renamed OLD would fail on the Module Def they share. Run
             `bench migrate` afterwards. A no-op once the site names NEW.
+            Also for an OLD that NEW has absorbed, both installed (Frappe's
+            `flow = "frappe"`): the site then drops OLD and hands its modules
+            to NEW.
           '';
         };
 

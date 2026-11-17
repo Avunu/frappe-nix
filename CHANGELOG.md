@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.0](https://github.com/Avunu/frappe-nix/compare/v2.7.0...v2.8.0) (2026-11-17)
+
+
+### Features
+
+* **release:** ship from a single release branch ([#287](https://github.com/Avunu/frappe-nix/issues/287)) ([59babef](https://github.com/Avunu/frappe-nix/commit/59babef48d2d8a0cfec083e2783ba1ebe798cf24))
+* **sources:** add a repair app for a flake Nix cannot read ([#256](https://github.com/Avunu/frappe-nix/issues/256)) ([b90349e](https://github.com/Avunu/frappe-nix/commit/b90349e61c6e7e6eb4c617fd82e12c2082b8e67e))
+
 ## [2.7.0](https://github.com/Avunu/frappe-nix/compare/v2.6.2...v2.7.0) (2026-11-17)
 
 

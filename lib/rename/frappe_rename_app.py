@@ -26,10 +26,19 @@ Two halves, run at different times:
         Run with the bench's interpreter from its sites/ directory. Standard library and
         frappe only.
 
+        When NEW is already installed and its modules.txt declares every module OLD owns,
+        NEW has absorbed OLD (an app folded into the framework or into a sibling: its code
+        is no longer under `OLD.` but under some path of NEW's, which this cannot know).
+        The pair is then not a rename but a hand-over: OLD leaves installed_apps and its
+        modules and app-name columns go to NEW, and the Patch Log and every text that
+        names `OLD.` are left as they are (reported, not rewritten), since `OLD.<x>` has
+        no `NEW.<x>` to become. NEW's own patches and sync take it from there.
+
 Exit status: 0 done, or nothing to do; 1 a precondition failed (a dirty tree, a replace
-pair, an app missing from the bench, both apps installed, a malformed OLD=NEW); 2 the code
-half was given no source of replace pairs, or one it cannot read, or the site half hit a
-database error (rolled back); 3 the code half needs frappe-nix-tools and cannot import it.
+pair, an app missing from the bench, both apps installed with NEW lacking a module of OLD's,
+a malformed OLD=NEW); 2 the code half was given no source of replace pairs, or one it cannot
+read, or the site half hit a database error (rolled back); 3 the code half needs
+frappe-nix-tools and cannot import it.
 """
 
 import argparse
@@ -641,15 +650,17 @@ class SiteRename:
 		)
 		return json.loads(rows[0][0] if rows and rows[0][0] else "[]")
 
-	def check(self, old: str, new: str, installed: list[str], bench_apps: list[str]) -> bool:
-		"""Whether the pair has anything to do; a failed precondition raises."""
+	def check(self, old: str, new: str, installed: list[str], bench_apps: list[str]) -> str | None:
+		"""How the pair is done, "rename" or "absorb", or None when there is nothing to do; a
+		failed precondition raises.
+
+		With both apps installed, NEW has absorbed OLD only if it declares every module OLD
+		owns, and OLD owns one. Two installed apps with modules of their own are two apps
+		(replacedApps), not one renamed into the other."""
 		if old not in installed:
 			print(f"{old} not installed on {self.frappe.local.site}: nothing to do")
-			return False
-		if new in installed:
-			raise Precondition(
-				f"both {old} and {new} are installed on {self.frappe.local.site}; resolve that by hand"
-			)
+			return None
+		both = new in installed
 		if new not in bench_apps:
 			raise Precondition(f"{new} is not in sites/apps.txt: put its code on the bench first")
 		self.modules[new] = module_names(package_dir(new))
@@ -660,24 +671,39 @@ class SiteRename:
 		]
 		declared = self.frappe.get_module_list(new)
 		missing = sorted(set(owned) - set(declared))
+		if both and (missing or not owned):
+			reason = (
+				f"{new}/modules.txt does not declare {old}'s module(s) {', '.join(missing)}"
+				if missing
+				else f"{old} owns no module to hand over"
+			)
+			raise Precondition(
+				f"both {old} and {new} are installed on {self.frappe.local.site}, and {reason}: that is "
+				f"not {new} absorbing {old}; resolve it by hand, or, for two apps that stay two, use replacedApps"
+			)
 		if missing:
 			raise Precondition(f"{new}/modules.txt does not declare {old}'s module(s) {', '.join(missing)}")
 		if old in bench_apps:
 			print(
 				f"warning: {old} is still in sites/apps.txt, so two apps claim its modules until it is removed"
 			)
-		return True
+		return "absorb" if both else "rename"
 
 	def update(self, sql: str, values) -> None:
 		if not self.dry_run:
 			self.db.sql(sql, values)
 
-	def rename(self, old: str, new: str) -> None:
+	def rename(self, old: str, new: str, mode: str = "rename") -> None:
 		# What NEW's package can name after `NEW.`: the code half rewrote exactly those
 		# `OLD.<x>`, and kept every other (JS namespaces, file names), so the site does too.
 		modules = self.modules[new]
 		installed = self.installed()
-		after = [new if a == old else a for a in installed]
+		# An absorbed app's place in the list is NEW's own, which is already there.
+		after = (
+			[a for a in installed if a != old]
+			if mode == "absorb"
+			else [new if a == old else a for a in installed]
+		)
 		self.log.append(f"installed_apps: {installed} -> {after}")
 		self.update(
 			"update `tabDefaultValue` set defvalue=%s where parent='__global' and defkey='installed_apps'",
@@ -700,6 +726,13 @@ class SiteRename:
 				self.update(
 					"update `tabSingles` set value=%s where doctype=%s and field=%s", (new, doctype, field)
 				)
+
+		if mode == "absorb":
+			# OLD's patches and dotted paths have no `NEW.<x>` to become: NEW holds the code
+			# under paths of its own, and a patch NEW lists by the same name it runs by its
+			# own log. What names OLD is reported, for a person to read.
+			self.leftovers(old)
+			return
 
 		# The Patch Log matches patches.txt lines exactly; NEW's are OLD's, renamed.
 		for name, patch in self.db.sql(
@@ -733,6 +766,29 @@ class SiteRename:
 						"update `tabSingles` set value=%s where doctype=%s and field=%s",
 						(renamed, doctype, field),
 					)
+
+	def leftovers(self, old: str) -> None:
+		"""What still names OLD in the columns a rename would have rewritten: counted and
+		named in the log, and left as it is (read-only)."""
+		for doctype, field in TOKEN_COLUMNS:
+			if not self.has_column(doctype, field):
+				continue
+			rows = self.db.sql(
+				f"select name, `{field}` from `tab{doctype}` where `{field}` like %s or `{field}` like %s",
+				(f"%{old}.%", f"%/assets/{old}/%"),
+			)
+			names = [name for name, value in rows if mentions(value, old)]
+			if names:
+				shown = ", ".join(str(n) for n in names[:5]) + (", ..." if len(names) > 5 else "")
+				self.log.append(
+					f"{doctype}.{field}: {len(names)} row(s) still name {old}, left as they are: {shown}"
+				)
+		for doctype in SINGLE_TEXT_DOCTYPES:
+			for field, value in self.db.sql(
+				"select field, value from `tabSingles` where doctype=%s", doctype
+			):
+				if mentions(value, old):
+					self.log.append(f"{doctype}.{field}: still names {old}, left as it is")
 
 	def scan(self, old: str) -> None:
 		"""Every text column, in every table but the logs, that still names OLD (read-only)."""
@@ -770,6 +826,19 @@ def drop_caches(frappe) -> None:
 	clear_defaults_cache("__global")
 
 
+def describe(todo: list[tuple[str, str, str]], done: bool = False) -> str:
+	"""The pairs in a sentence: "Rename a -> b, Absorb c into d", or "renamed a -> b, absorbed c into d"
+	when DONE."""
+	verbs = {"rename": ("Rename", "renamed"), "absorb": ("Absorb", "absorbed")}
+	arrows = {"rename": " -> ", "absorb": " into "}
+	parts = []
+	for mode in ("rename", "absorb"):
+		pairs = ", ".join(f"{o}{arrows[mode]}{n}" for o, n, m in todo if m == mode)
+		if pairs:
+			parts.append(f"{verbs[mode][1 if done else 0]} {pairs}")
+	return ", ".join(parts)
+
+
 def cmd_site(args) -> int:
 	pairs = []
 	for pair in args.pairs:
@@ -791,7 +860,11 @@ def cmd_site(args) -> int:
 		installed = job.installed()
 		bench_apps = frappe.get_all_apps(with_internal_apps=False)
 		try:
-			todo = [(old, new) for old, new in pairs if job.check(old, new, installed, bench_apps)]
+			todo = []
+			for old, new in pairs:
+				mode = job.check(old, new, installed, bench_apps)
+				if mode:
+					todo.append((old, new, mode))
 		except Precondition as e:
 			die(str(e))
 		if not todo and not args.scan:
@@ -799,12 +872,12 @@ def cmd_site(args) -> int:
 		if todo and not read_only and not args.yes:
 			if not sys.stdin.isatty():
 				die("pass --yes to rename without a prompt")
-			answer = input(f"Rename {', '.join(f'{o} -> {n}' for o, n in todo)} on {args.site}? [y/N] ")
+			answer = input(f"{describe(todo)} on {args.site}? [y/N] ")
 			if answer.strip().lower() not in ("y", "yes"):
 				die("not renamed")
 		try:
-			for old, new in todo:
-				job.rename(old, new)
+			for old, new, mode in todo:
+				job.rename(old, new, mode)
 			if args.scan:
 				for old, _ in pairs:
 					job.scan(old)
@@ -825,9 +898,7 @@ def cmd_site(args) -> int:
 			update_site_config("installed_apps", job.installed())
 		drop_caches(frappe)
 		frappe.clear_cache()
-		print(
-			f"frappe-rename-app: renamed {', '.join(f'{o} -> {n}' for o, n in todo)} on {args.site}; now migrate"
-		)
+		print(f"frappe-rename-app: {describe(todo, done=True)} on {args.site}; now migrate")
 		return 0
 	finally:
 		frappe.destroy()
