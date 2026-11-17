@@ -40,6 +40,7 @@ PIN_TYPES = ("github", "gitlab", "git")
 # branch per major (`release-1`, `release-2`). Those no longer move. Only the rollout's
 # one-time move off them reads this (`repo rollout`, `ci verify-rollout-patch`).
 _FROZEN_RELEASE = re.compile(r"release-[0-9]+")
+_FRAPPE_NIX = tuple("Avunu/frappe-nix".lower().split("/"))
 
 
 @dataclass(frozen=True)
@@ -177,8 +178,7 @@ def frozen_release_original(original: object) -> bool:
 		isinstance(original, dict)
 		and set(original) == {"type", "owner", "repo", "ref"}
 		and original["type"] == "github"
-		and str(original["owner"]).lower() == "avunu"
-		and str(original["repo"]).lower() == "frappe-nix"
+		and (str(original["owner"]).lower(), str(original["repo"]).lower()) == _FRAPPE_NIX
 		and isinstance(original["ref"], str)
 		and _FROZEN_RELEASE.fullmatch(original["ref"]) is not None
 	)

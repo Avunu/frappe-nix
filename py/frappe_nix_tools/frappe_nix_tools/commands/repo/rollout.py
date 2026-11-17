@@ -172,7 +172,7 @@ def leave_frozen_release(root: Path, app: appgates.AppConfig, *, write: bool = T
 	except EnvError:
 		return False
 	original = found[1].get("original") if found else None
-	if not flakelock.frozen_release_original(original):
+	if not isinstance(original, dict) or not flakelock.frozen_release_original(original):
 		return False
 	path = root / "flake.nix"
 	if not path.is_file():
