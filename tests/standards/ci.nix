@@ -24,7 +24,8 @@
 #                           the verify and re-derive steps, from the environment's own
 #                           FRAPPE_NIX_ROLLOUT_* variable and secret, which no other job or
 #                           workflow names; publish turns an earlier auto-merge off before
-#                           it labels needs-review; report has issues write and no secret
+#                           it pushes a head that cannot auto-merge, and before it labels
+#                           needs-review; report has issues write and no secret
 
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
@@ -166,6 +167,9 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         for path in glob.glob(".github/workflows/*.y*ml"):
             if not path.endswith("/rollout.yml"):
                 assert "FRAPPE_NIX_ROLLOUT_PRIVATE_KEY" not in open(path).read(), path
+        # `frappe-nix repo rollout` reads this env.BOT (rollout_bot) to know the rollout's commits.
+        from frappe_nix_tools.commands.repo import rollout as repo_rollout
+        assert repo_rollout.ROLLOUT_WORKFLOW == ".github/workflows/rollout.yml"
         assert doc["env"]["BOT"] == "avunu-rollout[bot]", doc["env"]
         steps = jobs["publish"]["steps"]
         verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
@@ -180,10 +184,16 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert mint["with"]["owner"] == "Avunu" and "matrix.name" in mint["with"]["repositories"], mint["with"]
         assert mint["with"]["private-key"] == "''${{ " + key + " }}", mint["with"]
         assert mint["with"]["client-id"] == "''${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}", mint["with"]
-        # needs-review never keeps an auto-merge an earlier run enabled; publish drops the label.
+        # needs-review never keeps an auto-merge an earlier run enabled: a run that cannot end
+        # pr-open turns it off before it pushes, and again after enable-automerge or the head
+        # check failed, before the label; publish drops the label.
         act = next(s["run"] for s in steps if "--add-label needs-review" in s.get("run", ""))
-        assert "gh pr merge --disable-auto" in act, act
-        assert act.index("gh pr merge --disable-auto") < act.index("--add-label needs-review"), act
+        off = "gh pr merge --disable-auto"
+        assert act.count(off) == 2, act
+        gate = act.index('if [ -n "$pr_url" ] && [ "$can_merge" = false ]; then')
+        assert gate < act.index(off) < act.index(" push -q "), act
+        assert act.rindex(off) < act.index("--add-label needs-review"), act
+        assert act.index('[ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]') < gate, act
         assert "--remove-label needs-review" in act and "autoMergeRequest" in act, act
         # A branch its merged or closed PR left behind is replaced, in resolve and in publish.
         resolve = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])

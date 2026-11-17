@@ -1,5 +1,6 @@
 """``frappe-nix repo rollout``: arguments, the dry-run plan, ``--emit-patch`` and the run by hand (spec §5.8)."""
 
+import base64
 import json
 import os
 import subprocess
@@ -18,6 +19,15 @@ OLD = "a" * 40
 TAG_SHA = "c" * 40
 NEWER = "d" * 40
 TAG = "v1.2.0"
+BOT = "avunu-rollout[bot]"
+#: frappe-nix's rollout.yml at TAG, as the contents API returns it: only its env.BOT is read.
+ROLLOUT_YML = f"repos/Avunu/frappe-nix/contents/.github/workflows/rollout.yml?ref={TAG}"
+
+
+def contents(text: str) -> dict:
+	return {"content": base64.b64encode(text.encode()).decode(), "encoding": "base64"}
+
+
 IDENTITY = {
 	"GIT_AUTHOR_NAME": "Rollout Person",
 	"GIT_AUTHOR_EMAIL": "person@example.com",
@@ -151,6 +161,25 @@ class TestYarnIgnoreScripts(unittest.TestCase):
 			self.assertEqual(sync.yarn_install(), ["yarn", "install", "--non-interactive"])
 
 
+def push_commit(case: "RolloutRepoCase", name: str, email: str, subject: str) -> str:
+	"""A commit by ``name`` <``email``> pushed to standards/frappe-nix on ``case``'s origin; its SHA."""
+	other = case.tmp / f"other-{len(list(case.tmp.glob('other-*')))}"
+	subprocess.run(["git", "clone", "-q", str(case.origin), str(other)], check=True)
+	git(other, "checkout", "-q", "-B", "standards/frappe-nix")
+	(other / "fix.txt").write_text(f"by {name}\n")
+	git(other, "add", "-A")
+	env = {
+		**os.environ,
+		"GIT_AUTHOR_NAME": name,
+		"GIT_AUTHOR_EMAIL": email,
+		"GIT_COMMITTER_NAME": name,
+		"GIT_COMMITTER_EMAIL": email,
+	}
+	subprocess.run(["git", "-C", str(other), "commit", "-q", "-m", subject], check=True, env=env)
+	git(other, "push", "-q", "-f", "origin", "standards/frappe-nix")
+	return git(case.origin, "rev-parse", "standards/frappe-nix").strip()
+
+
 class RolloutRepoCase(RepoCase):
 	"""An app on ``develop`` in a local bare ``origin``, a clone of it that ``targets.clone``
 	returns, and ``nix`` faked: the flake update moves frappe-nix to ``self.locks_to``, relock
@@ -194,6 +223,7 @@ class RolloutRepoCase(RepoCase):
 		p.start()
 		self.addCleanup(p.stop)
 		self.gh.routes[("GET", f"repos/Avunu/frappe-nix/commits/{TAG}")] = {"sha": TAG_SHA}
+		self.gh.routes[("GET", ROLLOUT_YML)] = contents(f"name: rollout\nenv:\n  BOT: {BOT}\n")
 
 
 class TestEmitPatch(RolloutRepoCase):
@@ -267,6 +297,68 @@ class TestEmitPatch(RolloutRepoCase):
 		self.assertEqual(self.nix_envs, [])
 
 
+class TestForeignCommits(RolloutRepoCase):
+	"""Which commits on standards/frappe-nix are the rollout's own: its subject, made by exactly
+	rollout.yml's bot or by you (``own_email``). Nothing else, bot or not."""
+
+	SUBJECT = f"chore(deps): frappe-nix {TAG}"
+
+	def foreign(self, bot: str = BOT) -> list[str]:
+		return rollout.foreign_commits(
+			self.clone, "standards/frappe-nix", "develop", "person@example.com", bot
+		)
+
+	def test_the_rollout_bot_is_its_own(self):
+		push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", self.SUBJECT)
+		self.assertEqual(self.foreign(), [])
+
+	def test_your_own_commit_is_its_own(self):
+		push_commit(self, "Rollout Person", "person@example.com", self.SUBJECT)
+		self.assertEqual(self.foreign(), [])
+		self.assertEqual(self.foreign(bot=""), [])
+
+	def test_another_bot_with_the_subject_is_foreign(self):
+		for bot in ("dependabot[bot]", "github-actions[bot]", "avunu-ci[bot]"):
+			with self.subTest(bot=bot):
+				push_commit(self, bot, f"1+{bot}@users.noreply.github.com", self.SUBJECT)
+				self.assertEqual(self.foreign(), [bot])
+
+	def test_the_rollout_bot_with_another_subject_is_foreign(self):
+		push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", "fix: something else")
+		self.assertEqual(self.foreign(), [BOT])
+
+	def test_no_bot_known_counts_only_you(self):
+		push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", self.SUBJECT)
+		self.assertEqual(self.foreign(bot=""), [BOT])
+
+
+LOCKED = {"owner": "Avunu", "repo": "frappe-nix"}
+
+
+class TestRolloutBot(RepoCase):
+	"""rollout.yml's env.BOT, read from the frappe-nix repository the lock names at the release."""
+
+	def test_reads_env_bot(self):
+		self.gh.routes[("GET", ROLLOUT_YML)] = contents(f"on: push\nenv:\n  BOT: {BOT}\n")
+		self.assertEqual(rollout.rollout_bot(LOCKED, TAG), BOT)
+
+	def test_unreadable_or_odd_is_none(self):
+		cases = {
+			"missing": None,
+			"server error": 502,
+			"not yaml": contents("env: [\n"),
+			"no env": contents("on: push\n"),
+			"not a bot login": contents("env:\n  BOT: someone\n"),
+			"not base64": {"content": "!!"},
+		}
+		for name, answer in cases.items():
+			with self.subTest(name):
+				self.gh.routes.pop(("GET", ROLLOUT_YML), None)
+				if answer is not None:
+					self.gh.routes[("GET", ROLLOUT_YML)] = answer
+				self.assertEqual(rollout.rollout_bot(LOCKED, TAG), "")
+
+
 class TestRolloutByHand(RolloutRepoCase):
 	def setUp(self) -> None:
 		super().setUp()
@@ -310,15 +402,29 @@ class TestRolloutByHand(RolloutRepoCase):
 
 	def human_commit(self) -> str:
 		"""A commit by someone else pushed to standards/frappe-nix; its SHA."""
-		human = self.tmp / "human"
-		subprocess.run(["git", "clone", "-q", str(self.origin), str(human)], check=True)
-		git(human, "checkout", "-q", "-b", "standards/frappe-nix")
-		(human / "fix.txt").write_text("by hand\n")
-		git(human, "add", "-A")
-		env = {**os.environ, "GIT_AUTHOR_NAME": "Human", "GIT_AUTHOR_EMAIL": "h@example.com"}
-		subprocess.run(["git", "-C", str(human), "commit", "-q", "-m", "fix"], check=True, env=env)
-		git(human, "push", "-q", "origin", "standards/frappe-nix")
-		return git(self.origin, "rev-parse", "standards/frappe-nix").strip()
+		return push_commit(self, "Human", "h@example.com", "fix")
+
+	def test_updates_over_the_rollout_bots_commit(self):
+		push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", f"{rollout.SUBJECT} v1.1.0")
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertNotIn("has commits by", text)
+		subject = git(self.origin, "log", "-1", "--format=%s", "standards/frappe-nix").strip()
+		self.assertEqual(subject, f"chore(deps): frappe-nix {TAG}")
+
+	def test_pauses_on_another_bots_rollout_subject(self):
+		"""Only avunu-rollout[bot] (or you) makes the rollout's commits; Dependabot's are foreign."""
+		bot = "dependabot[bot]"
+		before = push_commit(
+			self, bot, "49699333+dependabot[bot]@users.noreply.github.com", f"{rollout.SUBJECT} v1.1.0"
+		)
+		self.gh.routes[("GET", f"repos/{R}/pulls?state=open&head=example:standards/frappe-nix")] = [
+			{"number": 5, "html_url": "https://github.com/example/demo_app/pull/5"}
+		]
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertIn(f"has commits by {bot}", text)
+		self.assertEqual(git(self.origin, "rev-parse", "standards/frappe-nix").strip(), before)
 
 	def latest_pr(self, state: str, head_sha: str) -> None:
 		query = "state=all&head=example:standards/frappe-nix&sort=created&direction=desc&per_page=1"

@@ -26,7 +26,9 @@ name: rollout
 #            auto-merge, or turns an earlier run's auto-merge off and labels needs-review.
 #            The App's id and key are the environment's own variable and secret
 #            (FRAPPE_NIX_ROLLOUT_APP_ID, FRAPPE_NIX_ROLLOUT_PRIVATE_KEY): no other job, branch
-#            or workflow can read them, and no other App has Workflows write on the fleet.
+#            or workflow can read them. This workflow uses no other App's key. avunu-ci still
+#            has Workflows write too, for app-deps.yml's update-branches and the release
+#            fast-forward (app-release.yml, release.yml).
 #   report   (issues write on frappe-nix, no secret) a per-repository table in the job
 #            summary and the pinned issue "frappe-nix rollout status"; fails the run when a
 #            patch was rejected.
@@ -626,7 +628,7 @@ jobs:
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           # The frappe-nix-rollout environment's own variable and secret: the avunu-rollout
-          # App, the only one with Workflows write on the fleet, whose key nothing else holds.
+          # App's key, which only that environment holds and the only key this workflow uses.
           client-id: ${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}
           private-key: ${{ secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY }}
           owner: Avunu
@@ -684,6 +686,28 @@ jobs:
             fi
           fi
 
+          # Whether this run can end pr-open. When it cannot, an auto-merge an earlier run
+          # enabled comes off before the push, so GitHub never holds one for a head no run
+          # verified for publish; a failure to turn it off fails the step.
+          method="$(jq -r .merge_method "$decision")"
+          case "$method" in squash | merge | rebase) ;; *) method=squash ;; esac
+          automerge="$(jq -r .automerge "$decision")"
+          allowed="$(gh api "repos/$REPO" --jq .allow_auto_merge)"
+          can_merge=false
+          if [ "$DECISION" = publish ] && [ "$automerge" = true ] && [ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]; then
+            can_merge=true
+          fi
+          if [ -n "$pr_url" ] && [ "$can_merge" = false ]; then
+            armed="$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [ "$armed" = true ]; then
+              if ! gh pr merge --disable-auto "$pr_url"; then
+                echo "::error::could not turn off the auto-merge an earlier run enabled on $pr_url"
+                exit 1
+              fi
+              echo "turned off the auto-merge an earlier run enabled on $pr_url before pushing"
+            fi
+          fi
+
           pushed=false
           commit=""
           if [ -n "$observed" ] && [ "$(gh api "repos/$REPO/git/commits/$observed" --jq .tree.sha)" = "$TREE_ID" ]; then
@@ -718,13 +742,9 @@ jobs:
             fi
           done
 
-          method="$(jq -r .merge_method "$decision")"
-          case "$method" in squash | merge | rebase) ;; *) method=squash ;; esac
-          automerge="$(jq -r .automerge "$decision")"
-          allowed="$(gh api "repos/$REPO" --jq .allow_auto_merge)"
           result=needs-review
           want="${commit:-$observed}"
-          if [ "$DECISION" = publish ] && [ "$automerge" = true ] && [ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]; then
+          if [ "$can_merge" = true ]; then
             # The safety rule again (gates_protected on the branch now), then gh pr merge --auto;
             # it labels needs-review itself when either fails.
             out="$RUNNER_TEMP/automerge.out"
@@ -742,8 +762,10 @@ jobs:
             fi
           fi
           if [ "$result" = needs-review ]; then
-            # A push by the App leaves the auto-merge an earlier run enabled on: turn it off, or fail.
-            if [ "$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            # enable-automerge or the head check failed after the push, or GitHub kept an
+            # auto-merge on anyway: turn it off, or fail.
+            armed="$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [ "$armed" = true ]; then
               gh pr merge --disable-auto "$pr_url"
               echo "turned off the auto-merge an earlier run enabled on $pr_url"
             fi
