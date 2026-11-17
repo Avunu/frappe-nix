@@ -386,7 +386,7 @@ class TestRolloutByHand(RolloutRepoCase):
 		self.assertIn(("pr", "close", "3"), clis)
 		self.assertNotIn(("pr", "close", "4"), clis)
 		# The branch is not protected by the gates here: needs-review, never a bare merge --auto.
-		self.assertFalse(any(c[:2] == ("pr", "merge") for c in self.gh.cli_calls))
+		self.assertFalse(any(c[:3] == ("pr", "merge", "--auto") for c in self.gh.cli_calls))
 		self.assertTrue(any("needs-review" in c for c in self.gh.cli_calls))
 
 	def test_runs_again_over_its_own_commit(self):

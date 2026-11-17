@@ -7,15 +7,22 @@ the branch's rules and classic protection must require every enabled gate's ``ci
 context. If they don't, or the merge call fails (auto-merge disabled for the repository),
 the PR is labelled ``needs-review`` with a notice naming ``frappe-nix repo doctor``, and the
 step still succeeds. Every label is created (``--force``, idempotent) before it is applied.
-A PR labelled ``needs-review`` never keeps an auto-merge an earlier run enabled: a push by a
-user or App with write access leaves GitHub's auto-merge on, so it is turned off first.
+
+``gh pr merge --auto`` gets ``--match-head-commit <sha>`` with the head the verdict was made on
+(``head_sha``), so GitHub refuses to arm auto-merge on a PR whose head has moved since. A
+``review`` verdict (``hold``) first turns off an auto-merge an earlier run enabled, since
+GitHub keeps it on across a push by anyone with write access, and fails when it stays on.
+Every ``needs-review`` label goes through ``label``, which does the same first: a PR labelled
+``needs-review`` (a review verdict, a failed safety rule, a refused ``gh pr merge --auto``)
+never keeps an auto-merge an earlier run enabled.
 """
 
 import json
+import re
 
 from frappe_nix_tools.ci import LABELS, notice, verdict
 from frappe_nix_tools.common import github
-from frappe_nix_tools.common.report import EnvError
+from frappe_nix_tools.common.report import ConfigError, EnvError
 
 DOCTOR = "run `frappe-nix repo doctor` to see which repository settings it needs"
 
@@ -26,6 +33,30 @@ def ensure_label(name: str, repo: str = "") -> None:
 	if repo:
 		args += ["--repo", repo]
 	github.cli(*args)
+
+
+def disarm(pr_url: str) -> None:
+	"""Turn off the PR's auto-merge; an ``EnvError`` when it may still be on."""
+	res = github.cli("pr", "merge", "--disable-auto", pr_url)
+	if res.code == 0:
+		return
+	state = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
+	try:
+		off = state.code == 0 and json.loads(state.stdout).get("autoMergeRequest") is None
+	except (json.JSONDecodeError, AttributeError):
+		off = False
+	if not off:
+		raise EnvError(f"could not turn off auto-merge on {pr_url}: {res.stderr.strip()}")
+
+
+def label(pr_url: str, name: str, repo: str = "") -> None:
+	"""Apply ``name``; ``needs-review`` turns auto-merge off first (``disarm``), or raises."""
+	if name == "needs-review":
+		disarm(pr_url)
+	ensure_label(name, repo)
+	res = github.cli("pr", "edit", pr_url, "--add-label", name)
+	if res.code != 0:
+		notice(f"could not label {pr_url} {name}: {res.stderr.strip()}")
 
 
 def auto_merge_enabled(pr_url: str) -> bool:
@@ -40,38 +71,24 @@ def auto_merge_enabled(pr_url: str) -> bool:
 		return False
 
 
-def disable(pr_url: str) -> None:
-	"""Turn off the auto-merge an earlier run enabled on ``pr_url``, if it has one. A PR that now
-	needs a person must not merge on its own once its checks pass; failing to turn it off is
-	an error, not a notice."""
-	res = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
-	if res.code != 0:
-		raise EnvError(f"could not tell whether {pr_url} has auto-merge on: {res.stderr.strip()}")
-	try:
-		armed = bool(res.stdout.strip()) and bool(json.loads(res.stdout).get("autoMergeRequest"))
-	except (json.JSONDecodeError, AttributeError) as e:
-		raise EnvError(f"gh pr view {pr_url}: {e}") from e
-	if not armed:
-		return
-	res = github.cli("pr", "merge", "--disable-auto", pr_url)
-	if res.code != 0:
-		raise EnvError(f"could not turn off auto-merge on {pr_url}: {res.stderr.strip()}")
-	print(f"auto-merge turned off on {pr_url}")
+def hold(pr_url: str, repo: str, reason: str = "") -> str:
+	"""Leave the PR to a person: auto-merge off, then the ``needs-review`` label (``label``)."""
+	label(pr_url, "needs-review", repo)
+	if reason:
+		notice(reason)
+	print(f"labelled {pr_url} needs-review")
+	return "needs-review"
 
 
-def label(pr_url: str, name: str, repo: str = "") -> None:
-	if name == "needs-review":
-		disable(pr_url)
-	ensure_label(name, repo)
-	res = github.cli("pr", "edit", pr_url, "--add-label", name)
-	if res.code != 0:
-		notice(f"could not label {pr_url} {name}: {res.stderr.strip()}")
-
-
-def enable(pr_url: str, repo: str, integration: str, gates: list[str], merge_method: str) -> str:
+def enable(
+	pr_url: str, repo: str, integration: str, gates: list[str], merge_method: str, head_sha: str = ""
+) -> str:
 	"""``gh pr merge --auto`` when the gates protect ``integration``; else label ``needs-review``.
+	With ``head_sha``, GitHub arms it only while the PR's head is that commit.
 
 	Returns ``merging`` or ``needs-review``."""
+	if head_sha and not re.fullmatch(r"[0-9a-f]{40}", head_sha):
+		raise ConfigError(f"--head-sha {head_sha!r} is not a full commit SHA")
 	if not github.gates_protected(repo, integration, gates):
 		label(pr_url, "needs-review", repo)
 		contexts = ", ".join(github.gate_contexts(gates)) or "(no gates)"
@@ -83,7 +100,8 @@ def enable(pr_url: str, repo: str, integration: str, gates: list[str], merge_met
 	if auto_merge_enabled(pr_url):
 		print(f"auto-merge is already enabled on {pr_url}")
 		return "merging"
-	res = github.cli("pr", "merge", "--auto", f"--{merge_method}", pr_url)
+	match = ["--match-head-commit", head_sha] if head_sha else []
+	res = github.cli("pr", "merge", "--auto", f"--{merge_method}", *match, pr_url)
 	if res.code != 0:
 		label(pr_url, "needs-review", repo)
 		notice(f"`gh pr merge --auto` failed ({res.stderr.strip()}); labelled needs-review. {DOCTOR}")
@@ -104,6 +122,19 @@ def close(pr_url: str, moved: list[str]) -> None:
 	print(f"closed {pr_url}: {what} moves through frappe-nix repo rollout")
 
 
+def close_pins(pr_url: str, pins: list[str]) -> None:
+	"""A github-actions PR that moves only frappe-nix's reusable-workflow pins (S5)."""
+	what = ", ".join(pins) or "frappe-nix's reusable workflows"
+	body = (
+		f"This PR moves only frappe-nix pins ({what}). frappe-nix moves through its release rollout"
+		" (`frappe-nix repo rollout`), which moves flake.lock, the pins and the rendered files"
+		" together; a pin edited on its own never passes `ci / lint`'s sync check. Closing."
+	)
+	github.cli("pr", "comment", pr_url, "--body", body)
+	github.cli("pr", "close", pr_url)
+	print(f"closed {pr_url}: frappe-nix pins move through frappe-nix repo rollout")
+
+
 def apply(
 	decision: str,
 	*,
@@ -114,18 +145,27 @@ def apply(
 	merge_method: str,
 	relock_state: str = "",
 	moved: list[str] | None = None,
+	ecosystem: str = "",
+	locks: str = "",
+	head_sha: str = "",
 ) -> str:
-	"""Act on ``decision`` (a ``verdict`` value); returns what was done."""
+	"""Act on ``decision`` (a ``verdict`` value); returns what was done. ``moved`` names the
+	rollout inputs a nix PR moves, or the frappe-nix pins a github-actions PR moves."""
 	if decision == verdict.RELOCK:
-		decision = verdict.nix_verdict(relock_state)
+		decision = verdict.nix_verdict(relock_state, locks)
 		if decision == "wait":
+			# Not disarmed here: relock-push runs beside this job and may already have enabled
+			# auto-merge on the relock it pushed. app-deps.yml's disarm job turned off an earlier
+			# head's at the start of the run, and its hold job holds the PR when relock-push does
+			# not push.
 			print("nix: relock-push enables auto-merge after it pushes the relock")
 			return "wait"
 	if decision == verdict.CLOSE:
-		close(pr_url, moved or [])
+		if ecosystem == "github_actions":
+			close_pins(pr_url, moved or [])
+		else:
+			close(pr_url, moved or [])
 		return "closed"
 	if decision == verdict.AUTO:
-		return enable(pr_url, repo, integration, gates, merge_method)
-	label(pr_url, "needs-review", repo)
-	print(f"labelled {pr_url} needs-review")
-	return "needs-review"
+		return enable(pr_url, repo, integration, gates, merge_method, head_sha)
+	return hold(pr_url, repo)

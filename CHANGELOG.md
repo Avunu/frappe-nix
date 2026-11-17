@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.6.2](https://github.com/Avunu/frappe-nix/compare/v2.6.1...v2.6.2) (2026-11-17)
+
+
+### Bug Fixes
+
+* **app-standards:** keep Dependabot off frappe-nix reusable-workflow pins ([#278](https://github.com/Avunu/frappe-nix/issues/278)) ([66415f4](https://github.com/Avunu/frappe-nix/commit/66415f472e3cd24805b06b2bb3062e45cc160ea7))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#274](https://github.com/Avunu/frappe-nix/issues/274)) ([95597aa](https://github.com/Avunu/frappe-nix/commit/95597aa6070c001e2a6c9c21340e0b28983975a5))
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#280](https://github.com/Avunu/frappe-nix/issues/280)) ([d7cb2d3](https://github.com/Avunu/frappe-nix/commit/d7cb2d367c19752eb6ba1055c7c3a33804eb6a29))
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#270](https://github.com/Avunu/frappe-nix/issues/270)) ([89cce12](https://github.com/Avunu/frappe-nix/commit/89cce122150dd3d206169eb2f35660e819bf0fdc))
+* unblock frappe-nix-tools, cover stale node locks, fix Dependabot drift report ([#276](https://github.com/Avunu/frappe-nix/issues/276)) ([b426566](https://github.com/Avunu/frappe-nix/commit/b426566fd5b97da06e4975b0265d1fdc3abb0498))
+
 ## [2.6.1](https://github.com/Avunu/frappe-nix/compare/v2.6.0...v2.6.1) (2026-11-11)
 
 

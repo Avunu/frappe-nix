@@ -13,6 +13,8 @@ step                   prints                                                   
 ``verdict``            ``auto`` | ``review`` | ``relock`` | ``close``                ``verdict``
 ``automerge``          what it did                                                   ``result``
 ``enable-automerge``   what it did                                                   ``result``
+``hold``               what it did                                                   —
+``verify-relock``      ``ok`` | ``needs-review``, and why (exit 1 on ``reject``)     ``decision``
 ``relock-inputs``      ``ok`` | ``rollout-input-moved``                              ``state``, ``moved``
 ``relock-doctypes``    ``doctypes=true|false`` (``--probe``), or what it did         ``doctypes``
 ``relock-patch``       ``empty=true|false``                                          ``empty``
@@ -23,6 +25,12 @@ step                   prints                                                   
 ``fast-forward``       ``<branch> = <tag> = <sha>``                                  —
 ``drift``              one line per issue                                            —
 =====================  ============================================================  ==========================
+
+``verify-relock`` checks what the lock files of a relock say before a job that can hold the App's
+key pushes them (``frappe_nix_tools.ci.lockcheck``). ``hold`` turns off a PR's auto-merge and labels
+it ``needs-review``, for a relock that a person must look at; it fails when auto-merge stays on.
+``automerge`` and ``enable-automerge`` take ``--head-sha``: the head the verdict was computed on,
+passed to ``gh pr merge --auto --match-head-commit``.
 
 ``relock-doctypes`` is the typecheck gate's doctypes step without ``--check`` (``gate.doctypes``,
 one command for both): it rewrites ``types/doctypes.d.ts``, which a nix bump leaves stale, so
@@ -39,7 +47,7 @@ import json
 import os
 from pathlib import Path
 
-from frappe_nix_tools.ci import automerge, branches, drift, error, output, release, relock, verdict
+from frappe_nix_tools.ci import automerge, branches, drift, error, lockcheck, output, release, relock, verdict
 from frappe_nix_tools.commands import gate
 from frappe_nix_tools.common import appgates, repo
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError
@@ -95,6 +103,10 @@ def run_automerge(args: argparse.Namespace) -> int:
 		decision = _decide(args)
 	else:
 		raise ConfigError("give --verdict, or the fetch-metadata outputs (--ecosystem …)")
+	moved = _csv(args.moved)
+	if args.ecosystem == "github_actions" and not moved:
+		# A github-actions PR is closed only when it moves frappe-nix pins and nothing else.
+		moved = verdict.names(args.dependency_names)
 	result = automerge.apply(
 		decision,
 		pr_url=args.pr_url,
@@ -103,15 +115,39 @@ def run_automerge(args: argparse.Namespace) -> int:
 		gates=_gates(args),
 		merge_method=args.merge_method,
 		relock_state=args.relock,
-		moved=_csv(args.moved),
+		moved=moved,
+		ecosystem=args.ecosystem,
+		locks=args.locks,
+		head_sha=args.head_sha,
 	)
 	output(result=result)
 	return CLEAN
 
 
 def run_enable(args: argparse.Namespace) -> int:
-	result = automerge.enable(args.pr_url, _repo(args), args.integration, _gates(args), args.merge_method)
+	result = automerge.enable(
+		args.pr_url, _repo(args), args.integration, _gates(args), args.merge_method, args.head_sha
+	)
 	output(result=result)
+	return CLEAN
+
+
+def run_hold(args: argparse.Namespace) -> int:
+	automerge.hold(args.pr_url, _repo(args), args.reason)
+	return CLEAN
+
+
+def run_verify_relock(args: argparse.Namespace) -> int:
+	res = lockcheck.verify(Path(args.repo_dir), args.base, args.head)
+	decision = res.decision()
+	print(decision)
+	for reason in res.reasons():
+		print(f"  {reason}")
+	if decision == lockcheck.REJECT:
+		for reason in res.rejects:
+			error(f"refusing the relock: {reason}")
+		return DRIFT
+	output(decision=decision)
 	return CLEAN
 
 
@@ -270,6 +306,11 @@ def _merge_args(p: argparse.ArgumentParser) -> None:
 	p.add_argument("--integration", required=True, help="branches.integration")
 	p.add_argument("--gates", default=None, help="the enabled gates, comma-separated (default: the app's)")
 	p.add_argument("--merge-method", default="squash", choices=("squash", "merge", "rebase"))
+	p.add_argument(
+		"--head-sha",
+		default="",
+		help="the PR head the decision was made on: gh pr merge --auto --match-head-commit",
+	)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -293,11 +334,31 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 		"--relock", default="", help="relock-plan's state for nix: empty, patch or rollout-input-moved"
 	)
 	q.add_argument("--moved", default="", help="the rollout inputs a nix PR moves, comma-separated")
+	q.add_argument(
+		"--locks",
+		default="",
+		choices=("", lockcheck.OK, lockcheck.REVIEW),
+		help="verify-relock's decision on a nix PR's lock files; an empty relock auto-merges only on ok",
+	)
 	q.set_defaults(func=run_automerge)
 
 	q = sub.add_parser("enable-automerge", help="gh pr merge --auto under the safety rule (§4.5)")
 	_merge_args(q)
 	q.set_defaults(func=run_enable)
+
+	q = sub.add_parser("hold", help="turn a PR's auto-merge off and label it needs-review (§4.5)")
+	q.add_argument("--pr-url", required=True)
+	q.add_argument("--repo", default="")
+	q.add_argument("--reason", default="", help="the ::notice:: that says why")
+	q.set_defaults(func=run_hold)
+
+	q = sub.add_parser(
+		"verify-relock", help="check what a relock's lock files say before they are pushed (§4.5)"
+	)
+	q.add_argument("--base", required=True, help="a commit the integration branch holds (full SHA)")
+	q.add_argument("--head", required=True, help="the commit or tree to push (full object id)")
+	q.add_argument("--repo-dir", default=".", help="the git repository holding both (default: .)")
+	q.set_defaults(func=run_verify_relock)
 
 	q = sub.add_parser("relock-inputs", help="whether a nix PR moves frappe-nix or standards-profile")
 	q.add_argument("--base", required=True, help="the PR's base SHA (the merge-base with HEAD is used)")

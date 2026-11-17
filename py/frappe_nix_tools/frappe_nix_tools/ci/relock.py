@@ -3,10 +3,12 @@
 - ``moved_inputs``: a Dependabot ``nix`` PR that moves the ``frappe-nix`` or the
   ``standards-profile`` lock node is not relocked; it moves through ``frappe-nix repo
   rollout``, and the auto-merge job closes it.
-- ``make_patch``: ``git add -A`` then ``git diff --cached --binary``. Sync stages its writes and
-  new files (fresh ``nix/node-locks/**``) are untracked, so a plain ``git diff`` would miss
-  both. A patch that names any path under ``.github/workflows/`` is refused: ``GITHUB_TOKEN``
-  cannot push it, and no workflow ever pushes one (S29).
+- ``make_patch``: ``git add -A`` then ``git diff --cached --binary --no-renames``. Sync stages its
+  writes and new files (fresh ``nix/node-locks/**``) are untracked, so a plain ``git diff`` would
+  miss both. Without renames, a moved file is a delete and an add, which the push jobs accept
+  (they refuse a rename or copy), and both of its paths are checked. A patch that names any
+  path under ``.github/workflows/`` is refused: ``GITHUB_TOKEN`` cannot push it, and no
+  workflow ever pushes one (S29).
 - ``workflow_paths``: the paths of a commit range or of the index under ``.github/workflows/``.
 """
 
@@ -77,9 +79,9 @@ def make_patch(root: Path, out: Path) -> tuple[bool, list[str]]:
 	Returns ``(empty, refused)``: ``refused`` lists the workflow paths the patch names (and
 	then nothing should be pushed)."""
 	repo.git(root, "add", "-A")
-	patch = repo.git(root, "diff", "--cached", "--binary")
+	patch = repo.git(root, "diff", "--cached", "--binary", "--no-renames")
 	out.write_text(patch)
-	names = repo.git(root, "diff", "--cached", "--name-only").split("\n")
+	names = repo.git(root, "diff", "--cached", "--name-only", "--no-renames").split("\n")
 	return not patch.strip(), workflow_paths([n for n in names if n])
 
 

@@ -465,7 +465,7 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 	if not args.no_auto_merge and url:
 		automerge.enable(url, r, integration, app.gates, method)
 	elif url:
-		automerge.disable(url)
+		automerge.disarm(url)
 	return f"{r}: {url or head}"
 
 
