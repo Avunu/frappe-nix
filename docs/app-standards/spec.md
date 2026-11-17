@@ -676,7 +676,7 @@ Where an app's own Nix goes:
 - **Extra inputs** go in the local region `inputs`, inside the `inputs` attribute set. Its content is kept verbatim; a name that collides with a managed input (`frappe-nix`, `nixpkgs`, `frappe`, `standards-profile`, a sibling) is exit 2.
 - **Outputs** (packages, overlays, `nixosModules`, checks, extra dev-shell settings) go in `nix/local.nix`, a flake-parts module imported below; it can define `perSystem` and `flake.*` outputs and reads the extra inputs through `inputs`.
 - **Systems and binary caches** are the parameters above.
-- **The frappe-nix source.** `frappe-nix-url` replaces `github:Avunu/frappe-nix/release-<N>` with any flake URL: a tag (`…/v1.2.3`), a rev, a fork or a mirror. Phase A then re-locks only when the locked node's `original` differs from that URL (§3.3), so a pin is never undone. A GitHub fork is supported everywhere: the caller workflows' `uses:` and the no-Nix install read the locked `owner`/`repo` (§2.2 `frappe_nix`, §3.7, §4.1). A non-GitHub URL (`git+https:`) works for the dev shell and sync, and is exit 2 while `ci` is on, because a GitHub `uses:` can't name it. The skew rule (§3.7) compares the locked rev with the rev the running frappe-nix-tools was built from, so any pin works as long as the two agree.
+- **The frappe-nix source.** `frappe-nix-url` replaces `github:Avunu/frappe-nix/release-<N>` with any flake URL: a tag (`…/v1.2.3`), a rev, a fork or a mirror. Phase A then re-locks only when the locked node's `original` differs from that URL (§3.3), so a pin is never undone. A GitHub fork is supported everywhere: the caller workflows' `uses:` and the no-Nix install read the locked `owner`/`repo` (§2.2 `frappe_nix`, §3.7, §4.1), and the `deps`, `nightly` and `release` callers pass a fork as `frappe-nix-repo`, the one repository from which their jobs that can hold the GitHub App's key install frappe-nix-tools (any other `flake.lock` owner fails those jobs; `Avunu/frappe-nix` is the default). A non-GitHub URL (`git+https:`) works for the dev shell and sync, and is exit 2 while `ci` is on, because a GitHub `uses:` can't name it. The skew rule (§3.7) compares the locked rev with the rev the running frappe-nix-tools was built from, so any pin works as long as the two agree.
 
 **First opt-in.** When an app opts in (`--standards`) and its existing `flake.nix` has no managed header, sync compares it with what `templates/app/flake.nix` renders for the app. If they differ, sync exits 2, prints the diff of what would be replaced, and names the three places above; `--force` replaces it anyway. The same rule applies to `.envrc`. (Avunu fleet: PR A passes `--force` where an app's flake predates the template, after its diff is reviewed.)
 
@@ -2338,6 +2338,9 @@ jobs:
       registry-fork: <listing.registry-fork>
 {% endif %}
       pilot-assets: <pilot-assets.enable>
+{% if <fn> is not Avunu/frappe-nix %}
+      frappe-nix-repo: <fn>                 # a fork: where the jobs that can hold the App's key install frappe-nix-tools from
+{% endif %}
     secrets:
 {% if cfg.listing.publish %}
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
@@ -2394,6 +2397,9 @@ jobs:
 {% endif %}
       merge-method: <repo-policy.merge-methods[0]>
       relock-cron: "<ci.schedules.deps-relock>"
+{% if <fn> is not Avunu/frappe-nix %}
+      frappe-nix-repo: <fn>                 # a fork: where the jobs that can hold the App's key install frappe-nix-tools from
+{% endif %}
     secrets:
       NIX_CACHE_TOKEN: ${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}
       NIX_CACHE_READ_TOKEN: ${{ secrets.FRAPPE_NIX_CACHE_READ_TOKEN }}
@@ -2441,6 +2447,9 @@ jobs:
 {% endif %}
 {% if cfg.listing.publish %}
       publish: ${{ vars.MARKETPLACE_PUBLISH == 'true' }}
+{% endif %}
+{% if <fn> is not Avunu/frappe-nix %}
+      frappe-nix-repo: <fn>                 # a fork: where the jobs that can hold the App's key install frappe-nix-tools from
 {% endif %}
     secrets:
       NIX_CACHE_TOKEN: ${{ secrets.FRAPPE_NIX_CACHE_TOKEN }}

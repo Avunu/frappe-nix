@@ -23,7 +23,10 @@ name: app-deps
 # and a new package is pushed for review, with auto-merge off; what a plan job decides (whether
 # a rollout input moved, or that there was nothing to relock) is computed again here; every
 # `gh pr merge --auto` names the head it was decided on (--match-head-commit); and
-# frappe-nix-tools comes from Avunu/frappe-nix only, hash-locked.
+# frappe-nix-tools comes only from frappe-nix-repo (Avunu/frappe-nix, or the fork the caller
+# names), hash-locked. Since GitHub keeps auto-merge on across a push, every new head of a nix
+# PR starts with it off (disarm), and a head no job reached a verdict on is held (hold), both
+# with GITHUB_TOKEN alone.
 
 on:
   workflow_call:
@@ -58,6 +61,13 @@ on:
         description: ci.schedules.deps-relock; "" for no weekly relock
         type: string
         default: "0 8 * * 1"
+      frappe-nix-repo:
+        description: >-
+          The repository frappe-nix-tools is installed from in the jobs that can hold the GitHub
+          App's key, as owner/name: the app's flake.lock must lock frappe-nix from it. A fork's
+          callers pass the fork (the repository whose workflows they call).
+        type: string
+        default: Avunu/frappe-nix
       frappe-nix-override:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
@@ -91,6 +101,32 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
+  # A nix PR's verdict comes only after relock-plan (up to an hour), and GitHub keeps an
+  # auto-merge an earlier head's run enabled across Dependabot's push of a new head (a group
+  # refreshed in place): it checks --match-head-commit when auto-merge is enabled, not when it
+  # merges. So every new head of a nix PR starts with auto-merge off, until relock-push or
+  # auto-merge enables it again for that head. GITHUB_TOKEN only, nothing checked out or run.
+  disarm:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/') && inputs.auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --disable-auto
+      pull-requests: write # gh pr merge --disable-auto
+    steps:
+      - name: Turn off auto-merge an earlier head's run enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" != true ]; then
+            echo "auto-merge is not enabled on $PR_URL"
+            exit 0
+          fi
+          gh pr merge --disable-auto "$PR_URL"
+          echo "::notice::auto-merge turned off on $PR_URL until this head is relocked and checked"
+
   relock-plan:
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/')
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
@@ -429,7 +465,7 @@ jobs:
           enable-cache: "false"
 
       # This job can hold the App's key, so nothing it installs is resolved at run time:
-      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the integration branch's
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
       # flake.lock pins (never the PR's), every dependency from that revision's
       # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
       # against a hashed flit_core. uv is pinned above, without its cache, and reads no
@@ -441,6 +477,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -453,12 +490,13 @@ jobs:
               | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
               exit 1
             fi
             git init -q "$tools/src"
-            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
             git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
             project="$tools/src/py/frappe_nix_tools"
           fi
@@ -550,6 +588,8 @@ jobs:
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # enable auto-merge, label or close the PR
+    outputs:
+      result: ${{ steps.decide.outputs.result }}
     steps:
       - id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
@@ -607,7 +647,7 @@ jobs:
           enable-cache: "false"
 
       # This job can hold the App's key, so nothing it installs is resolved at run time:
-      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the integration branch's
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
       # flake.lock pins (never the PR's), every dependency from that revision's
       # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
       # against a hashed flit_core. uv is pinned above, without its cache, and reads no
@@ -619,6 +659,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -631,12 +672,13 @@ jobs:
               | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
               exit 1
             fi
             git init -q "$tools/src"
-            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
             git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
             project="$tools/src/py/frappe_nix_tools"
           fi
@@ -680,7 +722,8 @@ jobs:
 
       # The verdict is made on the event's head, and GitHub arms auto-merge only while the PR's
       # head is still that commit (--head-sha, gh pr merge --match-head-commit).
-      - name: The decision table
+      - id: decide
+        name: The decision table
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -723,6 +766,42 @@ jobs:
             fi
           fi
           frappe-nix ci automerge "${args[@]}"
+
+  # A head no job reached a verdict on is held: relock-plan, relock-push or auto-merge failed
+  # or was cancelled (relock-plan's own outputs, a false rollout-input-moved, a patch
+  # relock-push refuses), or auto-merge left a nix PR to relock-push (`wait`) and relock-push
+  # did not push. Auto-merge off, which disarm may not have done (a run that did not start
+  # it), and the needs-review label. GITHUB_TOKEN only, nothing checked out or run.
+  hold:
+    needs: [disarm, relock-plan, relock-push, auto-merge]
+    if: >-
+      always() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+      && inputs.auto-merge
+      && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      || (needs.auto-merge.outputs.result == 'wait' && needs.relock-push.result != 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --disable-auto
+      pull-requests: write # the label, and auto-merge off
+    steps:
+      - name: Hold for review (auto-merge off, labelled needs-review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if ! gh pr merge --disable-auto "$PR_URL"; then
+            on="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [ "$on" != false ]; then
+              echo "::error::could not turn off auto-merge on $PR_URL"
+              exit 1
+            fi
+          fi
+          gh label create needs-review --repo "$GITHUB_REPOSITORY" --color d93f0b \
+            --description "Not merged automatically; a person reviews it" --force
+          gh pr edit "$PR_URL" --add-label needs-review
+          echo "::notice::no job reached a verdict on this head (a job above failed, or the relock was not pushed): auto-merge is off and a person reviews it"
 
   sweep:
     if: (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch'
@@ -793,7 +872,7 @@ jobs:
           enable-cache: "false"
 
       # This job can hold the App's key, so nothing it installs is resolved at run time:
-      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the integration branch's
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
       # flake.lock pins (never the PR's), every dependency from that revision's
       # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
       # against a hashed flit_core. uv is pinned above, without its cache, and reads no
@@ -805,6 +884,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -817,12 +897,13 @@ jobs:
               | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
               exit 1
             fi
             git init -q "$tools/src"
-            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
             git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
             project="$tools/src/py/frappe_nix_tools"
           fi
@@ -1126,7 +1207,7 @@ jobs:
           enable-cache: "false"
 
       # This job can hold the App's key, so nothing it installs is resolved at run time:
-      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the integration branch's
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
       # flake.lock pins (never the PR's), every dependency from that revision's
       # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
       # against a hashed flit_core. uv is pinned above, without its cache, and reads no
@@ -1138,6 +1219,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -1150,12 +1232,13 @@ jobs:
               | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
               exit 1
             fi
             git init -q "$tools/src"
-            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
             git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
             project="$tools/src/py/frappe_nix_tools"
           fi
@@ -1171,11 +1254,18 @@ jobs:
 
       # What the lock files say, before the App's token is minted: checked against the commit the
       # plan relocked (on the integration branch) by its frappe-nix-tools (ci/lockcheck.py, which
-      # reads git only). A reject fails here and nothing is pushed; needs-review is pushed with
-      # auto-merge off and the PR labelled; only ok enables auto-merge.
+      # reads git only), and against the integration branch's head as well, since the plan job,
+      # which ran third-party code, names that commit itself and could name an older one whose
+      # locks still trust a source the branch has since dropped. The stricter decision holds: a
+      # reject in either fails here and nothing is pushed; needs-review in either is pushed with
+      # auto-merge off and the PR labelled; only ok in both enables auto-merge.
       - id: locks
         name: Check what the lock files say, against the commit the plan relocked
         run: frappe-nix ci verify-relock --base "$(git rev-parse HEAD)" --head "$(git write-tree)"
+
+      - id: locks-head
+        name: Check what the lock files say, against the integration branch's head
+        run: frappe-nix ci verify-relock --base "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" --head "$(git write-tree)"
 
       # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
       # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
@@ -1201,7 +1291,7 @@ jobs:
           INTEGRATION: ${{ inputs.integration-branch }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
           METHOD: ${{ inputs.merge-method }}
-          LOCKS: ${{ steps.locks.outputs.decision }}
+          LOCKS: ${{ steps.locks.outputs.decision == 'ok' && steps.locks-head.outputs.decision == 'ok' && 'ok' || 'needs-review' }}
         run: |
           set -euo pipefail
           branch=standards/relock-python

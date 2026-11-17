@@ -50,6 +50,9 @@ jobs:
       registry-fork: {{ cfg.listing["registry-fork"] }}
 {% endif %}
       pilot-assets: {{ "true" if modules["pilot-assets"] else "false" }}
+{% if (frappe_nix.owner ~ "/" ~ frappe_nix.name) | lower != "avunu/frappe-nix" %}
+      frappe-nix-repo: {{ frappe_nix.owner }}/{{ frappe_nix.name }}
+{% endif %}
     secrets:
 {% if publish %}
       REGISTRY_TOKEN: {% raw %}${{ secrets.REGISTRY_TOKEN }}{% endraw %}

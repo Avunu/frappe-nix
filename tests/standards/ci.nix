@@ -29,14 +29,20 @@
 #                           ancestor and a commit that is not; the hosted jobs compute
 #                           whether a rollout input moved themselves, with one jq program
 #                           run here against relock.moved_inputs; every job that can hold
-#                           the App's key installs frappe-nix-tools hash-locked (from
-#                           Avunu/frappe-nix only), with a pinned uv and no uv cache; the
+#                           the App's key installs frappe-nix-tools hash-locked, with a
+#                           pinned uv and no uv cache; the
 #                           relock push jobs, and auto-merge on a nix PR with nothing to
 #                           relock, run `frappe-nix ci verify-relock` (what the lock files say,
 #                           ci/lockcheck.py) before the token is minted, hold the PR before a
 #                           push unless it says ok, and enable auto-merge only on ok; every
 #                           `gh pr merge --auto` names the head it was decided on
-#                           (--head-sha); frappe-nix's own dependabot-auto-merge.yml merges
+#                           (--head-sha); the weekly relock is checked against the plan's
+#                           commit and the integration branch's head; a nix PR's new head
+#                           starts with auto-merge off (disarm) and a head no job reached a
+#                           verdict on is held (hold), both with GITHUB_TOKEN alone; the key
+#                           jobs install frappe-nix-tools only from the frappe-nix-repo input
+#                           (Avunu/frappe-nix unless a fork's caller names the fork);
+#                           frappe-nix's own dependabot-auto-merge.yml merges
 #                           only nix, uv and pre-commit bumps and holds the rest
 #                           (github-actions above all); and no reusable workflow from
 #                           elsewhere gets the key at a pin that runs it on a self-hosted
@@ -154,6 +160,9 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         def secrets_of(job):
             return set(SECRET.findall(json.dumps(job)))
 
+        def on_of(name):
+            return load(name)[1]
+
         # Every job that mints a GitHub App token or reads the App's key runs on ubuntu-latest,
         # written as such: never a caller's `runs-on`, never a shared self-hosted runner. A job
         # that calls a reusable workflow (`uses:`) only passes the key on, and that workflow's
@@ -231,8 +240,11 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
                                  "--require-hashes --no-build", "--offline --no-deps --no-build-isolation"):
                         assert want in run, (wf, name, want)
                     if wf.startswith("app-"):
-                        assert '[ "''${src,,}" != avunu/frappe-nix ]' in run, (wf, name)
-                        assert '^[0-9a-f]{40}$' in run and 'https://github.com/Avunu/frappe-nix.git "$rev"' in run, (wf, name)
+                        assert '[ "''${src,,}" != "''${ALLOWED,,}" ]' in run, (wf, name)
+                        assert '^[0-9a-f]{40}$' in run and '"https://github.com/$ALLOWED.git" "$rev"' in run, (wf, name)
+                        assert s["env"]["ALLOWED"] == "''${{ inputs.frappe-nix-repo }}", (wf, name, s["env"])
+                        frappe_nix_repo = on_of(wf)["workflow_call"]["inputs"]["frappe-nix-repo"]
+                        assert frappe_nix_repo["default"] == "Avunu/frappe-nix", (wf, frappe_nix_repo)
                     tails.add(run[run.index("uv --no-config export"):])
         assert len(tails) == 1, "one install, after the source is chosen"
 
@@ -334,6 +346,33 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         upgrade_steps = doc["jobs"]["relock-upgrade-push"]["steps"]
         upgrade_locks = next(s for s in upgrade_steps if s.get("id") == "locks")["run"]
         assert upgrade_locks == 'frappe-nix ci verify-relock --base "$(git rev-parse HEAD)" --head "$(git write-tree)"', upgrade_locks
+        # The plan job names the commit it relocked: checked against the integration branch's head
+        # too, and only ok in both is ok.
+        upgrade_head = next(s for s in upgrade_steps if s.get("id") == "locks-head")["run"]
+        assert upgrade_head == 'frappe-nix ci verify-relock --base "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" --head "$(git write-tree)"', upgrade_head
+        upgrade_ids = [s.get("id") for s in upgrade_steps]
+        assert upgrade_ids.index("locks-head") < upgrade_ids.index("app-token"), upgrade_ids
+        want = "''${{ steps.locks.outputs.decision == 'ok' && steps.locks-head.outputs.decision == 'ok' && 'ok' || 'needs-review' }}"
+        assert upgrade_steps[-1]["env"]["LOCKS"] == want, upgrade_steps[-1]["env"]
+        # GitHub keeps auto-merge on across a push: every new head of a nix PR starts with it off
+        # (disarm), and a head no job reached a verdict on is held (hold), with GITHUB_TOKEN alone.
+        for name in ("disarm", "hold"):
+            job = doc["jobs"][name]
+            assert job["runs-on"] == "ubuntu-latest" and not secrets_of(job), name
+            assert set(job["permissions"]) == {"contents", "pull-requests"}, (name, job["permissions"])
+            assert [list(s) for s in job["steps"]] == [["name", "env", "run"]], (name, job["steps"])
+            assert job["steps"][0]["env"]["GH_TOKEN"] == "''${{ github.token }}", name
+            assert "gh pr merge --disable-auto" in job["steps"][0]["run"], name
+        assert "startsWith(github.head_ref, 'dependabot/nix/')" in doc["jobs"]["disarm"]["if"], doc["jobs"]["disarm"]
+        assert not any(doc["jobs"][n].get("needs") for n in ("disarm", "relock-plan")), "disarm runs at once"
+        hold_job = doc["jobs"]["hold"]
+        assert hold_job["needs"] == ["disarm", "relock-plan", "relock-push", "auto-merge"], hold_job["needs"]
+        hold_if = " ".join(hold_job["if"].split())
+        for want in ("always()", "contains(needs.*.result, 'failure')", "contains(needs.*.result, 'cancelled')",
+                     "needs.auto-merge.outputs.result == 'wait' && needs.relock-push.result != 'success'"):
+            assert want in hold_if, (want, hold_if)
+        assert hold_job["steps"][0]["run"].index("--disable-auto") < hold_job["steps"][0]["run"].index("--add-label needs-review")
+        assert doc["jobs"]["auto-merge"]["outputs"]["result"] == "''${{ steps.decide.outputs.result }}"
         upgrade = upgrade_steps[-1]["run"]
         assert upgrade.index("frappe-nix ci hold") < upgrade.index("git push --force"), upgrade
         assert 'if [ "$LOCKS" != ok ]; then\n  frappe-nix ci hold' in upgrade, upgrade

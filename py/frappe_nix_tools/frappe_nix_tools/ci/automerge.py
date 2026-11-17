@@ -149,6 +149,10 @@ def apply(
 	if decision == verdict.RELOCK:
 		decision = verdict.nix_verdict(relock_state, locks)
 		if decision == "wait":
+			# Not disarmed here: relock-push runs beside this job and may already have enabled
+			# auto-merge on the relock it pushed. app-deps.yml's disarm job turned off an earlier
+			# head's at the start of the run, and its hold job holds the PR when relock-push does
+			# not push.
 			print("nix: relock-push enables auto-merge after it pushes the relock")
 			return "wait"
 	if decision == verdict.CLOSE:

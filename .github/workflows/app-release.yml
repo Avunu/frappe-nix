@@ -33,6 +33,13 @@ on:
         description: listing.registry-fork; required when publish is true
         type: string
         default: ""
+      frappe-nix-repo:
+        description: >-
+          The repository frappe-nix-tools is installed from in the jobs that can hold the GitHub
+          App's key, as owner/name: the app's flake.lock must lock frappe-nix from it. A fork's
+          callers pass the fork (the repository whose workflows they call).
+        type: string
+        default: Avunu/frappe-nix
       frappe-nix-override:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
@@ -198,7 +205,7 @@ jobs:
           enable-cache: "false"
 
       # This job can hold the App's key, so nothing it installs is resolved at run time:
-      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the pushed commit's
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the pushed commit's
       # flake.lock pins, every dependency from that revision's py/frappe_nix_tools/uv.lock by hash
       # and as a wheel, and only frappe-nix-tools itself built, against a hashed flit_core. uv is
       # pinned above, without its cache, and reads no configuration. Before the App's token is
@@ -208,6 +215,7 @@ jobs:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
           FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
         working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -224,12 +232,13 @@ jobs:
             node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' "$GITHUB_WORKSPACE/flake.lock")"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
               exit 1
             fi
             git init -q "$tools/src"
-            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
             git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
             project="$tools/src/py/frappe_nix_tools"
             echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
