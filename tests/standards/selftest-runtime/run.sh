@@ -423,6 +423,9 @@ EOF
     cd sites && ../env/bin/python '$HERE/rename_state.py' record $SITE standards_fixture '$WORK/rename-state.json'
     frappe-test --down"
   ok "recorded: a note, the daily job stopped, the patch run once"
+  # Diagnostics only: whether frappe-test --down left a bench up in this directory
+  # for the renamed bench to share its ports, its database and its site lock.
+  dev "$app" bash "$HERE/run.sh" down-check || true
 
   expect 0 "$WORK/rename-dry.log" dev "$app" frappe-rename-app code --from standards_fixture --to standards_fixture2 --dry-run
   grep -q 'rename from standards_fixture/api.py' "$WORK/rename-dry.log" || fail "code --dry-run shows no rename"
@@ -440,6 +443,111 @@ EOF
   expect 0 "$WORK/rename-site.log" dev "$app" bash "$HERE/run.sh" rename-site
 }
 
+# Every process whose working directory or command line is under $DEVENV_ROOT:
+# a bench an earlier step left running in this directory shows here.
+procs_in_root() {
+  local d cwd cmd
+  for d in /proc/[0-9]*; do
+    cwd="$(readlink "$d/cwd" 2> /dev/null || true)"
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2> /dev/null || true)"
+    case "$cwd $cmd" in
+      *"$DEVENV_ROOT"*) echo "  pid ${d#/proc/} cwd=$cwd: ${cmd:0:240}" ;;
+    esac
+  done
+}
+
+# Who holds the site's reconcile-apps lock: flock(2) holders by inode, and any
+# process with the file open. reconcile-apps blocks on this lock before it prints.
+lock_holders() {
+  local lock="$1" ino fd
+  ino="$(stat -c %i "$lock")"
+  echo "  /proc/locks for inode $ino:"
+  grep -E ":$ino " /proc/locks | sed 's/^/    /' || echo "    none"
+  echo "  open on the lock file:"
+  for fd in /proc/[0-9]*/fd/*; do
+    [ "$(readlink "$fd" 2> /dev/null || true)" = "$lock" ] && echo "    pid ${fd#/proc/} (${fd##*/})"
+  done
+  return 0
+}
+
+# Inside a dev shell: is its bench still up, and what in this directory is running.
+# Never fails: it reports, for the run that follows to be read against.
+cmd_down_check() {
+  group "down-check: is the bench still up after frappe-test --down"
+  if pc_up; then
+    echo "process-compose still answers on $PC_SOCKET_PATH"
+  else
+    echo "process-compose is down"
+  fi
+  echo "processes under $DEVENV_ROOT:"
+  procs_in_root
+  endgroup
+}
+
+# The rename and reconcile processes, with the kernel's view of each: its state,
+# what it sleeps in (wchan) and the syscall it is in. A Python process's own stack
+# is not readable from outside it, so this is the next best thing.
+rename_procs() {
+  local d cmd
+  for d in /proc/[0-9]*; do
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2> /dev/null || true)"
+    case "$cmd" in
+      *frappe_rename_app.py* | *reconcile-apps*)
+        echo "  pid ${d#/proc/} $(awk '/^State/ {print $2, $3}' "$d/status" 2> /dev/null) wchan=$(cat "$d/wchan" 2> /dev/null) syscall=[$(cat "$d/syscall" 2> /dev/null)]"
+        echo "    ${cmd:0:240}"
+        ;;
+    esac
+  done
+  return 0
+}
+
+# MariaDB's view while the rename is stuck: the process list, the open transactions
+# and what they wait on, the InnoDB transactions section, and the metadata locks.
+# Read-only; a failure is printed and the rest still runs.
+db_state() {
+  local client sock="$DEVENV_RUNTIME/mysql.sock"
+  client="$(command -v mariadb || command -v mysql || true)"
+  if [ -z "$client" ]; then
+    echo "  no mariadb client in the dev shell"
+    return 0
+  fi
+  q() { MYSQL_PWD="" timeout 30 "$client" --socket="$sock" -uroot "$@" 2>&1 || true; }
+  echo "  SHOW FULL PROCESSLIST:"
+  q -e "SHOW FULL PROCESSLIST"
+  echo "  information_schema.innodb_trx:"
+  q -e "SELECT trx_id, trx_state, trx_started, trx_mysql_thread_id, trx_requested_lock_id, trx_wait_started, trx_tables_locked, trx_rows_locked, LEFT(trx_query, 200) AS trx_query FROM information_schema.innodb_trx"
+  echo "  InnoDB status, TRANSACTIONS section:"
+  q -e "SHOW ENGINE INNODB STATUS\G" | sed -n '/^TRANSACTIONS/,/^FILE I\/O/p' | head -n 150
+  echo "  metadata locks not granted, or outside the system schemas:"
+  q -e "SELECT OBJECT_TYPE, OBJECT_SCHEMA, OBJECT_NAME, LOCK_TYPE, LOCK_STATUS, OWNER_THREAD_ID FROM performance_schema.metadata_locks WHERE LOCK_STATUS <> 'GRANTED' OR OBJECT_SCHEMA NOT IN ('mysql', 'performance_schema', 'information_schema') LIMIT 200"
+}
+
+# Inside a dev shell, after a bench did not come up: what its reconcile-apps was
+# waiting on, what process-compose has, what else runs in this directory, and what
+# the database is doing.
+diagnose_no_bench() {
+  local lock="$FRAPPE_BENCH_ROOT/sites/$SITE/locks/reconcile-apps.lock"
+  group "diagnostics: the bench that did not come up"
+  if [ -e "$lock" ]; then
+    echo "site lock: $lock"
+    lock_holders "$lock"
+  else
+    echo "site lock: $lock does not exist (reconcile-apps never reached it)"
+  fi
+  echo "rename and reconcile processes:"
+  rename_procs
+  echo "database:"
+  db_state
+  echo "process-compose:"
+  timeout 10 process-compose -U -u "$PC_SOCKET_PATH" process list -o wide 2>&1 || echo "  no process-compose answers on $PC_SOCKET_PATH"
+  echo "processes under $DEVENV_ROOT:"
+  procs_in_root
+  echo "common_site_config.json:"
+  cat "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2> /dev/null || echo "  missing"
+  echo
+  endgroup
+}
+
 # Inside the renamed app's dev shell.
 cmd_rename_site() {
   devenv up -D
@@ -450,7 +558,10 @@ cmd_rename_site() {
     port=""
     sleep 2
   done
-  [ -n "$port" ] || fail "the renamed bench did not come up (did reconcile-apps rename the site?)"
+  if [ -z "$port" ]; then
+    diagnose_no_bench
+    fail "the renamed bench did not come up (did reconcile-apps rename the site?)"
+  fi
   # The installed_apps global (list-apps reads Installed Application, which only migrate rebuilds).
   (cd "$FRAPPE_BENCH_ROOT" && env/bin/bench --site "$SITE" execute frappe.get_installed_apps) | tee "$WORK/rename-apps.txt"
   grep -q '"standards_fixture2"' "$WORK/rename-apps.txt" || fail "devenv up did not rename the site (renamedApps)"
@@ -686,6 +797,7 @@ case "${1:-}" in
   up-and-report) cmd_up_and_report ;;
   rename) cmd_rename ;; # resume after main's ports, by hand
   rename-site) cmd_rename_site ;;
+  down-check) cmd_down_check ;;
   erpnext)
     job_port_offset erpnext
     cmd_erpnext
