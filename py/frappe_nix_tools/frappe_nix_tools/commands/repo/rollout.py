@@ -24,9 +24,14 @@ branch (edited when it is open already), the old per-release ``standards/frappe-
 pull requests closed, and, unless ``--no-auto-merge``, auto-merge under the safety rule of
 §4.5 (``frappe-nix ci enable-automerge``): only when the integration branch requires every
 enabled gate, else the label ``needs-review``. A branch that has a commit by anyone but
-``avunu-ci[bot]`` (or an earlier ``chore(deps): frappe-nix`` commit of yours) is left alone,
-with a comment on its pull request. A repository whose ``profile`` is a built-in is skipped
-by ``--profile-to``. ``--dry-run`` prints each repository's plan and runs nothing.
+``avunu-rollout[bot]`` (or an earlier ``chore(deps): frappe-nix`` commit of yours) is left
+alone, with a comment on its pull request, while that pull request is open or no pull request
+holds those commits. Once its latest pull request is merged or closed and the branch is still
+that pull request's head, the branch is stale and the next rollout replaces it (with
+``--force-with-lease``). With ``--no-auto-merge``, or when the safety rule fails, an
+auto-merge an earlier run enabled is turned off. A repository whose ``profile`` is a
+built-in is skipped by ``--profile-to``. ``--dry-run`` prints each repository's plan and
+runs nothing.
 
 ``--emit-patch DIR`` (with one ``--repo``, ``--to`` and ``--base <sha>``) is rollout.yml's
 plan job: it checks out exactly ``--base``, which must be on the integration branch, runs
@@ -67,8 +72,9 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 #: The one branch a frappe-nix rollout uses, and the per-release ones it replaces.
 BRANCH = "standards/frappe-nix"
 LEGACY_PREFIX = "standards/frappe-nix-v"
-#: The rollout's own commits (rollout.yml commits as the avunu-ci App).
-BOT = "avunu-ci[bot]"
+#: The rollout's own commits: rollout.yml commits as the avunu-rollout App, whose key only the
+#: frappe-nix-rollout environment holds (docs/app-standards/github.md, Rollout).
+BOT = "avunu-rollout[bot]"
 
 # The environment the repository's own code (its flake, relock, sync) never sees.
 _SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
@@ -272,7 +278,7 @@ def remote_head(root: Path, head: str) -> str:
 
 def foreign_commits(root: Path, head: str, integration: str, own_email: str) -> list[str]:
 	"""The authors of the commits on ``origin``'s ``head`` that the integration branch lacks,
-	other than the rollout's: ``avunu-ci[bot]``, and an earlier ``chore(deps): frappe-nix``
+	other than the rollout's: ``avunu-rollout[bot]``, and an earlier ``chore(deps): frappe-nix``
 	commit by ``own_email`` (this command run by hand)."""
 	ref = f"refs/remotes/origin/{head}"
 	sh(git_safe("fetch", "-q", "origin", f"+refs/heads/{head}:{ref}"), root)
@@ -293,6 +299,16 @@ def open_pr(r: str, head: str) -> dict | None:
 	owner = r.split("/", 1)[0]
 	pulls = github.get(f"repos/{r}/pulls?state=open&head={owner}:{head}") or []
 	return pulls[0] if pulls else None
+
+
+def stale(r: str, head: str, observed: str) -> bool:
+	"""Whether ``head`` (at ``observed``) is what its latest pull request, now merged or closed,
+	left behind: no open pull request holds its commits, so a rollout may replace it."""
+	owner = r.split("/", 1)[0]
+	query = f"state=all&head={owner}:{head}&sort=created&direction=desc&per_page=1"
+	pulls = github.get_or_none(f"repos/{r}/pulls?{query}") or []
+	pr = pulls[0] if pulls else None
+	return bool(pr) and pr.get("state") == "closed" and (pr.get("head") or {}).get("sha") == observed
 
 
 def close_legacy(r: str, url: str) -> list[int]:
@@ -372,6 +388,12 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 	observed = remote_head(root, head)
 	if observed:
 		others = foreign_commits(root, head, integration, _own_email(root))
+		if others and stale(r, head, observed):
+			print(
+				f"{r}: {head} has commits by {', '.join(others)}, but its pull request is closed: replacing it",
+				file=sys.stderr,
+			)
+			others = []
 		if others:
 			pr = open_pr(r, head)
 			if pr:
@@ -383,8 +405,8 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 					r,
 					"--body",
 					f"`frappe-nix repo rollout` did not update `{head}` to {subject}: it has commits by"
-					f" {', '.join(others)}. Merge or close this pull request, or delete the branch, and"
-					" the next rollout moves it.",
+					f" {', '.join(others)}. Merge or close this pull request and the next rollout"
+					" replaces the branch.",
 				)
 			return f"{r}: skipped, {head} has commits by {', '.join(others)}"
 	sh(git_safe("checkout", "-q", "-B", head), root)
@@ -419,6 +441,8 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 			print(f"{r}: closed {', '.join(f'#{n}' for n in closed)} ({LEGACY_PREFIX}*)", file=sys.stderr)
 	if not args.no_auto_merge and url:
 		automerge.enable(url, r, integration, app.gates, method)
+	elif url:
+		automerge.disable(url)
 	return f"{r}: {url or head}"
 
 

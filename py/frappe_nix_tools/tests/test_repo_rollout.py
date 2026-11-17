@@ -308,6 +308,63 @@ class TestRolloutByHand(RolloutRepoCase):
 		self.assertNotIn("skipped", text)
 		self.assertEqual(sum(c[:2] == ("pr", "create") for c in self.gh.cli_calls), 2)
 
+	def human_commit(self) -> str:
+		"""A commit by someone else pushed to standards/frappe-nix; its SHA."""
+		human = self.tmp / "human"
+		subprocess.run(["git", "clone", "-q", str(self.origin), str(human)], check=True)
+		git(human, "checkout", "-q", "-b", "standards/frappe-nix")
+		(human / "fix.txt").write_text("by hand\n")
+		git(human, "add", "-A")
+		env = {**os.environ, "GIT_AUTHOR_NAME": "Human", "GIT_AUTHOR_EMAIL": "h@example.com"}
+		subprocess.run(["git", "-C", str(human), "commit", "-q", "-m", "fix"], check=True, env=env)
+		git(human, "push", "-q", "origin", "standards/frappe-nix")
+		return git(self.origin, "rev-parse", "standards/frappe-nix").strip()
+
+	def latest_pr(self, state: str, head_sha: str) -> None:
+		query = "state=all&head=example:standards/frappe-nix&sort=created&direction=desc&per_page=1"
+		self.gh.routes[("GET", f"repos/{R}/pulls?{query}")] = [
+			{"number": 5, "state": state, "head": {"sha": head_sha}}
+		]
+
+	def test_replaces_the_branch_a_closed_pr_left(self):
+		"""Closing (or squash-merging) the PR lifts the pause: no open PR holds the commits."""
+		before = self.human_commit()
+		self.latest_pr("closed", before)
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertIn("replacing it", text)
+		subject = git(self.origin, "log", "-1", "--format=%s", "standards/frappe-nix").strip()
+		self.assertEqual(subject, f"chore(deps): frappe-nix {TAG}")
+
+	def test_keeps_a_branch_that_moved_after_its_pr_closed(self):
+		before = self.human_commit()
+		self.latest_pr("closed", "f" * 40)
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertIn("has commits by Human", text)
+		self.assertEqual(git(self.origin, "rev-parse", "standards/frappe-nix").strip(), before)
+
+	def test_no_auto_merge_turns_off_an_earlier_one(self):
+		self.gh.cli_results[("pr", "view")] = github.Result(
+			0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}})
+		)
+		code, out, err = run_cli("repo", "rollout", "--repo", R, "--to", TAG, "--no-auto-merge")
+		self.assertEqual(code, 0, out + err)
+		self.assertTrue(
+			any(c[:3] == ("pr", "merge", "--disable-auto") for c in self.gh.cli_calls), self.gh.cli_calls
+		)
+
+	def test_needs_review_turns_off_an_earlier_auto_merge(self):
+		self.gh.cli_results[("pr", "view")] = github.Result(
+			0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}})
+		)
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		calls = self.gh.cli_calls
+		off = [i for i, c in enumerate(calls) if c[:3] == ("pr", "merge", "--disable-auto")]
+		label = [i for i, c in enumerate(calls) if c[:2] == ("pr", "edit") and "needs-review" in c]
+		self.assertTrue(off and label and off[0] < label[0], calls)
+
 	def test_leaves_a_branch_with_someone_elses_commit(self):
 		human = self.tmp / "human"
 		subprocess.run(["git", "clone", "-q", str(self.origin), str(human)], check=True)

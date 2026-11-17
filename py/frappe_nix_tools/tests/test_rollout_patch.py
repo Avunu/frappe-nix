@@ -237,6 +237,22 @@ class TestNeedsReview(VerifyCase):
 		doc = self.verify(self.plan(uv=uv_lock(TS, requests="2.33.0")))
 		self.assertDecision(doc, "needs-review", "moves requests")
 
+	def test_the_same_version_from_another_file_needs_review(self):
+		"""orjson 3.10.0 is still orjson 3.10.0 by name, but its sdist is another project's."""
+		uv = uv_lock(TS).replace(
+			'packages/orjson-3.10.0.tar.gz", hash = "sha256:00"',
+			'packages/evil-3.10.0.tar.gz", hash = "sha256:ff"',
+		)
+		doc = self.verify(self.plan(uv=uv))
+		self.assertDecision(doc, "needs-review", "orjson 3.10.0 has another source or other files")
+		self.assertFalse(doc["automerge"])
+
+	def test_a_node_lock_stamp_that_is_not_the_base_or_the_seed(self):
+		def forge():
+			self.write("nix/node-locks/frappe/ui/source.json", json.dumps({"forced": True}) + "\n")
+
+		self.assertDecision(self.verify(self.plan(forge)), "needs-review", "source.json is neither")
+
 
 class TestReject(VerifyCase):
 	def test_a_workflow_edit_the_render_does_not_make(self):
@@ -435,6 +451,116 @@ class TestLockChecks(unittest.TestCase):
 		for path in ("/etc/passwd", "../x", "a/../b", "a/.git/config", ".GIT/hooks/x", "a\nb"):
 			self.assertIsNotNone(rolloutpatch.path_problem(path), path)
 		self.assertIsNone(rolloutpatch.path_problem(".github/workflows/ci.yml"))
+
+	def uv_reviews(
+		self, path: str, base: str, new: str, explained: frozenset[str] = frozenset()
+	) -> list[str]:
+		trusted = rolloutpatch.trusted_locks({path: base.encode()})
+		rejects, reviews = rolloutpatch.uv_problems(path, base, new, TS, trusted, explained)
+		self.assertEqual(rejects, [])
+		return reviews
+
+	def test_uv_entries_are_tied_to_their_files(self):
+		wheel = (
+			'\nwheels = [{{ url = "https://files.pythonhosted.org/packages/ab/{f}", hash = "sha256:{h}" }}]\n'
+		)
+		base = uv_lock(REV, extra=wheel.format(f="requests-2.32.0-py3-none-any.whl", h="11"))
+		self.assertEqual(
+			self.uv_reviews(
+				"nix/uv.lock",
+				base,
+				uv_lock(TS, extra=wheel.format(f="requests-2.32.0-py3-none-any.whl", h="11")),
+			),
+			[],
+		)
+		# The same name and version, the same file name, another hash.
+		swapped = uv_lock(TS, extra=wheel.format(f="requests-2.32.0-py3-none-any.whl", h="22"))
+		self.assertTrue(
+			any("requests 2.32.0 has another" in r for r in self.uv_reviews("nix/uv.lock", base, swapped))
+		)
+		# Another project's wheel under requests' name and version.
+		swapped = uv_lock(TS, extra=wheel.format(f="evil-2.32.0-py3-none-any.whl", h="11"))
+		self.assertTrue(
+			any("requests 2.32.0 has another" in r for r in self.uv_reviews("nix/uv.lock", base, swapped))
+		)
+		# A new version (inside the runtime closure) must download that package's own files.
+		moved = uv_lock(TS, orjson="3.11.0").replace(
+			"packages/orjson-3.11.0.tar.gz", "packages/evil-3.11.0.tar.gz"
+		)
+		self.assertTrue(
+			any("not a file of that package" in r for r in self.uv_reviews("nix/uv.lock", base, moved))
+		)
+
+	def test_pypi_file_names(self):
+		ok = (
+			(
+				"PyYAML",
+				"6.0.2",
+				"https://files.pythonhosted.org/packages/a/b/pyyaml-6.0.2-cp314-cp314-manylinux_2_17_x86_64.whl",
+			),
+			(
+				"zope.interface",
+				"7.0",
+				"https://files.pythonhosted.org/packages/a/b/zope_interface-7.0.tar.gz",
+			),
+			(
+				"python-dateutil",
+				"2.9.0.post0",
+				"https://files.pythonhosted.org/packages/a/b/python-dateutil-2.9.0.post0.tar.gz",
+			),
+		)
+		for name, version, url in ok:
+			self.assertIsNone(rolloutpatch.pypi_file_problem(name, version, url), url)
+		self.assertIsNotNone(
+			rolloutpatch.pypi_file_problem(
+				"requests", "2.32.0", "https://files.pythonhosted.org/x/requests-2.31.0.tar.gz"
+			)
+		)
+		self.assertIsNotNone(
+			rolloutpatch.pypi_file_problem(
+				"requests", "2.32.0", "https://files.pythonhosted.org/x/evil-2.32.0-py3-none-any.whl"
+			)
+		)
+
+	def test_tools_lock_moves_only_what_a_floor_explains(self):
+		base = uv_lock(REV)
+		new = uv_lock(REV, requests="2.33.0")
+		self.assertTrue(any("moves requests" in r for r in self.uv_reviews("tools/uv.lock", base, new)))
+		self.assertEqual(self.uv_reviews("tools/uv.lock", base, new, frozenset({"requests"})), [])
+
+	def test_yarn_entries_are_tied_to_their_tarballs(self):
+		base = (
+			'# yarn lockfile v1\n\nlodash@^4.17.21:\n  version "4.17.21"\n'
+			'  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#abc"\n  integrity sha512-aa\n\n'
+			'"string-width-cjs@npm:string-width@^4.2.0":\n  version "4.2.3"\n'
+			'  resolved "https://registry.yarnpkg.com/string-width/-/string-width-4.2.3.tgz#def"\n'
+			"  integrity sha512-bb\n"
+		)
+		trusted = rolloutpatch.trusted_locks({"yarn.lock": base.encode()})
+
+		def reviews(new: str) -> list[str]:
+			rejects, out = rolloutpatch.yarn_problems("yarn.lock", base, new, trusted, False)
+			self.assertEqual(rejects, [])
+			return out
+
+		self.assertEqual(reviews(base), [])
+		# An existing key that now resolves another package on the registry.
+		evil = base.replace("lodash/-/lodash-4.17.21.tgz#abc", "evil/-/evil-1.0.0.tgz#abc")
+		found = reviews(evil)
+		self.assertTrue(
+			any("changes the version, URL or integrity of lodash@^4.17.21" in r for r in found), found
+		)
+		self.assertTrue(any("not lodash 4.17.21's tarball" in r for r in found), found)
+		# Only the integrity changed.
+		self.assertTrue(reviews(base.replace("sha512-aa", "sha512-zz")))
+		# A new range of a known package, resolved to its own tarball, is explained.
+		more = base + (
+			'\nlodash@^4.17.0:\n  version "4.17.21"\n'
+			'  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#abc"\n  integrity sha512-aa\n'
+		)
+		self.assertEqual(reviews(more), [])
+		scoped = {"version": "7.24.0", "resolved": "https://registry.npmjs.org/@babel/core/-/core-7.24.0.tgz"}
+		self.assertIsNone(rolloutpatch.npm_url_problem("@babel/core@^7.0.0", scoped))
 
 	def test_yarn_names(self):
 		names, urls = rolloutpatch.yarn_entries(

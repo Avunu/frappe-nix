@@ -7,12 +7,15 @@ the branch's rules and classic protection must require every enabled gate's ``ci
 context. If they don't, or the merge call fails (auto-merge disabled for the repository),
 the PR is labelled ``needs-review`` with a notice naming ``frappe-nix repo doctor``, and the
 step still succeeds. Every label is created (``--force``, idempotent) before it is applied.
+A PR labelled ``needs-review`` never keeps an auto-merge an earlier run enabled: a push by a
+user or App with write access leaves GitHub's auto-merge on, so it is turned off first.
 """
 
 import json
 
 from frappe_nix_tools.ci import LABELS, notice, verdict
 from frappe_nix_tools.common import github
+from frappe_nix_tools.common.report import EnvError
 
 DOCTOR = "run `frappe-nix repo doctor` to see which repository settings it needs"
 
@@ -25,13 +28,6 @@ def ensure_label(name: str, repo: str = "") -> None:
 	github.cli(*args)
 
 
-def label(pr_url: str, name: str, repo: str = "") -> None:
-	ensure_label(name, repo)
-	res = github.cli("pr", "edit", pr_url, "--add-label", name)
-	if res.code != 0:
-		notice(f"could not label {pr_url} {name}: {res.stderr.strip()}")
-
-
 def auto_merge_enabled(pr_url: str) -> bool:
 	"""Whether the PR already has auto-merge on, so a job that runs again (the weekly relock, the
 	nightly screenshots) leaves it as it is rather than asking twice."""
@@ -42,6 +38,34 @@ def auto_merge_enabled(pr_url: str) -> bool:
 		return bool(json.loads(res.stdout).get("autoMergeRequest"))
 	except (json.JSONDecodeError, AttributeError):
 		return False
+
+
+def disable(pr_url: str) -> None:
+	"""Turn off the auto-merge an earlier run enabled on ``pr_url``, if it has one. A PR that now
+	needs a person must not merge on its own once its checks pass; failing to turn it off is
+	an error, not a notice."""
+	res = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
+	if res.code != 0:
+		raise EnvError(f"could not tell whether {pr_url} has auto-merge on: {res.stderr.strip()}")
+	try:
+		armed = bool(res.stdout.strip()) and bool(json.loads(res.stdout).get("autoMergeRequest"))
+	except (json.JSONDecodeError, AttributeError) as e:
+		raise EnvError(f"gh pr view {pr_url}: {e}") from e
+	if not armed:
+		return
+	res = github.cli("pr", "merge", "--disable-auto", pr_url)
+	if res.code != 0:
+		raise EnvError(f"could not turn off auto-merge on {pr_url}: {res.stderr.strip()}")
+	print(f"auto-merge turned off on {pr_url}")
+
+
+def label(pr_url: str, name: str, repo: str = "") -> None:
+	if name == "needs-review":
+		disable(pr_url)
+	ensure_label(name, repo)
+	res = github.cli("pr", "edit", pr_url, "--add-label", name)
+	if res.code != 0:
+		notice(f"could not label {pr_url} {name}: {res.stderr.strip()}")
 
 
 def enable(pr_url: str, repo: str, integration: str, gates: list[str], merge_method: str) -> str:

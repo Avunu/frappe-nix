@@ -11,6 +11,7 @@ from unittest import mock
 from frappe_nix_tools.ci import automerge, drift, release, verdict
 from frappe_nix_tools.common import github
 from frappe_nix_tools.common.github import GitHubError, Result
+from frappe_nix_tools.common.report import EnvError
 from helpers import run_cli
 
 REPO = "example/app"
@@ -411,7 +412,30 @@ class TestAutomerge(FakeCase):
 		fake = self.use(Fake())
 		with mock.patch("builtins.print"):
 			self.assertEqual(self.apply("review"), "needs-review")
-		self.assertEqual(fake.clis[0][:3], ("label", "create", "needs-review"))
+		# It first looks for an earlier auto-merge to turn off (none here), then labels.
+		self.assertEqual(fake.clis[0][:2], ("pr", "view"))
+		self.assertEqual(fake.clis[1][:3], ("label", "create", "needs-review"))
+
+	def test_needs_review_turns_off_an_earlier_auto_merge(self):
+		"""A push by an App or a user with write access leaves auto-merge on; needs-review must not."""
+		armed = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+		for decision, fake in (
+			("review", Fake({}, {("pr", "view"): armed})),
+			("auto", Fake(protected(["ci / lint"]), {("pr", "view"): armed})),
+		):
+			self.use(fake)
+			with mock.patch("builtins.print"):
+				self.assertEqual(self.apply(decision), "needs-review")
+			off = [i for i, c in enumerate(fake.clis) if c[:3] == ("pr", "merge", "--disable-auto")]
+			edit = [i for i, c in enumerate(fake.clis) if c[:2] == ("pr", "edit")]
+			self.assertTrue(off and edit and off[0] < edit[0], fake.clis)
+
+	def test_needs_review_fails_when_auto_merge_stays_on(self):
+		armed = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+		fake = self.use(Fake({}, {("pr", "view"): armed, ("pr", "merge"): Result(1, "", "forbidden")}))
+		with mock.patch("builtins.print"), self.assertRaises(EnvError):
+			self.apply("review")
+		self.assertFalse(any(c[:2] == ("pr", "edit") for c in fake.clis))
 
 	def test_cli_exit_0(self):
 		self.use(Fake(protected([])))
