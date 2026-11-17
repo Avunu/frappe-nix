@@ -46,7 +46,7 @@ def lock(rev: str) -> str:
 						"type": "github",
 						"owner": "Avunu",
 						"repo": "frappe-nix",
-						"ref": "release-2",
+						"ref": "release",
 					},
 				},
 				"root": {"inputs": {"frappe-nix": "frappe-nix"}},

@@ -9,8 +9,7 @@ name: release
 #                   (version.txt and both frappe-nix-tools version locations move together,
 #                   release-please-config.json);
 #   fixture         the release PR moves frappe-nix-tools' version, which the caller workflows
-#                   of tests/fixtures/standards-app record (`@<sha> # v<version>`), as a
-#                   new major moves both fixtures' flake.nix to release-<major>, so it
+#                   of tests/fixtures/standards-app record (`@<sha> # v<version>`), so it
 #                   re-renders them offline with the PR's own tools and pushes the result
 #                   to the PR branch: every commit on main, the release's included, keeps
 #                   fixtures that `frappe-nix sync --check` passes;
@@ -18,10 +17,9 @@ name: release
 #                   dispatches check.yml (without inputs: `lint` and `flake`, no VM tests),
 #                   pr-policy.yml and docs.yml (the main ruleset's required `build / Check`)
 #                   on the release PR, each only while its check is absent on the PR's head;
-#   fast-forward    moves release-<major> (release-1 for v1.* tags, release-2 for v2.*) to the
-#                   new tag by a REST PATCH with force=false, or creates it on a major's first
-#                   release, which leaves the previous major's branch at its last release, and
-#                   fails unless it then equals the tag. The release-* ruleset
+#   fast-forward    moves `release` to the new tag, whatever its major, by a REST PATCH with
+#                   force=false, or creates it when it does not exist, and fails unless it
+#                   then equals the tag. The release ruleset
 #                   (repo-policy/self/rulesets/release.json) lets only GitHub Actions move it.
 #
 # release-please, fixture and fast-forward can hold AVUNU_CI_PRIVATE_KEY, so they run on
@@ -153,7 +151,6 @@ jobs:
         name: Re-render the fixtures with the release PR's frappe-nix-tools
         run: |
           set -euo pipefail
-          major="$(cut -d. -f1 version.txt)"
           for fixture in standards-app spa-app; do
             app="$RUNNER_TEMP/$fixture"
             cp -r "tests/fixtures/$fixture" "$app"
@@ -161,12 +158,6 @@ jobs:
             git -C "$app" add -A
             git -C "$app" -c user.name=ci -c user.email=ci@example.com commit -qm fixture
             (cd "$app" && frappe-nix sync --write --offline)
-            # A major's first release moves flake.nix's frappe-nix input to release-<major>, and
-            # offline the sync cannot relock: point the fixture lock's original at that branch
-            # (its locked rev is a fixed old commit either way).
-            lock="$app/flake.lock"
-            jq --indent 2 --arg ref "release-$major" '.nodes["frappe-nix"].original.ref = $ref' "$lock" > "$lock.new"
-            mv "$lock.new" "$lock"
             (cd "$app" && git add -A && frappe-nix sync --check)
             git -C "$app" diff --cached --binary > "$RUNNER_TEMP/$fixture.patch"
             if [ -s "$RUNNER_TEMP/$fixture.patch" ]; then
@@ -260,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write # move release-<major> without the App (the ruleset's bypass actor is GitHub Actions)
+      contents: write # move `release` without the App (the ruleset's bypass actor is GitHub Actions)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -316,7 +307,7 @@ jobs:
           permission-contents: write
           permission-workflows: write
 
-      - name: Fast-forward release-<major> to the new tag, and check it
+      - name: Fast-forward release to the new tag, and check it
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
@@ -324,11 +315,9 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          major="${TAG#v}"
-          major="${major%%.*}"
-          if ! [[ "$major" =~ ^[0-9]+$ ]]; then
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::release-please's tag ${TAG@Q} is not vX.Y.Z"
             exit 1
           fi
-          frappe-nix ci fast-forward --repo "$REPO" --release-branch "release-$major" \
+          frappe-nix ci fast-forward --repo "$REPO" --release-branch release \
             --sha "$SHA" --tag "$TAG" --version-scheme semver --tag-prefix v

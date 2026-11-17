@@ -45,7 +45,7 @@ class TestRepoPolicy(unittest.TestCase):
 		policy = repo_policy.from_dir(repo_policy.self_dir())
 		self.assertEqual(
 			[rs["name"] for rs in policy.rulesets],
-			["main", "release-* (release automation only)", "v* tags"],
+			["main", "release (release automation only)", "v* tags"],
 		)
 		for rs in policy.rulesets:
 			self.validate(rs)
@@ -56,7 +56,7 @@ class TestRepoPolicy(unittest.TestCase):
 		self.assertEqual(main["conditions"]["ref_name"]["include"], ["refs/heads/main"])
 		pr = next(r for r in main["rules"] if r["type"] == "pull_request")
 		self.assertEqual(pr["parameters"]["required_approving_review_count"], 0)
-		self.assertEqual(release["conditions"]["ref_name"]["include"], ["refs/heads/release-*"])
+		self.assertEqual(release["conditions"]["ref_name"]["include"], ["refs/heads/release"])
 		self.assertEqual(release["bypass_actors"], repo_policy.bypass_actors("github-actions"))
 		self.assertEqual(tags["conditions"]["ref_name"]["include"], ["refs/tags/v*"])
 		# The same rules as the app defaults they derive from.

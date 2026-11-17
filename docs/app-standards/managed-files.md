@@ -38,7 +38,7 @@ Both run in the app's repository: a git work tree whose `pyproject.toml` `[proje
 An app with no flake, or one whose flake still follows frappe-nix `main`, opts in with:
 
 ```sh
-nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --version version-16
+nix run github:Avunu/frappe-nix/release#frappe-init -- --app --sync --standards recommended --version version-16
 ```
 
 It needs only `nix` and `git`. Sync runs in two phases. **Phase A** creates `[tool.frappe-nix]` (the profile from `--standards`; the major from `--frappe-version` or the existing flake's `frappeVersion`; the siblings from `hooks.required_apps` plus the flake's, an existing sibling pinned off the generic rule written in the object form so its branch is kept; `integration-branch` when `origin/HEAD` names another branch than the branching model's default), writes `flake.nix` and `.envrc`, and locks the flake. When the lock now pins a different frappe-nix release than the one running, sync hands over to `nix run .#frappe-init -- --sync` once, so **phase B** always renders with the tools the lock pins. Phase B renders every other file, retracts what a module that turned off left behind, deletes the retired files, and brings the locks up: `uv lock --project tools`, `yarn install`, the node-lock seeds, `nix run .#relock`, and the README blocks.
@@ -112,7 +112,7 @@ Turning the module back on restores the files, byte for byte where sync laid the
 
 - **extra inputs** in the `inputs` local region (an input named like a managed one, such as `frappe` or `frappe-nix`, is exit 2);
 - **outputs** (packages, overlays, NixOS modules, checks, extra dev-shell settings) in `nix/local.nix`, a flake-parts module the flake imports when it exists;
-- **systems, binary caches and the frappe-nix source** in `[tool.frappe-nix.dev-shell]`: `systems`, `extra-substituters`, `extra-trusted-public-keys`, and `frappe-nix-url` (a tag, a rev, a fork or a mirror in place of `release-<N>`). Phase A relocks frappe-nix only when the lock's `original` differs from that URL, so a pin is never undone.
+- **systems, binary caches and the frappe-nix source** in `[tool.frappe-nix.dev-shell]`: `systems`, `extra-substituters`, `extra-trusted-public-keys`, and `frappe-nix-url` (a tag, a rev, a fork or a mirror in place of `release`). Phase A relocks frappe-nix only when the lock's `original` differs from that URL, so a pin is never undone.
 
 `.envrc` has the `envrc` local region for `dotenv`, exports and other direnv lines.
 

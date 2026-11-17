@@ -326,7 +326,7 @@
       },
       "original": {
         "owner": "Avunu",
-        "ref": "release-2",
+        "ref": "release",
         "repo": "frappe-nix",
         "type": "github"
       }

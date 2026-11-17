@@ -530,7 +530,7 @@
           },
           "frappe-nix-url": {
             "type": "string",
-            "description": "\"\" means github:Avunu/frappe-nix/release-<major>; any flake URL otherwise (a fork, a mirror, a tag or a rev).",
+            "description": "\"\" means github:Avunu/frappe-nix/release; any flake URL otherwise (a fork, a mirror, a tag or a rev).",
             "default": "",
             "x-app-only": true
           }

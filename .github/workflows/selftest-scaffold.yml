@@ -26,8 +26,8 @@ name: selftest-scaffold
 #              shape, which has to relock and re-enter through the app's dev
 #              shell: --check is clean right after, and the locks exist.
 #   real-lock  `frappe-init --app --standards recommended` on a bare app with no
-#              override: before release-<major> exists it refuses (exit 3) with
-#              the tree untouched, after it locks release-<major>.
+#              override: before `release` exists it refuses (exit 3) with the
+#              tree untouched, after it locks `release`.
 #   no-nix     `uv tool install` from a clone with no checkout left on disk, then
 #              `frappe-nix sync --check` and `frappe-nix compat` on the fixture:
 #              the package is self-contained (S10). Then the fixture on the in-repo
@@ -478,12 +478,12 @@ jobs:
           "$RUNNER_TEMP/frappe-init/bin/frappe-init" --app --standards recommended --version version-16 2>&1 | tee "$RUNNER_TEMP/app.log"
           code="${PIPESTATUS[0]}"
           set -e
-          release="release-$(cut -d. -f1 "$GITHUB_WORKSPACE/version.txt")"
+          release=release
           if git ls-remote --exit-code --heads https://github.com/Avunu/frappe-nix "$release" > /dev/null; then
             [ "$code" = 0 ] || { echo "::error::frappe-init --app exited $code with $release present"; exit 1; }
             grep -q "\"ref\": \"$release\"" flake.lock || { echo "::error::flake.lock is not on $release"; exit 1; }
           else
-            # Before a major's first release (S32): refused up front, nothing written or staged.
+            # Before the release branch exists (S32): refused up front, nothing written or staged.
             [ "$code" = 3 ] || { echo "::error::frappe-init --app exited $code, not 3, without $release"; exit 1; }
             grep -q "has no $release branch yet" "$RUNNER_TEMP/app.log"
             [ -z "$(git status --porcelain)" ] || { echo "::error::the refused run changed the tree"; git status; exit 1; }
