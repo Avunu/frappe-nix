@@ -376,7 +376,10 @@ jobs:
             nix flake lock --refresh
             rm -rf .git
           else
-            sed -i -E 's|github:Avunu/frappe-nix/release-[0-9]+|github:Avunu/frappe-nix|' flake.nix
+            # Off the release branch onto frappe-nix's main, so the sync below must rewrite
+            # flake.nix and move the frappe-nix input in phase A.
+            sed -i 's|"github:Avunu/frappe-nix/release"|"github:Avunu/frappe-nix"|' flake.nix
+            grep -q 'frappe-nix\.url = "github:Avunu/frappe-nix";' flake.nix || { echo "::error::the fixture's flake.nix still follows release"; exit 1; }
             git init -q && git add -A
             nix flake lock --refresh
             rm -rf .git
