@@ -327,7 +327,9 @@ class TestCheck(unittest.TestCase):
 		moved_git = BASE_UV.replace(b"a" * 40, b"e" * 40)
 		yarn_added = BASE_YARN + yarn(("d3@^7", "7.9.0", npm("d3", "7.9.0")))[len(yarn()) :]
 		no_url = BASE_YARN + yarn(("local@file:../x", "1.0.0", None))[len(yarn()) :]
+		low = BASE_YARN + yarn(("vue@^3.5.0", "3.4.1", npm("vue", "3.4.1")))[len(yarn()) :]
 		cases = {
+			"a version its range does not allow": (with_(yarn=low), "vue@^3.5.0 (3.4.1) lock a version"),
 			"a new package": (with_(uv=added), "nix/uv.lock adds tzdata"),
 			"a git source at another commit": (with_(uv=moved_git), "another commit of a git source"),
 			"a new yarn entry": (with_(yarn=yarn_added), "adds d3"),

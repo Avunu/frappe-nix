@@ -433,3 +433,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 	q.add_argument("--summary-file", default="", help="`frappe-nix sync --check` output to quote")
 	q.add_argument("--no-profile", action="store_true", help="skip the standards-profile comparison")
 	q.set_defaults(func=run_drift)
+
+	# rollout.yml's steps (verify-rollout-patch, rollout-contract): their module registers them.
+	from frappe_nix_tools.ci import rolloutpatch
+
+	rolloutpatch.register(sub)

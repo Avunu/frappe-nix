@@ -353,6 +353,16 @@ def needs_repo_settings(plan: engine.Plan) -> list[str]:
 	return [m for m in _repo_settings(plan.ctx) if m not in before]
 
 
+def yarn_install() -> list[str]:
+	"""Step 9's ``yarn install``. Under ``FRAPPE_NIX_YARN_IGNORE_SCRIPTS=1`` it runs no package's
+	lifecycle scripts, as ``deps/node_locks.py`` resolves: the rollout's plan job sets it, since
+	the lock is all it keeps and the packages are the app's, not frappe-nix's (spec §5.8)."""
+	argv = ["yarn", "install", "--non-interactive"]
+	if os.environ.get("FRAPPE_NIX_YARN_IGNORE_SCRIPTS") == "1":
+		argv.append("--ignore-scripts")
+	return argv
+
+
 def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock_changed: bool) -> int:
 	"""Steps 5 to 13."""
 	lock_changed = lock_changed or bootstrap.inherited_lock_change()
@@ -390,7 +400,7 @@ def phase_b(root: Path, args: argparse.Namespace, runner: bootstrap.Runner, lock
 			_stage(root, ["tools/uv.lock"], runner)  # now, so a failure below leaves it staged
 	yarn_item = by_path.get("yarn.lock")
 	if yarn_item and (yarn_item.command or "package.json" in touched):
-		runner.run(["yarn", "install", "--non-interactive"])
+		runner.run(yarn_install())
 		touched.append("yarn.lock")
 		if (root / "yarn.lock").is_file():
 			_stage(root, ["yarn.lock"], runner)
