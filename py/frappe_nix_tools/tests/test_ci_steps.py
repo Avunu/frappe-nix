@@ -253,9 +253,35 @@ class TestVerdict(FakeCase):
 				dependency_names="example/frappe-nix",
 				frappe_nix_repo="Example/frappe-nix",
 			),
-			"review",
+			"close",
 		)
 		self.assertEqual(verdict.decide("cargo", dependency_names="x"), "review")
+
+	def test_frappe_nix_pins_by_path_close(self):
+		"""Dependabot names reusable workflows by path: a PR moving only those pins is closed (S5)."""
+		got = verdict.decide(
+			"github_actions", group="actions", frappe_nix_repo="Example/frappe-nix",
+			dependency_names="Example/frappe-nix/.github/workflows/app-lint.yml, "
+			"Example/frappe-nix/.github/workflows/app-test.yml",
+		)  # fmt: skip
+		self.assertEqual(got, "close")
+
+	def test_frappe_nix_pins_mixed_with_other_actions_are_review(self):
+		got = verdict.decide(
+			"github_actions", group="actions", frappe_nix_repo="Example/frappe-nix",
+			dependency_names="Example/frappe-nix/.github/workflows/app-lint.yml, actions/checkout",
+		)  # fmt: skip
+		self.assertEqual(got, "review")
+
+	def test_other_actions_are_unchanged(self):
+		"""Only frappe-nix itself, or a path under it, is a frappe-nix pin."""
+		for deps in ("actions/checkout, actions/setup-python", "Example/frappe-nix-extras/x.yml"):
+			with self.subTest(deps=deps):
+				got = verdict.decide(
+					"github_actions", group="actions", dependency_names=deps,
+					frappe_nix_repo="Example/frappe-nix",
+				)  # fmt: skip
+				self.assertEqual(got, "auto")
 
 	def test_cli(self):
 		out = Path(tempfile.mkdtemp()) / "out"
@@ -291,11 +317,17 @@ class TestVerdict(FakeCase):
 
 	def test_policy_all_never_merges_a_frappe_nix_pin(self):
 		"""frappe-nix moves only through `frappe-nix repo rollout` (S5), whatever the policy."""
-		got = verdict.decide(
-			"github_actions", group="actions", dependency_names="example/frappe-nix",
-			frappe_nix_repo="Example/frappe-nix", policy="all",
-		)  # fmt: skip
-		self.assertEqual(got, "review")
+		for deps, want in (
+			("example/frappe-nix", "close"),
+			("Example/frappe-nix/.github/workflows/app-lint.yml", "close"),
+			("Example/frappe-nix/.github/workflows/app-lint.yml,actions/checkout", "review"),
+		):
+			with self.subTest(deps=deps):
+				got = verdict.decide(
+					"github_actions", group="actions", dependency_names=deps,
+					frappe_nix_repo="Example/frappe-nix", policy="all",
+				)  # fmt: skip
+				self.assertEqual(got, want)
 
 	def test_policy_cli(self):
 		code, stdout, _ = run_cli(
@@ -384,6 +416,20 @@ class TestAutomerge(FakeCase):
 			)
 		self.assertEqual([c[:2] for c in fake.clis], [("pr", "comment"), ("pr", "close")])
 		self.assertIn("frappe-nix moves through `frappe-nix repo rollout`", fake.clis[0][-1])
+
+	def test_frappe_nix_pins_close(self):
+		fake = self.use(Fake())
+		pin = "Example/frappe-nix/.github/workflows/app-lint.yml"
+		with mock.patch("builtins.print"):
+			code, _, err = run_cli(
+				"ci", "automerge", "--pr-url", PR, "--repo", REPO, "--integration", "develop",
+				"--gates", "lint,test", "--ecosystem", "github_actions", "--dependency-group", "actions",
+				"--dependency-names", pin, "--frappe-nix-repo", "Example/frappe-nix",
+			)  # fmt: skip
+		self.assertEqual(code, 0, err)
+		self.assertEqual([c[:2] for c in fake.clis], [("pr", "comment"), ("pr", "close")])
+		self.assertIn(pin, fake.clis[0][-1])
+		self.assertIn("release rollout (`frappe-nix repo rollout`)", fake.clis[0][-1])
 
 	def test_already_enabled_is_left_alone(self):
 		"""The weekly relock and the nightly screenshots enable it again on the same PR."""

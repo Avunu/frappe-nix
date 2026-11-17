@@ -5,7 +5,9 @@
 ========================  ==========================================  ===========================================
 ``github_actions``        the ``actions`` group                        the ``docs-actions`` group (or a name matching
                                                                        ``docs-site.action-patterns``) and the
-                                                                       ``pilot`` group (``frappe/pilot*``)
+                                                                       ``pilot`` group (``frappe/pilot*``); a PR
+                                                                       that moves only frappe-nix pins is
+                                                                       ``close``\\ d
 ``npm_and_yarn``          minor and patch, in ``/`` and nested         ``directory == /docs-site``; any
                           frontends                                    ``version-update:semver-major``
 ``uv``                    minor and patch                              semver-major
@@ -16,15 +18,22 @@
 ``submodules``            always                                       —
 ========================  ==========================================  ===========================================
 
-Anything else (an ecosystem the table does not name, a frappe-nix bump that arrived despite
-the ignore) is ``review``: nothing merges without a rule that says it may.
+Anything else (an ecosystem the table does not name, a frappe-nix pin bumped alongside other
+actions) is ``review``: nothing merges without a rule that says it may.
+
+Dependabot names a reusable workflow by its path (``Avunu/frappe-nix/.github/workflows/app-lint.yml``),
+so a frappe-nix pin is the repository itself or anything under it. A PR that moves only those
+pins is closed: frappe-nix moves through its release rollout (``frappe-nix repo rollout``),
+which moves ``flake.lock`` and the rendered files with the pins, and a pin edited alone never
+passes ``ci / lint``'s sync check.
 
 ``dependabot.auto-merge-policy`` chooses between that table (``decision-table``, the default)
 and ``all``: every ``review`` becomes ``auto``, so the required checks alone decide what merges,
 majors, the ``docs-actions``, ``pilot`` and ``test-utils`` groups and ``/docs-site`` included.
-Two verdicts stay as they are under ``all``: a nix bump still waits for its relock
-(``relock``) or is closed when it moves a rollout input (``close``), and a frappe-nix pin
-bump is still ``review``, because frappe-nix moves only through ``frappe-nix repo rollout`` (S5).
+The other verdicts stay as they are under ``all``: a nix bump still waits for its relock
+(``relock``) or is closed when it moves a rollout input (``close``), a PR moving only frappe-nix
+pins is still ``close``\\ d, and one moving them alongside other actions is still ``review``,
+because frappe-nix moves only through ``frappe-nix repo rollout`` (S5).
 """
 
 from fnmatch import fnmatchcase
@@ -64,13 +73,24 @@ def _minor_or_patch(update_type: str, group: str) -> bool:
 	return update_type in MINOR_PATCH or (not update_type and bool(group))
 
 
+def _is_frappe_nix(dep: str, frappe_nix_repo: str) -> bool:
+	"""The frappe-nix repository, or one of its reusable workflows: Dependabot names those by
+	path (``Avunu/frappe-nix/.github/workflows/app-lint.yml``)."""
+	dep, repo = dep.lower(), frappe_nix_repo.lower()
+	return bool(repo) and (dep == repo or dep.startswith(repo + "/"))
+
+
 def _moves_frappe_nix(ecosystem: str, deps: list[str], frappe_nix_repo: str) -> bool:
-	"""A github-actions bump of the frappe-nix pin: ignored by dependabot.yml (S5), and never
+	"""A github-actions bump of a frappe-nix pin: ignored by dependabot.yml (S5), and never
 	merged if it arrives anyway, under either policy."""
+	return ecosystem == "github_actions" and any(_is_frappe_nix(d, frappe_nix_repo) for d in deps)
+
+
+def _moves_only_frappe_nix(ecosystem: str, deps: list[str], frappe_nix_repo: str) -> bool:
+	"""A github-actions PR whose every dependency is a frappe-nix pin: closed, because frappe-nix
+	moves through its release rollout (S5), never a Dependabot PR."""
 	return (
-		ecosystem == "github_actions"
-		and bool(frappe_nix_repo)
-		and any(d.lower() == frappe_nix_repo.lower() for d in deps)
+		ecosystem == "github_actions" and bool(deps) and all(_is_frappe_nix(d, frappe_nix_repo) for d in deps)
 	)
 
 
@@ -87,6 +107,8 @@ def _table(
 	deps = names(dependency_names)
 	directory = "/" + directory.strip("/") if directory else "/"
 	if ecosystem == "github_actions":
+		if _moves_only_frappe_nix(ecosystem, deps, frappe_nix_repo):
+			return CLOSE
 		if _moves_frappe_nix(ecosystem, deps, frappe_nix_repo):
 			return REVIEW
 		if group in ("docs-actions", "pilot"):
