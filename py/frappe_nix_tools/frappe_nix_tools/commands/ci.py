@@ -103,6 +103,10 @@ def run_automerge(args: argparse.Namespace) -> int:
 		decision = _decide(args)
 	else:
 		raise ConfigError("give --verdict, or the fetch-metadata outputs (--ecosystem …)")
+	moved = _csv(args.moved)
+	if args.ecosystem == "github_actions" and not moved:
+		# A github-actions PR is closed only when it moves frappe-nix pins and nothing else.
+		moved = verdict.names(args.dependency_names)
 	result = automerge.apply(
 		decision,
 		pr_url=args.pr_url,
@@ -111,7 +115,8 @@ def run_automerge(args: argparse.Namespace) -> int:
 		gates=_gates(args),
 		merge_method=args.merge_method,
 		relock_state=args.relock,
-		moved=_csv(args.moved),
+		moved=moved,
+		ecosystem=args.ecosystem,
 		locks=args.locks,
 		head_sha=args.head_sha,
 	)
