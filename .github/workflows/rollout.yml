@@ -6,7 +6,7 @@ name: rollout
 # that moves the flake.lock `frappe-nix` node, the relock and the `frappe-init --sync` render
 # together, and auto-merges once the app's required checks pass.
 #
-#   resolve  (contents/pull-requests read, no secret) the release: `release-2`'s head, the v*
+#   resolve  (contents/pull-requests read, no secret) the release: `release`'s head, the v*
 #            tag at exactly that commit, the release PR it merged from; the targets, and per
 #            repository its integration branch, that branch's head (base_sha) and the
 #            frappe-nix it locks. A repository at the tag, or whose branch has a person's
@@ -71,8 +71,8 @@ concurrency:
 
 env:
   FORCE_COLOR: "1"
-  # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release-2).
-  RELEASE_BRANCH: release-2
+  # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release).
+  RELEASE_BRANCH: release
   # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app
   # while an open PR (or no PR) holds it.
   BOT: avunu-rollout[bot]
@@ -126,11 +126,6 @@ jobs:
           if ! git ls-remote --tags "https://github.com/$REPO.git" "refs/tags/$tag" "refs/tags/$tag^{}" \
             | awk -v sha="$sha" '$1 == sha { found = 1 } END { exit !found }'; then
             echo "::error::$tag (version.txt at $RELEASE_BRANCH's head $sha) is not a tag of that commit"
-            exit 1
-          fi
-          major="${RELEASE_BRANCH#release-}"
-          if [[ "$tag" != "v$major."* ]]; then
-            echo "::error::$tag is not a v$major.* release, but $RELEASE_BRANCH points at it"
             exit 1
           fi
           # A release commit is release-please's PR merged into main, nothing else.
@@ -498,7 +493,7 @@ jobs:
           path: ${{ runner.temp }}/plan
 
       # meta.json comes from the plan, where the app's code ran: its state is a claim. A
-      # superseded plan must find release-2 moved past the tag, and a noop (or an empty patch)
+      # superseded plan must find release moved past the tag, and a noop (or an empty patch)
       # a base that locks the tag already, else the app would drop out of the rollout unseen.
       - name: Check the plan against resolve's matrix
         id: plan

@@ -200,7 +200,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         for s in jobs["plan"]["steps"]:
             if s.get("uses", "").startswith("DeterminateSystems/nix-installer-action@"):
                 assert s.get("with", {}).get("github-token") == "", s
-        # The release is version.txt's tag, which must point at release-2's head.
+        # The release is version.txt's tag, which must point at the release branch's head.
         resolve_runs = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
         assert "contents/version.txt?ref=$sha" in resolve_runs and "sort -uV" not in resolve_runs, resolve_runs
         # A commit counts as the bot's only when the bot authored and committed it.

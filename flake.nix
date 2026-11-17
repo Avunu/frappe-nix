@@ -193,14 +193,14 @@
         // {
           default = app;
           frappe-init = app;
-          # `nix run github:Avunu/frappe-nix/release-1#bootstrap -- ROOT`: a
+          # `nix run github:Avunu/frappe-nix/release#bootstrap -- ROOT`: a
           # fresh clone's apps, before its flake is evaluated (a bench's .envrc).
           bootstrap = {
             type = "app";
             program = pkgs.lib.getExe (shellTools pkgs).bootstrap;
             meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
           };
-          # `nix run github:Avunu/frappe-nix/release-2#repair`, from a bench: its
+          # `nix run github:Avunu/frappe-nix/release#repair`, from a bench: its
           # apps, settled, when Nix cannot read its flake. Here and not in the
           # bench's flake, which Nix cannot evaluate in that state.
           repair = {

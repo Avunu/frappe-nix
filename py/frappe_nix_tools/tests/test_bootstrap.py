@@ -43,7 +43,7 @@ sys.exit(0 if argv[:1] == ["eval"] else int(os.environ.get("FAKE_NIX_CODE", "0")
 """
 
 
-# The URL a rendered flake.nix gives frappe-nix by default (release-<major>).
+# The URL a rendered flake.nix gives frappe-nix by default (the release branch).
 URL = f"github:Avunu/frappe-nix/{RELEASE}"
 PINNED = "github:Avunu/frappe-nix/v1.0.0"
 
@@ -85,7 +85,7 @@ class FakeNix(AppCase):
 		os.environ["FAKE_NIX_LOG"] = str(self.log)
 		os.environ["PATH"] = str(self.bin)
 		os.environ["FAKE_NIX_VERSION"] = frappe_nix_tools.__version__
-		# The release-<N> probe asks GitHub; these tests are offline and say it exists.
+		# The release-branch probe asks GitHub; these tests are offline and say it exists.
 		probe = mock.patch.object(bootstrap, "release_branch_exists", return_value=True)
 		probe.start()
 		self.addCleanup(probe.stop)
@@ -412,7 +412,7 @@ class TestBareSyncBootstrap(FakeNix):
 
 
 class TestReleaseBranchPreflight(FakeNix):
-	"""Before release-<N> exists (S32), a sync that would lock it refuses before writing
+	"""Before the release branch exists (S32), a sync that would lock it refuses before writing
 	anything (review: `frappe-init --app` failed in `nix flake lock` with a staged tree)."""
 
 	def absent(self) -> None:
