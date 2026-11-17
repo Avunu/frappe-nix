@@ -5,7 +5,9 @@ name: app-release
 # APP_ID and APP_PRIVATE_KEY (ci.github-app); `dispatch-ci` runs ci.yml and pr-policy.yml on
 # its release PR when there is no App (a GITHUB_TOKEN push raises no event); `fast-forward`
 # moves the release branch to the new tag by a REST PATCH and checks it (D8); `publish` opens
-# the registry PR.
+# the registry PR. The two jobs that can hold the App's key (release-please, fast-forward) run
+# on ubuntu-latest whatever `runs-on` says: a self-hosted runner is shared with other
+# repositories' jobs.
 
 on:
   workflow_call:
@@ -31,13 +33,21 @@ on:
         description: listing.registry-fork; required when publish is true
         type: string
         default: ""
+      frappe-nix-repo:
+        description: >-
+          The repository frappe-nix-tools is installed from in the jobs that can hold the GitHub
+          App's key, as owner/name: the app's flake.lock must lock frappe-nix from it. A fork's
+          callers pass the fork (the repository whose workflows they call).
+        type: string
+        default: Avunu/frappe-nix
       frappe-nix-override:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
       runs-on:
         description: >-
-          The runner of every Linux job, as JSON: a label or a list of labels
+          The runner of every Linux job but release-please and fast-forward, which can hold the
+          GitHub App's key and always run on ubuntu-latest, as JSON: a label or a list of labels
           (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
         type: string
         default: '["ubuntu-latest"]'
@@ -68,7 +78,7 @@ env:
 jobs:
   release-please:
     if: github.ref == format('refs/heads/{0}', inputs.integration-branch)
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -79,20 +89,6 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       app: ${{ steps.app.outputs.enabled }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       # A GitHub App's token when the caller passes one (ci.github-app): the release PR it opens
       # or updates then starts ci.yml and pr-policy.yml like any other push. Else GITHUB_TOKEN.
       - id: app
@@ -193,55 +189,69 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch != ''
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # move the release branch without the App (the ruleset's bypass actor is GitHub Actions)
       actions: write # dispatch assets.yml
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the pushed commit's
+      # flake.lock pins, every dependency from that revision's py/frappe_nix_tools/uv.lock by hash
+      # and as a wheel, and only frappe-nix-tools itself built, against a hashed flit_core. uv is
+      # pinned above, without its cache, and reads no configuration. Before the App's token is
+      # minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision flake.lock pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
+        working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
           if [ -n "$FETCH_TOKEN" ]; then
             echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
           fi
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
           if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
             echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
             echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
           else
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' "$GITHUB_WORKSPACE/flake.lock")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
             echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
           fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
       # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the

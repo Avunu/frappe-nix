@@ -9,8 +9,10 @@ version: 2
 # pulled or patched within the week never reaches a pull request. Security
 # updates are not held back.
 #
-# Keeps this repo's dependencies up to date. PRs, github-actions bumps included, auto-merge
-# once the required checks go green and are kept up to date with main — see
+# Keeps this repo's dependencies up to date. nix, uv and pre-commit PRs auto-merge once the
+# required checks go green, and every PR is kept up to date with main. github-actions PRs are
+# labelled needs-review and wait for a person: the actions and reusable workflows they move run
+# in jobs that hold the org's GitHub App key, here and (once released) in every app. See
 # .github/workflows/dependabot-auto-merge.yml.
 #
 # Deliberately NOT configured: templates/bench/pyproject.toml. It is a scaffolding
@@ -100,7 +102,7 @@ updates:
       pre-commit-hooks:
         patterns: ["*"]
 
-  # GitHub Actions used by the workflows in .github/workflows.
+  # GitHub Actions used by the workflows in .github/workflows. Never auto-merged (above).
   - package-ecosystem: github-actions
     directory: /
     schedule:

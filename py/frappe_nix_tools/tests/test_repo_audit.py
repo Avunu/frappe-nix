@@ -128,5 +128,36 @@ class TestRepoAudit(RepoCase):
 		self.assertEqual(code, 2)
 
 
+class TestA15(unittest.TestCase):
+	"""Nightly's screenshots are two jobs: ``shots`` runs frappe-shots, ``shots-push`` pushes."""
+
+	def a15(self, jobs: list[dict]) -> tuple[str, str]:
+		with (
+			mock.patch.object(audit, "latest_run", return_value={"id": 1}),
+			mock.patch.object(audit, "run_jobs", return_value=jobs),
+			mock.patch.object(audit.github, "get", return_value=[]),
+		):
+			return audit.a15(mock.Mock(r=R))
+
+	def test_shots_then_push(self):
+		ok = {"name": "nightly / shots", "conclusion": "success"}
+		self.assertEqual(
+			self.a15([ok, {"name": "nightly / shots-push", "conclusion": "skipped"}])[0], "green"
+		)
+		self.assertEqual(
+			self.a15([ok, {"name": "nightly / shots-push", "conclusion": "success"}])[0], "green"
+		)
+		self.assertEqual(self.a15([ok])[0], "green")
+		status, detail = self.a15(
+			[{"name": "nightly / shots-push", "conclusion": "success"}, ok | {"conclusion": "failure"}]
+		)
+		self.assertEqual((status, detail), ("red", "shots failure"))
+		status, detail = self.a15([ok, {"name": "nightly / shots-push", "conclusion": "failure"}])
+		self.assertEqual((status, detail), ("red", "shots-push failure"))
+		self.assertEqual(
+			self.a15([{"name": "nightly / shots-push", "conclusion": "skipped"}]), ("red", "shots absent")
+		)
+
+
 if __name__ == "__main__":
 	unittest.main()

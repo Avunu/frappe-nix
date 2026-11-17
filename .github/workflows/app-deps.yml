@@ -5,11 +5,28 @@ name: app-deps
 # with no write token; relock-push only applies its patch); every Dependabot PR gets the
 # decision table's verdict (auto-merge or needs-review), or auto-merge under the `all` policy;
 # the sweep re-dispatches CI for bot PRs; update-branches brings bot PRs that are behind the
-# integration branch up to date; relock-upgrade refreshes nix/uv.lock weekly. Auto-merge is
-# enabled only where required checks protect the integration branch.
+# integration branch up to date; relock-upgrade-plan refreshes nix/uv.lock weekly (with no
+# write token) and relock-upgrade-push opens its PR. Auto-merge is enabled only where required
+# checks protect the integration branch.
 # With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) the pushes, PRs, labels and
 # auto-merges use the App's token, so they start CI and the release flow by themselves; without
 # one, GITHUB_TOKEN, and CI is dispatched.
+# Every job that holds a write token (relock-push, auto-merge, sweep, update-branches,
+# relock-upgrade-push) runs on ubuntu-latest whatever `runs-on` says: a self-hosted runner is
+# shared with other repositories' jobs, and their leftovers must never see the App's key. Those
+# jobs run no app code, and no dependency the lock does not pin by hash: the push jobs only
+# check and apply the patch their plan job uploaded, and refuse any path, mode or change type
+# relock does not write (flake.lock included: Dependabot writes it), and a commit the
+# integration branch does not hold; what the lock files say is checked too (`frappe-nix ci
+# verify-relock`, against a commit the integration branch holds): a source or file URL that is
+# not PyPI's or the npm registry's, or one that names another package or version, is refused,
+# and a new package is pushed for review, with auto-merge off; what a plan job decides (whether
+# a rollout input moved, or that there was nothing to relock) is computed again here; every
+# `gh pr merge --auto` names the head it was decided on (--match-head-commit); and
+# frappe-nix-tools comes only from frappe-nix-repo (Avunu/frappe-nix, or the fork the caller
+# names), hash-locked. Since GitHub keeps auto-merge on across a push, every new head of a nix
+# PR starts with it off (disarm), and a head no job reached a verdict on is held (hold), both
+# with GITHUB_TOKEN alone.
 
 on:
   workflow_call:
@@ -44,14 +61,22 @@ on:
         description: ci.schedules.deps-relock; "" for no weekly relock
         type: string
         default: "0 8 * * 1"
+      frappe-nix-repo:
+        description: >-
+          The repository frappe-nix-tools is installed from in the jobs that can hold the GitHub
+          App's key, as owner/name: the app's flake.lock must lock frappe-nix from it. A fork's
+          callers pass the fork (the repository whose workflows they call).
+        type: string
+        default: Avunu/frappe-nix
       frappe-nix-override:
         description: frappe-nix's self-test only (a path in the workspace)
         type: string
         default: ""
       runs-on:
         description: >-
-          The runner of every Linux job, as JSON: a label or a list of labels
-          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+          The runner of the jobs that hold no write token (relock-plan, relock-upgrade-plan), as
+          JSON: a label or a list of labels (`["self-hosted", "nixos"]`). A pull request from a
+          fork always runs on ubuntu-latest, and so does every job with a write token.
         type: string
         default: '["ubuntu-latest"]'
     secrets:
@@ -76,6 +101,32 @@ env:
   FORCE_COLOR: "1"
 
 jobs:
+  # A nix PR's verdict comes only after relock-plan (up to an hour), and GitHub keeps an
+  # auto-merge an earlier head's run enabled across Dependabot's push of a new head (a group
+  # refreshed in place): it checks --match-head-commit when auto-merge is enabled, not when it
+  # merges. So every new head of a nix PR starts with auto-merge off, until relock-push or
+  # auto-merge enables it again for that head. GITHUB_TOKEN only, nothing checked out or run.
+  disarm:
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/') && inputs.auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --disable-auto
+      pull-requests: write # gh pr merge --disable-auto
+    steps:
+      - name: Turn off auto-merge an earlier head's run enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')" != true ]; then
+            echo "auto-merge is not enabled on $PR_URL"
+            exit 0
+          fi
+          gh pr merge --disable-auto "$PR_URL"
+          echo "::notice::auto-merge turned off on $PR_URL until this head is relocked and checked"
+
   relock-plan:
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && startsWith(github.head_ref, 'dependabot/nix/')
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
@@ -287,48 +338,187 @@ jobs:
           name: relock-patch
           path: ${{ runner.temp }}/relock.patch
 
+  # Holds the write token: GitHub-hosted whatever `runs-on` says, and nothing of the PR's runs.
   relock-push:
     needs: relock-plan
     if: needs.relock-plan.outputs.empty == 'false'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # push the relock commit to the Dependabot branch
       actions: write # dispatch ci.yml and pr-policy.yml on it
       pull-requests: write # enable auto-merge, or label needs-review
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
+      # The commit relock-plan made its patch on, with its history (the merge-base's lock files
+      # are what verify-relock compares with). The push below is not forced: if the branch has
+      # moved since, it is refused, and the new head's own run relocks it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
+
+      # Recomputed here from the PR's flake.lock and its merge-base's, never taken from
+      # relock-plan, which ran the PR's code (relock.moved_inputs, in jq).
+      - id: moved
+        name: Does the PR move frappe-nix or the standards profile?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          merge_base="$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)"
+          for at in "$merge_base" "$HEAD_SHA"; do
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$at" > "$RUNNER_TEMP/$at.lock"
+          done
+          moved="$(jq -rn --slurpfile base "$RUNNER_TEMP/$merge_base.lock" --slurpfile head "$RUNNER_TEMP/$HEAD_SHA.lock" '
+            def node($lock; $name): $lock.nodes[$lock.root // "root"].inputs[$name] as $ref
+              | if $ref == null then null elif ($ref | type) == "array" then ["follows"] + $ref else $lock.nodes[$ref].locked end;
+            [("frappe-nix", "standards-profile") as $name | select(node($base[0]; $name) != node($head[0]; $name)) | $name] | join(",")')"
+          echo "moved=$moved"
+          echo "moved=$moved" >> "$GITHUB_OUTPUT"
+          echo "merge-base=$merge_base" >> "$GITHUB_OUTPUT"
+
+      # A PR that moves a rollout input is closed by auto-merge, never relocked: relock-plan
+      # should have made no patch for it.
+      - if: steps.moved.outputs.moved != ''
+        name: Refuse to relock a PR that moves a rollout input
+        env:
+          MOVED: ${{ steps.moved.outputs.moved }}
+        run: |
+          echo "::error::the PR moves ${MOVED}, which move only through frappe-nix repo rollout; relock-plan should not have made a patch"
+          exit 1
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: relock-patch
           path: ${{ runner.temp }}/relock
 
-      - name: Apply the relock patch (nothing else runs)
+      # relock-plan ran the PR's code, so its patch is data to check, before any token exists:
+      # only what relock and sync write besides flake.lock (nix/uv.lock, nix/node-locks/**, and
+      # types/doctypes.d.ts from relock-doctypes), each an added, modified or deleted regular
+      # file (mode 100644). flake.lock is Dependabot's, and the jobs that hold the App's key
+      # install frappe-nix-tools from the revision it locks, so a relock never changes it. A
+      # rename, copy, mode change, symlink, `..` or absolute path, or anything under .github/
+      # (S29) is refused.
+      - name: Check and apply the relock patch (nothing else runs)
+        env:
+          PATCH: ${{ runner.temp }}/relock/relock.patch
+          ALLOW: '^(nix/uv\.lock|nix/node-locks/[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*|types/doctypes\.d\.ts)$'
         run: |
           set -euo pipefail
-          git apply --index "$RUNNER_TEMP/relock/relock.patch"
-          if git diff --cached --name-only | grep -E '(^|/)\.github/workflows/'; then
-            echo "::error::relock would change a workflow; run frappe-nix repo rollout"
+          # The patch text first: no rename, copy or mode change, and no mode but 100644.
+          if grep -qE '^((rename|copy) (from|to)|(dis)?similarity index|(old|new) mode) ' "$PATCH" \
+            || grep -E '^(new file|deleted file) mode ' "$PATCH" | grep -vE ' mode 100644$' > /dev/null \
+            || grep -E '^index [0-9a-f]+\.\.[0-9a-f]+ ' "$PATCH" | grep -vE ' 100644$' > /dev/null; then
+            echo "::error::the patch renames, copies or changes the mode of a file, or has a mode other than 100644"
             exit 1
           fi
+          git apply --index "$PATCH"
+          # Then what the index holds against HEAD, entry by entry.
+          git diff --cached --no-renames --raw -z HEAD > "$RUNNER_TEMP/index.raw"
+          bad=0
+          while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            read -r old new _ _ status <<< "${meta#:}"
+            why=""
+            case "$status" in
+              A) [ "$new" = 100644 ] || why="mode $new" ;;
+              M) { [ "$old" = 100644 ] && [ "$new" = 100644 ]; } || why="mode $old to $new" ;;
+              D) [ "$old" = 100644 ] || why="mode $old" ;;
+              *) why="change type $status" ;;
+            esac
+            if [[ "/$path/" == *//* || "/$path/" == */./* || "/$path/" == */../* || "/$path/" == */.github/* ]]; then
+              why="${why:+$why; }path"
+            elif ! [[ "$path" =~ $ALLOW ]]; then
+              why="${why:+$why; }not a path this job pushes"
+            fi
+            if [ "$status" != D ] && [ -L "$path" ]; then
+              why="${why:+$why; }symlink"
+            fi
+            if [ -n "$why" ]; then
+              echo "::error::refusing ${path@Q}: $why"
+              bad=1
+            fi
+          done < "$RUNNER_TEMP/index.raw"
+          if [ "$bad" != 0 ]; then
+            exit 1
+          fi
+          if [ ! -s "$RUNNER_TEMP/index.raw" ]; then
+            echo "::error::the patch changes nothing"
+            exit 1
+          fi
+          git --no-pager diff --cached --stat HEAD
+
+      - if: inputs.auto-merge
+        name: Base checkout, for the gates the integration branch requires
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          path: .base
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          enable-cache: "false"
+
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
+      # flake.lock pins (never the PR's), every dependency from that revision's
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
+      # against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          if [ -n "$OVERRIDE" ]; then
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            node="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" \
+              | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            rev="$(jq -r .rev <<<"$node")"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
+          fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+
+      # What the lock files say, before the App's token is minted: checked against a commit the
+      # integration branch holds by its frappe-nix-tools (ci/lockcheck.py, which reads git only and
+      # runs nothing of the patch). A reject fails here and nothing is pushed; needs-review is
+      # pushed with auto-merge off and the PR labelled; only ok enables auto-merge.
+      - id: locks
+        name: Check what the lock files say, against the PR's merge-base
+        env:
+          MERGE_BASE: ${{ steps.moved.outputs.merge-base }}
+        run: frappe-nix ci verify-relock --base "$MERGE_BASE" --head "$(git write-tree)"
 
       # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
       # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
@@ -347,7 +537,16 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Commit and push to the PR branch
+      # Before the push: an auto-merge an earlier run enabled survives it, and must not merge this.
+      - if: steps.locks.outputs.decision != 'ok'
+        name: Hold the PR for review (auto-merge off, labelled needs-review)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: frappe-nix ci hold --pr-url "$PR_URL" --reason "the relock adds or moves what a person should see (the verify-relock step above says what); auto-merge is off"
+
+      - id: push
+        name: Commit and push to the PR branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           HEAD_REF: ${{ github.head_ref }}
@@ -355,7 +554,8 @@ jobs:
           set -euo pipefail
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "chore(deps): relock and sync after flake bump [dependabot skip]"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$HEAD_REF"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$HEAD_REF"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - if: steps.app.outputs.enabled != 'true'
         name: CI on the new head (a GITHUB_TOKEN push raises no event)
@@ -369,42 +569,7 @@ jobs:
             gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF"
           fi
 
-      - if: inputs.auto-merge
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
-
-      - if: inputs.auto-merge
-        name: Base checkout, for the gates the integration branch requires
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.integration-branch }}
-          path: .base
-          persist-credentials: false
-
-      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
-      - if: inputs.auto-merge
-        name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
-        env:
-          OVERRIDE: ${{ inputs.frappe-nix-override }}
-          INTEGRATION: ${{ inputs.integration-branch }}
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        working-directory: .base
-        run: |
-          set -euo pipefail
-          if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
-          else
-            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
-            rev="$(jq -r .rev <<<"$node")"
-            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
-          fi
-
-      - if: inputs.auto-merge
+      - if: inputs.auto-merge && steps.locks.outputs.decision == 'ok'
         name: Auto-merge, where required checks protect the integration branch
         working-directory: .base
         env:
@@ -412,31 +577,20 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           INTEGRATION: ${{ inputs.integration-branch }}
           METHOD: ${{ inputs.merge-method }}
-        run: frappe-nix ci enable-automerge --pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD"
+          SHA: ${{ steps.push.outputs.sha }}
+        run: frappe-nix ci enable-automerge --pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD" --head-sha "$SHA"
 
   auto-merge:
     needs: relock-plan
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]' && inputs.auto-merge && (needs.relock-plan.result == 'success' || needs.relock-plan.result == 'skipped')
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # enable auto-merge, label or close the PR
+    outputs:
+      result: ${{ steps.decide.outputs.result }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - id: meta
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
@@ -448,29 +602,106 @@ jobs:
           ref: ${{ inputs.integration-branch }}
           persist-credentials: false
 
+      # Recomputed here from the PR's flake.lock and its merge-base's, never taken from
+      # relock-plan, which ran the PR's code (relock.moved_inputs, in jq).
+      - if: steps.meta.outputs.package-ecosystem == 'nix'
+        id: moved
+        name: Does the PR move frappe-nix or the standards profile?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          merge_base="$(gh api "repos/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq .merge_base_commit.sha)"
+          for at in "$merge_base" "$HEAD_SHA"; do
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$at" > "$RUNNER_TEMP/$at.lock"
+          done
+          moved="$(jq -rn --slurpfile base "$RUNNER_TEMP/$merge_base.lock" --slurpfile head "$RUNNER_TEMP/$HEAD_SHA.lock" '
+            def node($lock; $name): $lock.nodes[$lock.root // "root"].inputs[$name] as $ref
+              | if $ref == null then null elif ($ref | type) == "array" then ["follows"] + $ref else $lock.nodes[$ref].locked end;
+            [("frappe-nix", "standards-profile") as $name | select(node($base[0]; $name) != node($head[0]; $name)) | $name] | join(",")')"
+          echo "moved=$moved"
+          echo "moved=$moved" >> "$GITHUB_OUTPUT"
+          echo "merge-base=$merge_base" >> "$GITHUB_OUTPUT"
+
+      # relock-plan's `empty` (nothing to relock) comes from a job that ran the PR's code, and the
+      # PR may already carry a relock an earlier run pushed and held for review: so its lock files
+      # are checked against the merge-base, as relock-push checks its patch. The PR's commits are
+      # only read (git), never run.
+      - if: >-
+          steps.meta.outputs.package-ecosystem == 'nix' && steps.moved.outputs.moved == ''
+          && needs.relock-plan.outputs.empty == 'true'
+        name: The PR head, as data for the lock check
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .head
+          fetch-depth: 0
+          persist-credentials: false
+
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
-      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
+      # flake.lock pins (never the PR's), every dependency from that revision's
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
+      # against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision the integration branch pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           INTEGRATION: ${{ inputs.integration-branch }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
+        working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
           if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
           else
-            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
-            rev="$(jq -r .rev <<<"$node")"
+            node="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" \
+              | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            rev="$(jq -r .rev <<<"$node")"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
           fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+
+      - if: >-
+          steps.meta.outputs.package-ecosystem == 'nix' && steps.moved.outputs.moved == ''
+          && needs.relock-plan.outputs.empty == 'true'
+        id: locks
+        name: Check what the PR's lock files say, against its merge-base
+        working-directory: .head
+        env:
+          MERGE_BASE: ${{ steps.moved.outputs.merge-base }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: frappe-nix ci verify-relock --base "$MERGE_BASE" --head "$HEAD_SHA"
 
       # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
       # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
@@ -489,7 +720,10 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: The decision table
+      # The verdict is made on the event's head, and GitHub arms auto-merge only while the PR's
+      # head is still that commit (--head-sha, gh pr merge --match-head-commit).
+      - id: decide
+        name: The decision table
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -503,10 +737,13 @@ jobs:
           DIRECTORY: ${{ steps.meta.outputs.directory }}
           RELOCK_STATE: ${{ needs.relock-plan.outputs.state }}
           RELOCK_EMPTY: ${{ needs.relock-plan.outputs.empty }}
-          MOVED: ${{ needs.relock-plan.outputs.moved }}
+          MOVED: ${{ steps.moved.outputs.moved }}
+          LOCKS: ${{ steps.locks.outputs.decision }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           args=(--pr-url "$PR_URL" --integration "$INTEGRATION" --merge-method "$METHOD" --policy "$POLICY"
+            --head-sha "$HEAD_SHA"
             --ecosystem "$ECOSYSTEM" --update-type "$UPDATE_TYPE" --dependency-group "$GROUP"
             --dependency-names "$NAMES" --directory "$DIRECTORY"
             --frappe-nix-repo "$(jq -r '.nodes[.nodes.root.inputs["frappe-nix"]].locked | "\(.owner)/\(.repo)"' flake.lock)")
@@ -514,19 +751,61 @@ jobs:
             args+=(--docs-patterns "$(frappe-nix config docs-site.action-patterns --json)")
           fi
           if [ "$ECOSYSTEM" = nix ]; then
-            if [ "$RELOCK_STATE" = rollout-input-moved ]; then
+            # Whether a rollout input moved is this job's own answer (the moved step), not
+            # relock-plan's: that job ran the PR's code.
+            if [ -n "$MOVED" ]; then
               args+=(--relock rollout-input-moved --moved "$MOVED")
+            elif [ "$RELOCK_STATE" = rollout-input-moved ]; then
+              echo "::error::relock-plan says the PR moves a rollout input, and the PR's flake.lock moves none: left for review"
+              exit 1
             elif [ "$RELOCK_EMPTY" = true ]; then
-              args+=(--relock empty)
+              # Auto-merged only when verify-relock found the PR's lock files ok.
+              args+=(--relock empty --locks "$LOCKS")
             else
               args+=(--relock patch)
             fi
           fi
           frappe-nix ci automerge "${args[@]}"
 
+  # A head no job reached a verdict on is held: relock-plan, relock-push or auto-merge failed
+  # or was cancelled (relock-plan's own outputs, a false rollout-input-moved, a patch
+  # relock-push refuses), or auto-merge left a nix PR to relock-push (`wait`) and relock-push
+  # did not push. Auto-merge off, which disarm may not have done (a run that did not start
+  # it), and the needs-review label. GITHUB_TOKEN only, nothing checked out or run.
+  hold:
+    needs: [disarm, relock-plan, relock-push, auto-merge]
+    if: >-
+      always() && github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+      && inputs.auto-merge
+      && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      || (needs.auto-merge.outputs.result == 'wait' && needs.relock-push.result != 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge --disable-auto
+      pull-requests: write # the label, and auto-merge off
+    steps:
+      - name: Hold for review (auto-merge off, labelled needs-review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if ! gh pr merge --disable-auto "$PR_URL"; then
+            on="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+            if [ "$on" != false ]; then
+              echo "::error::could not turn off auto-merge on $PR_URL"
+              exit 1
+            fi
+          fi
+          gh label create needs-review --repo "$GITHUB_REPOSITORY" --color d93f0b \
+            --description "Not merged automatically; a person reviews it" --force
+          gh pr edit "$PR_URL" --add-label needs-review
+          echo "::notice::no job reached a verdict on this head (a job above failed, or the relock was not pushed): auto-merge is off and a person reviews it"
+
   sweep:
     if: (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read # the checkout, and which workflows exist on each PR head
@@ -534,20 +813,6 @@ jobs:
       checks: read # which ci / * checks ran on each head
       pull-requests: read # the open bot PRs
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.integration-branch }}
@@ -584,7 +849,7 @@ jobs:
 
   update-branches:
     if: inputs.update-branches && (github.event_name == 'push' || (github.event_name == 'schedule' && github.event.schedule != inputs.relock-cron) || github.event_name == 'workflow_dispatch')
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     # One run at a time; a burst of merges leaves one run pending, which sees them all.
     concurrency:
@@ -596,20 +861,6 @@ jobs:
       actions: write # without an App, dispatch ci.yml and pr-policy.yml on the new head
       checks: read # which ci / * checks ran on that head
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.integration-branch }}
@@ -617,27 +868,54 @@ jobs:
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
-      - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
+      # flake.lock pins (never the PR's), every dependency from that revision's
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
+      # against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision the integration branch pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           INTEGRATION: ${{ inputs.integration-branch }}
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
+        working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
           if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
           else
-            lock="$(gh api "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" --jq .content | base64 -d)"
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' <<<"$lock")"
-            rev="$(jq -r .rev <<<"$node")"
+            node="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" \
+              | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
             src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            rev="$(jq -r .rev <<<"$node")"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
           fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # A GitHub App's token when the caller passes one (ci.github-app): the update it makes is a
       # push that starts CI. A merge that brings .github/workflows/ changes in needs Workflows
@@ -683,14 +961,17 @@ jobs:
           fi
           frappe-nix ci update-branches "${args[@]}"
 
-  relock-upgrade:
+  # Resolves new third-party packages: no write token and no secret but the read ones; it
+  # uploads the patch relock-upgrade-push checks and pushes.
+  relock-upgrade-plan:
     if: (inputs.relock-cron != '' && github.event.schedule == inputs.relock-cron) || github.event_name == 'workflow_dispatch'
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 60
     permissions:
-      contents: write # push standards/relock-python
-      pull-requests: write # open or update its PR, enable auto-merge
-      actions: write # dispatch ci.yml and pr-policy.yml on it
+      contents: read # the checkout; this job runs relock and holds no write token
+    outputs:
+      empty: ${{ steps.patch.outputs.empty }}
+      sha: ${{ steps.patch.outputs.sha }}
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
       # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
@@ -716,7 +997,7 @@ jobs:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
           tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
 
-      # From the integration branch's flake.lock, never the PR's: this job holds a write token.
+      # From the integration branch's flake.lock, as relock-plan installs it.
       - name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
@@ -810,6 +1091,182 @@ jobs:
           read -ra override <<< "$NIX_OVERRIDE"
           nix run --no-pure-eval "${override[@]}" .#relock -- --upgrade
 
+      # `git add -A`, the binary patch, and the workflow refusal (S29). The push job checks the
+      # patch again: this job ran third-party code.
+      - id: patch
+        name: The relock patch
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          frappe-nix ci relock-patch --out "$RUNNER_TEMP/relock.patch"
+
+      - if: steps.patch.outputs.empty == 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: relock-upgrade-patch
+          path: ${{ runner.temp }}/relock.patch
+
+  # Holds the write token: GitHub-hosted whatever `runs-on` says, and nothing of the app's runs.
+  relock-upgrade-push:
+    needs: relock-upgrade-plan
+    if: needs.relock-upgrade-plan.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push standards/relock-python
+      pull-requests: write # open or update its PR, enable auto-merge
+      actions: write # dispatch ci.yml and pr-policy.yml on it
+    steps:
+      # The integration branch with its history, then the commit the plan job ran on, which that
+      # job names itself: only a full SHA the integration branch already holds, so this job never
+      # builds on a commit the branch has not taken (a fork PR's head can be fetched from this
+      # repository by its SHA). The branch's head stays in $RUNNER_TEMP/base, where
+      # enable-automerge reads the gates.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.integration-branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the plan job's commit, only if it is on the integration branch
+        env:
+          SHA: ${{ needs.relock-upgrade-plan.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the plan job's commit ${SHA@Q} is not a full SHA"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "::error::the plan job's commit $SHA is not on the integration branch"
+            exit 1
+          fi
+          git worktree add -q --detach "$RUNNER_TEMP/base" HEAD
+          git switch -q --detach "$SHA"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relock-upgrade-patch
+          path: ${{ runner.temp }}/relock
+
+      # relock-upgrade-plan ran third-party code, so its patch is data to check, before any
+      # token exists: only what `relock --upgrade` writes (nix/uv.lock, nix/node-locks/**), each
+      # an added, modified or deleted regular file (mode 100644). A rename, copy, mode change,
+      # symlink, `..` or absolute path, or anything under .github/ (S29) is refused.
+      - name: Check and apply the relock patch (nothing else runs)
+        env:
+          PATCH: ${{ runner.temp }}/relock/relock.patch
+          ALLOW: '^(nix/uv\.lock|nix/node-locks/[A-Za-z0-9._@+-]+(/[A-Za-z0-9._@+-]+)*)$'
+        run: |
+          set -euo pipefail
+          # The patch text first: no rename, copy or mode change, and no mode but 100644.
+          if grep -qE '^((rename|copy) (from|to)|(dis)?similarity index|(old|new) mode) ' "$PATCH" \
+            || grep -E '^(new file|deleted file) mode ' "$PATCH" | grep -vE ' mode 100644$' > /dev/null \
+            || grep -E '^index [0-9a-f]+\.\.[0-9a-f]+ ' "$PATCH" | grep -vE ' 100644$' > /dev/null; then
+            echo "::error::the patch renames, copies or changes the mode of a file, or has a mode other than 100644"
+            exit 1
+          fi
+          git apply --index "$PATCH"
+          # Then what the index holds against HEAD, entry by entry.
+          git diff --cached --no-renames --raw -z HEAD > "$RUNNER_TEMP/index.raw"
+          bad=0
+          while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            read -r old new _ _ status <<< "${meta#:}"
+            why=""
+            case "$status" in
+              A) [ "$new" = 100644 ] || why="mode $new" ;;
+              M) { [ "$old" = 100644 ] && [ "$new" = 100644 ]; } || why="mode $old to $new" ;;
+              D) [ "$old" = 100644 ] || why="mode $old" ;;
+              *) why="change type $status" ;;
+            esac
+            if [[ "/$path/" == *//* || "/$path/" == */./* || "/$path/" == */../* || "/$path/" == */.github/* ]]; then
+              why="${why:+$why; }path"
+            elif ! [[ "$path" =~ $ALLOW ]]; then
+              why="${why:+$why; }not a path this job pushes"
+            fi
+            if [ "$status" != D ] && [ -L "$path" ]; then
+              why="${why:+$why; }symlink"
+            fi
+            if [ -n "$why" ]; then
+              echo "::error::refusing ${path@Q}: $why"
+              bad=1
+            fi
+          done < "$RUNNER_TEMP/index.raw"
+          if [ "$bad" != 0 ]; then
+            exit 1
+          fi
+          if [ ! -s "$RUNNER_TEMP/index.raw" ]; then
+            echo "::error::the patch changes nothing"
+            exit 1
+          fi
+          git --no-pager diff --cached --stat HEAD
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          enable-cache: "false"
+
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from frappe-nix-repo alone, at the full revision the integration branch's
+      # flake.lock pins (never the PR's), every dependency from that revision's
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself built,
+      # against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision the integration branch pins
+        env:
+          OVERRIDE: ${{ inputs.frappe-nix-override }}
+          INTEGRATION: ${{ inputs.integration-branch }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+          ALLOWED: ${{ inputs.frappe-nix-repo }}
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          if [ -n "$OVERRIDE" ]; then
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+          else
+            node="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/flake.lock?ref=$INTEGRATION" \
+              | jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked')"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
+            rev="$(jq -r .rev <<<"$node")"
+            if ! [[ "$ALLOWED" =~ ^[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*$ ]] \
+              || [ "${src,,}" != "${ALLOWED,,}" ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from ${ALLOWED@Q} (the frappe-nix-repo input) at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags "https://github.com/$ALLOWED.git" "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
+          fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
+
+      # What the lock files say, before the App's token is minted: checked against the commit the
+      # plan relocked (on the integration branch) by its frappe-nix-tools (ci/lockcheck.py, which
+      # reads git only), and against the integration branch's head as well, since the plan job,
+      # which ran third-party code, names that commit itself and could name an older one whose
+      # locks still trust a source the branch has since dropped. The stricter decision holds: a
+      # reject in either fails here and nothing is pushed; needs-review in either is pushed with
+      # auto-merge off and the PR labelled; only ok in both enables auto-merge.
+      - id: locks
+        name: Check what the lock files say, against the commit the plan relocked
+        run: frappe-nix ci verify-relock --base "$(git rev-parse HEAD)" --head "$(git write-tree)"
+
+      - id: locks-head
+        name: Check what the lock files say, against the integration branch's head
+        run: frappe-nix ci verify-relock --base "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" --head "$(git write-tree)"
+
       # A GitHub App's token when the caller passes one (ci.github-app): what it pushes, opens
       # or merges starts workflows like any other push. Else GITHUB_TOKEN, and CI is dispatched.
       - id: app
@@ -834,20 +1291,21 @@ jobs:
           INTEGRATION: ${{ inputs.integration-branch }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
           METHOD: ${{ inputs.merge-method }}
+          LOCKS: ${{ steps.locks.outputs.decision == 'ok' && steps.locks-head.outputs.decision == 'ok' && 'ok' || 'needs-review' }}
         run: |
           set -euo pipefail
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Nothing to relock."
-            exit 0
-          fi
-          frappe-nix ci refuse-workflows --cached
           branch=standards/relock-python
+          hold="the weekly relock adds or moves what a person should see (the verify-relock step above says what); auto-merge is off"
+          url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+          if [ "$LOCKS" != ok ] && [ -n "$url" ]; then
+            # Before the push: last week's auto-merge survives it, and must not merge this.
+            frappe-nix ci hold --pr-url "$url" --reason "$hold"
+          fi
           git switch -c "$branch"
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "chore(deps): relock python"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
-          url="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state open --json url --jq '.[0].url // ""')"
+          sha="$(git rev-parse HEAD)"
           if [ -z "$url" ]; then
             url="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$INTEGRATION" --head "$branch" \
               --title "chore(deps): relock python" \
@@ -860,6 +1318,9 @@ jobs:
               gh workflow run pr-policy.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
             fi
           fi
-          if [ "$AUTO_MERGE" = true ]; then
-            frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD"
+          if [ "$LOCKS" != ok ]; then
+            frappe-nix ci hold --pr-url "$url" --reason "$hold"
+          elif [ "$AUTO_MERGE" = true ]; then
+            # The gates the integration branch's head requires, not the plan job's commit's.
+            (cd "$RUNNER_TEMP/base" && frappe-nix ci enable-automerge --pr-url "$url" --integration "$INTEGRATION" --merge-method "$METHOD" --head-sha "$sha")
           fi
