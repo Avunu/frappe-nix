@@ -13,8 +13,9 @@ name: Dependabot auto-merge
 #                    or an action, below) has auto-merge turned off there.
 #   hold             every other one, github-actions bumps above all, is labelled needs-review
 #                    and never auto-merged. An action or reusable workflow pin here runs in jobs
-#                    that hold the org's GitHub App key: this repository's own release.yml, and
-#                    every app's app-*.yml jobs once a release carries the pin. A compromised
+#                    that hold the org's GitHub App key: this repository's own release.yml (and
+#                    rollout.yml's publish job, with the rollout App's key), and every app's
+#                    app-*.yml jobs once a release carries the pin. A compromised
 #                    release of one would pass every required check, so a person reviews it.
 #                    The ecosystem is read from Dependabot's branch name
 #                    (dependabot/<ecosystem>/...), which only Dependabot writes, and a name this
@@ -64,11 +65,12 @@ jobs:
     with:
       # Backstops to the `if:` above: a github-actions bump never auto-merges, and a diff that
       # touches a workflow or action file, or a `uses:` of an action or workflow that runs with
-      # the App's key (here, in release.yml, and in every app's app-*.yml), is held.
+      # an App's key (here, in release.yml and rollout.yml, and in every app's app-*.yml), is held.
       exclude-ecosystems: github_actions
       review-dependencies: >-
         actions/create-github-app-token actions/checkout actions/download-artifact
-        astral-sh/setup-uv dependabot/fetch-metadata googleapis/release-please-action
+        actions/upload-artifact astral-sh/setup-uv dependabot/fetch-metadata
+        googleapis/release-please-action DeterminateSystems/nix-installer-action
         Avunu/python-devops-nix
     # A Dependabot run sees only Dependabot secrets: the App's ID may be one too.
     secrets:

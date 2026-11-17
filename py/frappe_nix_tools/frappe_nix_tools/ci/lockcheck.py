@@ -9,7 +9,7 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
 (``--base``: the PR's merge-base, or the commit the weekly relock ran on), read from git:
 
 - ``nix/uv.lock`` may not be deleted. Every package entry that is not the base's (by name,
-  version, source and files) comes from PyPI (``registry = "https://pypi.org/simple"``) or from a
+  version, source, files and dependency edges) comes from PyPI (``registry = "https://pypi.org/simple"``) or from a
   source the base lock already has, and each of its files is an https URL on
   files.pythonhosted.org that names that package and version, or a URL the base lock already
   has. A git source the base has at another commit (frappe's ``pypika`` or ``gunicorn`` fork after
@@ -29,18 +29,19 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
   the override off as well and is ``reject``; pruning the whole forced target is ``needs-review``.
 - A package name no base lock of that file had (uv or yarn; for a yarn ``a@npm:b@^1`` alias,
   ``a`` and ``b`` both), a yarn ``npm:`` alias spec the base does not have, or a new or changed
-  yarn entry (its dependency lines included) without a ``resolved`` URL or with a ``name`` or
-  ``uid``, is ``needs-review``: an honest relock adds one only when the bumped dependency does,
-  and a person should see it.
+  yarn entry (its dependency lines included) without a ``resolved`` URL, with a ``name`` or
+  ``uid``, or whose ``version`` its spec's range does not allow (ci/npmrange.py, node-semver's
+  rules; a range it does not read counts as not allowing it), is ``needs-review``: an honest
+  relock adds one only when the bumped dependency does, and a person should see it.
 
 The decision is ``ok``, ``needs-review`` (pushed, labelled, auto-merge off) or ``reject`` (the
 step fails and nothing is pushed). It runs no nix, uv or yarn, and reads git only.
 
-The helpers from ``_uv`` to ``trusted_locks`` are rolloutpatch.py's (frappe-nix#281, the
-release-driven rollout's patch check), copied as they are so that the two share this module
-when #281 lands; all but ``yarn_blocks``, whose lenient reading ``strict_yarn`` replaces here,
-and which #281 should drop for it too. ``yarn_entries`` still reads the base's locks, which the
-integration branch holds, for the URLs they already trust.
+rolloutpatch.py (``frappe-nix ci verify-rollout-patch``, the release-driven rollout's patch
+check) reads lock files with this module: the helpers from ``_uv`` to ``trusted_locks``,
+``strict_yarn``/``nix_yarn`` and ``yarn_problems``, and the stamp rules (``stamp_problems``,
+``_pruned_forced``), with its own rollout rules on top. ``yarn_entries`` reads only the base's
+locks, which the integration branch holds, for the URLs they already trust.
 """
 
 import json
@@ -54,6 +55,7 @@ from typing import Any
 
 from packaging.version import InvalidVersion, Version
 
+from frappe_nix_tools.ci import npmrange
 from frappe_nix_tools.common import data_path
 from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from frappe_nix_tools.common.report import ConfigError, EnvError
@@ -86,7 +88,7 @@ class Result:
 		return list(dict.fromkeys(lines))
 
 
-# --- shared with rolloutpatch.py (#281) ------------------------------------------------
+# --- shared with rolloutpatch.py --------------------------------------------------------
 
 
 def _uv(text: str | None) -> dict:
@@ -136,14 +138,26 @@ def _source_key(source: dict) -> list[str]:
 	return [f"{kind}={source[kind]}" for kind in sorted(source) if isinstance(source[kind], str)]
 
 
+def _edges(pkg: dict) -> str:
+	"""A uv package's dependency edges (``dependencies``, ``optional-dependencies``,
+	``dev-dependencies``, markers and extras included), as one canonical string."""
+	return json.dumps(
+		{k: pkg.get(k) for k in ("dependencies", "optional-dependencies", "dev-dependencies")},
+		sort_keys=True,
+		default=str,
+	)
+
+
 def _artifacts(pkg: dict) -> Any:
-	"""A uv package's source and files (URL and hash each): what its name and version stand for."""
+	"""A uv package's source, files (URL and hash each) and dependency edges: what its name and
+	version stand for. An entry the base has by name and version but with other edges is not
+	the base's: it pulls in other packages."""
 	dists = []
 	for dist in [pkg.get("sdist"), *(pkg.get("wheels") or [])]:
 		if isinstance(dist, dict):
 			dists.append((str(dist.get("url", dist.get("path", ""))), str(dist.get("hash", ""))))
 	source = pkg.get("source")
-	return (sorted(_source_key(source)) if isinstance(source, dict) else [], sorted(dists))
+	return (sorted(_source_key(source)) if isinstance(source, dict) else [], sorted(dists), _edges(pkg))
 
 
 _SDIST_EXT = (".tar.gz", ".zip", ".tar.bz2", ".tgz", ".tar.xz", ".tar")
@@ -176,6 +190,17 @@ def _yarn_name(spec: str) -> tuple[str, str]:
 		at = target.find("@", 1)
 		return name, target[:at] if at > 0 else target
 	return name, name
+
+
+def _yarn_range(spec: str) -> str:
+	"""A yarn key's range: ``a@^1`` is ``^1``, ``a@npm:b@^1`` is ``^1`` too."""
+	at = spec.find("@", 1)
+	rng = spec[at + 1 :] if at > 0 else ""
+	if rng.startswith("npm:"):
+		target = rng[len("npm:") :]
+		at = target.find("@", 1)
+		rng = target[at + 1 :] if at > 0 else ""
+	return rng
 
 
 def npm_url_problem(spec: str, fields: dict[str, str]) -> str | None:
@@ -443,10 +468,12 @@ def yarn_problems(
 	# The base is the integration branch's: read the same way, best effort, so an entry it holds
 	# in a shape the strict reading skips counts as changed and is checked, never the reverse.
 	before = strict_yarn(base_text).specs if base_text else {}
-	unresolved, renamed, aliases = [], [], []
+	unresolved, renamed, aliases, outside = [], [], [], []
 	for spec, fields in head.specs.items():
 		if before.get(spec) == fields:
 			continue
+		if npmrange.satisfies(fields.get("version", ""), _yarn_range(spec)) is not True:
+			outside.append(f"{spec} ({fields.get('version', 'no version')})")
 		name, registry = _yarn_name(spec)
 		if name != registry and spec not in before:
 			aliases.append(f"{spec} ({registry})")
@@ -462,6 +489,11 @@ def yarn_problems(
 		reviews.append(f"{path}: {_more(renamed)} set a name or uid")
 	if aliases:
 		reviews.append(f"{path}: {_more(aliases)} install a package under another name (npm: alias)")
+	if outside:
+		reviews.append(
+			f"{path}: {_more(outside)} lock a version their range does not allow, or a range"
+			" this check does not read"
+		)
 	# Both names of each spec: an npm: alias under a name the base has still installs its target.
 	names = {n for s in head.specs for n in _yarn_name(s)} - {n for s in before for n in _yarn_name(s)}
 	added = sorted(names)

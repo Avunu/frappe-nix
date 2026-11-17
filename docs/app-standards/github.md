@@ -3,7 +3,7 @@ title: GitHub settings
 description: "The optional rulesets and repository settings, the release flow, and how they are applied and audited."
 order: 6
 tags: [app-standards, github, rulesets, releases]
-updated: 2026-10-31
+updated: 2026-11-16
 ---
 
 The CI gates and the release flow need a few repository settings to work, and rulesets to be worth anything: auto-merge is only as safe as the checks the integration branch requires. frappe-nix renders the settings and rulesets from an app's resolved configuration, and `frappe-nix repo apply` applies them, but only for an app whose profile turns on `repo-policy` (it is off in `recommended`). Without it nobody applies anything, and `frappe-nix repo doctor` tells you what the enabled modules rely on.
@@ -114,9 +114,30 @@ jobs:
 
 `FRAPPE_NIX_AUDIT_TOKEN` is a fine-grained token with Administration and Contents read on the fleet's repositories. The scorecard issues are written with the calling repository's own token.
 
-## `frappe-nix repo rollout`
+## Rollout: how a frappe-nix release reaches the apps
 
-A new frappe-nix release, or a new release of the org profile, rewrites the caller workflows' pinned SHAs. GitHub refuses a workflow change pushed with `GITHUB_TOKEN`, so Dependabot never moves either; rollout does, with your own token:
+A new frappe-nix release rewrites the caller workflows' pinned SHAs. GitHub refuses a workflow change pushed with `GITHUB_TOKEN`, so Dependabot never moves frappe-nix. frappe-nix's own `.github/workflows/rollout.yml` does, after every release, for the repositories frappe-nix's variable `FRAPPE_NIX_ROLLOUT_REPOS` names (spec §5.8):
+
+1. **resolve** (read-only, no secret) finds the release (`release-2`'s head, the `v*` tag at that commit, merged into `main` through a PR) and, per repository, its integration branch, that branch's head and the frappe-nix it locks. It skips a repository already at the tag and pauses one where a person's commits on `standards/frappe-nix` are held by an open PR (or by no PR), or where this release's PR was closed unmerged.
+2. **plan** (read-only, no secret, no cache) runs `frappe-nix repo rollout --emit-patch` in a throwaway runner, as an unprivileged user with no token at all: the app's flake, relock, uv and yarn (without install scripts) and `frappe-init --sync` run there and nowhere else. The result is a patch, and a `meta.json` whose state publish checks for itself.
+3. **publish** (environment `frappe-nix-rollout`) checks that patch with the tag's `frappe-nix ci verify-rollout-patch` before any token exists. Lock files are read the way `frappe-nix ci verify-relock` reads a relock's (strictly, as yarn writes them and as the Nix build reads them), must come from trusted sources, and each lock entry must still be the files its name and version stood for at the base; every other file must be byte for byte what the tag renders. Then it mints the rollout App's token for that one repository, turns off any auto-merge an earlier run enabled (GitHub keeps it on across a push), commits the verified tree as that App's bot (rollout.yml's `BOT`), pushes `standards/frappe-nix` and opens or updates `chore(deps): frappe-nix vX.Y.Z`. That PR auto-merges once the integration branch's required checks pass (only when they require every enabled gate and the repository allows auto-merge, and only for the commit the rollout pushed: `--head-sha`), or is labelled `needs-review` with auto-merge off.
+4. **report** (the workflow's own token, Issues write, no secret) writes a per-repository table to the run summary and to the pinned issue "frappe-nix rollout status" in frappe-nix, and fails the run when a patch was rejected.
+
+`standards/frappe-nix` belongs to the rollout. Push a fix to it (or amend or rebase the rollout's commit: a commit counts as the rollout's only when its bot both authored and committed it) and the rollout leaves it alone (with a comment) while its PR is open. Merge or close the PR and the next rollout replaces the branch (with `--force-with-lease`): a squash merge or a closed PR leaves your commits out of the integration branch, so take them there yourself. Close the PR unmerged and that release is skipped for the repository; the next release opens a new one. Commits that no PR holds (pushed with no PR open, or after the PR was closed) keep it paused until you delete the branch, or open a PR for them and merge or close it.
+
+One-time settings in frappe-nix:
+
+| Setting | Value |
+|---|---|
+| Environment `frappe-nix-rollout` (Settings → Environments) | Deployment branches: `main` only; required reviewers if a person should approve each release's publish. Only the publish job runs in it. It holds the rollout App's credentials: the environment variable `FRAPPE_NIX_ROLLOUT_APP_ID` (the App's client ID) and the environment secret `FRAPPE_NIX_ROLLOUT_PRIVATE_KEY`. |
+| Actions variable `FRAPPE_NIX_ROLLOUT_REPOS` | Unset or empty: no repository. `all`: every repository in `fleet.json`. Otherwise a comma-separated list, each in `fleet.json`. Canary order: one app, then a second, then `all`. |
+| The rollout App (a GitHub App of its own) | Owned by the organisation, no webhook, repository permissions Contents, Pull requests, Workflows and Issues read and write, installed on the fleet's consumers only. Its key is the environment secret above and nothing else: not a repository or organisation secret, so no other workflow, job or branch of frappe-nix (nor any other repository) can mint its token, and the environment's `main`-only rule then guards it. rollout.yml does not use the CI App of [CI](ci.md#a-github-app) or its key, so narrowing that secret's repositories does not affect it. Its bot login is rollout.yml's `BOT`. `frappe-nix repo rollout` reads that `BOT` from the frappe-nix repository the app locks, at the release it moves to, and counts a branch's `chore(deps): frappe-nix` commits as the rollout's own only when that exact login or you made them; any other bot's commit is someone else's. |
+
+Dispatch it by hand with `gh workflow run rollout.yml -R <owner>/frappe-nix -f repos=<owner>/my_app -f dry-run=true` to plan and verify without writing anything.
+
+### `frappe-nix repo rollout`, by hand
+
+The manual fallback, and the mover for an org profile. It uses your own token, which must have the `workflow` scope:
 
 ```bash
 gh auth refresh -s workflow
@@ -125,8 +146,8 @@ frappe-nix repo rollout --to v1.2.0 --all --fleet fleet.json
 frappe-nix repo rollout --profile-to latest --all --fleet fleet.json
 ```
 
-For each repository it clones the integration branch, runs `nix flake update frappe-nix` (and/or `standards-profile`), `nix run .#relock` and `frappe-init --sync`, commits `chore(deps): frappe-nix v1.2.0`, pushes `standards/frappe-nix-v1.2.0`, opens the PR and, unless `--no-auto-merge`, enables auto-merge with the first merge method. The nightly drift issues and audit row A10 remind you when an app is behind. An app without CI callers needs none of this: `nix flake update frappe-nix && frappe-init --sync` in any commit is enough.
+For each repository it clones the integration branch and runs `nix flake update frappe-nix` (and/or `standards-profile`), `nix run .#relock` and `frappe-init --sync`, with no token in their environment. It commits `chore(deps): frappe-nix v1.2.0` and pushes the one branch `standards/frappe-nix` with `--force-with-lease`; it leaves alone a branch that has someone else's commits. It turns off an auto-merge an earlier run enabled before it pushes, opens or edits the PR, closes the old `standards/frappe-nix-v*` PRs and, unless `--no-auto-merge`, enables auto-merge for the commit it pushed under the same safety rule (else the `needs-review` label). The nightly drift issues and audit row A10 remind you when an app is behind. An app without CI callers needs none of this: `nix flake update frappe-nix && frappe-init --sync` in any commit is enough.
 
 ## Landing a workflow change without a PAT
 
-Whether `GITHUB_TOKEN` can commit a change to `.github/workflows/` through the Git Data API (blobs, a tree, a commit, then a ref `PATCH`), which would let a later release automate the frappe-nix bump, has not been tested yet. The test needs a scratch repository: create a blob, a tree and a commit that change a workflow file, then `PATCH git/refs/heads/<branch>` with `force=false` from a workflow with `contents: write`. Until it is shown to work, `frappe-nix repo rollout` remains the only path.
+`rollout.yml` lands the workflow changes of a frappe-nix bump with the rollout App's token, which has Workflows write; no personal token is involved. Whether `GITHUB_TOKEN` alone could commit a change to `.github/workflows/` through the Git Data API (blobs, a tree, a commit, then a ref `PATCH`) has not been tested, and nothing depends on it any more.

@@ -12,6 +12,9 @@ step still succeeds. Every label is created (``--force``, idempotent) before it 
 (``head_sha``), so GitHub refuses to arm auto-merge on a PR whose head has moved since. A
 ``review`` verdict (``hold``) first turns off an auto-merge an earlier run enabled, since
 GitHub keeps it on across a push by anyone with write access, and fails when it stays on.
+Every ``needs-review`` label goes through ``label``, which does the same first: a PR labelled
+``needs-review`` (a review verdict, a failed safety rule, a refused ``gh pr merge --auto``)
+never keeps an auto-merge an earlier run enabled.
 """
 
 import json
@@ -32,7 +35,24 @@ def ensure_label(name: str, repo: str = "") -> None:
 	github.cli(*args)
 
 
+def disarm(pr_url: str) -> None:
+	"""Turn off the PR's auto-merge; an ``EnvError`` when it may still be on."""
+	res = github.cli("pr", "merge", "--disable-auto", pr_url)
+	if res.code == 0:
+		return
+	state = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
+	try:
+		off = state.code == 0 and json.loads(state.stdout).get("autoMergeRequest") is None
+	except (json.JSONDecodeError, AttributeError):
+		off = False
+	if not off:
+		raise EnvError(f"could not turn off auto-merge on {pr_url}: {res.stderr.strip()}")
+
+
 def label(pr_url: str, name: str, repo: str = "") -> None:
+	"""Apply ``name``; ``needs-review`` turns auto-merge off first (``disarm``), or raises."""
+	if name == "needs-review":
+		disarm(pr_url)
 	ensure_label(name, repo)
 	res = github.cli("pr", "edit", pr_url, "--add-label", name)
 	if res.code != 0:
@@ -51,23 +71,8 @@ def auto_merge_enabled(pr_url: str) -> bool:
 		return False
 
 
-def disarm(pr_url: str) -> None:
-	"""Turn off the PR's auto-merge; an ``EnvError`` when it may still be on."""
-	res = github.cli("pr", "merge", "--disable-auto", pr_url)
-	if res.code == 0:
-		return
-	state = github.cli("pr", "view", pr_url, "--json", "autoMergeRequest")
-	try:
-		off = state.code == 0 and json.loads(state.stdout).get("autoMergeRequest") is None
-	except (json.JSONDecodeError, AttributeError):
-		off = False
-	if not off:
-		raise EnvError(f"could not turn off auto-merge on {pr_url}: {res.stderr.strip()}")
-
-
 def hold(pr_url: str, repo: str, reason: str = "") -> str:
-	"""Leave the PR to a person: auto-merge off, then the ``needs-review`` label."""
-	disarm(pr_url)
+	"""Leave the PR to a person: auto-merge off, then the ``needs-review`` label (``label``)."""
 	label(pr_url, "needs-review", repo)
 	if reason:
 		notice(reason)
