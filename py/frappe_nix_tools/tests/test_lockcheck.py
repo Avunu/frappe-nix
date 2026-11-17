@@ -17,6 +17,7 @@ from helpers import run_cli
 PYPI = "https://pypi.org/simple"
 FILES = "https://files.pythonhosted.org/packages/ab/cd"
 SEED = "nix/node-locks/frappe/ui"
+CORPUS = Path(__file__).parent / "yarn_corpus"
 
 
 def pkg(name, version, source=None, files=None, deps=()):
@@ -264,6 +265,29 @@ class TestCheck(unittest.TestCase):
 		self.assertEqual(res.decision(), "needs-review", res.reasons())
 		self.assertTrue(any("set a name or uid" in r for r in res.reasons()), res.reasons())
 
+	def test_yarn_corpus(self):
+		"""tests/yarn_corpus: the locks tests/standards/lockcheck.nix reads with python-devops-nix's
+		own lib/node/yarn-lock.nix ``parse``, at the revision flake.lock pins, and compares with
+		``nix_yarn``. Each is a yarn v1 lock to that parser (its header in the first 8 lines); a
+		lock the strict reading takes reads the same both ways, and one it refuses is a reject."""
+		locks = sorted(CORPUS.glob("*/yarn.lock"))
+		self.assertGreater(len(locks), 10)
+		for path in locks:
+			with self.subTest(lock=path.parent.name):
+				text = path.read_bytes().decode()
+				self.assertIn("# yarn lockfile v1", text.split("\n")[:8])
+				parsed = lockcheck.strict_yarn(text)
+				if not parsed.errors:
+					ours = [(k, {f: v for f, v in fs.items() if f in ("version", "resolved", "integrity")})
+						for k, fs in parsed.entries]  # fmt: skip
+					self.assertEqual(lockcheck.nix_yarn(text), ours)
+				else:
+					rejects, _ = lockcheck.yarn_problems("x/yarn.lock", None, text, lockcheck.BaseLocks())
+					self.assertTrue(rejects)
+		self.assertEqual(
+			lockcheck.strict_yarn((CORPUS / "as-yarn-writes-it/yarn.lock").read_text()).errors, []
+		)
+
 	def test_forced_target_deleted(self):
 		forced = b'{\n  "forced": true,\n  "package.json": "' + b"1" * 64 + b'"\n}\n'
 		base = with_(stamp=forced)
@@ -326,6 +350,63 @@ class TestCheck(unittest.TestCase):
 		self.assertEqual(self.decide({**base, **seed}, base=base, major=16).decision(), "ok")
 		res = self.decide({**base, **seed}, base=base, major=None)
 		self.assertNotEqual(res.decision(), "ok", "without the major, the seed is a new lock to look at")
+		# A target the base has keeps the base's forced: the seed's bytes (forced) over a stamp
+		# that is not are not the seed's to decide.
+		res = self.decide(with_(stamp=seed[f"{SEED}/source.json"]), major=16)
+		self.assertEqual(res.decision(), "reject", res.reasons())
+		self.assertTrue(any("changes forced" in r for r in res.reasons()), res.reasons())
+
+	def test_yarn_npm_alias_and_dependency_edges(self):
+		"""An ``npm:`` alias under a name the base has, wired in through an existing entry's
+		dependency lines: every field of every entry checks out, so only both names of the alias,
+		the new alias and the changed edge show it."""
+
+		def lock(react_dep, extra=""):
+			return "\n".join(
+				[
+					"# yarn lockfile v1",
+					"",
+					"",
+					"lodash@^4.17.21:",
+					'  version "4.17.21"',
+					f'  resolved "{npm("lodash", "4.17.21")}"',
+					'  integrity "sha512-x"',
+					"",
+					"react@^18:",
+					'  version "18.3.1"',
+					f'  resolved "{npm("react", "18.3.1")}"',
+					'  integrity "sha512-y"',
+					"  dependencies:",
+					f"    {react_dep}",
+					"",
+					extra,
+				]
+			).encode()
+
+		base_lock = lock('lodash "^4.17.21"')
+		evil = "\n".join(
+			[
+				'"lodash@npm:evil-payload@^1.0.0":',
+				'  version "1.0.0"',
+				f'  resolved "{npm("evil-payload", "1.0.0")}"',
+				'  integrity "sha512-z"',
+				"",
+			]
+		)
+		head_lock = lock('lodash "npm:evil-payload@^1.0.0"', evil)
+		base = with_(yarn=base_lock)
+		res = self.decide(with_(yarn=head_lock), base=base)
+		self.assertEqual(res.decision(), "needs-review", res.reasons())
+		reasons = " ".join(res.reasons())
+		self.assertIn("adds evil-payload", reasons)
+		self.assertIn("npm: alias", reasons)
+		# the dependency edge alone makes react a changed entry
+		before = lockcheck.strict_yarn(base_lock.decode()).specs["react@^18"]
+		after = lockcheck.strict_yarn(head_lock.decode()).specs["react@^18"]
+		self.assertNotEqual(before, after)
+		self.assertEqual(lockcheck.strict_yarn(head_lock.decode()).errors, [])
+		# and the same lock again is the base's
+		self.assertEqual(self.decide(base, base=base).decision(), "ok")
 
 
 def git(root: Path, *args: str) -> str:

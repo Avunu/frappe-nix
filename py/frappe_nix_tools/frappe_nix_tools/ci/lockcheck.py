@@ -27,9 +27,11 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
   it is set), so it must stay what the base (or, for a new target, the seed) says. Deleting the
   ``yarn.lock`` or the ``source.json`` of a target the base forces, and keeping the other, turns
   the override off as well and is ``reject``; pruning the whole forced target is ``needs-review``.
-- A package name no base lock of that file had (uv or yarn), or a new yarn entry without a
-  ``resolved`` URL or with a ``name`` or ``uid``, is ``needs-review``: an honest relock adds one
-  only when the bumped dependency does, and a person should see it.
+- A package name no base lock of that file had (uv or yarn; for a yarn ``a@npm:b@^1`` alias,
+  ``a`` and ``b`` both), a yarn ``npm:`` alias spec the base does not have, or a new or changed
+  yarn entry (its dependency lines included) without a ``resolved`` URL or with a ``name`` or
+  ``uid``, is ``needs-review``: an honest relock adds one only when the bumped dependency does,
+  and a person should see it.
 
 The decision is ``ok``, ``needs-review`` (pushed, labelled, auto-merge off) or ``reject`` (the
 step fails and nothing is pushed). It runs no nix, uv or yarn, and reads git only.
@@ -281,7 +283,9 @@ _STRICT_FIELD = re.compile(
 )
 _STRICT_DEPS = re.compile(r"  (?:dependencies|optionalDependencies):")
 _STRICT_DEP = re.compile(rf'    (?:{_QUOTED}|{_BARE}) (?:"[^"\\\x00-\x1f\x7f]*"|{_BARE})')
-# lib/node/yarn-lock.nix's keyOf and fieldOf, as builtins.match applies them (whole line).
+# lib/node/yarn-lock.nix's keyOf and fieldOf, as builtins.match applies them (whole line). Copied,
+# so tests/standards/lockcheck.nix runs that file's `parse`, at the python-devops-nix revision
+# flake.lock pins, over tests/yarn_corpus and the shipped seeds and compares it with nix_yarn.
 _NIX_KEY = re.compile(r"([^ \t#].*):[ \t]*", re.S)
 _NIX_FIELD = re.compile(r'  (resolved|integrity|version) "?([^"]*)"?[ \t]*', re.S)
 _NIX_FIELDS = ("version", "resolved", "integrity")
@@ -289,8 +293,9 @@ _NIX_FIELDS = ("version", "resolved", "integrity")
 
 @dataclass
 class YarnLock:
-	"""A yarn (classic) lock as the strict reading has it: entries in order (key line, fields),
-	each spec's fields, and what is wrong with the file (nothing, for a lock yarn wrote)."""
+	"""A yarn (classic) lock as the strict reading has it: entries in order (key line, fields and
+	dependency blocks), each spec's, and what is wrong with the file (nothing, for a lock yarn
+	wrote)."""
 
 	entries: list[tuple[str, dict[str, str]]] = field(default_factory=list)
 	specs: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -307,18 +312,20 @@ def strict_yarn(text: str) -> YarnLock:
 	comments, an unindented key line, two-space ``version``/``resolved``/``integrity``/``name``/
 	``uid`` lines with one value each (quoted with no whitespace or escape, or bare), two-space
 	``dependencies:``/``optionalDependencies:`` headers and the four-space lines under them. A field
-	twice in one entry, a spec in two entries, or any other line is an error."""
+	twice in one entry, a spec in two entries, or any other line is an error. An entry keeps its
+	dependency lines, under their block's header line (``"  dependencies:"``), so an entry whose
+	dependency edges change is a changed entry."""
 	out = YarnLock()
 	if m := _LINE_BREAKS.search(text):
 		out.errors.append(f"has a {m[0]!r}, a line break only some of its readers see")
 	fields: dict[str, str] | None = None
-	in_deps = False
+	in_deps = ""  # the header of the dependency block the next lines belong to, if any
 	for n, line in enumerate(text.split("\n"), 1):
 		bad = f"line {n} {line[:120]!r} is not a line yarn writes"
 		if not line or line.startswith("#"):
 			continue
 		if _STRICT_KEY.fullmatch(line):
-			fields, in_deps = {}, False
+			fields, in_deps = {}, ""
 			out.entries.append((line[:-1], fields))
 			for spec in _specs(line[:-1]):
 				if spec in out.specs:
@@ -327,7 +334,7 @@ def strict_yarn(text: str) -> YarnLock:
 		elif fields is None:
 			out.errors.append(bad)
 		elif m := _STRICT_FIELD.fullmatch(line):
-			in_deps = False
+			in_deps = ""
 			if m["field"] in fields:
 				out.errors.append(f"line {n}: {m['field']} twice in one entry")
 			if m["sri"] is not None and m["field"] != "integrity":
@@ -337,12 +344,11 @@ def strict_yarn(text: str) -> YarnLock:
 			if line in fields:
 				out.errors.append(f"line {n}: {line.strip()} twice in one entry")
 			fields[line] = ""
-			in_deps = True
-		elif not (in_deps and _STRICT_DEP.fullmatch(line)):
+			in_deps = line
+		elif in_deps and _STRICT_DEP.fullmatch(line):
+			fields[in_deps] += line.strip() + "\n"
+		else:
 			out.errors.append(bad)
-	for _key, entry in out.entries:
-		for header in [k for k in entry if k.startswith("  ")]:
-			del entry[header]
 	return out
 
 
@@ -437,10 +443,13 @@ def yarn_problems(
 	# The base is the integration branch's: read the same way, best effort, so an entry it holds
 	# in a shape the strict reading skips counts as changed and is checked, never the reverse.
 	before = strict_yarn(base_text).specs if base_text else {}
-	unresolved, renamed = [], []
+	unresolved, renamed, aliases = [], [], []
 	for spec, fields in head.specs.items():
 		if before.get(spec) == fields:
 			continue
+		name, registry = _yarn_name(spec)
+		if name != registry and spec not in before:
+			aliases.append(f"{spec} ({registry})")
 		if "name" in fields or fields.get("uid"):
 			renamed.append(f"{spec} ({fields.get('name') or fields.get('uid')})")
 		if "resolved" not in fields:
@@ -451,7 +460,10 @@ def yarn_problems(
 		reviews.append(f"{path}: {_more(unresolved)} resolve to no URL")
 	if renamed:
 		reviews.append(f"{path}: {_more(renamed)} set a name or uid")
-	names = {_yarn_name(s)[0] for s in head.specs} - {_yarn_name(s)[0] for s in before}
+	if aliases:
+		reviews.append(f"{path}: {_more(aliases)} install a package under another name (npm: alias)")
+	# Both names of each spec: an npm: alias under a name the base has still installs its target.
+	names = {n for s in head.specs for n in _yarn_name(s)} - {n for s in before for n in _yarn_name(s)}
 	added = sorted(names)
 	if added:
 		reviews.append(f"{path} adds {_more(added)}")
@@ -469,8 +481,9 @@ def _stamp(data: bytes | None) -> dict | None:
 
 
 def stamp_problems(path: str, base: bytes | None, head: bytes, seed: bytes | None) -> list[str]:
-	"""Rejects for one ``source.json``: the base's or the seed's, or that stamp with other hashes."""
-	if head in (base, seed):
+	"""Rejects for one ``source.json``: the base's (or, for a target the base does not have, the
+	seed's), or that stamp with other hashes."""
+	if head == (seed if base is None else base):
 		return []
 	doc = _stamp(head)
 	if doc is None:
