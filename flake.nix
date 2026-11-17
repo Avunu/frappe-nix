@@ -661,6 +661,12 @@
         }
         # What an editable workspace member is built from in the dev shell.
         // import ./tests/editable-src.nix { inherit pkgs checks; }
+        # Frappe's flow harness, over a fixture bench: the editable build's
+        # `editables`, the production build's offline web UI, app mode's input.
+        // import ./tests/flow-webui.nix {
+          inherit pkgs checks inputs;
+          inherit (inputs) python-devops-nix;
+        }
         # Which apps/<x> and apps/<x>/<y> get a node lock, over a fixture tree.
         // import ./tests/node-targets.nix { inherit pkgs checks; }
         # Which lock each target builds from — its own, a fallback, a forced

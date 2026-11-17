@@ -1,0 +1,13 @@
+[project]
+name = "frappe"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = ["frappe-flow"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+# As frappe's own pyproject.toml has it.
+frappe-flow = { path = "flow/harness", editable = true }

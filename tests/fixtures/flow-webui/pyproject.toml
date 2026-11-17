@@ -1,0 +1,17 @@
+# Fixture for tests/flow-webui.nix: a bench shaped like a Frappe version-16 one,
+# whose frappe member installs its flow harness from `flow/harness` inside its
+# own directory. The lock is uv's for this file; do not re-lock.
+[project]
+name = "flow-webui-bench"
+version = "0.0.0"
+requires-python = ">=3.14"
+dependencies = ["frappe"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/frappe"]
+
+[tool.uv.sources]
+frappe = { workspace = true }
