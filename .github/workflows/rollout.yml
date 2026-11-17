@@ -758,7 +758,8 @@ jobs:
           result=needs-review
           want="${commit:-$observed}"
           if [ "$can_merge" = true ]; then
-            # The safety rule again (gates_protected on the branch now), then gh pr merge --auto;
+            # The safety rule again (gates_protected on the branch now), then auto-merge with
+            # --match-head-commit for the commit this run pushed (or found on the branch);
             # it labels needs-review itself when either fails.
             out="$RUNNER_TEMP/automerge.out"
             (cd "$GITHUB_WORKSPACE/consumer" && GITHUB_OUTPUT="$out" nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- \
