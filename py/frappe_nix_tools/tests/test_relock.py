@@ -122,6 +122,21 @@ class TestRelockPatch(Repo):
 		self.assertIn("::error::relock would change a workflow", out)
 		self.assertIn("run frappe-nix repo rollout", out)
 
+	def test_no_renames_and_a_workflow_moved_out_is_refused(self):
+		"""The push jobs refuse a rename, so the patch has none; a moved file names both paths."""
+		(self.root / "nix").mkdir()
+		git(self.root, "mv", "pyproject.toml", "nix/pyproject.toml")
+		patch = Path(self.tmp.name) / "relock.patch"
+		code, out, err = run_cli("ci", "relock-patch", "--out", str(patch), cwd=self.root)
+		self.assertEqual((code, out.strip()), (0, "empty=false"), err)
+		self.assertNotIn("rename from", patch.read_text())
+		self.assertIn("deleted file mode 100644", patch.read_text())
+		git(self.root, "reset", "-q", "--hard")
+		git(self.root, "mv", ".github/workflows/ci.yml", "ci.yml")
+		code, out, _ = run_cli("ci", "relock-patch", "--out", str(patch), cwd=self.root)
+		self.assertEqual(code, 1)
+		self.assertIn(".github/workflows/ci.yml", out)
+
 
 class TestRefuseWorkflows(Repo):
 	def test_range_and_index(self):

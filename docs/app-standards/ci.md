@@ -93,7 +93,7 @@ Each gate writes `.dev-dist/gate/<gate>.json` with every step's status. `--forma
 
 Dependabot opens the PRs; `deps.yml` decides what happens to them.
 
-- **A nix bump** (frappe and the siblings) changes `flake.lock`, and usually needs `nix/uv.lock` and `nix/node-locks/**` regenerated. `relock-plan` runs the PR's code with no write token, makes the relock and sync patch, and refuses one that touches `.github/workflows/`. In an app that tracks `types/doctypes.d.ts`, the new pins' DocTypes make it stale, so `relock-plan` also regenerates it with the doctypes check's own `gen-registry` command, less `--check` (`frappe-nix ci relock-doctypes`), and the patch carries it. If any step of that fails, the relock is pushed without it and the run has a notice; `ci / typecheck` then reports the stale file as before. `relock-push` only applies that patch, commits it to the PR branch and re-runs CI there. A PR that moves `frappe-nix` or the standards profile is closed: those move only with `frappe-nix repo rollout` (see [Versioning](versioning.md)).
+- **A nix bump** (frappe and the siblings) changes `flake.lock`, and usually needs `nix/uv.lock` and `nix/node-locks/**` regenerated. `relock-plan` runs the PR's code with no write token, makes the relock and sync patch, and refuses one that touches `.github/workflows/`. In an app that tracks `types/doctypes.d.ts`, the new pins' DocTypes make it stale, so `relock-plan` also regenerates it with the doctypes check's own `gen-registry` command, less `--check` (`frappe-nix ci relock-doctypes`), and the patch carries it. If any step of that fails, the relock is pushed without it and the run has a notice; `ci / typecheck` then reports the stale file as before. `relock-push`, on a GitHub-hosted runner, checks that patch (only `flake.lock`, `nix/uv.lock`, `nix/node-locks/**` and `types/doctypes.d.ts`, each a plain file, with no rename, mode change or symlink), applies it, commits it to the PR branch and re-runs CI there. A PR that moves `frappe-nix` or the standards profile is closed: those move only with `frappe-nix repo rollout` (see [Versioning](versioning.md)).
 - **Auto-merge** follows this table. It is enabled only when the integration branch requires every enabled gate's `ci / <gate>` check, and the repository allows auto-merge. Otherwise the PR is labelled `needs-review` and the log names `frappe-nix repo doctor`.
 
   | Ecosystem | Merged automatically | Labelled `needs-review` |
@@ -170,6 +170,8 @@ Unset, the callers carry no `runs-on` line and are byte for byte what they were 
 
 A pull request from a fork always runs on `ubuntu-latest`, whatever `ci.runs-on` says: each job's `runs-on` is `${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}`, so code from outside the repository never runs on your machine.
 
+The jobs that hold a write token for pushing, merging or releasing (release `release-please` and `fast-forward`; deps `relock-push`, `auto-merge`, `sweep`, `update-branches` and `relock-upgrade-push`; nightly `shots-push`) always run on `ubuntu-latest`, and `ci.runs-on` doesn't move them: a self-hosted runner keeps its home and Nix store between jobs and repositories, so the GitHub App's key never goes there. They are short and run no Nix builds; the jobs that do (`relock-plan`, `relock-upgrade-plan`, nightly `shots`) follow `ci.runs-on`.
+
 ### A self-hosted NixOS runner
 
 The jobs expect a plain Linux machine with Nix, not GitHub's Ubuntu image. On such a runner (`runner.environment` is `self-hosted`) they skip the hosted image's disk cleanup, the Nix installer, magic-nix-cache and `apt-get`, and get what those provided from Nix instead. The runner needs:
@@ -228,15 +230,16 @@ The App's ID travels as a secret because a caller's `with:` can't read secrets, 
 | deps `relock-push` | pushes the relock commit and enables auto-merge; CI is not dispatched |
 | deps `update-branches` | updates bot PRs from the integration branch, asking for Workflows write too when the App has it; CI is not dispatched |
 | deps `auto-merge` | enables auto-merge, labels or closes the Dependabot PR |
-| deps `relock-upgrade` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
-| nightly `shots` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
+| deps `relock-upgrade-push` | pushes `standards/relock-python`, opens its PR and enables auto-merge; CI is not dispatched |
+| nightly `shots-push` | pushes `standards/screenshots`, labels and opens its PR; CI is not dispatched |
 
 Unset (the default), or with the variable or the secret empty in a run, every job uses `GITHUB_TOKEN` and dispatches CI exactly as before, and the callers are byte for byte what they were before the key existed. The fast-forward of the release branch uses the App too, when it has **Workflows** write: GitHub refuses to move a branch with `GITHUB_TOKEN` onto commits that change `.github/workflows/`, which most releases do (Dependabot action bumps, `frappe-init --sync`). It asks for `contents` and `workflows` write; an App without Workflows write can't mint that token, and the move falls back to `GITHUB_TOKEN`. If the release-branch ruleset restricts updates, add the App to its bypass list. pilot's `assets.yml` dispatch keeps `GITHUB_TOKEN`.
 
 ## Security notes
 
 - Every third-party action is pinned to a commit SHA with a version comment, and `.github/zizmor.yml` makes zizmor enforce it. Dependabot moves third-party pins; frappe-nix's own pin moves only with `frappe-init --sync`.
-- Every checkout uses `persist-credentials: false`. The three jobs that push (relock-push, relock-upgrade and nightly shots) push to an explicit token URL from that step alone.
+- Every checkout uses `persist-credentials: false`. The three jobs that push (relock-push, relock-upgrade-push and nightly shots-push) push to an explicit token URL from that step alone.
+- Every job that can hold the GitHub App's key or a write token for pushing, merging or releasing runs on `ubuntu-latest`, whatever `ci.runs-on` says: a self-hosted runner is shared with other repositories' jobs, which could read what such a job leaves behind. Those jobs run no app or dependency code. The relock and screenshot jobs are split in two: a plan job runs relock or frappe-shots with `contents: read` and only the read secrets, and uploads a patch; the hosted push job checks that patch (only the paths the plan job writes, each an added, modified or deleted plain file: no rename, copy, mode change, symlink or `.github/` path) before it mints the App's token.
 - A [GitHub App](#a-github-app)'s token is minted only in the jobs that push, open PRs, label or enable auto-merge, after any step that runs the app's or third-party code, for the current repository alone and with Contents and Pull requests write only (`update-branches` asks for Workflows write too, and without it falls back to those two). It is revoked when the job ends.
 - Every workflow starts from `permissions: {}`, and each job asks for exactly what it uses.
 - The jobs that hold a write token never install frappe-nix-tools from the PR's `flake.lock`: they read the integration branch's.
