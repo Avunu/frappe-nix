@@ -43,7 +43,7 @@ from frappe_nix_tools.common.report import (
 	render,
 	worst,
 )
-from frappe_nix_tools.scaffold import bootstrap, defaults, engine, tomlmerge
+from frappe_nix_tools.scaffold import bootstrap, context, defaults, engine, tomlmerge
 from frappe_nix_tools.scaffold.engine import Item
 
 
@@ -324,7 +324,7 @@ def phase_a(root: Path, args: argparse.Namespace, runner: bootstrap.Runner) -> b
 		# §3.3: phase B of a dry run renders against the rev that lock would take.
 		url = plan.ctx.frappe_nix.url
 		if not runner.offline and not bootstrap.override_url() and bootstrap.release_ref_needed(root, url):
-			rev = bootstrap.release_branch_rev(root, f"release-{plan.ctx.frappe_nix.major}")
+			rev = bootstrap.release_branch_rev(root, context.RELEASE_BRANCH)
 			if rev:
 				args.dry_run_lock = {
 					"rev": rev,

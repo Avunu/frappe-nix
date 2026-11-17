@@ -13,7 +13,7 @@ The app standards are opt-in and profile-driven. A profile decides which modules
 An app opts in by having a `[tool.frappe-nix]` table in its `pyproject.toml`. The quickest way is to let sync create it:
 
 ```sh
-nix run github:Avunu/frappe-nix/release-1#frappe-init -- --app --sync --standards recommended --version version-16
+nix run github:Avunu/frappe-nix/release#frappe-init -- --app --sync --standards recommended --version version-16
 ```
 
 or add it by hand and run `frappe-init --sync`:

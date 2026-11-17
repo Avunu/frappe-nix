@@ -3,7 +3,7 @@ title: Upgrading frappe-nix
 description: Move a bench or an app repository to a newer frappe-nix, what the shell reconciles for you on entry, what to commit afterwards, and how to move a 1.x bench to 2.0.
 order: 9
 tags: [upgrade, flake-update, reconcile, release]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 To pick up a newer frappe-nix, update the pin and reload the shell:
@@ -19,14 +19,13 @@ That is the whole procedure.
 
 frappe-nix is released with release-please. A `fix:` merged to `main` makes a patch release and a `feat:` a minor one. Within a major release nothing a bench sets is taken away: a renamed option, flag or environment variable keeps its old name, with a warning, through every release of that major, and the old names go in the next major release. A change that alters a running deployment without anyone asking for it ships opt-in, and becomes the default in the next major release. A major release is cut by a `Release-As: <N>.0.0` footer (the pr-policy check refuses `!` and `BREAKING CHANGE`), and this page says what to change: [1.x to 2.0](#1x-to-20).
 
-| `frappe-nix.url`                     | Follows                                       |
-| ------------------------------------ | --------------------------------------------- |
-| `github:Avunu/frappe-nix/release-2`  | every 2.x release, and nothing that breaks it |
-| `github:Avunu/frappe-nix/release-1`  | every 1.x release; it stays at the last one   |
-| `github:Avunu/frappe-nix/v2.0.0`     | that one release                              |
-| `github:Avunu/frappe-nix`            | `main`, unreleased changes included           |
+| `frappe-nix.url`                  | Follows                             |
+| --------------------------------- | ----------------------------------- |
+| `github:Avunu/frappe-nix/release` | every release, a major one included |
+| `github:Avunu/frappe-nix/v2.0.0`  | that one release                    |
+| `github:Avunu/frappe-nix`         | `main`, unreleased changes included |
 
-Each `vN.*` tag moves a `release-N` branch, which only ever fast-forwards: `release-2` is created by the first 2.x release, and `release-1` stays where the last 1.x release left it. The scaffolder writes plain `github:Avunu/frappe-nix` for a bench. An app that opted in to the [app standards](../app-standards/versioning.md) follows `release-<N>` of the frappe-nix that last synced it, so it moves to `release-2` when you run `frappe-init --sync` with a 2.x frappe-nix.
+Every `v*` tag fast-forwards `release`, a new major included. Your `flake.lock` is what keeps you on the release you have: it moves only when you update it, or, for an app, when a rollout PR passes its checks. Read this page before you take a major. The scaffolder writes plain `github:Avunu/frappe-nix` for a bench; an app that opted in to the [app standards](../app-standards/versioning.md) follows `release`. The old `release-1` and `release-2` branches no longer move and will be deleted. The next rollout moves an app's flake off them onto `release` in its PR; point any other flake that names one at `release` yourself.
 
 ## 1.x to 2.0
 
@@ -44,11 +43,13 @@ Do it in this order:
 
 ### 1. Point the flake at 2.x
 
+A flake on `release` or on plain `github:Avunu/frappe-nix` gets 2.0 with its next `nix flake update frappe-nix`. One that names a tag or an old release branch points at `release` first:
+
 ```nix
-frappe-nix.url = "github:Avunu/frappe-nix/release-2";
+frappe-nix.url = "github:Avunu/frappe-nix/release";
 ```
 
-Then `nix flake update frappe-nix`. A bench on plain `github:Avunu/frappe-nix` gets 2.0 with its next update anyway.
+Then `nix flake update frappe-nix`.
 
 ### 2. Rename the dev shell options
 

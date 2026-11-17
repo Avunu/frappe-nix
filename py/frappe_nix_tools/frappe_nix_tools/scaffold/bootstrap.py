@@ -169,7 +169,7 @@ FRAPPE_NIX_REPO = "https://github.com/Avunu/frappe-nix"
 
 def release_ref_needed(root: Path, url: str) -> bool:
 	"""Whether phase A's lock would fetch frappe-nix's release branch: the flake follows the
-	default ``release-<N>`` URL, and there is no ``flake.lock`` or its frappe-nix node was
+	default ``release`` URL, and there is no ``flake.lock`` or its frappe-nix node was
 	locked from something else."""
 	if url != context.default_frappe_nix_url():
 		return False
@@ -223,20 +223,19 @@ def release_branch_rev(root: Path, branch: str) -> str | None:
 
 
 def require_release_branch(runner: Runner, url: str) -> None:
-	"""Refuse, before anything is written, when the ``release-<major>`` branch the rendered
-	flake follows does not exist: it is created when ``v<major>.0.0`` is tagged (S32), and
-	``nix flake lock`` would otherwise fail halfway through (GitHub answers 422). A network
-	failure is left to the lock step to report. A ``dev-shell.frappe-nix-url`` is the app's
-	own choice and is not checked."""
+	"""Refuse, before anything is written, when the ``release`` branch the rendered flake
+	follows does not exist: the release workflow creates it (S32), and ``nix flake lock``
+	would otherwise fail halfway through (GitHub answers 422). A network failure is left to
+	the lock step to report. A ``dev-shell.frappe-nix-url`` is the app's own choice and is
+	not checked."""
 	if runner.dry_run or runner.offline or override_url() or not release_ref_needed(runner.root, url):
 		return
-	major = context.frappe_nix_major(frappe_nix_tools.__version__)
-	branch = f"release-{major}"
+	branch = context.RELEASE_BRANCH
 	if release_branch_exists(runner.root, branch) is False:
 		raise EnvError(
-			f"{FRAPPE_NIX_REPO} has no {branch} branch yet: the app's flake follows it, and it is"
-			f" created when frappe-nix v{major}.0.0 is tagged (docs/app-standards/spec.md S32). Nothing"
-			" was written; app mode is available from that release on."
+			f"{FRAPPE_NIX_REPO} has no {branch} branch yet: the app's flake follows it, and"
+			" frappe-nix's release workflow creates it (docs/app-standards/spec.md S32). Nothing"
+			" was written; app mode is available once it exists."
 		)
 
 
@@ -245,7 +244,7 @@ def phase_a_lock(runner: Runner, inputs: dict[str, str | None], url: str) -> boo
 	before = (runner.root / "flake.lock").read_bytes() if (runner.root / "flake.lock").is_file() else None
 	relock, move = lock_reasons(runner.root, inputs, url)
 	if override_url():
-		# The self-tests lock the checkout under test in place of release-<N>.
+		# The self-tests lock the checkout under test in place of the release branch.
 		runner.run(["nix", "flake", "lock", *nix_args()])
 	else:
 		if relock:

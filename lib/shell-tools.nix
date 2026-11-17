@@ -19,11 +19,11 @@
 #                        revision a bench's flake.lock pins, run before Nix
 #                        evaluates the bench's flake, which reads apps/*. A
 #                        bench's .envrc runs it on a fresh clone
-#                        (`nix run github:Avunu/frappe-nix/release-1#bootstrap`).
+#                        (`nix run github:Avunu/frappe-nix/release#bootstrap`).
 #   frappe-nix-repair    `frappe-nix-sources repair`: what it takes for Nix to
 #                        read a bench's flake when it cannot. From this flake,
 #                        since the bench's cannot be evaluated in that state
-#                        (`nix run github:Avunu/frappe-nix/release-2#repair`).
+#                        (`nix run github:Avunu/frappe-nix/release#repair`).
 #   frappe-nix-db-nocow  lib.dbNocow: the dev MariaDB datadir off btrfs
 #                        copy-on-write, created and marked before the server
 #                        writes to it; a running server is a process with
