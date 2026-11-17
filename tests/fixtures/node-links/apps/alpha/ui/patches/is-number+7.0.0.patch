@@ -1,0 +1,8 @@
+--- a/node_modules/is-number/index.js
++++ b/node_modules/is-number/index.js
+@@ -16,3 +16,5 @@
+   }
+   return false;
+ };
++
++module.exports.patchedByFixture = true;
