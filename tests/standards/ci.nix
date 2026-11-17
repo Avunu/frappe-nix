@@ -48,7 +48,17 @@
 #                           elsewhere gets the key at a pin that runs it on a self-hosted
 #                           runner (only python-devops-nix e76d5d8, #72, is named hosted),
 #                           and frappe-nix's own call excludes github_actions and lists the
-#                           key jobs' actions under review-dependencies
+#                           key jobs' actions under review-dependencies; rollout.yml (§5.8)
+#                           runs every job on ubuntu-latest with minimal permissions, its
+#                           resolve and plan jobs hold no secret, environment or cache, its
+#                           plan runs the app's code as an unprivileged user, and publish (in
+#                           the frappe-nix-rollout environment) mints the App token only after
+#                           the verify and re-derive steps, from the environment's own
+#                           FRAPPE_NIX_ROLLOUT_* variable and secret, which no other job or
+#                           workflow names; publish turns an earlier auto-merge off before it
+#                           pushes, enables auto-merge only for the commit it pushed
+#                           (--head-sha), and turns it off again before it labels
+#                           needs-review; report has issues write and no secret
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -152,6 +162,108 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert any(s.get("uses", "").startswith("actions/cache/restore@") for s in steps[probe:notice]), steps
         assert any("frappe-nix ci relock-doctypes\n" in s.get("run", "") for s in steps[probe:notice]), steps
 
+        # rollout.yml (§5.8, S5): the app's code runs only where no secret and no write token is.
+        doc, triggers = load("rollout.yml")
+        assert doc["permissions"] == {}, doc["permissions"]
+        assert doc["concurrency"] == {"group": "frappe-nix-rollout", "cancel-in-progress": False}, doc["concurrency"]
+        wr = triggers["workflow_run"]
+        assert wr == {"workflows": ["release"], "types": ["completed"], "branches": ["main"]}, wr
+        assert {"schedule", "workflow_dispatch"} <= set(triggers), list(triggers)
+        jobs = doc["jobs"]
+        assert list(jobs) == ["resolve", "plan", "publish", "report"], list(jobs)
+        for name, job in jobs.items():
+            assert job["runs-on"] == "ubuntu-latest", (name, job["runs-on"])
+        assert "workflow_run.conclusion == 'success'" in jobs["resolve"]["if"], jobs["resolve"]["if"]
+        # The filter matches any `release` workflow on any `main`, a fork's pull request too:
+        # resolve runs only for release.yml's own run in this repository, never a PR's.
+        for want in ("workflow_run.head_repository.full_name == github.repository", "'.github/workflows/release.yml'", '"push","schedule","workflow_dispatch"'):
+            assert want in jobs["resolve"]["if"], (want, jobs["resolve"]["if"])
+        assert jobs["resolve"]["permissions"] == {"contents": "read", "pull-requests": "read"}, jobs["resolve"]
+        assert jobs["plan"]["permissions"] == {"contents": "read"}, jobs["plan"]["permissions"]
+        assert jobs["publish"]["permissions"] == {"contents": "read"}, jobs["publish"]["permissions"]
+        assert jobs["report"]["permissions"] == {"issues": "write"}, jobs["report"]["permissions"]
+        caches = ("actions/cache", "DeterminateSystems/magic-nix-cache", "cachix/")
+        for name in ("resolve", "plan"):
+            job = jobs[name]
+            assert "secrets." not in yaml.safe_dump(job), name
+            assert "environment" not in job, name
+            uses = [s.get("uses", "") for s in job["steps"]]
+            assert not any(u.startswith(caches) or u.startswith("actions/create-github-app-token@") for u in uses), uses
+        plan_runs = " ".join(s.get("run", "") for s in jobs["plan"]["steps"])
+        assert "sudo -u rollout" in plan_runs and "--emit-patch" in plan_runs, plan_runs
+        # The user the app's code runs as gets no token: the tool reads nothing from GitHub.
+        planning = next(s for s in jobs["plan"]["steps"] if "sudo -u rollout" in s.get("run", ""))
+        assert "GH_TOKEN" not in yaml.safe_dump(planning), planning
+        assert '--tag-sha "$TAG_SHA"' in planning["run"], planning["run"]
+        # Nor in /etc/nix/nix.conf, which every user reads: the installer writes its
+        # github-token (the job's token by default) there as access-tokens.
+        for s in jobs["plan"]["steps"]:
+            if s.get("uses", "").startswith("DeterminateSystems/nix-installer-action@"):
+                assert s.get("with", {}).get("github-token") == "", s
+        # The release is version.txt's tag, which must point at release-2's head.
+        resolve_runs = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
+        assert "contents/version.txt?ref=$sha" in resolve_runs and "sort -uV" not in resolve_runs, resolve_runs
+        # A commit counts as the bot's only when the bot authored and committed it.
+        assert 'for role in ("author", "committer")' in resolve_runs, resolve_runs
+        # meta.json's state is the plan's claim: publish checks superseded and noop itself.
+        check = next(s["run"] for s in jobs["publish"]["steps"] if "jq -r .state" in s.get("run", ""))
+        assert '"repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH"' in check and "contents/flake.lock?ref=$BASE" in check, check
+        assert any(s.get("env", {}).get("FRAPPE_NIX_YARN_IGNORE_SCRIPTS") == "1" for s in jobs["plan"]["steps"])
+        assert jobs["publish"]["environment"] == "frappe-nix-rollout", jobs["publish"].get("environment")
+        # The rollout App's key is an environment secret: only a job in that environment names
+        # it, rollout.yml never uses the avunu-ci key, and no other workflow names the rollout's.
+        import glob
+        key = "secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY"
+        for name, job in jobs.items():
+            text = yaml.safe_dump(job, width=10**6)
+            if key in text or "vars.FRAPPE_NIX_ROLLOUT_APP_ID" in text:
+                assert job.get("environment") == "frappe-nix-rollout", name
+            assert "AVUNU_CI_PRIVATE_KEY" not in text and "AVUNU_CI_APP_ID" not in text, name
+        for path in glob.glob(".github/workflows/*.y*ml"):
+            if not path.endswith("/rollout.yml"):
+                assert "FRAPPE_NIX_ROLLOUT_PRIVATE_KEY" not in open(path).read(), path
+        # `frappe-nix repo rollout` reads this env.BOT (rollout_bot) to know the rollout's commits.
+        from frappe_nix_tools.commands.repo import rollout as repo_rollout
+        assert repo_rollout.ROLLOUT_WORKFLOW == ".github/workflows/rollout.yml"
+        assert doc["env"]["BOT"] == "avunu-rollout[bot]", doc["env"]
+        steps = jobs["publish"]["steps"]
+        verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
+        recheck = next(i for i, s in enumerate(steps) if "write-tree" in s.get("run", ""))
+        token = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/create-github-app-token@")]
+        assert len(token) == 1 and verify < recheck < token[0], (verify, recheck, token)
+        for s in steps[: token[0]]:
+            assert "secrets." not in yaml.safe_dump(s), s
+            assert "app-token" not in yaml.safe_dump(s), s
+        mint = steps[token[0]]
+        assert "env.DRY_RUN != 'true'" in mint["if"] and "steps.recheck.outputs.go" in mint["if"], mint["if"]
+        assert mint["with"]["owner"] == "Avunu" and "matrix.name" in mint["with"]["repositories"], mint["with"]
+        assert mint["with"]["private-key"] == "''${{ " + key + " }}", mint["with"]
+        assert mint["with"]["client-id"] == "''${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}", mint["with"]
+        # needs-review never keeps an auto-merge an earlier run enabled: publish turns it off
+        # (disarm, which fails the step when it stays on) before every push and before keeping
+        # a head that cannot end pr-open, and again after enable-automerge or the head check
+        # failed, before the label; enable-automerge names the commit it pushed (--head-sha);
+        # publish drops the label.
+        act = next(s["run"] for s in steps if "--add-label needs-review" in s.get("run", ""))
+        off = "gh pr merge --disable-auto"
+        assert act.count(off) == 1 and act.index("disarm() {") < act.index(off), act
+        gate = act.index('if [ -n "$pr_url" ] && { [ "$can_merge" = false ] || [ "$same_tree" = false ]; }; then\n')
+        before_push = act.index('disarm "$pr_url"', gate)
+        assert act.index('[ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]') < gate < before_push < act.index(" push -q "), act
+        label = act.index("--add-label needs-review")
+        assert act.rindex('disarm "$pr_url"', 0, label) > act.index(" push -q "), act
+        enable = act.index("ci enable-automerge")
+        assert act.index('want="''${commit:-$observed}"') < enable, act
+        assert '--merge-method "$method" --head-sha "$want")' in act[enable:act.index("\n", enable)], act
+        assert "--remove-label needs-review" in act and "autoMergeRequest" in act, act
+        assert "select(.committer.login != $bot)" in act, act
+        # A branch its merged or closed PR left behind is replaced, in resolve and in publish.
+        resolve = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
+        assert '.get("sha") == head' in resolve and "if others and not left" in resolve and "state=all" in act, (resolve, act)
+        report = jobs["report"]
+        assert "environment" not in report and "secrets." not in yaml.safe_dump(report), report
+        assert not any(s.get("uses", "").startswith("actions/create-github-app-token@") for s in report["steps"])
+
         import glob, json, os, re, subprocess, tempfile
 
         SECRET = re.compile(r"secrets\.([A-Za-z0-9_]+)")
@@ -179,6 +291,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             "app-nightly.yml": {"shots-push"},
             "app-release.yml": {"release-please", "fast-forward"},
             "release.yml": {"release-please", "fixture", "fast-forward"},
+            "rollout.yml": {"publish"},
         }, holders
         doc, _ = load("app-deps.yml")
         assert doc["jobs"]["sweep"]["runs-on"] == "ubuntu-latest", doc["jobs"]["sweep"]

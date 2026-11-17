@@ -406,7 +406,9 @@ class TestAutomerge(FakeCase):
 		fake = self.use(Fake(protected(["ci / lint"])))  # lacks the other gates
 		with mock.patch("builtins.print") as p:
 			self.assertEqual(self.apply("auto"), "needs-review")
-		self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+		# never `gh pr merge --auto`; needs-review turns an earlier auto-merge off first
+		self.assertFalse(any(c[:3] == ("pr", "merge", "--auto") for c in fake.clis), fake.clis)
+		self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
 		create = [i for i, c in enumerate(fake.clis) if c[:3] == ("label", "create", "needs-review")]
 		edit = [i for i, c in enumerate(fake.clis) if c[:2] == ("pr", "edit")]
 		self.assertTrue(create and edit and create[0] < edit[0], fake.clis)
@@ -426,13 +428,19 @@ class TestAutomerge(FakeCase):
 		)
 		with mock.patch("builtins.print"):
 			self.assertEqual(self.apply("auto"), "needs-review")
-		self.assertFalse(any(c[:2] == ("pr", "merge") for c in fake.clis))
+		# never `gh pr merge --auto`; needs-review turns an earlier auto-merge off first
+		self.assertFalse(any(c[:3] == ("pr", "merge", "--auto") for c in fake.clis), fake.clis)
+		self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
 
 	def test_merge_auto_refused(self):
 		fake = self.use(
 			Fake(
 				protected([f"ci / {g}" for g in GATES]),
-				{("pr", "merge"): Result(1, "", "GraphQL: Auto merge is not allowed for this repository")},
+				{
+					("pr", "merge"): Result(1, "", "GraphQL: Auto merge is not allowed for this repository"),
+					# so --disable-auto fails too, and the PR has no auto-merge to turn off
+					("pr", "view"): Result(0, json.dumps({"autoMergeRequest": None})),
+				},
 			)
 		)
 		with mock.patch("builtins.print") as p:
@@ -534,6 +542,27 @@ class TestAutomerge(FakeCase):
 		self.assertEqual(code, 0, err)
 		self.assertEqual(fake.clis[0], ("pr", "merge", "--disable-auto", PR))
 		self.assertIn("::notice::why", out)
+
+	def test_needs_review_turns_off_an_earlier_auto_merge(self):
+		"""A push by an App or a user with write access leaves auto-merge on; needs-review must not."""
+		armed = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+		for decision, fake in (
+			("review", Fake({}, {("pr", "view"): armed})),
+			("auto", Fake(protected(["ci / lint"]), {("pr", "view"): armed})),
+		):
+			self.use(fake)
+			with mock.patch("builtins.print"):
+				self.assertEqual(self.apply(decision), "needs-review")
+			off = [i for i, c in enumerate(fake.clis) if c[:3] == ("pr", "merge", "--disable-auto")]
+			edit = [i for i, c in enumerate(fake.clis) if c[:2] == ("pr", "edit")]
+			self.assertTrue(off and edit and off[0] < edit[0], fake.clis)
+
+	def test_needs_review_fails_when_auto_merge_stays_on(self):
+		armed = Result(0, json.dumps({"autoMergeRequest": {"mergeMethod": "SQUASH"}}))
+		fake = self.use(Fake({}, {("pr", "view"): armed, ("pr", "merge"): Result(1, "", "forbidden")}))
+		with mock.patch("builtins.print"), self.assertRaises(EnvError):
+			self.apply("review")
+		self.assertFalse(any(c[:2] == ("pr", "edit") for c in fake.clis))
 
 	def test_cli_exit_0(self):
 		self.use(Fake(protected([])))
