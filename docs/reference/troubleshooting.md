@@ -48,7 +48,7 @@ fatal: '…/apps/hrms' does not appear to be a git repository
 A bench's flake sets `self.submodules = true`. With any change in the tree (an updated `flake.lock` counts) Nix reads each submodule from its checkout, so it stops at one with no checkout, a nested one included, and under Determinate Nix at a shallow one too. A plain `git submodule update --init` makes shallow clones when `.gitmodules` says `shallow = true`. This happens before any flake output exists, so neither the dev shell nor `nix run .#…` can get as far as fixing it. Run this from the bench, from outside its flake:
 
 ```bash
-nix run github:Avunu/frappe-nix/release-1#repair
+nix run github:Avunu/frappe-nix/release-2#repair
 ```
 
 It checks out what is missing, brings back a submodule removed by hand, gives a shallow clone its history without moving its checkout, and then asks Nix to read the flake. It exits 0 only if Nix can. It changes no tracked file and overwrites nothing: a directory in a submodule's way is named and left for you to move.

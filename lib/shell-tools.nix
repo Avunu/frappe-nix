@@ -23,7 +23,7 @@
 #   frappe-nix-repair    `frappe-nix-sources repair`: what it takes for Nix to
 #                        read a bench's flake when it cannot. From this flake,
 #                        since the bench's cannot be evaluated in that state
-#                        (`nix run github:Avunu/frappe-nix/release-1#repair`).
+#                        (`nix run github:Avunu/frappe-nix/release-2#repair`).
 #   frappe-nix-db-nocow  lib.dbNocow: the dev MariaDB datadir off btrfs
 #                        copy-on-write, created and marked before the server
 #                        writes to it; a running server is a process with

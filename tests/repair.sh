@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# frappe-nix-repair: what `nix run github:Avunu/frappe-nix/release-1#repair` does to a bench Nix cannot
+# frappe-nix-repair: what `nix run github:Avunu/frappe-nix/release-2#repair` does to a bench Nix cannot
 # read. The logic and its cases are python-devops-nix's lib.sources; this is the
 # product's configuration of it, on the state it exists for: a submodule shallow
 # (what `git submodule update --init` makes of `shallow = true`), and one removed
