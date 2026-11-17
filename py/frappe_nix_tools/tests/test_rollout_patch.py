@@ -32,7 +32,7 @@ NIXPKGS = {
 	"locked": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "rev": "9" * 40, "narHash": "sha256-n"},
 	"original": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "ref": "nixos-unstable"},
 }
-FN_LOCK = {
+FN_LOCK: dict = {
 	"nodes": {"nixpkgs": NIXPKGS, "root": {"inputs": {"nixpkgs": "nixpkgs"}}},
 	"root": "root",
 	"version": 7,
