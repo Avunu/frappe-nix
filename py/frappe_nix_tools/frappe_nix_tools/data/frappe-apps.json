@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-09",
+ "generated": "2026-11-16",
  "sources": [
   "github.com/frappe/marketplace",
   "github.com/frappe"
@@ -267,6 +267,34 @@
    "logo": "https://cloud.frappe.io/files/builder_logo_hd.png",
    "listed": true,
    "releases": [
+    {
+     "version": "1.39.0",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.38.0",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.7",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.37.6",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "1.37.5",
      "branch": "master",
@@ -538,26 +566,6 @@
    ]
   },
   {
-   "name": "changemakers",
-   "repo": "frappe/changemakers",
-   "title": "Changemakers",
-   "description": "Beneficiary Management Platform, built on Frappe Framework.",
-   "category": "",
-   "categories": [
-    "Official"
-   ],
-   "stars": 96,
-   "website": "https://frappe.io/products/changemakers",
-   "documentation": "",
-   "logo": "",
-   "listed": false,
-   "releases": [],
-   "default_branch": "develop",
-   "branches": [
-    "version-14"
-   ]
-  },
-  {
    "name": "check_run",
    "repo": "agritheory/check_run",
    "title": "Check Run",
@@ -651,6 +659,13 @@
    "logo": "https://cloud.frappe.io/files/FrappeCRM.png",
    "listed": true,
    "releases": [
+    {
+     "version": "16.0.3",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "16.0.2",
      "branch": "version-16",
@@ -1013,18 +1028,27 @@
   {
    "name": "ekyc_india",
    "repo": "frappe/ekyc_india",
-   "title": "Ekyc India",
-   "description": "",
-   "category": "",
+   "title": "eKYC India",
+   "description": "Aadhaar-based eKYC and eSign for any Frappe DocType via Digio",
+   "category": "Integrations",
    "categories": [
+    "Integrations",
     "Official"
    ],
-   "stars": 10,
-   "website": "",
-   "documentation": "",
-   "logo": "",
-   "listed": false,
-   "releases": [],
+   "stars": 0,
+   "website": "https://github.com/frappe/ekyc_india",
+   "documentation": "https://github.com/frappe/ekyc_india/blob/develop/README.md",
+   "logo": "https://raw.githubusercontent.com/frappe/ekyc_india/develop/ekyc_india/public/images/ekyc_india.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
    "default_branch": "develop",
    "branches": [
     "version-16",
@@ -1906,7 +1930,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 61,
+   "stars": 72,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2287,6 +2311,69 @@
    "logo": "https://cloud.frappe.io/files/tg_image_1025626910.jpeg",
    "listed": true,
    "releases": [
+    {
+     "version": "0.1.33",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.32",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.31",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.30",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.29",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.28",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.27",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.26",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.25",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "0.1.24",
      "branch": "develop",
@@ -2742,7 +2829,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 27,
+   "stars": 29,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2771,9 +2858,9 @@
    "listed": true,
    "releases": [
     {
-     "version": "4.0.0-dev",
+     "version": "3.50.0-dev",
      "branch": "develop",
-     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "frappe_core": ">=15.0.0,<18.0.0",
      "dependencies": {},
      "channel": "nightly"
     },
@@ -3037,6 +3124,15 @@
    "logo": "https://cloud.frappe.io/files/learning.png",
    "listed": true,
    "releases": [
+    {
+     "version": "16.1.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "payments": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
     {
      "version": "16.1.0",
      "branch": "version-16",
@@ -3367,7 +3463,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 26,
+   "stars": 27,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -3497,6 +3593,13 @@
    "listed": true,
    "releases": [
     {
+     "version": "16.0.8",
+     "branch": "version-16",
+     "frappe_core": ">=16.18.3,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "16.0.7",
      "branch": "version-16",
      "frappe_core": ">=16.18.3,<17.0.0",
@@ -3507,6 +3610,13 @@
      "version": "16.0.6",
      "branch": "version-16",
      "frappe_core": ">=16.18.3,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.0.8",
+     "branch": "version-15",
+     "frappe_core": ">=15.108.0,<16.0.0",
      "dependencies": {},
      "channel": "stable"
     },
@@ -4737,7 +4847,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 210,
+   "stars": 212,
    "website": "",
    "documentation": "",
    "logo": "",
