@@ -9,8 +9,10 @@ name: rollout
 #   resolve  (contents/pull-requests read, no secret) the release: `release-2`'s head, the v*
 #            tag at exactly that commit, the release PR it merged from; the targets, and per
 #            repository its integration branch, that branch's head (base_sha) and the
-#            frappe-nix it locks. A repository at the tag, or whose branch a person took over
-#            or whose PR for this tag was closed unmerged (paused), is not planned.
+#            frappe-nix it locks. A repository at the tag, or whose branch has a person's
+#            commits that an open PR (or no PR) holds, or whose PR for this tag was closed
+#            unmerged (paused), is not planned. A branch its merged or closed PR left behind is
+#            stale, and replaced.
 #   plan     (contents read, no secret, no cache) runs the consumer's own code (its flake,
 #            relock, uv, yarn without scripts, sync phase B) through `frappe-nix repo rollout
 #            --emit-patch`, as a separate user without sudo, so it can read neither the
@@ -18,12 +20,16 @@ name: rollout
 #            artifact is the patch and meta.json.
 #   publish  (environment frappe-nix-rollout) checks the patch with the tag's own
 #            `frappe-nix ci verify-rollout-patch` before any token exists, re-derives its tree
-#            in shell, and only then mints the avunu-ci App token for that one repository,
-#            commits the verified tree as avunu-ci[bot], pushes, opens or edits the PR, closes
-#            the per-release standards/frappe-nix-v* PRs and enables auto-merge (or labels
-#            needs-review).
-#   report   a per-repository table in the job summary and the pinned issue "frappe-nix
-#            rollout status"; fails the run when a patch was rejected.
+#            in shell, and only then mints the avunu-rollout App token for that one
+#            repository, commits the verified tree as avunu-rollout[bot], pushes, opens or
+#            edits the PR, closes the per-release standards/frappe-nix-v* PRs and enables
+#            auto-merge, or turns an earlier run's auto-merge off and labels needs-review.
+#            The App's id and key are the environment's own variable and secret
+#            (FRAPPE_NIX_ROLLOUT_APP_ID, FRAPPE_NIX_ROLLOUT_PRIVATE_KEY): no other job, branch
+#            or workflow can read them, and no other App has Workflows write on the fleet.
+#   report   (issues write on frappe-nix, no secret) a per-repository table in the job
+#            summary and the pinned issue "frappe-nix rollout status"; fails the run when a
+#            patch was rejected.
 #
 # repo, tag, tag sha and base sha come from resolve's matrix only; the artifact must agree.
 # Every job runs on a GitHub-hosted runner: the plan runs code no person reviewed for this.
@@ -62,8 +68,9 @@ env:
   FORCE_COLOR: "1"
   # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release-2).
   RELEASE_BRANCH: release-2
-  # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app.
-  BOT: avunu-ci[bot]
+  # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app
+  # while an open PR (or no PR) holds it.
+  BOT: avunu-rollout[bot]
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
   AUTO_MERGE: ${{ github.event_name != 'workflow_dispatch' || inputs.auto-merge }}
 
@@ -267,7 +274,11 @@ jobs:
                       (c.get("author") or {}).get("login") or c["commit"]["author"]["name"]
                       for c in commits if (c.get("author") or {}).get("login") != BOT
                   })
-                  if others:
+                  # A person's commits pause the app while an open PR (or no PR) holds them. A
+                  # branch still at the head of its merged or closed latest PR is what that PR
+                  # left behind: stale, and publish replaces it.
+                  left = bool(pr) and pr["state"] == "closed" and (pr.get("head") or {}).get("sha") == head
+                  if others and not left:
                       return "paused", f"{BRANCH} has commits by {', '.join(others)}"
                   # Already published for this tag on this base: nothing to plan.
                   if pr and pr["state"] == "open" and pr["title"] == f"chore(deps): frappe-nix {TAG}":
@@ -614,8 +625,10 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ vars.AVUNU_CI_APP_ID }}
-          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
+          # The frappe-nix-rollout environment's own variable and secret: the avunu-rollout
+          # App, the only one with Workflows write on the fleet, whose key nothing else holds.
+          client-id: ${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}
+          private-key: ${{ secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY }}
           owner: Avunu
           repositories: ${{ matrix.name }}
           permission-contents: write
@@ -655,9 +668,16 @@ jobs:
           if [ -n "$observed" ]; then
             others="$(gh api "repos/$REPO/compare/$BASE...$observed" \
               | jq -r --arg bot "$BOT" '[.commits[] | select(.author.login != $bot) | (.author.login // .commit.author.name)] | unique | join(", ")')"
-            if [ -n "$others" ]; then
+            # A person's commits pause the app while an open PR (or no PR) holds them. With no
+            # open PR and the branch still at its latest PR's head, that merged or closed PR
+            # left it behind: stale, replaced below with --force-with-lease.
+            left="$(gh api "repos/$REPO/pulls?state=all&head=${REPO%%/*}:$head&sort=created&direction=desc&per_page=1" \
+              --jq '.[0] | select(.state == "closed") | .head.sha')"
+            if [ -n "$others" ] && [ -z "$pr_url" ] && [ "$left" = "$observed" ]; then
+              echo "$head has commits by $others, but its pull request is closed: replacing it"
+            elif [ -n "$others" ]; then
               if [ -n "$pr_url" ]; then
-                gh pr comment "$pr_url" --body "The frappe-nix rollout did not move \`$head\` to $TAG: it has commits by $others. Merge or close this pull request, or delete the branch, and the next rollout moves it."
+                gh pr comment "$pr_url" --body "The frappe-nix rollout did not move \`$head\` to $TAG: it has commits by $others. Merge or close this pull request and the next rollout replaces the branch."
               fi
               status paused "$head has commits by $others" "$pr_url"
               exit 0
@@ -665,6 +685,7 @@ jobs:
           fi
 
           pushed=false
+          commit=""
           if [ -n "$observed" ] && [ "$(gh api "repos/$REPO/git/commits/$observed" --jq .tree.sha)" = "$TREE_ID" ]; then
             echo "$head already holds tree $TREE_ID: not pushing"
           else
@@ -702,16 +723,34 @@ jobs:
           automerge="$(jq -r .automerge "$decision")"
           allowed="$(gh api "repos/$REPO" --jq .allow_auto_merge)"
           result=needs-review
+          want="${commit:-$observed}"
           if [ "$DECISION" = publish ] && [ "$automerge" = true ] && [ "$AUTO_MERGE" = true ] && [ "$allowed" = true ]; then
             # The safety rule again (gates_protected on the branch now), then gh pr merge --auto;
             # it labels needs-review itself when either fails.
             out="$RUNNER_TEMP/automerge.out"
             (cd "$GITHUB_WORKSPACE/consumer" && GITHUB_OUTPUT="$out" nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- \
               ci enable-automerge --pr-url "$pr_url" --repo "$REPO" --integration "$INTEGRATION" --merge-method "$method")
-            grep -q '^result=merging$' "$out" && result=pr-open
-          else
+            if grep -q '^result=merging$' "$out"; then
+              # PR open only once GitHub holds auto-merge for the head this run verified (or merged it).
+              got="$(gh pr view "$pr_url" --json headRefOid,autoMergeRequest,state \
+                --jq '"\(.headRefOid) \(.autoMergeRequest != null) \(.state)"')"
+              if [ "$got" = "$want true OPEN" ] || [ "$got" = "$want false MERGED" ] || [ "$got" = "$want true MERGED" ]; then
+                result=pr-open
+              else
+                echo "::warning::$pr_url is $got after enabling auto-merge for $want: labelled needs-review"
+              fi
+            fi
+          fi
+          if [ "$result" = needs-review ]; then
+            # A push by the App leaves the auto-merge an earlier run enabled on: turn it off, or fail.
+            if [ "$(gh pr view "$pr_url" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+              gh pr merge --disable-auto "$pr_url"
+              echo "turned off the auto-merge an earlier run enabled on $pr_url"
+            fi
             gh label create needs-review -R "$REPO" --color d93f0b --description "Not merged automatically; a person reviews it" --force
             gh pr edit "$pr_url" --add-label needs-review
+          else
+            gh pr edit "$pr_url" --remove-label needs-review > /dev/null 2>&1 || true
           fi
 
           detail="$TAG"
@@ -737,8 +776,8 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: frappe-nix-rollout
-    permissions: {}
+    permissions:
+      issues: write # the pinned status issue in frappe-nix itself; no App key
     steps:
       - continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -816,19 +855,9 @@ jobs:
           EOF
 
       - if: steps.table.outputs.rows != '0' && env.DRY_RUN != 'true'
-        id: app-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.AVUNU_CI_APP_ID }}
-          private-key: ${{ secrets.AVUNU_CI_PRIVATE_KEY }}
-          owner: Avunu
-          repositories: frappe-nix
-          permission-issues: write
-
-      - if: steps.table.outputs.rows != '0' && env.DRY_RUN != 'true'
         name: Update the pinned status issue
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail

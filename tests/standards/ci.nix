@@ -21,7 +21,10 @@
 #                           and plan jobs hold no secret, environment or cache, its plan runs
 #                           the app's code as an unprivileged user, and publish (in the
 #                           frappe-nix-rollout environment) mints the App token only after
-#                           the verify and re-derive steps
+#                           the verify and re-derive steps, from the environment's own
+#                           FRAPPE_NIX_ROLLOUT_* variable and secret, which no other job or
+#                           workflow names; publish turns an earlier auto-merge off before
+#                           it labels needs-review; report has issues write and no secret
 
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
@@ -139,7 +142,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert jobs["resolve"]["permissions"] == {"contents": "read", "pull-requests": "read"}, jobs["resolve"]
         assert jobs["plan"]["permissions"] == {"contents": "read"}, jobs["plan"]["permissions"]
         assert jobs["publish"]["permissions"] == {"contents": "read"}, jobs["publish"]["permissions"]
-        assert jobs["report"]["permissions"] == {}, jobs["report"]["permissions"]
+        assert jobs["report"]["permissions"] == {"issues": "write"}, jobs["report"]["permissions"]
         caches = ("actions/cache", "DeterminateSystems/magic-nix-cache", "cachix/")
         for name in ("resolve", "plan"):
             job = jobs[name]
@@ -150,8 +153,20 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         plan_runs = " ".join(s.get("run", "") for s in jobs["plan"]["steps"])
         assert "sudo -u rollout" in plan_runs and "--emit-patch" in plan_runs, plan_runs
         assert any(s.get("env", {}).get("FRAPPE_NIX_YARN_IGNORE_SCRIPTS") == "1" for s in jobs["plan"]["steps"])
-        for name in ("publish", "report"):
-            assert jobs[name]["environment"] == "frappe-nix-rollout", (name, jobs[name].get("environment"))
+        assert jobs["publish"]["environment"] == "frappe-nix-rollout", jobs["publish"].get("environment")
+        # The rollout App's key is an environment secret: only a job in that environment names
+        # it, rollout.yml never uses the avunu-ci key, and no other workflow names the rollout's.
+        import glob
+        key = "secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY"
+        for name, job in jobs.items():
+            text = yaml.safe_dump(job, width=10**6)
+            if key in text or "vars.FRAPPE_NIX_ROLLOUT_APP_ID" in text:
+                assert job.get("environment") == "frappe-nix-rollout", name
+            assert "AVUNU_CI_PRIVATE_KEY" not in text and "AVUNU_CI_APP_ID" not in text, name
+        for path in glob.glob(".github/workflows/*.y*ml"):
+            if not path.endswith("/rollout.yml"):
+                assert "FRAPPE_NIX_ROLLOUT_PRIVATE_KEY" not in open(path).read(), path
+        assert doc["env"]["BOT"] == "avunu-rollout[bot]", doc["env"]
         steps = jobs["publish"]["steps"]
         verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
         recheck = next(i for i, s in enumerate(steps) if "write-tree" in s.get("run", ""))
@@ -163,10 +178,19 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         mint = steps[token[0]]
         assert "env.DRY_RUN != 'true'" in mint["if"] and "steps.recheck.outputs.go" in mint["if"], mint["if"]
         assert mint["with"]["owner"] == "Avunu" and "matrix.name" in mint["with"]["repositories"], mint["with"]
-        report = [s for s in jobs["report"]["steps"] if s.get("uses", "").startswith("actions/create-github-app-token@")]
-        assert len(report) == 1, report
-        perms = {k for k in report[0]["with"] if k.startswith("permission-")}
-        assert perms == {"permission-issues"} and report[0]["with"]["repositories"] == "frappe-nix", report[0]["with"]
+        assert mint["with"]["private-key"] == "''${{ " + key + " }}", mint["with"]
+        assert mint["with"]["client-id"] == "''${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}", mint["with"]
+        # needs-review never keeps an auto-merge an earlier run enabled; publish drops the label.
+        act = next(s["run"] for s in steps if "--add-label needs-review" in s.get("run", ""))
+        assert "gh pr merge --disable-auto" in act, act
+        assert act.index("gh pr merge --disable-auto") < act.index("--add-label needs-review"), act
+        assert "--remove-label needs-review" in act and "autoMergeRequest" in act, act
+        # A branch its merged or closed PR left behind is replaced, in resolve and in publish.
+        resolve = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
+        assert '.get("sha") == head' in resolve and "if others and not left" in resolve and "state=all" in act, (resolve, act)
+        report = jobs["report"]
+        assert "environment" not in report and "secrets." not in yaml.safe_dump(report), report
+        assert not any(s.get("uses", "").startswith("actions/create-github-app-token@") for s in report["steps"])
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout
