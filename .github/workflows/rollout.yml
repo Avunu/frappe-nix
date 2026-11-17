@@ -20,9 +20,9 @@ name: rollout
 #            artifact is the patch and meta.json.
 #   publish  (environment frappe-nix-rollout) checks the patch with the tag's own
 #            `frappe-nix ci verify-rollout-patch` before any token exists, re-derives its tree
-#            in shell, and only then mints the avunu-rollout App token for that one
+#            in shell, and only then mints the Avunu Release Manager App token for that one
 #            repository, turns an earlier run's auto-merge off, commits the verified tree as
-#            avunu-rollout[bot], pushes, opens or edits the PR, closes the per-release
+#            avunu-release-manager[bot], pushes, opens or edits the PR, closes the per-release
 #            standards/frappe-nix-v* PRs and enables auto-merge for the commit it pushed
 #            (--head-sha), or turns auto-merge off and labels needs-review.
 #            The App's id and key are the environment's own variable and secret
@@ -75,7 +75,7 @@ env:
   RELEASE_BRANCH: release
   # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app
   # while an open PR (or no PR) holds it.
-  BOT: avunu-rollout[bot]
+  BOT: avunu-release-manager[bot]
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
   AUTO_MERGE: ${{ github.event_name != 'workflow_dispatch' || inputs.auto-merge }}
 
@@ -675,7 +675,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          # The frappe-nix-rollout environment's own variable and secret: the avunu-rollout
+          # The frappe-nix-rollout environment's own variable and secret: the Avunu Release Manager
           # App's key, which only that environment holds and the only key this workflow uses.
           client-id: ${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}
           private-key: ${{ secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY }}
