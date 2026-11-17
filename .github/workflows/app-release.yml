@@ -194,29 +194,55 @@ jobs:
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      - name: Install frappe-nix-tools at the frappe-nix revision flake.lock pins
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from Avunu/frappe-nix alone, at the full revision the pushed commit's
+      # flake.lock pins, every dependency from that revision's py/frappe_nix_tools/uv.lock by hash
+      # and as a wheel, and only frappe-nix-tools itself built, against a hashed flit_core. uv is
+      # pinned above, without its cache, and reads no configuration. Before the App's token is
+      # minted.
+      - name: Install frappe-nix-tools, hash-locked, at the frappe-nix revision flake.lock pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
           FETCH_TOKEN: ${{ secrets.FETCH_TOKEN }}
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
         run: |
           set -euo pipefail
           if [ -n "$FETCH_TOKEN" ]; then
             echo "FRAPPE_NIX_FETCH_TOKEN=$FETCH_TOKEN" >> "$GITHUB_ENV"
           fi
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
           if [ -n "$OVERRIDE" ]; then
-            uv tool install --python 3.14 "$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
+            project="$GITHUB_WORKSPACE/$OVERRIDE/py/frappe_nix_tools"
             echo "FRAPPE_NIX_ALLOW_SKEW=1" >> "$GITHUB_ENV"      # self-test only (spec §3.7)
             echo "FRAPPE_NIX_EXPECT_REV=" >> "$GITHUB_ENV"
           else
-            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' flake.lock)"
+            node="$(jq -c '.nodes[.nodes.root.inputs["frappe-nix"]].locked' "$GITHUB_WORKSPACE/flake.lock")"
+            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"
             rev="$(jq -r .rev <<<"$node")"
-            src="$(jq -r '"\(.owner)/\(.repo)"' <<<"$node")"   # the frappe-nix repository the app locks, or a fork
-            uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
+            if [ "${src,,}" != avunu/frappe-nix ] || ! [[ "$rev" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::flake.lock locks frappe-nix at ${src@Q} ${rev@Q}: a job that can hold the App's key installs frappe-nix-tools only from Avunu/frappe-nix at a full revision"
+              exit 1
+            fi
+            git init -q "$tools/src"
+            git -C "$tools/src" fetch -q --depth 1 --no-tags https://github.com/Avunu/frappe-nix.git "$rev"
+            git -C "$tools/src" -c advice.detachedHead=false checkout -q FETCH_HEAD
+            project="$tools/src/py/frappe_nix_tools"
             echo "FRAPPE_NIX_EXPECT_REV=$rev" >> "$GITHUB_ENV"
           fi
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
       # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the

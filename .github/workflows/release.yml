@@ -121,14 +121,38 @@ jobs:
       - if: steps.pr.outputs.head != ''
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
+
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from this checkout, every dependency from its
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself
+      # built, against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - if: steps.pr.outputs.head != ''
+        name: Install frappe-nix-tools, hash-locked, from this checkout
+        env:
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          project="$GITHUB_WORKSPACE/py/frappe_nix_tools"
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       - if: steps.pr.outputs.head != ''
         name: Re-render the fixtures with the release PR's frappe-nix-tools
         run: |
           set -euo pipefail
-          uv tool install --python 3.14 ./py/frappe_nix_tools
           major="$(cut -d. -f1 version.txt)"
           for fixture in standards-app spa-app; do
             app="$RUNNER_TEMP/$fixture"
@@ -244,11 +268,32 @@ jobs:
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          tool-dir: ${{ runner.temp }}/uv-tool-dir
-          tool-bin-dir: ${{ runner.temp }}/uv-tool-bin-dir
+          version: "0.13.6"
+          enable-cache: "false"
 
-      - name: Install frappe-nix-tools from this checkout
-        run: uv tool install --python 3.14 ./py/frappe_nix_tools
+      # This job can hold the App's key, so nothing it installs is resolved at run time:
+      # frappe-nix-tools from this checkout, every dependency from its
+      # py/frappe_nix_tools/uv.lock by hash and as a wheel, and only frappe-nix-tools itself
+      # built, against a hashed flit_core. uv is pinned above, without its cache, and reads no
+      # configuration. Before the App's token is minted.
+      - name: Install frappe-nix-tools, hash-locked, from this checkout
+        env:
+          FLIT_CORE: flit-core==3.12.0 --hash=sha256:e7a0304069ea895172e3c7bb703292e992c5d1555dd1233ab7b5621b5b69e62c
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/frappe-nix-tools"
+          mkdir -p "$tools/bin"
+          project="$GITHUB_WORKSPACE/py/frappe_nix_tools"
+          uv --no-config export -q --frozen --no-dev --no-emit-project --no-header --project "$project" \
+            -o "$tools/requirements.txt"
+          echo "$FLIT_CORE" > "$tools/build.txt"
+          uv --no-config venv -q --python 3.14 --no-project "$tools/venv"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --require-hashes --no-build \
+            -r "$tools/requirements.txt" -r "$tools/build.txt"
+          uv --no-config pip install -q --python "$tools/venv/bin/python" --offline --no-deps --no-build-isolation "$project"
+          ln -s "$tools/venv/bin/frappe-nix" "$tools/bin/frappe-nix"
+          echo "$tools/bin" >> "$GITHUB_PATH"
 
       # GitHub refuses a ref update from GITHUB_TOKEN onto commits that change .github/workflows/
       # (most releases: Dependabot action bumps, frappe-init --sync), so with the GitHub App the

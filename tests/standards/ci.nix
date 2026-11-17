@@ -23,7 +23,16 @@
 #                           half that runs app or third-party code no write token and no secret
 #                           but the read ones, and the hosted half runs no Nix or app code and
 #                           checks the patch before it mints the token, with one script that is
-#                           run here on accepted and refused patches
+#                           run here on accepted and refused patches (flake.lock among the
+#                           refused); the push jobs build only on a plan commit the
+#                           integration branch holds, with one script run here on an
+#                           ancestor and a commit that is not; the hosted jobs compute
+#                           whether a rollout input moved themselves, with one jq program
+#                           run here against relock.moved_inputs; every job that can hold
+#                           the App's key installs frappe-nix-tools hash-locked (from
+#                           Avunu/frappe-nix only), with a pinned uv and no uv cache; and
+#                           no reusable workflow from elsewhere gets the key at a pin that
+#                           runs it on a self-hosted runner (python-devops-nix 0c9a3a0)
 #   standards-ci-gate       `frappe-nix gate lint|typecheck|marketplace` on the fixture with
 #                           no GITHUB_* variables (test_gate.py, which the package build
 #                           skips: its source is py/frappe_nix_tools alone)
@@ -65,6 +74,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           pkgs.shellcheck
           pkgs.zizmor
           pkgs.oxfmt
+          pkgs.jq
         ];
       }
       ''
@@ -154,6 +164,59 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         doc, _ = load("app-deps.yml")
         assert doc["jobs"]["sweep"]["runs-on"] == "ubuntu-latest", doc["jobs"]["sweep"]
 
+        # A job that calls a reusable workflow from elsewhere passes the App's key only to a pin
+        # whose jobs that hold it run on hosted runners, and never through `secrets: inherit`.
+        # python-devops-nix 0c9a3a0 runs its dependabot-* jobs on ["self-hosted","nixos"];
+        # python-devops-nix#72 moves them to ubuntu-latest: name its merge commit here when the
+        # pins move to it, and pass the key again.
+        HOSTED_PINS = set()
+        for path in sorted(glob.glob(".github/workflows/*.yml")):
+            for name, job in yaml.safe_load(open(path))["jobs"].items():
+                if "uses" not in job:
+                    continue
+                assert job.get("secrets") != "inherit", (path, name)
+                if any(k in json.dumps(job.get("secrets", {})) for k in APP_KEY):
+                    pin = job["uses"].rsplit("@", 1)[1]
+                    assert pin in HOSTED_PINS and not pin.startswith("0c9a3a0"), (path, name, pin)
+
+        # Every job that can hold the App's key installs frappe-nix-tools with nothing resolved
+        # at run time: uv pinned and without the Actions cache, every dependency from the
+        # committed uv.lock by hash and as a wheel, frappe-nix-tools built offline against a
+        # hashed flit_core, and (from an app's lock) only Avunu/frappe-nix at a full revision.
+        installers = {
+            "app-deps.yml": {"relock-push", "auto-merge", "update-branches", "relock-upgrade-push"},
+            "app-nightly.yml": {"shots-push"},
+            "app-release.yml": {"fast-forward"},
+            "release.yml": {"fixture", "fast-forward"},
+        }
+        tails = set()
+        for wf, names in holders.items():
+            doc, _ = load(wf)
+            for name in names:
+                job = doc["jobs"][name]
+                installs = []
+                for s in job["steps"]:
+                    if s.get("uses", "").startswith("astral-sh/setup-uv@"):
+                        w = s.get("with", {})
+                        assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", str(w.get("version", ""))), (wf, name, w)
+                        assert w.get("enable-cache") == "false", (wf, name, w)
+                    run = s.get("run", "")
+                    assert not re.search(r"\buv (tool|run)\b|\buvx\b|pip install(?! -q --python)", run), (wf, name, run)
+                    if "uv --no-config pip install" in run:
+                        installs.append(s)
+                assert len(installs) == (name in installers.get(wf, ())), (wf, name, len(installs))
+                for s in installs:
+                    run = s["run"]
+                    assert re.fullmatch(r"flit-core==[0-9.]+ --hash=sha256:[0-9a-f]{64}", s["env"]["FLIT_CORE"]), s["env"]
+                    for want in ("uv --no-config export -q --frozen --no-dev --no-emit-project",
+                                 "--require-hashes --no-build", "--offline --no-deps --no-build-isolation"):
+                        assert want in run, (wf, name, want)
+                    if wf.startswith("app-"):
+                        assert '[ "''${src,,}" != avunu/frappe-nix ]' in run, (wf, name)
+                        assert '^[0-9a-f]{40}$' in run and 'https://github.com/Avunu/frappe-nix.git "$rev"' in run, (wf, name)
+                    tails.add(run[run.index("uv --no-config export"):])
+        assert len(tails) == 1, "one install, after the source is chosen"
+
         # The split jobs: the half that runs the app or third-party code has no write token, no
         # App and only the read secrets; the half with the token runs after it on ubuntu-latest,
         # downloads its patch and nothing else, runs no Nix and no app, and checks the patch with
@@ -191,6 +254,77 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert len(scripts) == 1, "the push jobs check their patch with one script"
         script = scripts.pop()
 
+        # The push jobs that build on the plan job's commit check that the integration branch
+        # holds it, with one script, before anything is applied or minted.
+        ancestors = set()
+        for wf, plan_name, push_name in (("app-deps.yml", "relock-upgrade-plan", "relock-upgrade-push"),
+                                         ("app-nightly.yml", "shots", "shots-push")):
+            doc, _ = load(wf)
+            steps = doc["jobs"][push_name]["steps"]
+            assert steps[0]["with"]["ref"] == "''${{ inputs.integration-branch }}", steps[0]
+            assert steps[0]["with"]["fetch-depth"] == 0, steps[0]
+            assert steps[1]["env"]["SHA"] == f"''${{{{ needs.{plan_name}.outputs.sha }}}}", steps[1]
+            ancestors.add(steps[1]["run"])
+            assert not any("outputs.sha" in json.dumps(s) for s in steps[2:]), push_name
+            last = steps[-1]["run"]
+            assert '(cd "$RUNNER_TEMP/base" && frappe-nix ci enable-automerge' in last, (push_name, last)
+        assert len(ancestors) == 1, "the push jobs check the plan's commit with one script"
+        ancestor = ancestors.pop()
+
+        # relock-push and auto-merge compute whether a rollout input moved with one step, and
+        # neither reads relock-plan's `moved`.
+        doc, _ = load("app-deps.yml")
+        moved_runs = set()
+        for name in ("relock-push", "auto-merge"):
+            job = doc["jobs"][name]
+            ids = [s.get("id") for s in job["steps"]]
+            moved_runs.add(job["steps"][ids.index("moved")]["run"])
+            assert "relock-plan.outputs.moved" not in json.dumps(job), name
+            token = next(i for i, s in enumerate(job["steps"]) if "create-github-app-token" in s.get("uses", ""))
+            assert ids.index("moved") < token, name
+        assert len(moved_runs) == 1, "one moved step"
+        push = doc["jobs"]["relock-push"]["steps"]
+        refuse = next(i for i, s in enumerate(push) if s.get("if") == "steps.moved.outputs.moved != '''")
+        assert refuse < next(i for i, s in enumerate(push) if s.get("name", "").startswith("Check and apply")), push
+        decide = next(s for s in doc["jobs"]["auto-merge"]["steps"] if s.get("name") == "The decision table")
+        assert decide["env"]["MOVED"] == "''${{ steps.moved.outputs.moved }}", decide["env"]
+        program = re.search(r"--slurpfile head \S+ '\n(.*?)'\)\"\n", moved_runs.pop(), re.S).group(1)
+
+        from frappe_nix_tools.ci import relock as relock_mod
+
+        def jq_moved(base, head):
+            with tempfile.TemporaryDirectory() as tmp:
+                b, h = os.path.join(tmp, "b"), os.path.join(tmp, "h")
+                open(b, "w").write(json.dumps(base))
+                open(h, "w").write(json.dumps(head))
+                out = subprocess.run(["jq", "-rn", "--slurpfile", "base", b, "--slurpfile", "head", h, program],
+                                     check=True, capture_output=True, text=True).stdout.strip()
+            return [x for x in out.split(",") if x]
+
+        def lock(fn="a", profile="p", follows=False, extra="x", owner="Avunu"):
+            nodes = {"root": {"inputs": {"frappe-nix": ["frappe"] if follows else "frappe-nix",
+                                         "standards-profile": "standards-profile", "frappe": "frappe"}},
+                     "frappe-nix": {"locked": {"owner": owner, "repo": "frappe-nix", "rev": fn}},
+                     "standards-profile": {"locked": {"rev": profile}},
+                     "frappe": {"locked": {"rev": extra}}}
+            return {"nodes": nodes, "root": "root", "version": 7}
+
+        cases = [
+            (lock(), lock()),
+            (lock(), lock(extra="y")),
+            (lock(), lock(fn="b")),
+            (lock(), lock(fn="b", profile="q")),
+            (lock(), lock(profile="q")),
+            (lock(), lock(follows=True)),
+            (lock(), lock(owner="attacker")),
+            ({"nodes": {"root": {}}, "root": "root"}, lock()),
+        ]
+        for base, head in cases:
+            want = relock_mod.moved_inputs(json.dumps(base), json.dumps(head))
+            assert jq_moved(base, head) == want, (base, head, want)
+        assert jq_moved(lock(), lock(fn="b", profile="q")) == ["frappe-nix", "standards-profile"]
+        assert jq_moved(lock(), lock(owner="attacker")) == ["frappe-nix"]
+
         def g(cwd, *args):
             return subprocess.run(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", *args],
                                   check=True, capture_output=True, text=True).stdout
@@ -226,7 +360,6 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
                 return subprocess.run(["bash", "-c", script], cwd=dst, env=env).returncode
 
         def relock_ok(r):
-            write(r, "flake.lock", b"{\"v\": 2}\n")
             write(r, "nix/node-locks/erpnext/yarn.lock", b"# yarn lockfile v1\n\x00\n")
             write(r, "types/doctypes.d.ts", b"// y\n")
             os.remove(os.path.join(r, "nix/uv.lock"))
@@ -245,13 +378,15 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert check_patch(shots, shots_ok) == 0
         refused = {
             "workflow": (relock, lambda r: write(r, ".github/workflows/ci.yml", b"name: x\n")),
+            "flake.lock in a relock": (relock, lambda r: write(r, "flake.lock", b"{\"v\": 2}\n")),
+            "flake.lock in an upgrade": (upgrade, lambda r: write(r, "flake.lock", b"{\"v\": 2}\n")),
             "dotgithub": (relock, lambda r: write(r, "nix/node-locks/.github/x", b"x\n")),
             "outside the allowlist": (relock, lambda r: write(r, "pyproject.toml", b"[project]\nx = 1\n")),
             "doctypes in an upgrade": (upgrade, lambda r: write(r, "types/doctypes.d.ts", b"// y\n")),
             "a relock in the shots": (shots, relock_ok),
             "a script in the shots": (shots, lambda r: write(r, "docs/screenshots/x.sh", b"#!/bin/sh\n")),
             "executable": (relock, lambda r: write(r, "nix/node-locks/x/yarn.lock", b"x\n", 0o755)),
-            "mode change": (relock, lambda r: os.chmod(os.path.join(r, "flake.lock"), 0o755)),
+            "mode change": (relock, lambda r: os.chmod(os.path.join(r, "nix/uv.lock"), 0o755)),
             "symlink": (relock, symlink),
             "nothing": (relock, lambda r: None),
         }
@@ -265,6 +400,39 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert check_patch(relock, rename, ("--no-renames",)) == 0, "a move without renames"
         dotdot = "diff --git a/../x b/../x\nnew file mode 100644\n--- /dev/null\n+++ b/../x\n@@ -0,0 +1 @@\n+x\n"
         assert check_patch(relock, None, text=dotdot) != 0, ".."
+
+        def check_ancestor(pick):
+            """The push jobs' check on the plan's commit `pick(shas)`, in a clone of the integration branch."""
+            with tempfile.TemporaryDirectory() as tmp:
+                src, dst = os.path.join(tmp, "src"), os.path.join(tmp, "dst")
+                os.makedirs(src)
+                g(src, "init", "-q", "-b", "develop")
+                shas = {}
+                for name in ("one", "two"):
+                    write(src, "f", name.encode())
+                    g(src, "add", "-A")
+                    g(src, "commit", "-qm", name)
+                    shas[name] = g(src, "rev-parse", "HEAD").strip()
+                g(src, "switch", "-qc", "side", shas["one"])
+                write(src, "f", b"side")
+                g(src, "commit", "-qam", "side")
+                shas["side"] = g(src, "rev-parse", "HEAD").strip()
+                g(src, "switch", "-q", "develop")
+                g(tmp, "clone", "-q", "--no-single-branch", src, dst)
+                g(dst, "cat-file", "-e", shas["side"])  # fetchable, as a fork PR's head is
+                env = {**os.environ, "SHA": pick(shas), "RUNNER_TEMP": tmp}
+                code = subprocess.run(["bash", "-c", ancestor], cwd=dst, env=env).returncode
+                if code == 0:
+                    assert g(dst, "rev-parse", "HEAD").strip() == pick(shas)
+                    assert g(os.path.join(tmp, "base"), "rev-parse", "HEAD").strip() == shas["two"]
+                return code
+
+        assert check_ancestor(lambda s: s["one"]) == 0, "an ancestor"
+        assert check_ancestor(lambda s: s["two"]) == 0, "the head"
+        assert check_ancestor(lambda s: s["side"]) != 0, "a commit the branch does not hold"
+        assert check_ancestor(lambda s: s["one"][:12]) != 0, "a short SHA"
+        assert check_ancestor(lambda s: "HEAD") != 0, "a ref"
+        assert check_ancestor(lambda s: s["one"] + "\n") != 0, "a newline"
         EOF
         cd "$TMPDIR"
         cp -rL ${checkout} checkout
