@@ -113,6 +113,8 @@ class TestRepoRollout(RepoCase):
 			["--emit-patch", str(self.tmp / "o"), "--base", OLD, "--dry-run"],
 			["--emit-patch", str(self.tmp / "o"), "--base", OLD, "--profile-to", "latest"],
 			["--emit-patch", str(self.tmp / "o"), "--base", OLD, "--repo", "example/other"],
+			["--emit-patch", str(self.tmp / "o"), "--base", OLD, "--tag-sha", "v1"],  # not a SHA
+			["--tag-sha", OLD],  # no --emit-patch
 		):
 			code, _, err = run_cli(*base, *extra)
 			self.assertEqual(code, 2, (extra, err))
@@ -161,8 +163,11 @@ class TestYarnIgnoreScripts(unittest.TestCase):
 			self.assertEqual(sync.yarn_install(), ["yarn", "install", "--non-interactive"])
 
 
-def push_commit(case: "RolloutRepoCase", name: str, email: str, subject: str) -> str:
-	"""A commit by ``name`` <``email``> pushed to standards/frappe-nix on ``case``'s origin; its SHA."""
+def push_commit(
+	case: "RolloutRepoCase", name: str, email: str, subject: str, committer: tuple[str, str] | None = None
+) -> str:
+	"""A commit by ``name`` <``email``> (committed by ``committer``, else by the author) pushed to
+	standards/frappe-nix on ``case``'s origin; its SHA."""
 	other = case.tmp / f"other-{len(list(case.tmp.glob('other-*')))}"
 	subprocess.run(["git", "clone", "-q", str(case.origin), str(other)], check=True)
 	git(other, "checkout", "-q", "-B", "standards/frappe-nix")
@@ -172,8 +177,8 @@ def push_commit(case: "RolloutRepoCase", name: str, email: str, subject: str) ->
 		**os.environ,
 		"GIT_AUTHOR_NAME": name,
 		"GIT_AUTHOR_EMAIL": email,
-		"GIT_COMMITTER_NAME": name,
-		"GIT_COMMITTER_EMAIL": email,
+		"GIT_COMMITTER_NAME": (committer or (name, email))[0],
+		"GIT_COMMITTER_EMAIL": (committer or (name, email))[1],
 	}
 	subprocess.run(["git", "-C", str(other), "commit", "-q", "-m", subject], check=True, env=env)
 	git(other, "push", "-q", "-f", "origin", "standards/frappe-nix")
@@ -227,12 +232,28 @@ class RolloutRepoCase(RepoCase):
 
 
 class TestEmitPatch(RolloutRepoCase):
-	def emit(self, base: str | None = None) -> tuple[int, str, Path]:
+	def emit(self, base: str | None = None, *extra: str) -> tuple[int, str, Path]:
 		out = self.tmp / "out"
 		code, stdout, err = run_cli(
-			"repo", "rollout", "--repo", R, "--to", TAG, "--base", base or self.base, "--emit-patch", str(out)
-		)
+			"repo", "rollout", "--repo", R, "--to", TAG, "--base", base or self.base, "--emit-patch", str(out),
+			*extra,
+		)  # fmt: skip
 		return code, stdout + err, out
+
+	def test_with_the_tag_sha_it_reads_nothing_from_github(self):
+		"""rollout.yml's plan holds no token: given the tag's commit, it makes no GitHub call."""
+		self.gh.routes.clear()
+		code, text, out = self.emit(None, "--tag-sha", TAG_SHA)
+		self.assertEqual(code, 0, text)
+		meta = json.loads((out / "meta.json").read_text())
+		self.assertEqual((meta["tag_sha"], meta["state"]), (TAG_SHA, "patch"))
+		self.assertTrue((out / "patch").read_bytes())
+		self.assertEqual((self.gh.calls, self.gh.cli_calls), ([], []))
+		# A lock at another commit after the update: superseded, for publish to check.
+		self.locks_to = NEWER
+		code, text, out = self.emit(None, "--tag-sha", TAG_SHA)
+		self.assertEqual(code, 0, text)
+		self.assertEqual(json.loads((out / "meta.json").read_text())["state"], "superseded")
 
 	def test_writes_the_patch_and_meta_and_pushes_nothing(self):
 		code, text, out = self.emit()
@@ -330,6 +351,17 @@ class TestForeignCommits(RolloutRepoCase):
 	def test_no_bot_known_counts_only_you(self):
 		push_commit(self, BOT, f"1+{BOT}@users.noreply.github.com", self.SUBJECT)
 		self.assertEqual(self.foreign(bot=""), [BOT])
+
+	def test_the_rollout_bots_commit_amended_by_someone_else_is_foreign(self):
+		"""An amend or a rebase keeps the bot as author; the committer is the person."""
+		push_commit(
+			self,
+			BOT,
+			f"1+{BOT}@users.noreply.github.com",
+			self.SUBJECT,
+			committer=("Maintainer", "m@example.com"),
+		)
+		self.assertEqual(self.foreign(), [BOT, "Maintainer"])
 
 
 LOCKED = {"owner": "Avunu", "repo": "frappe-nix"}

@@ -174,6 +174,10 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         for name, job in jobs.items():
             assert job["runs-on"] == "ubuntu-latest", (name, job["runs-on"])
         assert "workflow_run.conclusion == 'success'" in jobs["resolve"]["if"], jobs["resolve"]["if"]
+        # The filter matches any `release` workflow on any `main`, a fork's pull request too:
+        # resolve runs only for release.yml's own run in this repository, never a PR's.
+        for want in ("workflow_run.head_repository.full_name == github.repository", "'.github/workflows/release.yml'", '"push","schedule","workflow_dispatch"'):
+            assert want in jobs["resolve"]["if"], (want, jobs["resolve"]["if"])
         assert jobs["resolve"]["permissions"] == {"contents": "read", "pull-requests": "read"}, jobs["resolve"]
         assert jobs["plan"]["permissions"] == {"contents": "read"}, jobs["plan"]["permissions"]
         assert jobs["publish"]["permissions"] == {"contents": "read"}, jobs["publish"]["permissions"]
@@ -187,6 +191,18 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             assert not any(u.startswith(caches) or u.startswith("actions/create-github-app-token@") for u in uses), uses
         plan_runs = " ".join(s.get("run", "") for s in jobs["plan"]["steps"])
         assert "sudo -u rollout" in plan_runs and "--emit-patch" in plan_runs, plan_runs
+        # The user the app's code runs as gets no token: the tool reads nothing from GitHub.
+        planning = next(s for s in jobs["plan"]["steps"] if "sudo -u rollout" in s.get("run", ""))
+        assert "GH_TOKEN" not in yaml.safe_dump(planning), planning
+        assert '--tag-sha "$TAG_SHA"' in planning["run"], planning["run"]
+        # The release is version.txt's tag, which must point at release-2's head.
+        resolve_runs = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
+        assert "contents/version.txt?ref=$sha" in resolve_runs and "sort -uV" not in resolve_runs, resolve_runs
+        # A commit counts as the bot's only when the bot authored and committed it.
+        assert 'for role in ("author", "committer")' in resolve_runs, resolve_runs
+        # meta.json's state is the plan's claim: publish checks superseded and noop itself.
+        check = next(s["run"] for s in jobs["publish"]["steps"] if "jq -r .state" in s.get("run", ""))
+        assert '"repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH"' in check and "contents/flake.lock?ref=$BASE" in check, check
         assert any(s.get("env", {}).get("FRAPPE_NIX_YARN_IGNORE_SCRIPTS") == "1" for s in jobs["plan"]["steps"])
         assert jobs["publish"]["environment"] == "frappe-nix-rollout", jobs["publish"].get("environment")
         # The rollout App's key is an environment secret: only a job in that environment names
@@ -235,6 +251,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         assert act.index('want="''${commit:-$observed}"') < enable, act
         assert '--merge-method "$method" --head-sha "$want")' in act[enable:act.index("\n", enable)], act
         assert "--remove-label needs-review" in act and "autoMergeRequest" in act, act
+        assert "select(.committer.login != $bot)" in act, act
         # A branch its merged or closed PR left behind is replaced, in resolve and in publish.
         resolve = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
         assert '.get("sha") == head' in resolve and "if others and not left" in resolve and "state=all" in act, (resolve, act)

@@ -38,8 +38,10 @@ name: rollout
 # Every job runs on a GitHub-hosted runner: the plan runs code no person reviewed for this.
 
 on:
-  # Only release.yml's own runs on main (push, schedule, dispatch; never a pull request), and
-  # nothing of that run is used: no artifact, ref or output, only that it succeeded.
+  # release.yml's runs on main. The filter matches any workflow named `release` on a branch
+  # named `main`, a fork's pull request included, so resolve also checks that the run was
+  # release.yml's own, in this repository, from a push, schedule or dispatch. Nothing of that
+  # run is used: no artifact, ref or output, only that it succeeded.
   workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: [release]
     types: [completed]
@@ -79,7 +81,14 @@ env:
 
 jobs:
   resolve:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name != 'workflow_run' || (
+        github.event.workflow_run.conclusion == 'success'
+        && contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
+        && github.event.workflow_run.head_repository.full_name == github.repository
+        && (github.event.workflow_run.path == '.github/workflows/release.yml'
+          || startsWith(github.event.workflow_run.path, '.github/workflows/release.yml@'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -105,12 +114,18 @@ jobs:
             echo "::error::$RELEASE_BRANCH has no head commit"
             exit 1
           fi
-          # The v* tag at exactly that commit (a lightweight tag's line, or an annotated one's ^{}).
-          tag="$(git ls-remote --tags "https://github.com/$REPO.git" 'v*' \
-            | awk -v sha="$sha" '$1 == sha { ref = $2; sub(/\^\{\}$/, "", ref); sub(/^refs\/tags\//, "", ref); print ref }' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -uV | tail -n 1 || true)"
-          if [ -z "$tag" ]; then
-            echo "::error::no v* tag points at $RELEASE_BRANCH's head $sha"
+          # The release is the version release-please wrote to version.txt at that commit, and
+          # its tag must point exactly there (a lightweight tag's line, or an annotated one's
+          # ^{}). Another v* tag on the same commit is not the release.
+          version="$(gh api "repos/$REPO/contents/version.txt?ref=$sha" --jq .content | base64 -d | tr -d '[:space:]')"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version.txt at $sha is not a release version: ${version@Q}"
+            exit 1
+          fi
+          tag="v$version"
+          if ! git ls-remote --tags "https://github.com/$REPO.git" "refs/tags/$tag" "refs/tags/$tag^{}" \
+            | awk -v sha="$sha" '$1 == sha { found = 1 } END { exit !found }'; then
+            echo "::error::$tag (version.txt at $RELEASE_BRANCH's head $sha) is not a tag of that commit"
             exit 1
           fi
           major="${RELEASE_BRANCH#release-}"
@@ -273,9 +288,13 @@ jobs:
               if branch:
                   head = branch["commit"]["sha"]
                   commits = (api(f"repos/{full}/compare/{base}...{head}") or {}).get("commits", [])
+                  # A commit is the bot's only when the bot both authored and committed it: an
+                  # amend or rebase by a person keeps the author and makes them the committer.
                   others = sorted({
-                      (c.get("author") or {}).get("login") or c["commit"]["author"]["name"]
-                      for c in commits if (c.get("author") or {}).get("login") != BOT
+                      (c.get(role) or {}).get("login") or c["commit"][role]["name"]
+                      for c in commits
+                      for role in ("author", "committer")
+                      if (c.get(role) or {}).get("login") != BOT
                   })
                   # A person's commits pause the app while an open PR (or no PR) holds them. A
                   # branch still at the head of its merged or closed latest PR is what that PR
@@ -288,7 +307,7 @@ jobs:
                       parents = [p["sha"] for c in commits[-1:] for p in c.get("parents", [])]
                       if len(commits) == 1 and parents == [base]:
                           state = "failing" if failing(full, head) else "pr-open"
-                          return state, pr["html_url"]
+                          return state, {"detail": TAG, "pr": pr["html_url"]}
               slug = full.replace("/", "__")
               return "target", {
                   "repo": full,
@@ -335,8 +354,9 @@ jobs:
                   targets.append(detail)
                   print(f"{repo}: plan from {detail['base_sha'][:12]} on {detail['integration']}")
               else:
-                  skipped.append({"repo": repo, "state": state, "detail": detail})
-                  print(f"{repo}: {state}, {detail}")
+                  row = detail if isinstance(detail, dict) else {"detail": detail}
+                  skipped.append({"repo": repo, "state": state, **row})
+                  print(f"{repo}: {state}, {row}")
           out(
               matrix=json.dumps({"include": targets}, separators=(",", ":")),
               count=len(targets),
@@ -392,11 +412,14 @@ jobs:
 
       # The app's own code runs as `rollout`: no sudo, no docker, and another uid than the
       # runner's, so it can read neither the runner process's memory and environment (the
-      # token that uploads artifacts and writes the Actions cache) nor change the runner.
+      # token that uploads artifacts and writes the Actions cache) nor change the runner. That
+      # user gets no token at all, not even this job's read-only one: the app's code runs as
+      # the same uid as frappe-nix-tools there and could read its environment. --tag-sha
+      # spares the tool its GitHub reads; the repositories are public, and git and nix fetch
+      # them anonymously.
       - if: steps.current.outputs.superseded == 'false'
         name: Plan the rollout as an unprivileged user
         env:
-          GH_TOKEN: ${{ github.token }}
           FRAPPE_NIX_YARN_IGNORE_SCRIPTS: "1"
           REPO: ${{ matrix.repo }}
           BASE: ${{ matrix.base_sha }}
@@ -406,12 +429,12 @@ jobs:
           set -euo pipefail
           sudo useradd --create-home --shell /bin/bash rollout
           code=0
-          sudo -u rollout -H --preserve-env=GH_TOKEN,FRAPPE_NIX_YARN_IGNORE_SCRIPTS,REPO,BASE,TAG,TAG_SHA \
+          sudo -u rollout -H --preserve-env=FRAPPE_NIX_YARN_IGNORE_SCRIPTS,REPO,BASE,TAG,TAG_SHA \
             bash -c 'set -euo pipefail
               export PATH="/nix/var/nix/profiles/default/bin:$PATH"
               cd "$HOME"
               nix run "github:Avunu/frappe-nix/$TAG_SHA#frappe-nix" -- repo rollout \
-                --repo "$REPO" --to "$TAG" --base "$BASE" --emit-patch "$HOME/out"' || code=$?
+                --repo "$REPO" --to "$TAG" --tag-sha "$TAG_SHA" --base "$BASE" --emit-patch "$HOME/out"' || code=$?
           # Nothing of the app's keeps running, then only regular files leave its home.
           sudo pkill -KILL -u rollout || true
           for f in meta.json patch; do
@@ -471,10 +494,14 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ runner.temp }}/plan
 
+      # meta.json comes from the plan, where the app's code ran: its state is a claim. A
+      # superseded plan must find release-2 moved past the tag, and a noop (or an empty patch)
+      # a base that locks the tag already, else the app would drop out of the rollout unseen.
       - name: Check the plan against resolve's matrix
         id: plan
         env:
           DOWNLOADED: ${{ steps.download.outcome }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
@@ -497,8 +524,23 @@ jobs:
           state="$(jq -r .state "$meta")"
           case "$state" in
             patch) ;;
-            noop) status at-tag "the plan changed nothing" ;;
-            superseded) status superseded "$RELEASE_BRANCH moved past $TAG" ;;
+            noop)
+              locked="$(gh api "repos/$REPO/contents/flake.lock?ref=$BASE" --jq .content | base64 -d \
+                | jq -r '(.nodes[.root].inputs["frappe-nix"]) as $n | if ($n | type) == "string" then .nodes[$n].locked.rev // "" else "" end')"
+              if [ "$locked" != "$TAG_SHA" ]; then
+                status failing "the plan changed nothing, but $BASE locks frappe-nix ${locked:0:12}, not $TAG"
+                exit 1
+              fi
+              status at-tag "the plan changed nothing"
+              ;;
+            superseded)
+              head="$(gh api "repos/$GITHUB_REPOSITORY/branches/$RELEASE_BRANCH" --jq .commit.sha)"
+              if [ "$head" = "$TAG_SHA" ]; then
+                status failing "the plan says superseded, but $RELEASE_BRANCH is still at $TAG"
+                exit 1
+              fi
+              status superseded "$RELEASE_BRANCH moved past $TAG"
+              ;;
             *)
               status rejected "the plan's state is ${state@Q}"
               exit 1
@@ -546,6 +588,7 @@ jobs:
           DECISION: ${{ steps.verify.outputs.decision }}
           TREE_ID: ${{ steps.verify.outputs.tree_id }}
           PATCH_SHA256: ${{ steps.verify.outputs.patch_sha256 }}
+          CONSUMER: ${{ github.workspace }}/consumer
         run: |
           set -euo pipefail
           STATUS="$RUNNER_TEMP/status/$STATUS_NAME.json"
@@ -558,6 +601,12 @@ jobs:
           case "$DECISION" in
             publish | needs-review) ;;
             noop)
+              # An empty patch is honest only on a base that locks the tag already.
+              locked="$(jq -r '(.nodes[.root].inputs["frappe-nix"]) as $n | if ($n | type) == "string" then .nodes[$n].locked.rev // "" else "" end' "$CONSUMER/flake.lock")"
+              if [ "$locked" != "$TAG_SHA" ]; then
+                status failing "the patch is empty, but $BASE locks frappe-nix ${locked:0:12}, not $TAG"
+                exit 1
+              fi
               status at-tag "the patch is empty"
               exit 0
               ;;
@@ -669,8 +718,10 @@ jobs:
           pr_url="$(gh pr list -R "$REPO" --head "$head" --state open --json url,isCrossRepository \
             --jq 'map(select(.isCrossRepository | not))[0].url // ""')"
           if [ -n "$observed" ]; then
+            # The bot's commit is one it both authored and committed (an amend or a rebase by a
+            # person keeps the author and makes them the committer).
             others="$(gh api "repos/$REPO/compare/$BASE...$observed" \
-              | jq -r --arg bot "$BOT" '[.commits[] | select(.author.login != $bot) | (.author.login // .commit.author.name)] | unique | join(", ")')"
+              | jq -r --arg bot "$BOT" '[.commits[] | (select(.author.login != $bot) | (.author.login // .commit.author.name)), (select(.committer.login != $bot) | (.committer.login // .commit.committer.name))] | unique | join(", ")')"
             # A person's commits pause the app while an open PR (or no PR) holds them. With no
             # open PR and the branch still at its latest PR's head, that merged or closed PR
             # left it behind: stale, replaced below with --force-with-lease.
@@ -680,7 +731,9 @@ jobs:
               echo "$head has commits by $others, but its pull request is closed: replacing it"
             elif [ -n "$others" ]; then
               if [ -n "$pr_url" ]; then
-                gh pr comment "$pr_url" --body "The frappe-nix rollout did not move \`$head\` to $TAG: it has commits by $others. Merge or close this pull request and the next rollout replaces the branch."
+                # Commit names are anyone's to choose: code, so no mention or link renders.
+                names="$(printf '%s' "$others" | tr '`' "'")"
+                gh pr comment "$pr_url" --body "The frappe-nix rollout did not move \`$head\` to $TAG: it has commits by \`$names\`. Merge or close this pull request and the next rollout replaces the branch."
               fi
               status paused "$head has commits by $others" "$pr_url"
               exit 0
@@ -831,7 +884,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I - <<'EOF'
-          import json, os
+          import json, os, re
           from pathlib import Path
 
           env = os.environ
@@ -871,10 +924,14 @@ jobs:
               ]
 
               def cell(text):
-                  return str(text).replace("|", "\\|").replace("\n", " ")[:400]
+                  # Details carry what the plan chose (package names, paths) and commit names:
+                  # one code span, so no link, mention or HTML in them renders.
+                  text = " ".join(str(text).replace("`", "'").split())[:400].replace("|", "\\|")
+                  return f"`{text}`" if text else ""
 
+              PR = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+")
               for r in sorted(rows.values(), key=lambda r: (order.index(r["state"]) if r["state"] in order else 99, r["repo"])):
-                  pr = f" ([PR]({r['pr']}))" if r.get("pr") else ""
+                  pr = f" ([PR]({r['pr']}))" if PR.fullmatch(str(r.get("pr") or "")) else ""
                   lines.append(f"| [{r['repo']}](https://github.com/{r['repo']}) | {label.get(r['state'], r['state'])} | {cell(r.get('detail', ''))}{pr} |")
           elif env["RESOLVE"] == "success" and env.get("CONTRACT") == "true":
               lines.append("No repository was considered (FRAPPE_NIX_ROLLOUT_REPOS is unset or empty).")

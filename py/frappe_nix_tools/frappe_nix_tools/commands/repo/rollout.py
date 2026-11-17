@@ -42,7 +42,10 @@ the commands above, stages everything and writes ``DIR/patch`` (``git diff --cac
 ``base_sha``, ``tag``, ``tag_sha``, ``state``, ``tools_version``). ``state`` is ``patch``,
 ``noop`` (an empty patch) or ``superseded``: frappe-nix's release branch has moved past
 ``--to``, so a later release's run moves the app instead, and nothing else is written. It
-commits, pushes and writes nothing on GitHub.
+commits, pushes and writes nothing on GitHub. With ``--tag-sha <sha>`` (rollout.yml's plan,
+which holds no token) it reads nothing from GitHub either: ``--to``'s commit is that SHA, and
+a lock at any other commit after the update is ``superseded``. rollout.yml's publish job never
+takes ``state`` on trust: it checks ``superseded`` and ``noop`` against GitHub itself.
 
 ``--to`` names the release the bump must reach: after ``nix flake update frappe-nix`` the
 locked revision must be that tag's commit (the release branch the app tracks is
@@ -263,7 +266,16 @@ def emit_patch(r: str, args: argparse.Namespace) -> str:
 	cmds, _subject, _branch = plan(app, args.to, None)
 	for c in cmds:
 		sh(c, root, scrub=True)
-		if c[-1] == "frappe-nix":
+		if c[-1] == "frappe-nix" and args.tag_sha:
+			# rollout.yml gives the tag's commit and no token: the release branch at anything
+			# else moved past the tag (resolve took the tag from its head), which publish checks
+			# itself.
+			meta["tag_sha"] = args.tag_sha
+			if locked_frappe_nix(root).get("rev") != args.tag_sha:
+				meta["state"] = "superseded"
+				(out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+				return f"{r}: superseded, frappe-nix's release branch is not at {args.to}"
+		elif c[-1] == "frappe-nix":
 			locked = locked_frappe_nix(root)
 			meta["tag_sha"] = tag_sha(locked, args.to) or ""
 			if meta["tag_sha"] != locked.get("rev"):
@@ -301,21 +313,25 @@ def remote_head(root: Path, head: str) -> str:
 
 
 def foreign_commits(root: Path, head: str, integration: str, own_email: str, bot: str) -> list[str]:
-	"""The authors of the commits on ``origin``'s ``head`` that the integration branch lacks,
-	other than the rollout's: a ``chore(deps): frappe-nix`` commit by exactly ``bot``
-	(rollout.yml's App, see ``rollout_bot``) or by ``own_email`` (this command run by hand).
-	Any other bot's commit is foreign, whatever its subject."""
+	"""The authors and committers of the commits on ``origin``'s ``head`` that the integration
+	branch lacks, other than the rollout's: a ``chore(deps): frappe-nix`` commit both authored
+	and committed by exactly ``bot`` (rollout.yml's App, see ``rollout_bot``) or by
+	``own_email`` (this command run by hand). Any other bot's commit is foreign, whatever its
+	subject, and so is a rollout commit someone else amended or rebased (its committer)."""
+
+	def own(name: str, email: str) -> bool:
+		return (bool(bot) and name == bot) or (bool(own_email) and email == own_email)
+
 	ref = f"refs/remotes/origin/{head}"
 	sh(git_safe("fetch", "-q", "origin", f"+refs/heads/{head}:{ref}"), root)
-	log = sh(git_safe("log", "--format=%an%x1f%ae%x1f%s", ref, "--not", f"origin/{integration}"), root)
+	fmt = "--format=%an%x1f%ae%x1f%cn%x1f%ce%x1f%s"
+	log = sh(git_safe("log", fmt, ref, "--not", f"origin/{integration}"), root)
 	out = []
 	for line in log.splitlines():
-		name, email, subject = [*line.split("\x1f"), "", ""][:3]
-		ours = (bool(bot) and name == bot) or (bool(own_email) and email == own_email)
-		if ours and subject.startswith(SUBJECT):
+		name, email, cname, cemail, subject = [*line.split("\x1f"), "", "", "", ""][:5]
+		if own(name, email) and own(cname, cemail) and subject.startswith(SUBJECT):
 			continue
-		if name not in out:
-			out.append(name)
+		out += [who for who in dict.fromkeys((name, cname)) if who not in out]
 	return out
 
 
@@ -491,6 +507,8 @@ def run(args: argparse.Namespace) -> int:
 			raise ConfigError(f"--base takes a full commit SHA, not {args.base!r}")
 		if args.profile_to or args.all or len(args.repo or []) != 1 or args.dry_run:
 			raise ConfigError("--emit-patch takes one --repo, and no --profile-to, --all or --dry-run")
+	if args.tag_sha and (not args.emit_patch or not _SHA.match(args.tag_sha)):
+		raise ConfigError(f"--tag-sha takes a full commit SHA, with --emit-patch: not {args.tag_sha!r}")
 	pairs, _fleet = targets.entries(args.repo or [], args.all, args.fleet)
 	code = CLEAN
 	try:
@@ -527,4 +545,9 @@ def register(sub: argparse._SubParsersAction) -> None:
 		help="rollout.yml's plan: write DIR/patch and DIR/meta.json, push nothing (needs --base, --to)",
 	)
 	p.add_argument("--base", metavar="SHA", help="with --emit-patch: the integration head to start from")
+	p.add_argument(
+		"--tag-sha",
+		metavar="SHA",
+		help="with --emit-patch: --to's commit, so the plan reads nothing from GitHub (rollout.yml gives no token)",
+	)
 	p.set_defaults(func=run)
