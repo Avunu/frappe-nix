@@ -36,11 +36,11 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
 The decision is ``ok``, ``needs-review`` (pushed, labelled, auto-merge off) or ``reject`` (the
 step fails and nothing is pushed). It runs no nix, uv or yarn, and reads git only.
 
-The helpers from ``_uv`` to ``trusted_locks`` are rolloutpatch.py's (frappe-nix#281, the
-release-driven rollout's patch check), copied as they are so that the two share this module
-when #281 lands; all but ``yarn_blocks``, whose lenient reading ``strict_yarn`` replaces here,
-and which #281 should drop for it too. ``yarn_entries`` still reads the base's locks, which the
-integration branch holds, for the URLs they already trust.
+rolloutpatch.py (``frappe-nix ci verify-rollout-patch``, the release-driven rollout's patch
+check) reads lock files with this module: the helpers from ``_uv`` to ``trusted_locks``,
+``strict_yarn``/``nix_yarn`` and ``yarn_problems``, and the stamp rules (``stamp_problems``,
+``_pruned_forced``), with its own rollout rules on top. ``yarn_entries`` reads only the base's
+locks, which the integration branch holds, for the URLs they already trust.
 """
 
 import json
@@ -86,7 +86,7 @@ class Result:
 		return list(dict.fromkeys(lines))
 
 
-# --- shared with rolloutpatch.py (#281) ------------------------------------------------
+# --- shared with rolloutpatch.py --------------------------------------------------------
 
 
 def _uv(text: str | None) -> dict:

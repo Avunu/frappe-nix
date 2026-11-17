@@ -23,21 +23,32 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      registry the base's locks already have, a relative workspace or editable path, and one
      new git source: ``frappe-runtime`` at
      ``https://github.com/Avunu/frappe-nix?subdirectory=runtime#<tag sha>``.
-   - ``yarn.lock`` and ``nix/node-locks/**/yarn.lock``: every ``resolved`` URL is on
-     registry.yarnpkg.com or registry.npmjs.org, or one the base's locks already have.
+   - ``yarn.lock`` and ``nix/node-locks/**/yarn.lock`` are read the way ``frappe-nix ci
+     verify-relock`` reads a relock's (ci/lockcheck.py, which this module shares): strictly,
+     as exactly the shape yarn writes, and as lib/node/yarn-lock.nix reads them (the same
+     entries and values both ways), else ``reject``; every ``resolved`` URL is https on
+     registry.yarnpkg.com or registry.npmjs.org, or one the base's locks already have; and an
+     npm registry URL of a new or changed entry is ``/<name>/-/<base name>-<version>.tgz`` for
+     the package (or ``npm:`` alias) and version it names, else ``reject``. Only the app's
+     own ``yarn.lock`` may be a berry lock (``needs-review``); under node-locks one is
+     ``reject``.
    - Each entry is tied to what it names. A uv package whose name and version a base lock
      has must have the same source and the same files (URL and hash) there; a new version's
-     files on files.pythonhosted.org must be named for that package and version. A yarn
-     entry whose key the base lock of that file has must keep its ``version``, ``resolved``
-     and ``integrity``, and an npm registry URL must be ``/<name>/-/<base name>-<version>.tgz``
-     for the package (or ``npm:`` alias) and version it resolves. A node-lock
-     ``source.json`` must be the base's or the seed's.
-   - A lock change the release does not explain (a package name no base lock of that file
-     had, an entry that differs from the base's for the same name and version, a version
-     change in ``nix/uv.lock`` outside ``frappe-runtime``'s dependency closure, or in
-     ``tools/uv.lock`` outside the closure of the tools this release raises a floor for)
-     makes the decision ``needs-review``, not ``reject``. A node-lock seed equal to the one
-     this frappe-nix-tools ships is explained.
+     files on files.pythonhosted.org must be named for that package and version (else
+     ``reject``). A node-lock ``source.json`` follows verify-relock's stamp rules (the base's,
+     the seed's, or that stamp with other hashes, and ``forced`` unchanged, else ``reject``),
+     and a ``nix/uv.lock`` deletion, or half of a forced node-lock target deleted, is
+     ``reject``.
+   - A lock change the release does not explain makes the decision ``needs-review``, not
+     ``reject``: a package name no base lock of that file had (for a yarn ``a@npm:b@^1``
+     alias, ``a`` and ``b`` both), a new yarn ``npm:`` alias, a new or changed yarn entry
+     without a ``resolved`` URL or with a ``name`` or ``uid``, a yarn entry whose spec the base
+     has with other fields or dependency lines, a uv entry that differs from the base's for
+     the same name and version, a stamp that is neither the base's nor the seed's, a whole
+     forced node-lock target pruned, a version change in ``nix/uv.lock`` outside
+     ``frappe-runtime``'s dependency closure, or in ``tools/uv.lock`` outside the closure of
+     the tools this release raises a floor for. A node-lock seed equal to the one this
+     frappe-nix-tools ships is explained.
 c. **Every other path** is computed here with this (the tag's) sync engine, the plan
    ``sync --check`` builds, from the base tree plus the verified lock files. The patch's
    content for it must be those bytes; a path the engine does not change is ``reject``. A
@@ -81,11 +92,9 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from packaging.version import InvalidVersion, Version
-
 import frappe_nix_tools
-from frappe_nix_tools.ci import output
-from frappe_nix_tools.common import appgates, data_path, flakelock, github
+from frappe_nix_tools.ci import lockcheck, output
+from frappe_nix_tools.common import appgates, flakelock, github
 from frappe_nix_tools.common.repo import NO_AUTO_MAINTENANCE
 from frappe_nix_tools.common.report import INVALID, ConfigError, EnvError, FrappeNixError
 
@@ -102,11 +111,8 @@ PUBLISH, REVIEW, REJECT, NOOP = "publish", "needs-review", "reject", "noop"
 
 #: The files the plan's nix, relock, uv and yarn write: the only content taken from it.
 LOCK_FILES = frozenset({"flake.lock", "nix/uv.lock", "tools/uv.lock", "yarn.lock"})
-NODE_LOCKS = "nix/node-locks/"
-UV_LOCKS = ("nix/uv.lock", "tools/uv.lock")
-PYPI = "https://pypi.org/simple"
-PYPI_FILES = frozenset({"files.pythonhosted.org"})
-NPM_HOSTS = frozenset({"registry.yarnpkg.com", "registry.npmjs.org"})
+NODE_LOCKS = lockcheck.NODE_LOCKS
+UV_LOCKS = lockcheck.UV_LOCKS
 
 # What sync's --check reads from the environment that would weaken it here.
 _UNSAFE_ENV = ("FRAPPE_NIX_ALLOW_SKEW", "FRAPPE_NIX_URL_OVERRIDE")
@@ -414,90 +420,16 @@ def flake_lock_problems(
 	return out
 
 
-def _uv(text: str | None) -> dict:
-	if text is None:
-		return {}
-	doc = tomllib.loads(text)
-	return doc if isinstance(doc, dict) else {}
-
-
-def _packages(doc: dict) -> list[dict]:
-	pkgs = doc.get("package") or []
-	return [p for p in pkgs if isinstance(p, dict)] if isinstance(pkgs, list) else []
-
-
-def _uv_urls(pkg: dict) -> list[str]:
-	urls = []
-	for dist in [pkg.get("sdist"), *(pkg.get("wheels") or [])]:
-		if isinstance(dist, dict) and isinstance(dist.get("url"), str):
-			urls.append(dist["url"])
-	return urls
-
-
-@dataclass
-class BaseLocks:
-	"""What the base's locks already trust: sources, registries, file URLs, resolved URLs, and
-	each uv ``(name, version)``'s source and files as the base locks them."""
-
-	sources: set[str] = field(default_factory=set)
-	urls: set[str] = field(default_factory=set)
-	resolved: set[str] = field(default_factory=set)
-	artifacts: dict[tuple[str, str], list[Any]] = field(default_factory=dict)
-
-
-def _norm(name: str) -> str:
-	"""A distribution name normalised the way PEP 503 and wheel filenames compare it."""
-	return re.sub(r"[-_.]+", "-", name).lower()
-
-
-def _same_version(a: str, b: str) -> bool:
-	try:
-		return Version(a) == Version(b)
-	except InvalidVersion:
-		return a == b
-
-
-def _source_key(source: dict) -> list[str]:
-	return [f"{kind}={source[kind]}" for kind in sorted(source) if isinstance(source[kind], str)]
-
-
-def _artifacts(pkg: dict) -> Any:
-	"""A uv package's source and files (URL and hash each): what its name and version stand for."""
-	dists = []
-	for dist in [pkg.get("sdist"), *(pkg.get("wheels") or [])]:
-		if isinstance(dist, dict):
-			dists.append((str(dist.get("url", dist.get("path", ""))), str(dist.get("hash", ""))))
-	source = pkg.get("source")
-	return (sorted(_source_key(source)) if isinstance(source, dict) else [], sorted(dists))
-
-
-_SDIST_EXT = (".tar.gz", ".zip", ".tar.bz2", ".tgz", ".tar.xz", ".tar")
-
-
-def pypi_file_problem(name: str, version: str, url: str) -> str | None:
-	"""Why a files.pythonhosted.org ``url`` is not a file of ``name`` ``version``, or ``None``."""
-	filename = urllib.parse.unquote(PurePosixPath(urllib.parse.urlsplit(url).path).name)
-	if filename.endswith(".whl"):
-		parts = filename[: -len(".whl")].split("-")
-		dist, ver = (parts[0], parts[1]) if len(parts) >= 5 else ("", "")
-	else:
-		stem = next((filename[: -len(e)] for e in _SDIST_EXT if filename.endswith(e)), "")
-		dist, _, ver = stem.rpartition("-")
-	if not dist or _norm(dist) != _norm(name) or not _same_version(ver, version):
-		return f"{name} {version} downloads {filename!r}, which is not a file of that package and version"
-	return None
-
-
 def _versions(doc: dict) -> dict[str, list[str]]:
 	out: dict[str, list[str]] = {}
-	for pkg in _packages(doc):
+	for pkg in lockcheck._packages(doc):
 		out.setdefault(str(pkg.get("name", "")), []).append(str(pkg.get("version", "")))
 	return {k: sorted(v) for k, v in out.items()}
 
 
 def _closure(doc: dict, name: str) -> set[str]:
 	deps: dict[str, set[str]] = {}
-	for pkg in _packages(doc):
+	for pkg in lockcheck._packages(doc):
 		names = deps.setdefault(str(pkg.get("name", "")), set())
 		groups = [pkg.get("dependencies") or []]
 		for table in ("optional-dependencies", "dev-dependencies"):
@@ -521,35 +453,36 @@ def uv_problems(
 	base_text: str | None,
 	new_text: str,
 	tag_sha: str,
-	trusted: BaseLocks,
+	trusted: lockcheck.BaseLocks,
 	explained: frozenset[str] = frozenset(),
 ) -> tuple[list[str], list[str]]:
 	"""``(rejects, reviews)`` for one ``uv.lock``. ``explained`` (``tools/uv.lock``): the tools
 	this release raises a floor for, whose dependency closure may move."""
 	try:
-		new, base = _uv(new_text), _uv(base_text)
+		new, base = lockcheck._uv(new_text), lockcheck._uv(base_text)
 	except tomllib.TOMLDecodeError as e:
 		return [f"{path}: not TOML: {e}"], []
 	rejects: list[str] = []
 	reviews: list[str] = []
 	runtime = RUNTIME_GIT.format(rev=tag_sha)
-	for pkg in _packages(new):
+	for pkg in lockcheck._packages(new):
 		name = str(pkg.get("name", ""))
 		version = str(pkg.get("version", ""))
 		if name != RUNTIME:
-			known = trusted.artifacts.get((_norm(name), version))
+			known = trusted.artifacts.get((lockcheck._norm(name), version))
 			if known is not None:
-				if _artifacts(pkg) not in known:
+				if lockcheck._artifacts(pkg) not in known:
 					reviews.append(
 						f"{path}: {name} {version} has another source or other files (URL or hash)"
 						" than the base locks for it"
 					)
 			else:
-				for url in _uv_urls(pkg):
-					if (urllib.parse.urlsplit(url).hostname or "") in PYPI_FILES and (
-						problem := pypi_file_problem(name, version, url)
+				# verify-relock's rule: a new version's PyPI files are that package's and version's.
+				for url in lockcheck._uv_urls(pkg):
+					if (urllib.parse.urlsplit(url).hostname or "") in lockcheck.PYPI_FILES and (
+						problem := lockcheck.pypi_file_problem(name, version, url)
 					):
-						reviews.append(f"{path}: {problem}")
+						rejects.append(f"{path}: {problem}")
 		source = pkg.get("source")
 		if not isinstance(source, dict) or not source:
 			rejects.append(f"{path}: {name} has no source")
@@ -558,7 +491,7 @@ def uv_problems(
 			key = f"{kind}={value}"
 			if key in trusted.sources:
 				continue
-			if kind == "registry" and value == PYPI:
+			if kind == "registry" and value == lockcheck.PYPI:
 				continue
 			if kind == "git" and name == RUNTIME and value == runtime:
 				continue
@@ -567,15 +500,15 @@ def uv_problems(
 				if not p.is_absolute() and "://" not in value and ".." not in p.parts:
 					continue
 			rejects.append(f"{path}: {name} comes from {kind} {value!r}, which is not allowed")
-		for url in _uv_urls(pkg):
+		for url in lockcheck._uv_urls(pkg):
 			host = urllib.parse.urlsplit(url).hostname or ""
-			if not (url.startswith("https://") and host in PYPI_FILES) and url not in trusted.urls:
+			if not (url.startswith("https://") and host in lockcheck.PYPI_FILES) and url not in trusted.urls:
 				rejects.append(f"{path}: {name} downloads {url}, which is not on PyPI")
 	new_versions = _versions(new)
 	base_versions = _versions(base)
 	added = sorted(set(new_versions) - set(base_versions) - {RUNTIME})
 	if added:
-		reviews.append(f"{path} adds {', '.join(added[:10])}{' …' if len(added) > 10 else ''}")
+		reviews.append(f"{path} adds {lockcheck._more(added)}")
 	if path == "nix/uv.lock":
 		closure, why = _closure(new, RUNTIME), f"outside {RUNTIME}'s dependencies"
 	else:
@@ -588,138 +521,50 @@ def uv_problems(
 		if new_versions[n] != base_versions[n] and n not in closure
 	)
 	if moved:
-		reviews.append(f"{path} moves {', '.join(moved[:10])}, {why}")
+		reviews.append(f"{path} moves {lockcheck._more(moved)}, {why}")
 	return rejects, list(dict.fromkeys(reviews))
 
 
-_YARN_KEY = re.compile(r"^(?![\s#])(?P<keys>.+):\s*$")
-_YARN_RESOLVED = re.compile(r'^\s+resolved\s+"?(?P<url>[^"\s]+)"?\s*$')
-_YARN_FIELD = re.compile(r'^  (?P<field>version|resolved|integrity)\s+"?(?P<value>[^"\s]+)"?\s*$')
-
-
-def _yarn_name(spec: str) -> tuple[str, str]:
-	"""A yarn key's ``(name, registry name)``: ``a@npm:b@^1`` is ``a``, installed from ``b``."""
-	at = spec.find("@", 1)
-	name, rng = (spec[:at], spec[at + 1 :]) if at > 0 else (spec, "")
-	if rng.startswith("npm:"):
-		target = rng[len("npm:") :]
-		at = target.find("@", 1)
-		return name, target[:at] if at > 0 else target
-	return name, name
-
-
-def yarn_blocks(text: str) -> dict[str, dict[str, str]]:
-	"""A yarn (classic) lock's entries: each key → its ``version``, ``resolved`` and ``integrity``."""
-	out: dict[str, dict[str, str]] = {}
-	fields: dict[str, str] | None = None
-	for line in text.splitlines():
-		if m := _YARN_KEY.match(line):
-			fields = {}
-			for spec in m["keys"].split(","):
-				out[spec.strip().strip('"')] = fields
-		elif fields is not None and (m := _YARN_FIELD.match(line)):
-			fields[m["field"]] = m["value"]
-	return out
-
-
-def npm_url_problem(spec: str, fields: dict[str, str]) -> str | None:
-	"""Why an entry's npm registry URL is not the tarball of the package and version it names."""
-	url = fields.get("resolved", "")
-	parts = urllib.parse.urlsplit(url)
-	if (parts.hostname or "") not in NPM_HOSTS:
-		return None
-	_name, registry = _yarn_name(spec)
-	base_name = registry.rsplit("/", 1)[-1]
-	want = f"/{registry}/-/{base_name}-{fields.get('version', '')}.tgz"
-	if urllib.parse.unquote(parts.path) != want:
-		return f"{spec} resolves {url[:200]}, not {registry} {fields.get('version', '?')}'s tarball"
-	return None
-
-
-def yarn_entries(text: str) -> tuple[set[str], set[str]]:
-	"""A yarn (classic) lock's package names and ``resolved`` URLs."""
-	names: set[str] = set()
-	urls: set[str] = set()
-	for line in text.splitlines():
-		if m := _YARN_KEY.match(line):
-			for spec in m["keys"].split(","):
-				spec = spec.strip().strip('"')
-				at = spec.find("@", 1)
-				names.add(spec[:at] if at > 0 else spec)
-		elif m := _YARN_RESOLVED.match(line):
-			urls.add(m["url"])
-	return names, urls
-
-
 def yarn_problems(
-	path: str, base_text: str | None, new_text: str, trusted: BaseLocks, seed: bool
+	path: str, base_text: str | None, new_text: str, trusted: lockcheck.BaseLocks, seed: bool
 ) -> tuple[list[str], list[str]]:
-	if "__metadata:" in new_text:
+	"""``(rejects, reviews)`` for ``yarn.lock`` or a ``nix/node-locks/**/yarn.lock``: verify-relock's
+	reading (``lockcheck.yarn_problems``: strict, as lib/node/yarn-lock.nix reads it, registry
+	URLs tied to their entries, ``npm:`` aliases and both their names, a new or changed entry's
+	dependency lines included), plus the rollout's own rule: an entry whose spec the base has
+	keeps its fields and dependency lines, or a person looks. ``seed`` (the node-lock seed this
+	frappe-nix-tools ships) is explained, so only its rejects count. The app's own ``yarn.lock``
+	may be a berry lock, which is shown to a person; relock never writes one under node-locks."""
+	if path == "yarn.lock" and "__metadata:" in new_text:
 		return [], [f"{path} is a yarn berry lock, which this check does not read"]
-	names, urls = yarn_entries(new_text)
-	rejects = []
-	for url in sorted(urls):
-		parts = urllib.parse.urlsplit(url)
-		if (
-			not (parts.scheme == "https" and (parts.hostname or "") in NPM_HOSTS)
-			and url not in trusted.resolved
-		):
-			rejects.append(f"{path}: resolves {url[:200]}, which is not on the npm registry")
-	reviews: list[str] = []
-	if seed:
-		return rejects, reviews
-	added = sorted(names - (yarn_entries(base_text)[0] if base_text else set()))
-	if added:
-		reviews.append(f"{path} adds {', '.join(added[:10])}{' …' if len(added) > 10 else ''}")
-	before = yarn_blocks(base_text) if base_text else {}
-	changed, wrong = [], []
-	for spec, fields in yarn_blocks(new_text).items():
-		if before.get(spec) == fields:
-			continue
-		if spec in before:
-			changed.append(spec)
-		if problem := npm_url_problem(spec, fields):
-			wrong.append(problem)
+	rejects, reviews = lockcheck.yarn_problems(path, base_text, new_text, trusted)
+	if seed or rejects:
+		return rejects, []
+	before = lockcheck.strict_yarn(base_text).specs if base_text else {}
+	changed = [
+		spec for spec, fields in lockcheck.strict_yarn(new_text).specs.items()
+		if spec in before and before[spec] != fields
+	]  # fmt: skip
 	if changed:
 		reviews.append(
-			f"{path} changes the version, URL or integrity of {', '.join(changed[:10])}"
-			f"{' …' if len(changed) > 10 else ''}"
+			f"{path} changes the version, URL, integrity or dependencies of {lockcheck._more(changed)}"
 		)
-	reviews += [f"{path}: {w}" for w in wrong[:10]]
 	return rejects, reviews
 
 
-def node_lock_seed(path: str, content: bytes, major: int | None) -> bool:
-	"""Whether ``path`` (under ``nix/node-locks/``) is the seed this frappe-nix-tools ships for it."""
-	if major is None:
-		return False
-	rel = path.removeprefix(NODE_LOCKS)
-	try:
-		seed = data_path(f"node-locks/version-{major}/{rel}")
-	except ConfigError:
-		return False
-	return seed.is_file() and seed.read_bytes() == content
-
-
-def trusted_locks(base: dict[str, bytes]) -> BaseLocks:
-	"""The base's lock files (``path → bytes``) as what they already trust."""
-	out = BaseLocks()
-	for path, data in base.items():
-		text = data.decode("utf-8", errors="replace")
-		if path in UV_LOCKS:
-			try:
-				doc = _uv(text)
-			except tomllib.TOMLDecodeError:
-				continue
-			for pkg in _packages(doc):
-				if isinstance(pkg.get("source"), dict):
-					out.sources.update(_source_key(pkg["source"]))
-				out.urls.update(_uv_urls(pkg))
-				key = (_norm(str(pkg.get("name", ""))), str(pkg.get("version", "")))
-				out.artifacts.setdefault(key, []).append(_artifacts(pkg))
-		elif path.endswith("yarn.lock"):
-			out.resolved |= yarn_entries(text)[1]
-	return out
+def stamp_problems(
+	path: str, before: bytes | None, data: bytes, major: int | None
+) -> tuple[list[str], list[str]]:
+	"""``(rejects, reviews)`` for a node-lock ``source.json``: verify-relock's stamp rules
+	(``lockcheck.stamp_problems``: the base's or the seed's, or that stamp with other hashes;
+	``forced`` as the base, or for a new target the seed, has it), and a stamp that is neither
+	the base's nor the seed's goes to a person."""
+	rejects = lockcheck.stamp_problems(path, before, data, lockcheck._seed(path, major))
+	if rejects:
+		return rejects, []
+	if data != before and not lockcheck.node_lock_seed(path, data, major):
+		return [], [f"{path} is neither the base's stamp nor the seed's"]
+	return [], []
 
 
 # --- c: the render ---------------------------------------------------------------------
@@ -912,7 +757,7 @@ def _verify_trees(
 	major = app.cfg.get("frappe-major")
 	tracked = _git(repo_dir, "ls-files", "-z", "--", *sorted(LOCK_FILES), NODE_LOCKS).stdout.decode()
 	base_locks = {p: _show(repo_dir, req.base_sha, p) or b"" for p in tracked.split("\0") if p}
-	trusted = trusted_locks(base_locks)
+	trusted = lockcheck.trusted_locks(base_locks)
 
 	# b: the lock files, and the base plus them is what the engine renders from.
 	if fn_lock is None:
@@ -926,9 +771,20 @@ def _verify_trees(
 		req.tag_sha,
 		fn_lock,
 	)
+	head_locks = {p: d for p in sorted(set(base_locks) | set(locks)) if (d := after(p)) is not None}
 	for path in locks:
 		data = after(path)
-		if data is None or path == "flake.lock":
+		if path == "flake.lock":
+			continue
+		if data is None:
+			# verify-relock's rules for a deletion: nix/uv.lock stays, and a forced node-lock
+			# target goes whole (needs-review) or not at all.
+			if path == lockcheck.UV_LOCK:
+				res.rejects.append(f"{path}: deleted")
+			elif path.startswith(NODE_LOCKS) and (
+				pruned := lockcheck._pruned_forced(path, base_locks, head_locks)
+			):
+				(res.rejects if pruned[0] == lockcheck.REJECT else res.reviews).append(pruned[1])
 			continue
 		before = base_locks.get(path)
 		try:
@@ -941,18 +797,12 @@ def _verify_trees(
 			explained = tools_floor_roots(repo_dir) if path == "tools/uv.lock" else frozenset()
 			rejects, reviews = uv_problems(path, before_text, text, req.tag_sha, trusted, explained)
 		elif path == "yarn.lock" or (path.startswith(NODE_LOCKS) and path.endswith("/yarn.lock")):
-			seed = before is None and node_lock_seed(path, data, major)
+			seed = before is None and lockcheck.node_lock_seed(path, data, major)
 			rejects, reviews = yarn_problems(path, before_text, text, trusted, seed)
 		elif path.startswith(NODE_LOCKS) and path.endswith("/source.json"):
 			# The stamp decides which lock the build takes (``forced`` puts the fallback over the
-			# app's own): the base's or the seed's, and any other goes to a person.
-			try:
-				json.loads(text)
-				rejects, reviews = [], []
-			except json.JSONDecodeError as e:
-				rejects, reviews = [f"{path}: not JSON: {e}"], []
-			if not rejects and data != before and not node_lock_seed(path, data, major):
-				reviews = [f"{path} is neither the base's stamp nor the seed's"]
+			# app's own).
+			rejects, reviews = stamp_problems(path, before, data, major)
 		else:
 			rejects, reviews = [f"{path}: not a file relock writes under {NODE_LOCKS}"], []
 		res.rejects += rejects
