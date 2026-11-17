@@ -14,23 +14,31 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
   files.pythonhosted.org that names that package and version, or a URL the base lock already
   has. A git source the base has at another commit (frappe's ``pypika`` or ``gunicorn`` fork after
   a frappe bump) is ``needs-review``; any other new source is ``reject``.
-- ``nix/node-locks/**`` holds only ``yarn.lock`` and ``source.json`` files. In a ``yarn.lock``
-  (classic; a berry lock is ``reject``) every ``resolved`` URL is https on registry.yarnpkg.com or
+- ``nix/node-locks/**`` holds only ``yarn.lock`` and ``source.json`` files. A ``yarn.lock`` is
+  classic (a berry lock is ``reject``) and exactly the shape yarn writes (``strict_yarn``: split on
+  ``\\n`` only, one grammar per line, no field twice in an entry, no spec in two entries), and
+  lib/node/yarn-lock.nix's own line regexes (``nix_yarn``) find the same entries and values in
+  it; else ``reject``, since a line one reader skips and another takes is how a lock says one
+  thing here and another to the build. Every ``resolved`` URL is https on registry.yarnpkg.com or
   registry.npmjs.org, or one the base's locks already have, and an entry that is not the base's
   resolves the npm tarball of the name and version it names (``/<name>/-/<base name>-<version>.tgz``).
   A ``source.json`` stamp is the base's, the seed's, or the same stamp with other manifest hashes:
   only ``forced`` steers the build (lib/bench.nix takes the fallback lock over the app's own when
-  it is set), so it must stay what the base (or, for a new target, the seed) says.
+  it is set), so it must stay what the base (or, for a new target, the seed) says. Deleting the
+  ``yarn.lock`` or the ``source.json`` of a target the base forces, and keeping the other, turns
+  the override off as well and is ``reject``; pruning the whole forced target is ``needs-review``.
 - A package name no base lock of that file had (uv or yarn), or a new yarn entry without a
-  ``resolved`` URL, is ``needs-review``: an honest relock adds one only when the bumped
-  dependency does, and a person should see it.
+  ``resolved`` URL or with a ``name`` or ``uid``, is ``needs-review``: an honest relock adds one
+  only when the bumped dependency does, and a person should see it.
 
 The decision is ``ok``, ``needs-review`` (pushed, labelled, auto-merge off) or ``reject`` (the
 step fails and nothing is pushed). It runs no nix, uv or yarn, and reads git only.
 
 The helpers from ``_uv`` to ``trusted_locks`` are rolloutpatch.py's (frappe-nix#281, the
 release-driven rollout's patch check), copied as they are so that the two share this module
-when #281 lands.
+when #281 lands; all but ``yarn_blocks``, whose lenient reading ``strict_yarn`` replaces here,
+and which #281 should drop for it too. ``yarn_entries`` still reads the base's locks, which the
+integration branch holds, for the URLs they already trust.
 """
 
 import json
@@ -155,7 +163,6 @@ def pypi_file_problem(name: str, version: str, url: str) -> str | None:
 
 _YARN_KEY = re.compile(r"^(?![\s#])(?P<keys>.+):\s*$")
 _YARN_RESOLVED = re.compile(r'^\s+resolved\s+"?(?P<url>[^"\s]+)"?\s*$')
-_YARN_FIELD = re.compile(r'^  (?P<field>version|resolved|integrity)\s+"?(?P<value>[^"\s]+)"?\s*$')
 
 
 def _yarn_name(spec: str) -> tuple[str, str]:
@@ -167,20 +174,6 @@ def _yarn_name(spec: str) -> tuple[str, str]:
 		at = target.find("@", 1)
 		return name, target[:at] if at > 0 else target
 	return name, name
-
-
-def yarn_blocks(text: str) -> dict[str, dict[str, str]]:
-	"""A yarn (classic) lock's entries: each key → its ``version``, ``resolved`` and ``integrity``."""
-	out: dict[str, dict[str, str]] = {}
-	fields: dict[str, str] | None = None
-	for line in text.splitlines():
-		if m := _YARN_KEY.match(line):
-			fields = {}
-			for spec in m["keys"].split(","):
-				out[spec.strip().strip('"')] = fields
-		elif fields is not None and (m := _YARN_FIELD.match(line)):
-			fields[m["field"]] = m["value"]
-	return out
 
 
 def npm_url_problem(spec: str, fields: dict[str, str]) -> str | None:
@@ -270,6 +263,101 @@ def _more(items: list[str]) -> str:
 	return ", ".join(items[:10]) + (" …" if len(items) > 10 else "")
 
 
+# A relock's yarn.lock, read strictly. Three programs read it after the push: the offline mirror
+# (python-devops-nix lib/node/yarn-lock.nix: its own line regexes, last field wins), nixpkgs'
+# fixup-yarn-lock and yarn (@yarnpkg/lockfile's tokenizer). A line one of them reads and the
+# others skip is how a lock can say one thing to this check and another to the build, so a lock
+# that is not exactly the shape yarn writes is refused rather than read the lenient way.
+_LINE_BREAKS = re.compile("[\0\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
+# What yarn writes unquoted (its lockfile stringify's shouldWrapKey is false): a letter first, and
+# nothing its tokenizer stops at or reads as a boolean.
+_BARE = r'(?!true|false)[a-zA-Z][^\s:"\\,\[\]#]*'
+_QUOTED = r'"[^"\\\x00-\x1f\x7f]+"'  # a key or dependency range: spaces allowed, no escapes
+_SRI = r"sha(?:1|256|384|512)-[A-Za-z0-9+/]+=*"
+_STRICT_KEY = re.compile(rf"(?:{_QUOTED}|{_BARE})(?:, (?:{_QUOTED}|{_BARE}))*:")
+_STRICT_FIELD = re.compile(
+	rf'  (?P<field>version|resolved|integrity|name|uid) (?:"(?P<q>[^"\\\s]*)"|(?P<bare>{_BARE})'
+	rf'|"(?P<sri>{_SRI}(?: {_SRI})+)")'
+)
+_STRICT_DEPS = re.compile(r"  (?:dependencies|optionalDependencies):")
+_STRICT_DEP = re.compile(rf'    (?:{_QUOTED}|{_BARE}) (?:"[^"\\\x00-\x1f\x7f]*"|{_BARE})')
+# lib/node/yarn-lock.nix's keyOf and fieldOf, as builtins.match applies them (whole line).
+_NIX_KEY = re.compile(r"([^ \t#].*):[ \t]*", re.S)
+_NIX_FIELD = re.compile(r'  (resolved|integrity|version) "?([^"]*)"?[ \t]*', re.S)
+_NIX_FIELDS = ("version", "resolved", "integrity")
+
+
+@dataclass
+class YarnLock:
+	"""A yarn (classic) lock as the strict reading has it: entries in order (key line, fields),
+	each spec's fields, and what is wrong with the file (nothing, for a lock yarn wrote)."""
+
+	entries: list[tuple[str, dict[str, str]]] = field(default_factory=list)
+	specs: dict[str, dict[str, str]] = field(default_factory=dict)
+	errors: list[str] = field(default_factory=list)
+
+
+def _specs(keys: str) -> list[str]:
+	"""A strict key line's specs, quotes off (a quoted one may hold a comma)."""
+	return [s.strip('"') for s in re.findall(rf"{_QUOTED}|{_BARE}", keys)]
+
+
+def strict_yarn(text: str) -> YarnLock:
+	"""``text`` read line by line (``\\n`` only), accepting only what yarn writes: blank lines,
+	comments, an unindented key line, two-space ``version``/``resolved``/``integrity``/``name``/
+	``uid`` lines with one value each (quoted with no whitespace or escape, or bare), two-space
+	``dependencies:``/``optionalDependencies:`` headers and the four-space lines under them. A field
+	twice in one entry, a spec in two entries, or any other line is an error."""
+	out = YarnLock()
+	if m := _LINE_BREAKS.search(text):
+		out.errors.append(f"has a {m[0]!r}, a line break only some of its readers see")
+	fields: dict[str, str] | None = None
+	in_deps = False
+	for n, line in enumerate(text.split("\n"), 1):
+		bad = f"line {n} {line[:120]!r} is not a line yarn writes"
+		if not line or line.startswith("#"):
+			continue
+		if _STRICT_KEY.fullmatch(line):
+			fields, in_deps = {}, False
+			out.entries.append((line[:-1], fields))
+			for spec in _specs(line[:-1]):
+				if spec in out.specs:
+					out.errors.append(f"line {n}: {spec} is in two entries")
+				out.specs[spec] = fields
+		elif fields is None:
+			out.errors.append(bad)
+		elif m := _STRICT_FIELD.fullmatch(line):
+			in_deps = False
+			if m["field"] in fields:
+				out.errors.append(f"line {n}: {m['field']} twice in one entry")
+			if m["sri"] is not None and m["field"] != "integrity":
+				out.errors.append(bad)
+			fields[m["field"]] = next(v for v in (m["q"], m["bare"], m["sri"]) if v is not None)
+		elif _STRICT_DEPS.fullmatch(line):
+			if line in fields:
+				out.errors.append(f"line {n}: {line.strip()} twice in one entry")
+			fields[line] = ""
+			in_deps = True
+		elif not (in_deps and _STRICT_DEP.fullmatch(line)):
+			out.errors.append(bad)
+	for _key, entry in out.entries:
+		for header in [k for k in entry if k.startswith("  ")]:
+			del entry[header]
+	return out
+
+
+def nix_yarn(text: str) -> list[tuple[str, dict[str, str]]]:
+	"""The entries lib/node/yarn-lock.nix's ``parse`` finds in ``text``: what the offline mirror
+	fetches, by its own reading."""
+	out: list[tuple[str, dict[str, str]]] = []
+	for line in text.split("\n"):
+		if k := _NIX_KEY.fullmatch(line):
+			out.append((k[1], {}))
+		elif (f := _NIX_FIELD.fullmatch(line)) and out:
+			out[-1][1][f[1]] = f[2]
+	return out
+
+
 def uv_problems(base_text: str | None, head_text: str, trusted: BaseLocks) -> tuple[list[str], list[str]]:
 	"""``(rejects, reviews)`` for ``nix/uv.lock``: only what the base locks, or PyPI's files for the
 	package and version they name."""
@@ -328,9 +416,17 @@ def yarn_problems(
 	"""``(rejects, reviews)`` for one ``nix/node-locks/**/yarn.lock``."""
 	if "__metadata:" in head_text:
 		return [f"{path} is a yarn berry lock, which relock never writes"], []
+	head = strict_yarn(head_text)
+	if head.errors:
+		return [f"{path}: {e}" for e in head.errors[:10]], []
+	nix = nix_yarn(head_text)
+	ours = [(key, {f: v for f, v in fields.items() if f in _NIX_FIELDS}) for key, fields in head.entries]
+	if nix != ours:
+		return [f"{path}: lib/node/yarn-lock.nix would read its entries differently from yarn"], []
 	rejects: list[str] = []
 	reviews: list[str] = []
-	_names, urls = yarn_entries(head_text)
+	urls = {f["resolved"] for _k, f in head.entries if "resolved" in f}
+	urls |= {f["resolved"] for _k, f in nix if "resolved" in f}
 	for url in sorted(urls):
 		parts = urllib.parse.urlsplit(url)
 		if (
@@ -338,18 +434,25 @@ def yarn_problems(
 			and url not in trusted.resolved
 		):
 			rejects.append(f"{path}: resolves {url[:200]}, which is not on the npm registry")
-	before = yarn_blocks(base_text) if base_text else {}
-	unresolved = []
-	for spec, fields in yarn_blocks(head_text).items():
+	# The base is the integration branch's: read the same way, best effort, so an entry it holds
+	# in a shape the strict reading skips counts as changed and is checked, never the reverse.
+	before = strict_yarn(base_text).specs if base_text else {}
+	unresolved, renamed = [], []
+	for spec, fields in head.specs.items():
 		if before.get(spec) == fields:
 			continue
+		if "name" in fields or fields.get("uid"):
+			renamed.append(f"{spec} ({fields.get('name') or fields.get('uid')})")
 		if "resolved" not in fields:
 			unresolved.append(spec)
 		elif problem := npm_url_problem(spec, fields):
 			rejects.append(f"{path}: {problem}")
 	if unresolved:
 		reviews.append(f"{path}: {_more(unresolved)} resolve to no URL")
-	added = sorted(yarn_entries(head_text)[0] - (yarn_entries(base_text)[0] if base_text else set()))
+	if renamed:
+		reviews.append(f"{path}: {_more(renamed)} set a name or uid")
+	names = {_yarn_name(s)[0] for s in head.specs} - {_yarn_name(s)[0] for s in before}
+	added = sorted(names)
 	if added:
 		reviews.append(f"{path} adds {_more(added)}")
 	return rejects, reviews
@@ -396,6 +499,20 @@ def _seed(path: str, major: int | None) -> bytes | None:
 	return seed.read_bytes() if seed.is_file() else None
 
 
+def _pruned_forced(path: str, base: dict[str, bytes], head: dict[str, bytes]) -> tuple[str, str] | None:
+	"""A deleted node-lock file of a target the base forces: lib/bench.nix forces a target only
+	while both its ``yarn.lock`` and a ``forced`` stamp are there, so deleting either turns the
+	override off and the app's own lock builds it again. One of the two is ``reject``; the whole
+	target is ``needs-review`` (an honest relock prunes a target only when it is gone)."""
+	target = str(PurePosixPath(path).parent)
+	pair = (f"{target}/yarn.lock", f"{target}/source.json")
+	if path not in pair or not (_stamp(base.get(pair[1])) or {}).get("forced"):
+		return None
+	if kept := [p for p in pair if p in head]:
+		return REJECT, f"{path}: deleted while {kept[0]} stays, which turns the forced lock off"
+	return REVIEW, f"{target}: a forced lock is pruned, so the app's own yarn.lock builds it again"
+
+
 def check(base: dict[str, bytes], head: dict[str, bytes], major: int | None) -> Result:
 	"""Check the lock files ``head`` (``path → bytes``) against ``base``'s."""
 	res = Result()
@@ -407,6 +524,8 @@ def check(base: dict[str, bytes], head: dict[str, bytes], major: int | None) -> 
 		if after is None:
 			if path == UV_LOCK:
 				res.rejects.append(f"{path}: deleted")
+			elif path.startswith(NODE_LOCKS) and (problem := _pruned_forced(path, base, head)):
+				(res.rejects if problem[0] == REJECT else res.reviews).append(problem[1])
 			continue  # a node-lock target pruned: its app ships its own lock again, or is gone
 		try:
 			text = after.decode("utf-8")
