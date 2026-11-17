@@ -19,7 +19,7 @@ OLD = "a" * 40
 TAG_SHA = "c" * 40
 NEWER = "d" * 40
 TAG = "v1.2.0"
-BOT = "avunu-rollout[bot]"
+BOT = "avunu-release-manager[bot]"
 #: frappe-nix's rollout.yml at TAG, as the contents API returns it: only its env.BOT is read.
 ROLLOUT_YML = f"repos/Avunu/frappe-nix/contents/.github/workflows/rollout.yml?ref={TAG}"
 
@@ -541,7 +541,7 @@ class TestRolloutByHand(RolloutRepoCase):
 		self.assertEqual(subject, f"chore(deps): frappe-nix {TAG}")
 
 	def test_pauses_on_another_bots_rollout_subject(self):
-		"""Only avunu-rollout[bot] (or you) makes the rollout's commits; Dependabot's are foreign."""
+		"""Only avunu-release-manager[bot] (or you) makes the rollout's commits; Dependabot's are foreign."""
 		bot = "dependabot[bot]"
 		before = push_commit(
 			self, bot, "49699333+dependabot[bot]@users.noreply.github.com", f"{rollout.SUBJECT} v1.1.0"
