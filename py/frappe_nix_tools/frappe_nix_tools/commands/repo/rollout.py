@@ -11,6 +11,12 @@ integration branch::
     nix flake update standards-profile         # with --profile-to (the ref in `profile` set first)
     nix run --no-pure-eval .#relock && nix run --no-pure-eval .#frappe-init -- --sync
 
+With ``--to``, a flake whose lock still follows a frozen per-major branch
+(``github:Avunu/frappe-nix/release-<N>``) first has that URL in flake.nix pointed at
+``github:Avunu/frappe-nix/release``, which the release's sync renders too; those branches no
+longer move, so the update would otherwise never reach the tag. An app that sets
+``dev-shell.frappe-nix-url`` is left on its own URL.
+
 The ``nix`` commands run the repository's own code, so they get an environment without
 ``GH_TOKEN``, ``GITHUB_TOKEN`` or any other ``*_TOKEN`` or ``*_KEY`` variable (nor
 ``SSH_AUTH_SOCK``), and ``GH_CONFIG_DIR`` points at an empty directory: ``gh``'s stored login
@@ -73,6 +79,7 @@ from frappe_nix_tools.commands.repo import targets
 from frappe_nix_tools.common import appgates, flakelock, github
 from frappe_nix_tools.common.config import ORG_PROFILE_PREFIXES
 from frappe_nix_tools.common.report import CLEAN, DRIFT, ConfigError, EnvError, FrappeNixError
+from frappe_nix_tools.scaffold import context
 
 _VERSION = re.compile(r"^v\d+\.\d+\.\d+$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -149,6 +156,35 @@ def locked_frappe_nix(root: Path) -> dict:
 	found = flakelock.node_at(lock, ["frappe-nix"])
 	locked = found[1].get("locked") if found else None
 	return locked if isinstance(locked, dict) else {}
+
+
+def leave_frozen_release(root: Path, app: appgates.AppConfig, *, write: bool = True) -> bool:
+	"""Point flake.nix's frappe-nix input at ``release`` when the lock follows a frozen
+	``release-<N>`` branch (one per major, from before every release moved ``release``).
+	Those branches no longer move, so ``nix flake update frappe-nix`` would never reach the
+	tag. The release's own sync renders the same URL. An app that sets
+	``dev-shell.frappe-nix-url`` chose its URL and is left as it is. Returns whether flake.nix
+	changes (with ``write=False``, would change)."""
+	if (app.cfg.get("dev-shell") or {}).get("frappe-nix-url"):
+		return False
+	try:
+		found = flakelock.node_at(flakelock.load(root / "flake.lock"), ["frappe-nix"])
+	except EnvError:
+		return False
+	original = found[1].get("original") if found else None
+	if not flakelock.frozen_release_original(original):
+		return False
+	path = root / "flake.nix"
+	if not path.is_file():
+		return False
+	frozen = re.compile(
+		rf'"github:{re.escape(original["owner"])}/{re.escape(original["repo"])}/{re.escape(original["ref"])}"',
+		re.I,
+	)
+	text, n = frozen.subn(f'"{context.default_frappe_nix_url()}"', path.read_text())
+	if n and write:
+		path.write_text(text)
+	return bool(n)
 
 
 def tag_sha(locked: dict, to: str) -> str | None:
@@ -263,6 +299,7 @@ def emit_patch(r: str, args: argparse.Namespace) -> str:
 		"state": "",
 		"tools_version": frappe_nix_tools.__version__,
 	}
+	leave_frozen_release(root, app)
 	cmds, _subject, _branch = plan(app, args.to, None)
 	for c in cmds:
 		sh(c, root, scrub=True)
@@ -396,6 +433,10 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 	method = (app.cfg.get("repo-policy", {}).get("merge-methods") or ["squash"])[0]
 	if args.dry_run:
 		lines = [f"{r} ({integration}):"]
+		if args.to and leave_frozen_release(root, app, write=False):
+			lines.append(
+				f"  point flake.nix's frappe-nix at {context.default_frappe_nix_url()} (off a frozen release-<N>)"
+			)
 		if args.profile_to and args.profile_to != "latest" and source.startswith(ORG_PROFILE_PREFIXES):
 			lines.append(f"  set profile = {args.profile_to!r}")
 		lines += [f"  {' '.join(c)}" for c in cmds]
@@ -413,6 +454,8 @@ def rollout_one(r: str, args: argparse.Namespace) -> str:
 		return "\n".join(lines)
 	if args.profile_to:
 		set_profile_ref(root / "pyproject.toml", args.profile_to)
+	if args.to:
+		leave_frozen_release(root, app)
 	for c in cmds:
 		sh(c, root, scrub=True)
 		if args.to and c[-1] == "frappe-nix":

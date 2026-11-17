@@ -264,6 +264,21 @@ class TestPublish(VerifyCase):
 		path.write_bytes(b"")
 		self.assertDecision(self.verify(path), "noop")
 
+	def test_a_move_off_a_frozen_release_branch_publishes(self):
+		"""The base follows release-2, which no longer moves: the plan points flake.nix at
+		`release` and the lock's original follows. The render explains flake.nix."""
+		frozen = json.loads(app_lock(REV))
+		frozen["nodes"]["frappe-nix"]["original"]["ref"] = "release-2"
+		self.write("flake.lock", json.dumps(frozen, indent=2) + "\n")
+		url = '"github:Avunu/frappe-nix/release"'
+		self.assertIn(url, self.read("flake.nix"))
+		self.write("flake.nix", self.read("flake.nix").replace(url, '"github:Avunu/frappe-nix/release-2"'))
+		self.commit()
+		self.base = git(self.root, "rev-parse", "HEAD").strip()
+		patch = self.plan()
+		self.assertIn(b"+    frappe-nix.url = " + url.encode(), patch.read_bytes())
+		self.assertDecision(self.verify(patch), "publish")
+
 	def test_rollout_contract(self):
 		code, out, _ = run_cli("ci", "rollout-contract")
 		self.assertEqual((code, out.strip()), (0, "1"))
@@ -526,6 +541,27 @@ class TestLockChecks(unittest.TestCase):
 		lock["nodes"]["stray"] = {"locked": {"type": "path", "path": "/"}}
 		problems = rolloutpatch.flake_lock_problems(app_lock(REV), json.dumps(lock), TS, FN_LOCK)
 		self.assertTrue(any("stray" in p for p in problems), problems)
+
+	def test_frappe_nix_original_moves_only_off_a_frozen_release_branch(self):
+		def lock_on(ref: str, rev: str, **original: str) -> str:
+			lock = json.loads(app_lock(rev))
+			lock["nodes"]["frappe-nix"]["original"].update(ref=ref, **original)
+			return json.dumps(lock)
+
+		def problems(base: str, new: str) -> list[str]:
+			return [p for p in rolloutpatch.flake_lock_problems(base, new, TS, FN_LOCK) if "original" in p]
+
+		self.assertEqual(problems(lock_on("release-2", REV), lock_on("release", TS)), [])
+		self.assertEqual(problems(lock_on("release-1", REV), lock_on("release", TS)), [])
+		for base, new in (
+			(lock_on("release-2", REV), lock_on("main", TS)),  # anywhere but release
+			(lock_on("release", REV), lock_on("release-2", TS)),  # back onto a frozen branch
+			(lock_on("v2.1.0", REV), lock_on("release", TS)),  # a pinned tag stays pinned
+			(lock_on("release-2", REV, owner="evil"), lock_on("release", TS, owner="evil")),
+			(lock_on("release-2", REV), lock_on("release", TS, dir="x")),
+		):
+			with self.subTest(base=json.loads(base)["nodes"]["frappe-nix"]["original"]):
+				self.assertTrue(problems(base, new))
 
 	def test_a_follows_the_base_had_is_kept(self):
 		base = json.loads(app_lock(REV))

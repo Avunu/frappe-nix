@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from frappe_nix_tools.commands.repo import rollout, targets
-from frappe_nix_tools.common import github
+from frappe_nix_tools.common import appgates, github
 from helpers import run_cli
 from repo_helpers import RepoCase, write_app
 from scaffold_helpers import git
@@ -36,7 +36,7 @@ IDENTITY = {
 }
 
 
-def lock(rev: str) -> str:
+def lock(rev: str, ref: str = "release") -> str:
 	return json.dumps(
 		{
 			"nodes": {
@@ -46,7 +46,7 @@ def lock(rev: str) -> str:
 						"type": "github",
 						"owner": "Avunu",
 						"repo": "frappe-nix",
-						"ref": "release",
+						"ref": ref,
 					},
 				},
 				"root": {"inputs": {"frappe-nix": "frappe-nix"}},
@@ -56,6 +56,11 @@ def lock(rev: str) -> str:
 		},
 		indent=2,
 	)
+
+
+#: A flake.nix with only its frappe-nix input, following ``ref``.
+def flake(ref: str) -> str:
+	return '{\n  inputs = {\n    frappe-nix.url = "github:Avunu/frappe-nix/' + ref + '";\n  };\n}\n'
 
 
 class TestRepoRollout(RepoCase):
@@ -82,6 +87,18 @@ class TestRepoRollout(RepoCase):
 	def test_all_needs_fleet(self):
 		code, _, _ = run_cli("repo", "rollout", "--all", "--to", "v1.2.0")
 		self.assertEqual(code, 2)
+
+	def test_dry_run_names_the_move_off_a_frozen_release_branch(self):
+		root = self.clones[(R, None)]
+		(root / "flake.nix").write_text(flake("release-2"))
+		(root / "flake.lock").write_text(lock(OLD, "release-2"))
+		code, out, err = run_cli("repo", "rollout", "--repo", R, "--to", TAG, "--dry-run")
+		self.assertEqual(code, 0, err)
+		self.assertIn("point flake.nix's frappe-nix at github:Avunu/frappe-nix/release", out)
+		self.assertEqual((root / "flake.nix").read_text(), flake("release-2"), "a dry run writes nothing")
+		(root / "flake.lock").write_text(lock(OLD))
+		code, out, err = run_cli("repo", "rollout", "--repo", R, "--to", TAG, "--dry-run")
+		self.assertNotIn("point flake.nix", out)
 
 	def test_dry_run_prints_the_plan(self):
 		code, out, err = run_cli("repo", "rollout", "--repo", R, "--to", "v1.2.0", "--dry-run")
@@ -208,6 +225,7 @@ class RolloutRepoCase(RepoCase):
 		self.clones[(R, None)] = self.clone
 		self.locks_to = TAG_SHA
 		self.nix_envs: list[dict] = []
+		self.flake_at_update: str | None = None
 		real = rollout.sh
 
 		def fake_sh(cmd, cwd, *, scrub=None):
@@ -215,6 +233,8 @@ class RolloutRepoCase(RepoCase):
 				return real(cmd, cwd, scrub=scrub)
 			self.nix_envs.append({"scrub": scrub})
 			if cmd[1:3] == ["flake", "update"]:
+				if (cwd / "flake.nix").is_file():
+					self.flake_at_update = (cwd / "flake.nix").read_text()
 				(cwd / "flake.lock").write_text(lock(self.locks_to))
 			elif cmd[-1] == ".#relock":
 				(cwd / "nix").mkdir(exist_ok=True)
@@ -229,6 +249,19 @@ class RolloutRepoCase(RepoCase):
 		self.addCleanup(p.stop)
 		self.gh.routes[("GET", f"repos/Avunu/frappe-nix/commits/{TAG}")] = {"sha": TAG_SHA}
 		self.gh.routes[("GET", ROLLOUT_YML)] = contents(f"name: rollout\nenv:\n  BOT: {BOT}\n")
+
+	def frozen_base(self, ref: str = "release-2", pyproject_extra: str = "") -> None:
+		"""A new integration head whose flake follows ``ref`` (by default a frozen per-major
+		branch), with the lock to match."""
+		(self.clone / "flake.nix").write_text(flake(ref))
+		(self.clone / "flake.lock").write_text(lock(OLD, ref))
+		if pyproject_extra:
+			with (self.clone / "pyproject.toml").open("a") as f:
+				f.write(pyproject_extra)
+		git(self.clone, "add", "-A")
+		git(self.clone, "commit", "-q", "-m", "flake")
+		git(self.clone, "push", "-q", "origin", "HEAD:develop")
+		self.base = git(self.clone, "rev-parse", "HEAD").strip()
 
 
 class TestEmitPatch(RolloutRepoCase):
@@ -303,6 +336,28 @@ class TestEmitPatch(RolloutRepoCase):
 		code, text, _ = self.emit()
 		self.assertEqual(code, 1)
 		self.assertIn("has not reached", text)
+
+	def test_moves_a_flake_off_a_frozen_release_branch(self):
+		"""release-<N> no longer moves: flake.nix follows `release` before the update, so the
+		lock reaches the tag (its original moves too, which verify-rollout-patch allows)."""
+		self.frozen_base()
+		code, text, out = self.emit(None, "--tag-sha", TAG_SHA)
+		self.assertEqual(code, 0, text)
+		self.assertEqual(self.flake_at_update, flake("release"))
+		self.assertEqual(json.loads((out / "meta.json").read_text())["state"], "patch")
+		patch = (out / "patch").read_text()
+		self.assertIn('-    frappe-nix.url = "github:Avunu/frappe-nix/release-2";', patch)
+		self.assertIn('+    frappe-nix.url = "github:Avunu/frappe-nix/release";', patch)
+
+	def test_leaves_any_other_url_alone(self):
+		dev_shell = '\n[tool.frappe-nix.dev-shell]\nfrappe-nix-url = "github:Avunu/frappe-nix/release-2"\n'
+		for i, (ref, extra) in enumerate((("release", ""), ("v2.1.0", ""), ("release-2", dev_shell))):
+			with self.subTest(ref=ref, dev_shell=bool(extra)):
+				root = write_app(self.tmp / f"plain-{i}", extra)
+				(root / "flake.nix").write_text(flake(ref))
+				(root / "flake.lock").write_text(lock(OLD, ref))
+				self.assertFalse(rollout.leave_frozen_release(root, appgates.load(root)))
+				self.assertEqual((root / "flake.nix").read_text(), flake(ref))
 
 	def test_base_must_be_on_the_integration_branch(self):
 		other = self.tmp / "other"
@@ -407,6 +462,14 @@ class TestRolloutByHand(RolloutRepoCase):
 	def run_rollout(self) -> tuple[int, str]:
 		code, out, err = run_cli("repo", "rollout", "--repo", R, "--to", TAG)
 		return code, out + err
+
+	def test_moves_a_flake_off_a_frozen_release_branch(self):
+		self.frozen_base()
+		code, text = self.run_rollout()
+		self.assertEqual(code, 0, text)
+		self.assertEqual(self.flake_at_update, flake("release"))
+		pushed = git(self.origin, "show", "standards/frappe-nix:flake.nix")
+		self.assertEqual(pushed, flake("release"))
 
 	def test_pushes_the_one_branch_and_opens_the_pr(self):
 		code, text = self.run_rollout()

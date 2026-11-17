@@ -36,6 +36,11 @@ PROFILE_INPUT = "standards-profile"
 
 PIN_TYPES = ("github", "gitlab", "git")
 
+# Before every frappe-nix release moved the one branch `release`, an app's flake followed a
+# branch per major (`release-1`, `release-2`). Those no longer move. Only the rollout's
+# one-time move off them reads this (`repo rollout`, `ci verify-rollout-patch`).
+_FROZEN_RELEASE = re.compile(r"release-[0-9]+")
+
 
 @dataclass(frozen=True)
 class Pin:
@@ -163,6 +168,20 @@ def frappe_nix_rev(lock: dict) -> str | None:
 	locked = found[1].get("locked") if found else None
 	rev = locked.get("rev") if isinstance(locked, dict) else None
 	return rev if isinstance(rev, str) else None
+
+
+def frozen_release_original(original: object) -> bool:
+	"""Whether ``original`` (a lock node's) is exactly ``github:Avunu/frappe-nix/release-<N>``,
+	one of the frozen per-major branches."""
+	return (
+		isinstance(original, dict)
+		and set(original) == {"type", "owner", "repo", "ref"}
+		and original["type"] == "github"
+		and str(original["owner"]).lower() == "avunu"
+		and str(original["repo"]).lower() == "frappe-nix"
+		and isinstance(original["ref"], str)
+		and _FROZEN_RELEASE.fullmatch(original["ref"]) is not None
+	)
 
 
 def _field(name: str, locked: dict, key: str) -> str:

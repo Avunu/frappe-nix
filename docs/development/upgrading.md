@@ -25,7 +25,7 @@ frappe-nix is released with release-please. A `fix:` merged to `main` makes a pa
 | `github:Avunu/frappe-nix/v2.0.0`  | that one release                    |
 | `github:Avunu/frappe-nix`         | `main`, unreleased changes included |
 
-Every `v*` tag fast-forwards `release`, a new major included. Your `flake.lock` is what keeps you on the release you have: it moves only when you update it, or, for an app, when a rollout PR passes its checks. Read this page before you take a major. The scaffolder writes plain `github:Avunu/frappe-nix` for a bench; an app that opted in to the [app standards](../app-standards/versioning.md) follows `release`. The old `release-1` and `release-2` branches no longer move and will be deleted; point a flake that names one at `release`.
+Every `v*` tag fast-forwards `release`, a new major included. Your `flake.lock` is what keeps you on the release you have: it moves only when you update it, or, for an app, when a rollout PR passes its checks. Read this page before you take a major. The scaffolder writes plain `github:Avunu/frappe-nix` for a bench; an app that opted in to the [app standards](../app-standards/versioning.md) follows `release`. The old `release-1` and `release-2` branches no longer move and will be deleted. The next rollout moves an app's flake off them onto `release` in its PR; point any other flake that names one at `release` yourself.
 
 ## 1.x to 2.0
 
