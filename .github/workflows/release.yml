@@ -24,6 +24,9 @@ name: release
 #                   fails unless it then equals the tag. The release-* ruleset
 #                   (repo-policy/self/rulesets/release.json) lets only GitHub Actions move it.
 #
+# release-please, fixture and fast-forward can hold AVUNU_CI_PRIVATE_KEY, so they run on
+# ubuntu-latest, never on the shared self-hosted runners other repositories' jobs use.
+#
 # The daily cron catches merges that raise no push (an auto-merge enabled with GITHUB_TOKEN)
 # and retries a dispatch that failed or a concurrency group cancelled. frappe-nix's flake.lock
 # has no frappe-nix node, so the tools come from this checkout.
@@ -47,7 +50,7 @@ env:
 jobs:
   release-please:
     if: github.ref == 'refs/heads/main'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -58,20 +61,6 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       app: ${{ steps.app.outputs.enabled }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       # The org's GitHub App when this repository can read it: the release PR it opens, updates
       # or pushes to then starts check.yml, pr-policy.yml and docs.yml. Else GITHUB_TOKEN.
       - id: app
@@ -106,26 +95,12 @@ jobs:
   fixture:
     needs: release-please
     if: needs.release-please.result == 'success'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # push the re-rendered fixture to the release PR branch
       pull-requests: read # the open release PR
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - name: Find the open release PR
         id: pr
         env:
@@ -258,25 +233,11 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true'
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # move release-<major> without the App (the ruleset's bypass actor is GitHub Actions)
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

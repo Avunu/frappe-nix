@@ -521,9 +521,14 @@ def a15(a: Audit) -> tuple[str, str]:
 	run = latest_run(a, "nightly.yml")
 	if not run:
 		return RED, "nightly never ran"
-	shots = [j for j in run_jobs(a, run["id"]) if "shots" in (j.get("name") or "")]
+	# `shots` runs frappe-shots; `shots-push` pushes its patch, and is skipped when nothing changed.
+	jobs = run_jobs(a, run["id"])
+	pushes = [j for j in jobs if (j.get("name") or "").endswith("shots-push")]
+	shots = [j for j in jobs if "shots" in (j.get("name") or "") and j not in pushes]
 	if not shots or shots[0].get("conclusion") != "success":
 		return RED, f"shots {shots[0].get('conclusion') if shots else 'absent'}"
+	if pushes and pushes[0].get("conclusion") not in ("success", "skipped"):
+		return RED, f"shots-push {pushes[0].get('conclusion')}"
 	prs = github.get(f"repos/{a.r}/pulls?state=open&per_page=100") or []
 	old = [
 		p["number"]

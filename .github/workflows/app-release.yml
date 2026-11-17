@@ -5,7 +5,9 @@ name: app-release
 # APP_ID and APP_PRIVATE_KEY (ci.github-app); `dispatch-ci` runs ci.yml and pr-policy.yml on
 # its release PR when there is no App (a GITHUB_TOKEN push raises no event); `fast-forward`
 # moves the release branch to the new tag by a REST PATCH and checks it (D8); `publish` opens
-# the registry PR.
+# the registry PR. The two jobs that can hold the App's key (release-please, fast-forward) run
+# on ubuntu-latest whatever `runs-on` says: a self-hosted runner is shared with other
+# repositories' jobs.
 
 on:
   workflow_call:
@@ -37,7 +39,8 @@ on:
         default: ""
       runs-on:
         description: >-
-          The runner of every Linux job, as JSON: a label or a list of labels
+          The runner of every Linux job but release-please and fast-forward, which can hold the
+          GitHub App's key and always run on ubuntu-latest, as JSON: a label or a list of labels
           (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
         type: string
         default: '["ubuntu-latest"]'
@@ -68,7 +71,7 @@ env:
 jobs:
   release-please:
     if: github.ref == format('refs/heads/{0}', inputs.integration-branch)
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # tags and releases
@@ -79,20 +82,6 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       app: ${{ steps.app.outputs.enabled }}
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       # A GitHub App's token when the caller passes one (ci.github-app): the release PR it opens
       # or updates then starts ci.yml and pr-policy.yml like any other push. Else GITHUB_TOKEN.
       - id: app
@@ -193,26 +182,12 @@ jobs:
   fast-forward:
     needs: release-please
     if: needs.release-please.outputs.releases_created == 'true' && inputs.release-branch != ''
-    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write # move the release branch without the App (the ruleset's bypass actor is GitHub Actions)
       actions: write # dispatch assets.yml
     steps:
-      # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
-      # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
-      # cannot remove: clear $RUNNER_TEMP, keeping the runner's _* files, and make the workspace
-      # writable for checkout to clean. The working directory is $RUNNER_TEMP, which always exists.
-      - if: runner.environment != 'github-hosted'
-        name: Clear what an earlier job left in the runner's temp dir and workspace
-        working-directory: ${{ runner.temp }}
-        run: |
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' ! -type l -exec chmod -R u+w {} +
-          find "$RUNNER_TEMP" -mindepth 1 -maxdepth 1 ! -name '_*' -exec rm -rf {} +
-          if [ -d "$GITHUB_WORKSPACE" ]; then
-            find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 ! -type l -exec chmod -R u+w {} +
-          fi
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

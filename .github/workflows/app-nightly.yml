@@ -4,10 +4,12 @@ name: app-nightly
 # optional job is a `run-*` input the caller renders from its module switch: the integration
 # suites (tests), screenshots (screenshots), the listing links (listing), code duplication
 # (test-utils) and the registry refresh (listing.publish). `drift` always runs: it keeps the
-# "frappe-nix vX.Y.Z available" and "standards profile update available" issues. With a GitHub
-# App (APP_ID and APP_PRIVATE_KEY, ci.github-app) `shots` pushes and opens its PR with the
-# App's token, which starts CI by itself; without one, GITHUB_TOKEN, and CI is dispatched.
-# `auto-merge` (dependabot.auto-merge-policy = "all") enables auto-merge on that PR.
+# "frappe-nix vX.Y.Z available" and "standards profile update available" issues. `shots` runs
+# frappe-shots with no write token and uploads the screenshot patch; `shots-push`, on
+# ubuntu-latest whatever `runs-on` says and running no app code, checks that patch and pushes
+# it and opens its PR. With a GitHub App (APP_ID and APP_PRIVATE_KEY, ci.github-app) it does so
+# with the App's token, which starts CI by itself; without one, GITHUB_TOKEN, and CI is
+# dispatched. `auto-merge` (dependabot.auto-merge-policy = "all") enables auto-merge on that PR.
 
 on:
   workflow_call:
@@ -51,8 +53,9 @@ on:
         default: ""
       runs-on:
         description: >-
-          The runner of every Linux job, as JSON: a label or a list of labels
-          (`["self-hosted", "nixos"]`). A pull request from a fork always runs on ubuntu-latest.
+          The runner of every Linux job but shots-push, which holds the write token and always
+          runs on ubuntu-latest, as JSON: a label or a list of labels (`["self-hosted", "nixos"]`).
+          A pull request from a fork always runs on ubuntu-latest.
         type: string
         default: '["ubuntu-latest"]'
     secrets:
@@ -210,14 +213,18 @@ jobs:
             attic push "ci:$NAME" "${paths[@]}"
           fi
 
+  # Runs the app (frappe-shots over its demo site): no write token and no secret but the read
+  # ones. It uploads the screenshot patch shots-push checks and pushes.
   shots:
     if: inputs.run-shots
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON(inputs.runs-on) }}
     timeout-minutes: 90
     permissions:
-      contents: write # push standards/screenshots
-      pull-requests: write # open or update its PR
-      actions: write # dispatch ci.yml and pr-policy.yml on it
+      contents: read # the checkout; this job runs the app and holds no write token
+    outputs:
+      changed: ${{ steps.patch.outputs.changed }}
+      sha: ${{ steps.patch.outputs.sha }}
+      diffs: ${{ steps.diffs.outputs.artifact-url }}
     steps:
       # A self-hosted runner reuses $RUNNER_TEMP and the workspace, and an interrupted job leaves
       # read-only files there (copies out of the Nix store) that the runner's cleanup and checkout
@@ -336,7 +343,103 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
-      - if: steps.spec.outputs.tracked == 'true' && inputs.auto-merge
+      # docs/screenshots alone, as a binary patch without renames; shots-push checks it again.
+      - if: steps.spec.outputs.tracked == 'true'
+        id: patch
+        name: The screenshot patch
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if [ -z "$(git status --porcelain -- docs/screenshots)" ]; then
+            echo "The committed screenshots match."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git add -A -- docs/screenshots
+          git diff --cached --binary --no-renames -- docs/screenshots > "$RUNNER_TEMP/shots.patch"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots-patch
+          path: ${{ runner.temp }}/shots.patch
+
+  # Holds the write token: GitHub-hosted whatever `runs-on` says, and nothing of the app's runs.
+  shots-push:
+    needs: shots
+    if: needs.shots.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # push standards/screenshots
+      pull-requests: write # open or update its PR
+      actions: write # dispatch ci.yml and pr-policy.yml on it
+    steps:
+      # The commit the shots job ran on, not the branch's head now: the patch is its.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.shots.outputs.sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: screenshots-patch
+          path: ${{ runner.temp }}/shots
+
+      # The shots job ran the app and its dependencies, so its patch is data to check, before
+      # any token exists: only what frappe-shots writes (docs/screenshots/<name>-<theme>.webp
+      # and docs/screenshots/manifest.json), each an added, modified or deleted regular file
+      # (mode 100644). A rename, copy, mode change, symlink, or any other path is refused.
+      - name: Check and apply the screenshot patch (nothing else runs)
+        env:
+          PATCH: ${{ runner.temp }}/shots/shots.patch
+          ALLOW: '^docs/screenshots/([a-z0-9-]+-(light|dark)\.webp|manifest\.json)$'
+        run: |
+          set -euo pipefail
+          # The patch text first: no rename, copy or mode change, and no mode but 100644.
+          if grep -qE '^((rename|copy) (from|to)|(dis)?similarity index|(old|new) mode) ' "$PATCH" \
+            || grep -E '^(new file|deleted file) mode ' "$PATCH" | grep -vE ' mode 100644$' > /dev/null \
+            || grep -E '^index [0-9a-f]+\.\.[0-9a-f]+ ' "$PATCH" | grep -vE ' 100644$' > /dev/null; then
+            echo "::error::the patch renames, copies or changes the mode of a file, or has a mode other than 100644"
+            exit 1
+          fi
+          git apply --index "$PATCH"
+          # Then what the index holds against HEAD, entry by entry.
+          git diff --cached --no-renames --raw -z HEAD > "$RUNNER_TEMP/index.raw"
+          bad=0
+          while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+            read -r old new _ _ status <<< "${meta#:}"
+            why=""
+            case "$status" in
+              A) [ "$new" = 100644 ] || why="mode $new" ;;
+              M) { [ "$old" = 100644 ] && [ "$new" = 100644 ]; } || why="mode $old to $new" ;;
+              D) [ "$old" = 100644 ] || why="mode $old" ;;
+              *) why="change type $status" ;;
+            esac
+            if [[ "/$path/" == *//* || "/$path/" == */./* || "/$path/" == */../* || "/$path/" == */.github/* ]]; then
+              why="${why:+$why; }path"
+            elif ! [[ "$path" =~ $ALLOW ]]; then
+              why="${why:+$why; }not a path this job pushes"
+            fi
+            if [ "$status" != D ] && [ -L "$path" ]; then
+              why="${why:+$why; }symlink"
+            fi
+            if [ -n "$why" ]; then
+              echo "::error::refusing ${path@Q}: $why"
+              bad=1
+            fi
+          done < "$RUNNER_TEMP/index.raw"
+          if [ "$bad" != 0 ]; then
+            exit 1
+          fi
+          if [ ! -s "$RUNNER_TEMP/index.raw" ]; then
+            echo "::error::the patch changes nothing"
+            exit 1
+          fi
+          git --no-pager diff --cached --stat HEAD
+
+      - if: inputs.auto-merge
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           tool-dir: ${{ runner.temp }}/uv-tool-dir
@@ -344,7 +447,8 @@ jobs:
 
       # For the auto-merge safety rule (spec §4.5). From the integration branch's flake.lock, as
       # every job that holds a write token installs it, and not through the app's dev shell.
-      - if: steps.spec.outputs.tracked == 'true' && inputs.auto-merge
+      # Before the App's token is minted.
+      - if: inputs.auto-merge
         name: Install frappe-nix-tools at the frappe-nix revision the integration branch pins
         env:
           OVERRIDE: ${{ inputs.frappe-nix-override }}
@@ -363,16 +467,16 @@ jobs:
             uv tool install --python 3.14 "frappe-nix-tools @ git+https://github.com/${src}@${rev}#subdirectory=py/frappe_nix_tools"
           fi
 
-      # A GitHub App's token when the caller passes one (ci.github-app), minted only after
-      # frappe-shots ran: the PR it pushes then starts CI like any other push. Else GITHUB_TOKEN.
-      - if: steps.spec.outputs.tracked == 'true'
-        id: app
+      # A GitHub App's token when the caller passes one (ci.github-app), minted in this job
+      # alone, which runs no app code: the PR it pushes then starts CI like any other push.
+      # Else GITHUB_TOKEN.
+      - id: app
         name: Whether the caller passes a GitHub App
         env:
           ENABLED: ${{ secrets.APP_ID != '' && secrets.APP_PRIVATE_KEY != '' }}
         run: echo "enabled=$ENABLED" >> "$GITHUB_OUTPUT"
 
-      - if: steps.spec.outputs.tracked == 'true' && steps.app.outputs.enabled == 'true'
+      - if: steps.app.outputs.enabled == 'true'
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -381,28 +485,18 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - if: steps.spec.outputs.tracked == 'true'
-        name: Open or update the screenshots PR
+      - name: Open or update the screenshots PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           APP: ${{ steps.app.outputs.enabled }}
           INTEGRATION: ${{ inputs.integration-branch }}
-          DIFFS: ${{ steps.diffs.outputs.artifact-url }}
+          DIFFS: ${{ needs.shots.outputs.diffs }}
           AUTO_MERGE: ${{ inputs.auto-merge }}
           METHOD: ${{ inputs.merge-method }}
         run: |
           set -euo pipefail
-          if [ -z "$(git status --porcelain docs/screenshots)" ]; then
-            echo "The committed screenshots match."
-            exit 0
-          fi
           branch=standards/screenshots
           git switch -c "$branch"
-          git add docs/screenshots
-          if git diff --cached --name-only | grep -E '(^|/)\.github/workflows/'; then
-            echo "::error::the screenshot refresh would change a workflow"
-            exit 1
-          fi
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -m "docs: refresh screenshots"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$branch"
