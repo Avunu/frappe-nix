@@ -24,8 +24,8 @@ branch (edited when it is open already), the old per-release ``standards/frappe-
 pull requests closed, and, unless ``--no-auto-merge``, auto-merge under the safety rule of
 §4.5 (``frappe-nix ci enable-automerge``): only when the integration branch requires every
 enabled gate, else the label ``needs-review``. A branch that has a commit by anyone but
-``avunu-rollout[bot]`` (or an earlier ``chore(deps): frappe-nix`` commit of yours) is left
-alone, with a comment on its pull request, while that pull request is open or no pull request
+the rollout (a ``chore(deps): frappe-nix`` commit by a ``[bot]`` author, rollout.yml's App, or
+by you) is left alone, with a comment on its pull request, while that pull request is open or no pull request
 holds those commits. Once its latest pull request is merged or closed and the branch is still
 that pull request's head, the branch is stale and the next rollout replaces it (with
 ``--force-with-lease``). With ``--no-auto-merge``, or when the safety rule fails, an
@@ -72,9 +72,10 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 #: The one branch a frappe-nix rollout uses, and the per-release ones it replaces.
 BRANCH = "standards/frappe-nix"
 LEGACY_PREFIX = "standards/frappe-nix-v"
-#: The rollout's own commits: rollout.yml commits as the avunu-rollout App, whose key only the
-#: frappe-nix-rollout environment holds (docs/app-standards/github.md, Rollout).
-BOT = "avunu-rollout[bot]"
+#: The subject of the rollout's own commits. rollout.yml commits them as its App's bot (a
+#: ``[bot]`` author, whose key only the frappe-nix-rollout environment holds; the workflow
+#: checks the App's login itself), and this command by hand as you.
+SUBJECT = "chore(deps): frappe-nix"
 
 # The environment the repository's own code (its flake, relock, sync) never sees.
 _SECRET_SUFFIXES = ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")
@@ -278,17 +279,16 @@ def remote_head(root: Path, head: str) -> str:
 
 def foreign_commits(root: Path, head: str, integration: str, own_email: str) -> list[str]:
 	"""The authors of the commits on ``origin``'s ``head`` that the integration branch lacks,
-	other than the rollout's: ``avunu-rollout[bot]``, and an earlier ``chore(deps): frappe-nix``
-	commit by ``own_email`` (this command run by hand)."""
+	other than the rollout's: a ``chore(deps): frappe-nix`` commit by a ``[bot]`` author
+	(rollout.yml's App) or by ``own_email`` (this command run by hand)."""
 	ref = f"refs/remotes/origin/{head}"
 	sh(git_safe("fetch", "-q", "origin", f"+refs/heads/{head}:{ref}"), root)
 	log = sh(git_safe("log", "--format=%an%x1f%ae%x1f%s", ref, "--not", f"origin/{integration}"), root)
 	out = []
 	for line in log.splitlines():
 		name, email, subject = [*line.split("\x1f"), "", ""][:3]
-		if name == BOT:
-			continue
-		if own_email and email == own_email and subject.startswith("chore(deps): frappe-nix"):
+		ours = name.endswith("[bot]") or (own_email and email == own_email)
+		if ours and subject.startswith(SUBJECT):
 			continue
 		if name not in out:
 			out.append(name)

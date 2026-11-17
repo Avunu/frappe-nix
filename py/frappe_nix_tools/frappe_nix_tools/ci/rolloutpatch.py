@@ -76,7 +76,7 @@ import subprocess
 import tempfile
 import tomllib
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -94,7 +94,7 @@ CONTRACT = 1
 
 BRANCH = "standards/frappe-nix"
 LEGACY_PREFIX = "standards/frappe-nix-v"
-FRAPPE_NIX = ("avunu", "frappe-nix")
+FRAPPE_NIX = tuple("Avunu/frappe-nix".lower().split("/"))
 RUNTIME = "frappe-runtime"
 RUNTIME_GIT = "https://github.com/Avunu/frappe-nix?subdirectory=runtime#{rev}"
 
@@ -187,7 +187,7 @@ def _show(cwd: Path, rev: str, path: str) -> bytes | None:
 
 
 @contextlib.contextmanager
-def _worktree(repo_dir: Path, rev: str, parent: Path, name: str) -> Iterator[Path]:
+def _worktree(repo_dir: Path, rev: str, parent: Path, name: str) -> Generator[Path]:
 	"""A detached work tree of ``repo_dir`` at ``rev``, removed afterwards."""
 	path = parent / name
 	_git(repo_dir, "worktree", "add", "-q", "--force", "--detach", str(path), rev)
@@ -200,7 +200,7 @@ def _worktree(repo_dir: Path, rev: str, parent: Path, name: str) -> Iterator[Pat
 
 
 @contextlib.contextmanager
-def _safe_env() -> Iterator[None]:
+def _safe_env() -> Generator[None]:
 	saved = {k: os.environ.pop(k) for k in _UNSAFE_ENV if k in os.environ}
 	try:
 		yield
@@ -1047,7 +1047,7 @@ def verify(req: Request, fn_lock: dict | None = None) -> tuple[Result, dict]:
 	if not patch.strip():
 		res.empty = True
 		return res, facts
-	if not frappe_nix_tools.__version__ or req.tag != f"v{frappe_nix_tools.__version__}":
+	if req.tag != f"v{frappe_nix_tools.__version__}":
 		res.rejects.append(f"this frappe-nix-tools is v{frappe_nix_tools.__version__}, not {req.tag}'s")
 	res.rejects += header_problems(patch)
 	with tempfile.TemporaryDirectory(prefix="frappe-nix-verify-") as tmp_name, _safe_env():
