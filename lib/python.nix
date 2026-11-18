@@ -57,6 +57,9 @@
   # expands at startup. A bench's members live at `<bench>/apps/<name>`; frappe-nix's
   # own dev env (dev/env.nix) has its project in dev/ and reaches runtime/ as `../`.
   editableRoot ? "$FRAPPE_BENCH_ROOT",
+  # The Node that builds what a package builds with Node (see `prodSourceOverlay` below
+  # and lib/flow-web-ui.nix). The bench's `frappe-nix.nodejs`.
+  nodejs ? pkgs.nodejs,
 }:
 
 let
@@ -103,6 +106,50 @@ let
     sourcePreference = "wheel";
   };
 
+  # The packages uv.lock records, as the lock writes them (names normalized).
+  lockPackages = (builtins.fromTOML (builtins.readFile (workspaceRoot + "/uv.lock"))).package or [ ];
+
+  # Where a package the lock installs from a directory lives, relative to the
+  # workspace root, or null: a workspace member, or a path source such as
+  # frappe's flow harness. Not the root (`virtual`), which is never built.
+  localPathOf = p: p.source.editable or p.source.directory or null;
+
+  # Packages the lock installs from a directory *inside* an overridden member's
+  # directory, as `{ <name> = <src>; }` re-rooted on that member's override.
+  #
+  # Frappe (from 16.60) keeps its flow harness at `flow/harness`, which the
+  # lock records as `apps/frappe/flow/harness`. In app mode `apps/frappe` is a
+  # mirror (lib/app-workspace.nix): real directories of symlinks to the input,
+  # which dangle in the sandbox for the reason `srcOverrides` exists. The harness
+  # is no workspace member, so nothing overrides it by name; it is the input's
+  # `flow/harness` all the same.
+  nestedSrcOverrides =
+    let
+      byName = lib.listToAttrs (map (p: lib.nameValuePair p.name p) lockPackages);
+      roots = lib.filter (name: byName ? ${name} && localPathOf byName.${name} != null) (
+        lib.attrNames srcOverrides
+      );
+    in
+    lib.listToAttrs (
+      lib.concatMap (
+        p:
+        let
+          path = localPathOf p;
+        in
+        lib.optionals (path != null && !(srcOverrides ? ${p.name})) (
+          lib.concatMap (
+            root:
+            let
+              rootPath = localPathOf byName.${root} + "/";
+            in
+            lib.optional (lib.hasPrefix rootPath path) (
+              lib.nameValuePair p.name (srcOverrides.${root} + "/${lib.removePrefix rootPath path}")
+            )
+          ) roots
+        )
+      ) lockPackages
+    );
+
   # Last, so it wins over uv2nix's own src and over anything extraOverrides did.
   # Applied to the editable set as well, below.
   #
@@ -122,7 +169,7 @@ let
         inherit src;
         postUnpack = "";
       })
-    ) (lib.filterAttrs (name: _: prev ? ${name}) srcOverrides);
+    ) (lib.filterAttrs (name: _: prev ? ${name}) (srcOverrides // nestedSrcOverrides));
 
   pythonSet =
     (pkgs.callPackage pyproject-nix.build.packages {
@@ -219,19 +266,83 @@ let
       grafts = graftFor kind;
     };
 
+  # The packages uv.lock installs editable, by distribution name: workspace
+  # members, and a path source such as frappe's flow harness.
+  editableMembers = map (p: p.name) (lib.filter (p: p ? source && p.source ? editable) lockPackages);
+
+  # Every package built from a source tree, which is every package whose build
+  # is the project's own: the apps, and whatever else the lock installs from a
+  # directory (frappe's flow harness). A wheel and an sdist from an index are
+  # not: their build is the index's.
+  localSrcNames = lib.filter (n: n != rootPkgName) (
+    map (p: p.name) (lib.filter (p: localPathOf p != null) lockPackages)
+  );
+
+  # lib/flow-web-ui.nix, for the package whose build hook packages a web UI by
+  # running npm, which the sandbox cannot do against a registry: the UI is built
+  # offline from its lock on its own, and the package is given it as a source
+  # distribution would carry it.
+  flowWebUi = import ./flow-web-ui.nix {
+    inherit pkgs lib nodejs;
+    node = python-devops-nix.lib.node;
+  };
+
+  # What the flow harness is given: its UI, as a source distribution carries it.
+  # The build hook (hatch_build.py) takes a tree with a PKG-INFO for an sdist and
+  # only checks that the UI is there. hatchling reads that file as the core
+  # metadata of the sdist, and refuses one without a Name and a Version, so it
+  # is the minimal one an sdist of this package would hold, from the lock's own
+  # name and version. Nothing when the harness is not the one
+  # lib/flow-web-ui.nix knows.
+  flowHarnessAttrs =
+    old:
+    let
+      webui = flowWebUi old.src;
+    in
+    lib.optionalAttrs (webui != null) {
+      postPatch = (old.postPatch or "") + ''
+        mkdir -p src/flow_harness/server
+        cp -r --no-preserve=mode ${webui} src/flow_harness/server/webui
+        printf 'Metadata-Version: 2.1\nName: %s\nVersion: %s\n' \
+          ${lib.escapeShellArg old.pname} ${lib.escapeShellArg old.version} > PKG-INFO
+      '';
+      passthru = (old.passthru or { }) // {
+        inherit webui;
+      };
+    };
+
+  prodSourceOverlay =
+    _final: prev:
+    lib.genAttrs (lib.filter (n: prev ? ${n}) localSrcNames) (
+      n:
+      prev.${n}.overrideAttrs (
+        old:
+        {
+          # Node and npm in the build of every package built from source. A
+          # fallback, and a narrow one: there is still no network, so it serves
+          # a build hook that works from what is in the tree (a prebuilt
+          # bundle, a script that only bundles) and fails fast on one that
+          # installs. What needs an install is built beforehand, like the
+          # harness's UI. Wheels and sdists from an index are untouched, so this
+          # changes the apps' derivations and nothing else's.
+          nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ nodejs ];
+          env = python-devops-nix.lib.node.sandboxEnv // (old.env or { });
+        }
+        // lib.optionalAttrs (n == "frappe-flow") (flowHarnessAttrs old)
+      )
+    );
+
+  # The production set: pythonSet plus what only a build from source needs. Not in
+  # the editable set, whose build packages nothing, so a development shell never
+  # builds a web UI.
+  prodPythonSet = pythonSet.overrideScope prodSourceOverlay;
+
   # Production: workspace members + runtime deps, no dev tools
   prodPythonEnv = assertProdLockCurrent (
     withGrafts "prod" (
-      pythonSet.mkVirtualEnv "${name}-bench-prod-env" (
+      prodPythonSet.mkVirtualEnv "${name}-bench-prod-env" (
         lib.filterAttrs (name: _: name != rootPkgName) workspace.deps.default // rootDepsAttr
       )
-    )
-  );
-
-  # The workspace members uv.lock installs editable, by distribution name.
-  editableMembers = map (p: p.name) (
-    lib.filter (p: p ? source && p.source ? editable) (
-      (builtins.fromTOML (builtins.readFile (workspaceRoot + "/uv.lock"))).package or [ ]
     )
   );
 
@@ -261,6 +372,16 @@ let
         root = editableRoot;
       })
       editableSrcOverlay
+      # `editables`, for the editable build of the root and of every package the
+      # lock installs editable. hatchling imports it in its PEP 660 hook but
+      # lists it only from `get_requires_for_build_editable`, at build time, so
+      # neither a package's [build-system].requires nor uv.lock names it and
+      # uv2nix does not provide it: the build dies on `No module named
+      # 'editables'`. The root has always needed it; frappe's flow harness
+      # (hatchling, a path source of frappe's own) is not the last package to.
+      # Every package uv2nix's editable overlay above touches gets it, which is
+      # every local one (a `directory` source as much as an `editable` one). Any
+      # other backend ignores it.
       (final: prev: {
         ${rootPkgName} = prev.${rootPkgName}.overrideAttrs (old: {
           nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
@@ -268,6 +389,15 @@ let
           ];
         });
       })
+      (
+        final: prev:
+        lib.genAttrs (lib.filter (n: prev ? ${n}) localSrcNames) (
+          n:
+          prev.${n}.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ final.editables ];
+          })
+        )
+      )
       # After the editable overlay, which rewrites each member's build phases but
       # keeps reading its sources from src.
       srcOverlay
@@ -289,6 +419,7 @@ in
 {
   inherit
     pythonSet
+    prodPythonSet
     prodPythonEnv
     devPythonEnv
     editablePythonSet

@@ -1,0 +1,12 @@
+{
+	"name": "flow-web",
+	"private": true,
+	"version": "0.0.0",
+	"type": "module",
+	"scripts": {
+		"build": "node build.js"
+	},
+	"dependencies": {
+		"@flow/ui-core": "0.0.0"
+	}
+}
