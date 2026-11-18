@@ -225,7 +225,7 @@ printf '\n' >> "$BENCH/apps/beta/package.json"
 if YARN_LOCK="$ROOT/bad.lock" "$TOOL" "$BENCH" node-locks beta > "$ROOT/bad.log" 2>&1; then no "an unbuildable lock fails the run"; else ok "an unbuildable lock fails the run"; fi
 check "…naming the registry entry without integrity" grep -q 'nointegrity@1.0.0: no integrity' "$ROOT/bad.log"
 check "…the git entry without a commit" grep -q 'unpinned.*without a commit' "$ROOT/bad.log"
-check "…and the file: entry" grep -q 'linked@file:../linked.*file:/link:' "$ROOT/bad.log"
+check "…and the file: entry" grep -q 'linked@file:../linked.*file:/link: dependency, which a generated lock cannot cover' "$ROOT/bad.log"
 check_not "but not the one with a #sha1" grep -q 'fine@1.0.0' "$ROOT/bad.log"
 check "the previous lock is kept" cmp -s "$ROOT/beta-before.lock" "$LOCKS/beta/yarn.lock"
 check "and the stamp is not advanced, so it is retried" \
@@ -236,9 +236,17 @@ echo "── pruning ───────────────────�
 mkdir -p "$LOCKS/gone" && printf '# yarn lockfile v1\n' > "$LOCKS/gone/yarn.lock"
 "$TOOL" "$BENCH" node-locks beta > /dev/null 2>&1 || no "explicit targets exit 0"
 check "explicit targets never prune" test -e "$LOCKS/gone/yarn.lock"
-"$TOOL" "$BENCH" node-locks > "$ROOT/prune.log" 2>&1 || no "discovery run exits 0"
+"$TOOL" "$BENCH" node-locks > /dev/null 2>&1 || no "discovery run exits 0"
 check_not "discovery prunes a lock whose target is gone" test -e "$LOCKS/gone"
+mkdir -p "$LOCKS/gone" "$LOCKS/alpha/tools/panel" "$LOCKS/alpha/tools/nolock"
+for d in gone alpha/tools/panel alpha/tools/nolock; do printf '# yarn lockfile v1\n' > "$LOCKS/$d/yarn.lock"; done
+"$TOOL" "$BENCH" node-locks > "$ROOT/prune.log" 2>&1 || no "discovery run exits 0"
 check "and says so" grep -q 'node-locks/gone (no longer a target)' "$ROOT/prune.log"
+check "a directory two levels down that ships its own lock is a target" \
+  grep -q 'node-locks/alpha/tools/panel is unused' "$ROOT/prune.log"
+check "one with only a package-lock.json is not" \
+  grep -q 'node-locks/alpha/tools/nolock (no longer a target)' "$ROOT/prune.log"
+rm -rf "$LOCKS/alpha/tools"
 "$TOOL" "$BENCH" node-locks alpha/desk > /dev/null 2>&1 || no "forcing a nested frontend exits 0"
 "$TOOL" --exclude=alpha/desk "$BENCH" node-locks > /dev/null 2>&1 || no "excluded run exits 0"
 check_not "an excluded frontend's lock is pruned" test -e "$LOCKS/alpha/desk"

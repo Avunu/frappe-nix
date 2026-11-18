@@ -39,6 +39,25 @@ env -u FRAPPE_NIX_KEEP_GOING bench build
 
 Frappe's esbuild writes `sites/assets/assets.json` from what esbuild built, then runs every app's `yarn build`. A bundle an app builds with Vite (`public/dist/js/<name>.bundle.<hash>.js`) gets no key, so `app_include_js = ["<name>.bundle.js"]` or `bundled_asset("<name>.bundle.js")` asks for a file that is not there. After each app's `yarn build` that succeeds, the preload reads the app's Vite manifests and adds a `<name>.bundle.js` / `.css` key for every entry, as Frappe's own `--using-cached` path names the same files. It is the code an app that opted in to the app standards ships as `scripts/vite-register.mjs` for stock benches, and running both changes nothing the second time. It is always on, for every app in app mode, and a registration that fails is a warning, never a failed build. [App assets](../app-standards/assets.md) has the details and the naming conventions.
 
+## Frappe's own yarn installs
+
+From 16.60 Frappe's build runs yarn on some frontends itself, not only `yarn build`:
+
+- for the island toolchain (`frappe/island-toolchain`), `yarn check --integrity`, and `yarn install --frozen-lockfile` when the check fails;
+- for `frappe/studio/frontend` and `frappe/flow`, `yarn install --frozen-lockfile` before every build.
+
+None of them passes `--offline`, and the package build has no network. They are harmless as long as yarn finds each `node_modules` installed, which takes three things. The first two are the node target's ([`link:` dependencies](locks.md#link-dependencies)); the third is the build's.
+
+1. **The recorded lock is the tree's.** `node_modules/.yarn-integrity` names every lock entry as the app's own `yarn.lock` does.
+2. **The link is in the tree**, so the build finds `@framework/ui` once yarn has stepped aside.
+3. **`YARN_IGNORE_SCRIPTS=true`.** The install ran with `--ignore-scripts`, yarn records that, and a later yarn without the flag reports "Flags don't match" and reinstalls. `builtBench` exports the variable for a bench that has a target with a `link:` dependency. It does not affect `yarn run` or `yarn build`. It also keeps a `postinstall` from running against the store's packages.
+
+`NODE_ENV=production` must stay unset around these calls: yarn skips its "already up to date" shortcut under it. `builtBench` does not set it.
+
+A `bench build` run later over the package's tree needs the same variable, or yarn tries the network and then the read-only store.
+
+`frappe/studio/frontend`'s build script removes `node_modules/frappe-ui` when it is a symlink and reinstalls, taking it for a developer's local link. In the bench tree every entry is a link into the store, so that one entry is made a real directory of links instead.
+
 ## Asset-shadow staleness
 
 Some Frappe apps ship their own JS and CSS build tooling that shadows Frappe's own bundle keys in `sites/assets/assets.json`. Carbon-themed desk skins are the case this was found from, though frappe-nix has no knowledge of any specific one.
