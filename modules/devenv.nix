@@ -475,7 +475,7 @@ in
             else
               pkgs.nodejs_22;
           defaultText = lib.literalMD "`pkgs.nodejs_22`, or the `app.frappeVersion` preset's Node in app mode";
-          description = "Node.js package for frontend builds and socketio.";
+          description = "Node.js package for frontend builds, socketio, and the production build of packages installed from a source tree (a web UI their build hook packages).";
         };
 
         esbuildTarget = mkOption {
@@ -2324,7 +2324,7 @@ in
 
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
-          inherit (cfg) python name;
+          inherit (cfg) python name nodejs;
           workspaceRoot = effectiveWorkspaceRoot;
           lockAuditRelock = if appMode then appRelockAdvice else null;
           # Keyed on the distribution name uv resolved the member to, which is

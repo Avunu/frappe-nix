@@ -3,7 +3,7 @@ title: FAQ and troubleshooting
 description: Answers to common questions about frappe-nix and the errors you are most likely to meet in the dev shell, in builds and on a deployed host, with their fixes.
 order: 6
 tags: [faq, troubleshooting, errors]
-updated: 2026-10-21
+updated: 2026-11-17
 ---
 
 Each entry starts with what you see, then what it means and what to do. Where a page explains the cause in depth, the entry links to it.
@@ -81,6 +81,10 @@ Without a terminal the scaffolder asks nothing, so it needs `--version` (and `-y
 A nested repository added to `apps/` with `git add` and no `.gitmodules` entry is a gitlink that Nix sees as an empty directory. See [A gitlink with no .gitmodules entry](../development/apps.md#a-gitlink-with-no-gitmodules-entry) for the two ways out.
 
 ## Builds fail
+
+### `ModuleNotFoundError: No module named 'editables'`, or `RuntimeError: npm is required to package the web UI`
+
+A package built from a source tree (Frappe's flow harness, `frappe-flow`, from 16.60) whose build hook needs more than the sandbox gives it. The first is the development virtualenv, the second the production one. frappe-nix handles both for the flow harness; on an older frappe-nix, update it. See [Packages built from a source tree](../development/locks.md#packages-built-from-a-source-tree).
 
 ### `Couldn't find any versions for "<PACKAGE>" that matches "<RANGE>" in our cache`
 

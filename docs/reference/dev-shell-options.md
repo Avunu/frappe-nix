@@ -22,7 +22,7 @@ The options every bench sets.
 | `defaultSite`      | str          | `""`                                             | Frappe's `default_site`, and the shell's `FRAPPE_SITE`. Empty means multi-tenancy, with the site set per shell through `.env`. Formerly `siteName`. |
 | `workspaceRoot` | path or null | `null`                                           | The bench root, where `pyproject.toml` and `apps/` live, usually `./.`. Required in bench mode. It must stay `null` in app mode, where frappe-nix assembles the workspace itself.          |
 | `python`        | package      | `pkgs.python312`                                 | Python interpreter. In app mode, the `app.frappeVersion` preset's.                                                                                                                         |
-| `nodejs`        | package      | `pkgs.nodejs_22`                                 | Node.js for frontend builds and the Node realtime server. In app mode, the `app.frappeVersion` preset's.                                                                                   |
+| `nodejs`        | package      | `pkgs.nodejs_22`                                 | Node.js for frontend builds, the Node realtime server and, in production, packages built from a source tree. In app mode, the `app.frappeVersion` preset's.                                                                                   |
 | `esbuildTarget` | str          | `"es2022"`                                       | The target Frappe's esbuild pipeline compiles bundles for, exported as `ESBUILD_TARGET` in the dev shell and to `builtBench`. See [Asset builds](../development/assets.md#compile-target). |
 
 ## App mode

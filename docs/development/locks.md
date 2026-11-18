@@ -3,7 +3,7 @@ title: Dependencies and locks
 description: How uv.lock and each app's yarn.lock carry the contract from development to production, what a stale lock looks like, and how the node-locks fallback works.
 order: 6
 tags: [uv, yarn, lockfiles, relock]
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 Two kinds of lock file carry the contract between the developer's imperative commands and the declarative Nix build. You commit both.
@@ -125,6 +125,15 @@ To move:
 3. `nix run .#relock`, then commit `pyproject.toml`.
 
 The derivations of packages installed from a wheel change once (uv2nix adds a package's extra build dependencies to a wheel's build inputs too, and the stock list named many wheels), so the next deploy rebuilds the environment.
+
+### Packages built from a source tree
+
+The apps, and any other package the lock installs from a directory, are built by frappe-nix itself ([`lib/python.nix`](../../lib/python.nix)), not from an index, and a few things hold for them that do not for a wheel or an sdist.
+
+- **`editables`.** The development virtualenv installs each one editable. hatchling's editable build imports `editables` but reports it only at build time, so neither the package's `[build-system].requires` nor `uv.lock` names it, and a package built with hatchling died on `No module named 'editables'`. frappe-nix provides it to every editable install, so a hatchling-built app needs no `[tool.uv.extra-build-dependencies]` entry for it. Frappe's flow harness (`frappe-flow`, at `flow/harness` in the Frappe checkout from 16.60, and on develop) is the first such package, and any local package gets it, a `directory` source as much as an `editable` one.
+- **A web UI built by a build hook.** The production build has no network, so a hook that runs `npm ci` cannot. frappe-nix builds the flow harness's UI on its own ([`lib/flow-web-ui.nix`](../../lib/flow-web-ui.nix)), offline, from `flow/harness/ui/package-lock.json`, with the same `npm run build -w app` the hook runs, and gives the package the result with a minimal `PKG-INFO` (its name and version), which the hook takes for a source distribution that already carries its UI. It is built from the manifests and the UI's own sources, so an edit to the harness's Python does not rebuild it. The development virtualenv builds no UI. A harness that is not laid out this way is left as the lock has it.
+- **Node and npm.** Node (`frappe-nix.nodejs`) and npm are in the production build of each of these packages, as a fallback for a build hook that works from what the tree already holds. There is still no registry: a hook that installs fails, and the fix is to build what it needs beforehand, as above. Wheels and sdists from an index do not get Node, so their derivations do not change. Changing `frappe-nix.nodejs` rebuilds these packages.
+- **App mode.** A package nested inside an app, such as the flow harness inside Frappe, is taken from the same input as the app (`apps/frappe` is a mirror there, whose links dangle in the sandbox).
 
 ## Node: each app's yarn.lock
 
