@@ -62,7 +62,7 @@ class _TolerantConnect:
 
 	async def connect(self, eio_sid: str, namespace: str) -> str | None:
 		# A mixin: super() and sid_from_eio_sid are the manager it is combined with.
-		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)  # ty: ignore[unresolved-attribute]
+		return await super().connect(eio_sid, namespace) or self.sid_from_eio_sid(eio_sid, namespace)  # ty: ignore[missing-attribute]
 
 
 class TolerantManager(_TolerantConnect, socketio.AsyncManager):

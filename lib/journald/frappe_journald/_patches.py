@@ -75,9 +75,9 @@ def patch_frappe_logger(module):
 				handler.setFormatter(formatter(name))
 		return logger
 
-	get_logger.__wrapped__ = original  # ty: ignore[unresolved-attribute]
+	get_logger.__wrapped__ = original  # ty: ignore[missing-attribute]
 	get_logger.__doc__ = original.__doc__
-	get_logger.__journald__ = "frappe.utils.logger.get_logger"  # ty: ignore[unresolved-attribute]
+	get_logger.__journald__ = "frappe.utils.logger.get_logger"  # ty: ignore[missing-attribute]
 	module.get_logger = get_logger
 
 
@@ -122,6 +122,6 @@ def patch_bench_utils(module):
 			logger.addHandler(handler)
 		return logger
 
-	setup_logging.__wrapped__ = original  # ty: ignore[unresolved-attribute]
-	setup_logging.__journald__ = "bench.utils.setup_logging"  # ty: ignore[unresolved-attribute]
+	setup_logging.__wrapped__ = original  # ty: ignore[missing-attribute]
+	setup_logging.__journald__ = "bench.utils.setup_logging"  # ty: ignore[missing-attribute]
 	module.setup_logging = setup_logging

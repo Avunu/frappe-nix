@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
 			if frappe.db.get_single_value("Global Defaults", "demo_company"):
 				print("frappe-demo: erpnext's demo data is already there")
 			else:
-				from erpnext.setup.demo import setup_demo_data  # ty: ignore[unresolved-import]
+				from erpnext.setup.demo import setup_demo_data  # ty: ignore[import-not-found]
 
 				print("frappe-demo: erpnext's demo data")
 				setup_demo_data(company)
