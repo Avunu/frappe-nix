@@ -142,7 +142,10 @@ def unbuildable(lock: str) -> list[str]:
 		if not key:
 			return
 		if re.search(r"@(file|link):", key):
-			bad.append(f"{key}: a file:/link: dependency, which the Nix build cannot fetch")
+			bad.append(
+				f"{key}: a file:/link: dependency, which a generated lock cannot cover"
+				" (a target with a link: dependency builds from the yarn.lock it ships)"
+			)
 		elif not resolved:
 			bad.append(f"{key}: no resolved URL")
 		elif _GITISH.search(resolved) or _DOT_GIT.search(resolved) or _CODELOAD.search(resolved):
@@ -271,15 +274,22 @@ class Generator:
 			if not os.path.exists(f"apps/{app}/package.json"):
 				continue
 			yield app
-			subs = None
-			for sub in _listdir(f"apps/{app}"):
-				if sub == "node_modules" or not os.path.exists(f"apps/{app}/{sub}/package.json"):
-					continue
-				if subs is None:
-					subs = self._submodule_paths(app)
-				if sub in subs or f"{app}/{sub}" in self.args.excludes:
-					continue
-				yield f"{app}/{sub}"
+			skip = self._submodule_paths(app) | {
+				e.removeprefix(f"{app}/") for e in self.args.excludes if e.startswith(f"{app}/")
+			}
+			top = [sub for sub in _listdir(f"apps/{app}") if sub != "node_modules" and sub not in skip]
+			for sub in top:
+				if os.path.exists(f"apps/{app}/{sub}/package.json"):
+					yield f"{app}/{sub}"
+			# One level further down only with a lockfile of its own.
+			for sub in top:
+				for name in _listdir(f"apps/{app}/{sub}") if os.path.isdir(f"apps/{app}/{sub}") else []:
+					deep = f"{sub}/{name}"
+					path = f"apps/{app}/{deep}"
+					if name == "node_modules" or deep in skip or not os.path.exists(f"{path}/package.json"):
+						continue
+					if os.path.exists(f"{path}/yarn.lock") or os.path.exists(f"{path}/pnpm-lock.yaml"):
+						yield f"{app}/{deep}"
 
 	def is_forced(self, key: str) -> bool:
 		"""The committed stamp's word."""

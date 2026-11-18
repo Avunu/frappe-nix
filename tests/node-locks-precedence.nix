@@ -48,7 +48,7 @@ in
 
     echo "── no node-locks/ at all ─────────────────────────────────────"
     eq "an app with a yarn.lock builds from it; one without has no lock" \
-      "alpha=apps/alpha/yarn.lock alpha/desk=apps/alpha/desk/yarn.lock beta=-" ${sh (show (sources "none"))}
+      "alpha=apps/alpha/yarn.lock alpha/desk=apps/alpha/desk/yarn.lock alpha/tools/panel=apps/alpha/tools/panel/yarn.lock beta=-" ${sh (show (sources "none"))}
     eq "and the missing one is the only notice" "missing: beta" ${sh (lib.concatStringsSep "|" (notices "none"))}
 
     echo "── a fallback for the app without a yarn.lock ────────────────"
@@ -116,7 +116,15 @@ in
 
     echo "── an excluded frontend ──────────────────────────────────────"
     eq "is not a target, so it has no lock source" "alpha=apps/alpha/yarn.lock beta=-" \
-      ${sh (show (bench "none" { nodeNestedFrontendExcludes = [ "alpha/desk" ]; }).nodeLockSources)}
+      ${sh (
+        show
+          (bench "none" {
+            nodeNestedFrontendExcludes = [
+              "alpha/desk"
+              "alpha/tools"
+            ];
+          }).nodeLockSources
+      )}
 
     if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
     echo "all node-locks-precedence checks passed" | tee "$out"

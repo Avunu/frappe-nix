@@ -19,19 +19,19 @@ error: Failed to fetch git repository 'file:///…/apps/erpnext'
 
 The bench's flake sets `self.submodules = true`, so Nix reads every app while it evaluates the flake, which is before the dev shell exists to check them out. On a fresh clone with any change in the tree (a `flake.lock` being updated counts) it reads each app from its empty directory and fails as above. With a clean tree it fetches every app itself, a full clone each, past frappe-nix's partial clones of the paired branch.
 
-The `.envrc` the scaffolder writes handles it: when an app under `apps/` is not checked out, it runs `nix run github:Avunu/frappe-nix/release-1#bootstrap`, which runs `frappe-nix-sources` (the shell's own checkout) from the frappe-nix revision `flake.lock` pins, and then loads the shell. A bench scaffolded before that has a one-line `.envrc` and needs one of these:
+The `.envrc` the scaffolder writes handles it: when an app under `apps/` is not checked out, it runs `nix run github:Avunu/frappe-nix/release#bootstrap`, which runs `frappe-nix-sources` (the shell's own checkout) from the frappe-nix revision `flake.lock` pins, and then loads the shell. A bench scaffolded before that has a one-line `.envrc` and needs one of these:
 
 - Check the apps out once, with the same command the shell runs on entry, then `direnv reload`:
 
   ```bash
-  nix run github:Avunu/frappe-nix/release-1#sources -- enter "$PWD"
+  nix run github:Avunu/frappe-nix/release#sources -- enter "$PWD"
   ```
 
 - Or replace `.envrc` with the template's, so the next fresh clone does it by itself. The `.envrc` is the bench's own file, and neither `frappe-init --migrate` nor `frappe-nix sync` rewrites it:
 
   ```bash
   if git submodule status -- apps 2> /dev/null | grep '^-' > /dev/null; then
-    nix run github:Avunu/frappe-nix/release-1#bootstrap -- "$PWD" || true
+    nix run github:Avunu/frappe-nix/release#bootstrap -- "$PWD" || true
   fi
   use flake . --no-pure-eval
   ```
@@ -48,7 +48,7 @@ fatal: '…/apps/hrms' does not appear to be a git repository
 A bench's flake sets `self.submodules = true`. With any change in the tree (an updated `flake.lock` counts) Nix reads each submodule from its checkout, so it stops at one with no checkout, a nested one included, and under Determinate Nix at a shallow one too. A plain `git submodule update --init` makes shallow clones when `.gitmodules` says `shallow = true`. This happens before any flake output exists, so neither the dev shell nor `nix run .#…` can get as far as fixing it. Run this from the bench, from outside its flake:
 
 ```bash
-nix run github:Avunu/frappe-nix/release-2#repair
+nix run github:Avunu/frappe-nix/release#repair
 ```
 
 It checks out what is missing, brings back a submodule removed by hand, gives a shallow clone its history without moving its checkout, and then asks Nix to read the flake. It exits 0 only if Nix can. It changes no tracked file and overwrites nothing: a directory in a submodule's way is named and left for you to move.

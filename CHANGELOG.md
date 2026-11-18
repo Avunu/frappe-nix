@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.9.0](https://github.com/Avunu/frappe-nix/compare/v2.8.0...v2.9.0) (2026-11-18)
+
+
+### Features
+
+* **app-standards:** hand an absorbed app's modules to the app that took them ([#292](https://github.com/Avunu/frappe-nix/issues/292)) ([a67183b](https://github.com/Avunu/frappe-nix/commit/a67183bb56b300fa5847cd504b0f9a698abb6923))
+* **node:** build node targets that have link: dependencies ([#291](https://github.com/Avunu/frappe-nix/issues/291)) ([ca20fd0](https://github.com/Avunu/frappe-nix/commit/ca20fd05596da72c53834ea81e5662f4d47f070a))
+
+## [2.8.0](https://github.com/Avunu/frappe-nix/compare/v2.7.0...v2.8.0) (2026-11-17)
+
+
+### Features
+
+* **release:** ship from a single release branch ([#287](https://github.com/Avunu/frappe-nix/issues/287)) ([59babef](https://github.com/Avunu/frappe-nix/commit/59babef48d2d8a0cfec083e2783ba1ebe798cf24))
+* **sources:** add a repair app for a flake Nix cannot read ([#256](https://github.com/Avunu/frappe-nix/issues/256)) ([b90349e](https://github.com/Avunu/frappe-nix/commit/b90349e61c6e7e6eb4c617fd82e12c2082b8e67e))
+
 ## [2.7.0](https://github.com/Avunu/frappe-nix/compare/v2.6.2...v2.7.0) (2026-11-17)
 
 

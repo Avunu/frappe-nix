@@ -200,7 +200,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         for s in jobs["plan"]["steps"]:
             if s.get("uses", "").startswith("DeterminateSystems/nix-installer-action@"):
                 assert s.get("with", {}).get("github-token") == "", s
-        # The release is version.txt's tag, which must point at release-2's head.
+        # The release is version.txt's tag, which must point at the release branch's head.
         resolve_runs = " ".join(s.get("run", "") for s in jobs["resolve"]["steps"])
         assert "contents/version.txt?ref=$sha" in resolve_runs and "sort -uV" not in resolve_runs, resolve_runs
         # A commit counts as the bot's only when the bot authored and committed it.
@@ -225,7 +225,7 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # `frappe-nix repo rollout` reads this env.BOT (rollout_bot) to know the rollout's commits.
         from frappe_nix_tools.commands.repo import rollout as repo_rollout
         assert repo_rollout.ROLLOUT_WORKFLOW == ".github/workflows/rollout.yml"
-        assert doc["env"]["BOT"] == "avunu-rollout[bot]", doc["env"]
+        assert doc["env"]["BOT"] == "avunu-release-manager[bot]", doc["env"]
         steps = jobs["publish"]["steps"]
         verify = next(i for i, s in enumerate(steps) if "ci verify-rollout-patch" in s.get("run", ""))
         recheck = next(i for i, s in enumerate(steps) if "write-tree" in s.get("run", ""))

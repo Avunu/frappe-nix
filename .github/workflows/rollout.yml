@@ -6,7 +6,7 @@ name: rollout
 # that moves the flake.lock `frappe-nix` node, the relock and the `frappe-init --sync` render
 # together, and auto-merges once the app's required checks pass.
 #
-#   resolve  (contents/pull-requests read, no secret) the release: `release-2`'s head, the v*
+#   resolve  (contents/pull-requests read, no secret) the release: `release`'s head, the v*
 #            tag at exactly that commit, the release PR it merged from; the targets, and per
 #            repository its integration branch, that branch's head (base_sha) and the
 #            frappe-nix it locks. A repository at the tag, or whose branch has a person's
@@ -20,9 +20,9 @@ name: rollout
 #            artifact is the patch and meta.json.
 #   publish  (environment frappe-nix-rollout) checks the patch with the tag's own
 #            `frappe-nix ci verify-rollout-patch` before any token exists, re-derives its tree
-#            in shell, and only then mints the avunu-rollout App token for that one
+#            in shell, and only then mints the Avunu Release Manager App token for that one
 #            repository, turns an earlier run's auto-merge off, commits the verified tree as
-#            avunu-rollout[bot], pushes, opens or edits the PR, closes the per-release
+#            avunu-release-manager[bot], pushes, opens or edits the PR, closes the per-release
 #            standards/frappe-nix-v* PRs and enables auto-merge for the commit it pushed
 #            (--head-sha), or turns auto-merge off and labels needs-review.
 #            The App's id and key are the environment's own variable and secret
@@ -71,11 +71,11 @@ concurrency:
 
 env:
   FORCE_COLOR: "1"
-  # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release-2).
-  RELEASE_BRANCH: release-2
+  # The release branch the apps' flake input tracks (github:Avunu/frappe-nix/release).
+  RELEASE_BRANCH: release
   # The rollout's commits; a commit on standards/frappe-nix by anyone else pauses the app
   # while an open PR (or no PR) holds it.
-  BOT: avunu-rollout[bot]
+  BOT: avunu-release-manager[bot]
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
   AUTO_MERGE: ${{ github.event_name != 'workflow_dispatch' || inputs.auto-merge }}
 
@@ -126,11 +126,6 @@ jobs:
           if ! git ls-remote --tags "https://github.com/$REPO.git" "refs/tags/$tag" "refs/tags/$tag^{}" \
             | awk -v sha="$sha" '$1 == sha { found = 1 } END { exit !found }'; then
             echo "::error::$tag (version.txt at $RELEASE_BRANCH's head $sha) is not a tag of that commit"
-            exit 1
-          fi
-          major="${RELEASE_BRANCH#release-}"
-          if [[ "$tag" != "v$major."* ]]; then
-            echo "::error::$tag is not a v$major.* release, but $RELEASE_BRANCH points at it"
             exit 1
           fi
           # A release commit is release-please's PR merged into main, nothing else.
@@ -498,7 +493,7 @@ jobs:
           path: ${{ runner.temp }}/plan
 
       # meta.json comes from the plan, where the app's code ran: its state is a claim. A
-      # superseded plan must find release-2 moved past the tag, and a noop (or an empty patch)
+      # superseded plan must find release moved past the tag, and a noop (or an empty patch)
       # a base that locks the tag already, else the app would drop out of the rollout unseen.
       - name: Check the plan against resolve's matrix
         id: plan
@@ -680,7 +675,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          # The frappe-nix-rollout environment's own variable and secret: the avunu-rollout
+          # The frappe-nix-rollout environment's own variable and secret: the Avunu Release Manager
           # App's key, which only that environment holds and the only key this workflow uses.
           client-id: ${{ vars.FRAPPE_NIX_ROLLOUT_APP_ID }}
           private-key: ${{ secrets.FRAPPE_NIX_ROLLOUT_PRIVATE_KEY }}

@@ -3,17 +3,17 @@ title: Versioning
 description: "How an app pins frappe-nix and its profile, how a release reaches every app, and what each version number promises."
 order: 10
 tags: [app-standards, versioning, releases]
-updated: 2026-11-16
+updated: 2026-11-17
 ---
 
-frappe-nix stays on `main` and releases with tags `vX.Y.Z`. A branch per major, `release-1`, is fast-forwarded to each `v1.*` tag and never moves otherwise. Apps follow that branch, so updating their lock only ever proposes a release, never an arbitrary `main` commit.
+frappe-nix stays on `main` and releases with tags `vX.Y.Z`. One branch, `release`, is fast-forwarded to every tag, whatever its major, and never moves otherwise. Apps follow that branch, so updating their lock only ever proposes a release, never an arbitrary `main` commit. What keeps a release, a major one included, from reaching an app unchecked is the app's pinned `flake.lock` and the rollout PR whose checks must pass, not the branch name.
 
 ## How an app pins frappe-nix
 
 An app that has opted in pins one frappe-nix release in four places, and sync keeps them in step:
 
-- `flake.nix` names `github:Avunu/frappe-nix/release-1`, unless the app sets `[tool.frappe-nix.dev-shell] frappe-nix-url` (a tag, a commit, a fork or a mirror).
-- `flake.lock` records the commit. For the default URL that is always a `v1.*` tag commit, because `release-1` only fast-forwards to tags.
+- `flake.nix` names `github:Avunu/frappe-nix/release`, unless the app sets `[tool.frappe-nix.dev-shell] frappe-nix-url` (a tag, a commit, a fork or a mirror).
+- `flake.lock` records the commit. For the default URL that is always a release tag commit, because `release` only fast-forwards to tags.
 - The caller workflows use `uses: …@<that commit> # vX.Y.Z`. `frappe-init --sync` rewrites them from `flake.lock`, and `--check` fails when they disagree.
 - The jobs that run without Nix install `frappe-nix-tools` from the same commit.
 
@@ -22,7 +22,7 @@ An app with an org profile also locks the `standards-profile` input, so its mana
 ## How a release reaches every app
 
 1. A pull request merges to frappe-nix's `main`. frappe-nix's `release.yml` runs release-please, which opens or updates the release PR. The version bump changes the `# v<version>` comment that the caller workflows of `tests/fixtures/standards-app` carry, so the same run re-renders the fixture offline with the PR's frappe-nix-tools and pushes it to the PR branch; `main` never holds a fixture that `frappe-nix sync --check` rejects. When the repository can read the org's GitHub App (the variable and secret the org profile's `ci.github-app` names), release-please and the fixture push use its token, and the PR starts `check.yml`, `pr-policy.yml` and `docs.yml` by itself. Without it, because a push made with `GITHUB_TOKEN` starts no workflow, the same run then dispatches `check.yml` (its `lint` and `flake` jobs, without the VM tests), `pr-policy.yml` and `docs.yml` (the required `build / Check`) on that PR.
-2. Merging the release PR is the decision to ship. release-please tags `vX.Y.Z` and writes the GitHub release; `release.yml` then moves `release-<major>` to the tag with a REST `PATCH` that GitHub refuses unless it is a fast-forward (it creates the branch on a major's first release), reads it back and fails unless the branch equals the tag.
+2. Merging the release PR is the decision to ship. release-please tags `vX.Y.Z` and writes the GitHub release; `release.yml` then moves `release` to the tag with a REST `PATCH` that GitHub refuses unless it is a fast-forward (it creates the branch when it does not exist), reads it back and fails unless the branch equals the tag.
 3. frappe-nix's `rollout.yml` moves each app that frappe-nix's variable `FRAPPE_NIX_ROLLOUT_REPOS` names (see [GitHub settings](github.md#rollout-how-a-frappe-nix-release-reaches-the-apps)). It updates the `frappe-nix` input, relocks and runs `frappe-init --sync` (which rewrites the caller SHAs and every changed managed file) with no token. Then it checks the result against the release's own render and opens `chore(deps): frappe-nix vX.Y.Z` on `standards/frappe-nix` with the org's GitHub App token, with auto-merge on when the app's required checks protect its integration branch. Any other app is moved by hand, with a token that may change workflow files:
 
    ```bash
@@ -39,7 +39,7 @@ Dependabot never moves `frappe-nix` or `standards-profile`: the bump has to rewr
 
 frappe-nix follows semver for everything an app consumes: reusable workflows, the `[tool.frappe-nix]` table, profiles, modules, tools and their flags.
 
-- **Major**: a removed or renamed reusable-workflow input, secret, output or job name; changed required-check contexts; a new `schema` for the table or for profiles; a removed or renamed module or parameter, or a changed meaning of an existing value; a change `--sync` cannot apply on its own; a removed tool or flag; a module turned **on** in `minimal`; a change to a released `recommended@<minor>` snapshot other than one that accepts strictly more code; or a new schema default for `releases.branching`, `releases.version-scheme`, `releases.tag-prefix` or `integration-branch`. A new major gets a new `release-<N>` branch, and apps move to it by editing the flake URL in a deliberate PR.
+- **Major**: a removed or renamed reusable-workflow input, secret, output or job name; changed required-check contexts; a new `schema` for the table or for profiles; a removed or renamed module or parameter, or a changed meaning of an existing value; a change `--sync` cannot apply on its own; a removed tool or flag; a module turned **on** in `minimal`; a change to a released `recommended@<minor>` snapshot other than one that accepts strictly more code; or a new schema default for `releases.branching`, `releases.version-scheme`, `releases.tag-prefix` or `integration-branch`. A major moves `release` like any other release; an app keeps its pinned `flake.lock` until a rollout PR, gated by the app's checks, moves it.
 - **Minor**: new managed content or checks that `--sync` applies, even when they fail code that passed before (the bump PR then waits); a new module, off in both built-in profiles and in every existing snapshot; a new `recommended@<minor>` snapshot, which plain `recommended` then means; new parameters, inputs, tools or flags, each with a default that keeps the old behaviour.
 - **Patch**: fixes, and pin bumps such as nixpkgs, devenv, the action SHAs inside the reusable workflows and the pre-commit hook revisions.
 
@@ -64,7 +64,7 @@ An org profile repository should release the same way: tags `vX.Y.Z` and a branc
 - **Commit rules**: `committed.toml` (conventional commits, frappe's types, a subject of at most 100 characters). `pr-policy.yml` checks the PR's base (`main`), its title and each commit. A Dependabot PR's title and Dependabot's own commits are exempt from the subject length alone, since a SHA-pinned bump's generated subject runs far past 100 characters (spec §5.9). It is its own workflow so that a retitle re-runs it without rebuilding the `flake` job.
 - **Dependabot** writes `fix(deps)` for the bumps apps run (nix inputs, the action SHAs, pre-commit hook revisions), so each of those ships as a patch release, and `chore(deps)` for frappe-nix's own dev environment (`/dev`), which releases nothing.
 - **`check.yml`** builds the NixOS VM tests on pull requests and pushes. A `workflow_dispatch` runs them only with the input `vm-tests: true`; the release flow's dispatch leaves it off.
-- **Repository policy**: `repo-policy/self/` holds frappe-nix's own settings and rulesets: `main` requires a pull request and the checks `lint`, `flake` and `pr-policy`; `release-*` may be created and moved only by GitHub Actions, with no deletion or force-push; `v*` tags may not be deleted or moved. Apply them with a token that has admin on the repository:
+- **Repository policy**: `repo-policy/self/` holds frappe-nix's own settings and rulesets: `main` requires a pull request and the checks `lint`, `flake` and `pr-policy`; `release` may be created and moved only by GitHub Actions, with no deletion or force-push; `v*` tags may not be deleted or moved. Apply them with a token that has admin on the repository:
 
   ```bash
   frappe-nix repo apply --self --dry-run   # the JSON diff, no writes

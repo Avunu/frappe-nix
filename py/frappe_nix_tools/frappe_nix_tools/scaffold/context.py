@@ -33,6 +33,8 @@ PYTHON = {15: "3.12", 16: "3.14", 17: "3.14"}
 # The default frappe-nix source when the locked node names none (§2.2 `frappe_nix`).
 FRAPPE_NIX_REPO = "Avunu/frappe-nix"
 FRAPPE_NIX_OWNER, FRAPPE_NIX_NAME = FRAPPE_NIX_REPO.split("/")
+# The branch every frappe-nix release fast-forwards, whatever its major: the default flake URL.
+RELEASE_BRANCH = "release"
 
 # The gates of §4, in the order the context lists them (§2.3).
 GATES = ("pr-policy", "lint", "typecheck", "test", "marketplace")
@@ -66,14 +68,8 @@ def ns(value: Any) -> Any:
 	return value
 
 
-def frappe_nix_major(ver: str) -> int:
-	"""The frappe-nix major the flake tracks (``release-<major>``): 1 for the pre-1.0 builds."""
-	head = ver.split(".", 1)[0]
-	return max(1, int(head)) if head.isdigit() else 1
-
-
 def default_frappe_nix_url() -> str:
-	return f"github:{FRAPPE_NIX_REPO}/release-{frappe_nix_major(frappe_nix_tools.__version__)}"
+	return f"github:{FRAPPE_NIX_REPO}/{RELEASE_BRANCH}"
 
 
 def frappe_nix_url(cfg: dict) -> str:
@@ -340,7 +336,6 @@ def build(
 			"frappe_nix": {
 				"rev": lock.get("rev") or "",
 				"version": ver,
-				"major": frappe_nix_major(ver),
 				"owner": lock.get("owner") or FRAPPE_NIX_OWNER,
 				"name": lock.get("repo") or FRAPPE_NIX_NAME,
 				"url": frappe_nix_url(cfg),

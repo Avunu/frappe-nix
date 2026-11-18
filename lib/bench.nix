@@ -37,6 +37,12 @@
   # postPatch, nativeBuildInputs, preInstall, or a yarnOfflineCache of your
   # own. The install flags are yarnConfigHook's and not among them.
   nodeOverrides ? { },
+  # Per target key: top-level node_modules entries that are linked into the
+  # bench tree as real directories (of links to the store entry's children)
+  # rather than as one link each. For a build script that tests an entry with
+  # lstat and reinstalls when it is a symlink; merged over the ones Frappe
+  # itself has (nodeRealEntryDefaults).
+  nodeRealEntries ? { },
   extraPackages ? [ ],
   # Exported as ESBUILD_TARGET to builtBench's `bench build`. frappe's es2017
   # default cannot lower async generators or BigInt literals, and the sandbox's
@@ -276,6 +282,34 @@ let
       null;
 
   lockedTargets = lib.filter (t: lockOf t != null) nodeTargets;
+
+  # `link:` dependencies (lib/node-links.nix): a package.json entry that is a
+  # directory of the source tree — frappe/flow's "@framework/ui":
+  # "link:../ui", erpnext/islands' "link:../../frappe/ui". The store's
+  # node_modules cannot hold such a link (its destination is the tree), so the
+  # install leaves it out and benchRoot makes it, in the tree. Everything a
+  # link needs is conditional on the target having one: a target without is
+  # the derivation it always was.
+  nodeLinks = import ./node-links.nix { inherit lib; };
+  linksFor =
+    t:
+    if isPnpm t then
+      [ ]
+    else
+      nodeLinks.linksOf {
+        inherit t;
+        appNames = names;
+      };
+  linkTargets = lib.filter (t: linksFor t != [ ]) lockedTargets;
+
+  # frappe/studio/frontend's build starts with scripts/unlink-frappe-ui.mjs:
+  # a node_modules/frappe-ui that is a symlink is taken for a developer's
+  # `yarn link`, removed, and reinstalled from the network.
+  nodeRealEntryDefaults = {
+    "frappe/studio/frontend" = [ "frappe-ui" ];
+  };
+  realEntries = nodeRealEntryDefaults // nodeRealEntries;
+  realEntriesFor = t: realEntries.${t.key} or [ ];
   missingLocks = lib.filter (t: lockOf t == null) nodeTargets;
 
   # Evaluation-time notices about the fallback directory, per target: a
@@ -327,19 +361,30 @@ let
       let
         lock = lockOf t;
         pname = lib.replaceStrings [ "/" ] [ "-" ] t.key;
+        links = linksFor t;
+        patchDir = nodeLinks.patchDirOf t links;
         # Only what `yarn install` reads. Not the app: a node_modules that took
         # the whole tree as its source would be rebuilt — every tarball
         # re-linked, every package re-extracted — for a change to any Python
         # file in the app.
-        manifests = pkgs.runCommand "${pname}-manifests" { } ''
-          mkdir -p $out
-          cp ${t.src + "/package.json"} $out/package.json
-          cp ${lock.file} $out/yarn.lock
+        #
+        # With a link: dependency the manifests are laid out as the bench is
+        # (apps/<target>, apps/<link destination>), each destination with its
+        # package.json: yarn reads it through the link and installs the linked
+        # package's dependencies into the target, and without it would leave
+        # them out without a word. Not the file as it is, but the part of it
+        # this lock can install (nodeLinks.manifestFor). Its patch-package
+        # directory comes too, when the target's postinstall applies one —
+        # and nothing else of it.
+        manifestFiles = dir: ''
+          mkdir -p ${dir}
+          cp ${t.src + "/package.json"} ${dir}/package.json
+          cp ${lock.file} ${dir}/yarn.lock
           ${lib.concatMapStrings
             (
               f:
               lib.optionalString (builtins.pathExists (t.src + "/${f}")) ''
-                cp ${t.src + "/${f}"} $out/${f}
+                cp ${t.src + "/${f}"} ${dir}/${f}
               ''
             )
             [
@@ -348,6 +393,44 @@ let
             ]
           }
         '';
+        # One link per destination: two names may link the same directory.
+        linkDests = lib.attrValues (lib.listToAttrs (map (l: lib.nameValuePair l.dest l) links));
+        linkManifestOf =
+          l:
+          if builtins.pathExists (linkSrcOf l + "/package.json") then
+            nodeLinks.manifestFor {
+              lockFile = lock.file;
+              manifestFile = linkSrcOf l + "/package.json";
+            }
+          else
+            null;
+        linkDropped = lib.concatMap (
+          l:
+          lib.optionals (linkManifestOf l != null) (
+            map (d: "${d} (apps/${l.dest})") (linkManifestOf l).dropped
+          )
+        ) linkDests;
+        linkSrcOf = l: appSrcOf l.destApp + lib.optionalString (l.destSub != "") "/${l.destSub}";
+        manifests = pkgs.runCommand "${pname}-manifests" { } (
+          if links == [ ] then
+            manifestFiles "$out"
+          else
+            ''
+              ${manifestFiles "$out/apps/${t.key}"}
+              ${lib.concatMapStrings (l: ''
+                mkdir -p $out/apps/${l.dest}
+                ${lib.optionalString (linkManifestOf l != null) ''
+                  cp ${pkgs.writeText "package.json" (builtins.toJSON (linkManifestOf l).manifest)} $out/apps/${l.dest}/package.json
+                ''}
+              '') linkDests}
+              ${lib.optionalString (patchDir != null) ''
+                mkdir -p $out/apps/${patchDir.link.dest}/${patchDir.dir}
+                cp -r ${
+                  linkSrcOf patchDir.link + "/${patchDir.dir}"
+                }/. $out/apps/${patchDir.link.dest}/${patchDir.dir}/
+              ''}
+            ''
+        );
         remedy =
           if lock.fallback then
             "regenerate it: ${nodeLocksCommand} ${t.key}"
@@ -363,7 +446,9 @@ let
               pkgs.yarnConfigHook
               pkgs.yarn
               nodejs
-            ];
+            ]
+            # For the patches a link: dependency brings (buildPhase below).
+            ++ lib.optional (patchDir != null) pkgs.patch;
             yarnOfflineCache = yarnLock.mkOfflineMirror {
               inherit pkgs;
               lockFile = lock.file;
@@ -378,6 +463,12 @@ let
             preConfigure = ''
               echo "frappe-nix: node_modules for ${t.key} from ${lock.label}"
               echo "  (a \"Couldn't find any versions for … in our cache\" error below means that lock does not cover package.json — ${remedy})"
+            ''
+            + lib.optionalString (linkDropped != [ ]) ''
+              echo "  ${lock.label} has no entry for these dependencies of a linked package; they are not installed here and resolve from the linked package's own node_modules (and a \`yarn install\` in apps/${t.key} will not find it up to date):"
+              ${lib.concatMapStrings (d: ''
+                echo "    ${d}"
+              '') linkDropped}
             '';
             dontBuild = true;
             installPhase = ''
@@ -386,6 +477,60 @@ let
               cp -R node_modules $out/node_modules
               runHook postInstall
             '';
+          }
+          // lib.optionalAttrs (links != [ ]) {
+            sourceRoot = "${manifests.name}/apps/${t.key}";
+            # Not only the source root: where the target and a linked package
+            # want different versions of one dependency, yarn installs the
+            # linked package's under the link — in the destination's own
+            # node_modules, which is not this derivation's to ship. In the
+            # bench that directory is the destination's, from its own lock.
+            postUnpack = "chmod -R u+w ${manifests.name}";
+            dontBuild = false;
+            buildPhase = ''
+              runHook preBuild
+
+              ${lib.optionalString (patchDir != null) ''
+                # The target's postinstall, done here: lifecycle scripts do not
+                # run, and patch-package in the bench tree would be patching the
+                # store. Its patches are git diffs against the target directory.
+                for p in node_modules/${patchDir.link.name}/${patchDir.dir}/*.patch; do
+                  [ -e "$p" ] || continue
+                  echo "frappe-nix: applying ''${p##*/} (${patchDir.link.name}/${patchDir.dir})"
+                  patch -p1 --forward --no-backup-if-mismatch -i "$p"
+                done
+              ''}
+
+              # .yarn-integrity records the lock as fixup-yarn-lock rewrote it
+              # for the offline mirror; the bench tree has the lock as shipped.
+              # Frappe's build asks yarn whether such a target is installed
+              # (`yarn check --integrity`, `yarn install --frozen-lockfile`)
+              # and installs from the network when the answer is no.
+              node ${./restore-yarn-integrity.js} node_modules/.yarn-integrity ${lock.file}
+              cp ${lock.file} yarn.lock
+              if ! YARN_IGNORE_SCRIPTS=true yarn check --integrity --production=false; then
+                echo "frappe-nix: ${t.key}: yarn does not take this node_modules for an installed ${lock.label} — \`bench build\` would try to install it from the network" >&2
+                exit 1
+              fi
+
+              runHook postBuild
+            '';
+            # The links themselves stay out of the store, where they would
+            # dangle; benchRoot makes them in the tree (passthru.linkDeps).
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -R node_modules $out/node_modules
+              ${lib.concatMapStrings (l: ''
+                rm $out/node_modules/${l.name}
+                ${lib.optionalString (
+                  l.scope != null
+                ) "rmdir --ignore-fail-on-non-empty $out/node_modules/${l.scope}"}
+              '') links}
+              find $out/node_modules/.bin -xtype l -delete 2>/dev/null || true
+              runHook postInstall
+            '';
+            passthru.linkDeps = links;
           }
           // (nodeOverrides.${t.key} or { })
         )
@@ -458,26 +603,64 @@ let
             ln -s "$entry" "$2/''${entry##*/}"
           done
         }
-        ${lib.concatMapStrings (
-          t:
-          if isPnpm t then
-            # lib.node's linking: the app's and each workspace member's
-            # node_modules, scoped packages entry by entry, and a link to a
-            # member pointed at the member in this tree (the store holds only
-            # its node_modules).
-            ''
-              (
-                cd $out/bench/apps/${t.key}
-                modules=${nodeModules.${t.key}}
-                ${base.node.linkModules (pnpmTargetOf t).members}
-              )
-            ''
-          else
-            ''
-              rm -rf $out/bench/apps/${t.key}/node_modules
-              _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
-            ''
-        ) lockedTargets}
+        ${
+          # Only where a target needs it: a bench without is the derivation it was.
+          lib.optionalString (lib.any (t: linksFor t != [ ] || realEntriesFor t != [ ]) lockedTargets) ''
+            # One such link, made a real directory of links to what it held.
+            _real_entry() { # <entry, relative to the current node_modules>
+              local store
+              store=$(readlink "$1")
+              rm "$1"
+              _link_node_modules "$store" "$1"
+            }
+          ''
+        }${
+          lib.concatMapStrings (
+            t:
+            if isPnpm t then
+              # lib.node's linking: the app's and each workspace member's
+              # node_modules, scoped packages entry by entry, and a link to a
+              # member pointed at the member in this tree (the store holds only
+              # its node_modules).
+              ''
+                (
+                  cd $out/bench/apps/${t.key}
+                  modules=${nodeModules.${t.key}}
+                  ${base.node.linkModules (pnpmTargetOf t).members}
+                )
+              ''
+            else
+              ''
+                rm -rf $out/bench/apps/${t.key}/node_modules
+                _link_node_modules ${nodeModules.${t.key}}/node_modules $out/bench/apps/${t.key}/node_modules
+              ''
+              + lib.optionalString (linksFor t != [ ] || realEntriesFor t != [ ]) ''
+                (
+                  cd $out/bench/apps/${t.key}/node_modules
+                  ${lib.concatMapStrings (entry: ''
+                    if [ -L ${lib.escapeShellArg entry} ]; then
+                      _real_entry ${lib.escapeShellArg entry}
+                    fi
+                  '') (realEntriesFor t)}
+                  ${lib.concatMapStrings (l: ''
+                    ${lib.optionalString (l.scope != null) ''
+                      # The scope holds store packages and a link into the tree.
+                      if [ -L ${lib.escapeShellArg l.scope} ]; then
+                        _real_entry ${lib.escapeShellArg l.scope}
+                      else
+                        mkdir -p ${lib.escapeShellArg l.scope}
+                      fi
+                    ''}
+                    ln -s ${lib.escapeShellArg l.treeTarget} ${lib.escapeShellArg l.name}
+                    if [ ! -e ${lib.escapeShellArg "${l.name}/package.json"} ]; then
+                      echo "frappe-nix: apps/${t.key}: the link: dependency ${l.name} does not reach apps/${l.dest} in the bench tree" >&2
+                      exit 1
+                    fi
+                  '') (linksFor t)}
+                )
+              ''
+          ) lockedTargets
+        }
 
         # The registry. The committed apps.json, if any, is only a *seed*: the
         # lowest-ranked source, consulted for a commit hash the sandbox cannot
@@ -520,7 +703,8 @@ let
 
     # yarn stays: `bench build` is `yarn run production` in apps/frappe, and
     # every app with a build script is built with `yarn build`. It only runs
-    # scripts against the node_modules already linked in; nothing is installed.
+    # scripts against the node_modules already linked in; nothing is installed
+    # — where Frappe's build asks yarn to install (below), yarn finds it done.
     nativeBuildInputs = [
       prodPythonEnv
       nodejs
@@ -560,14 +744,31 @@ let
       export NODE_OPTIONS="--max-old-space-size=4096"
       export HOME=$TMPDIR/home
       mkdir -p $HOME
+      ${lib.optionalString (linkTargets != [ ]) ''
+        # Frappe's build runs yarn on some frontends itself: `yarn check
+        # --integrity` and, failing that, `yarn install` for the island
+        # toolchain; an unconditional `yarn install --frozen-lockfile` for
+        # others. Those are the targets with a link: dependency, whose
+        # node_modules record the lock the tree has and the flag they were
+        # installed with (--ignore-scripts). With the same flag here yarn
+        # answers "up to date" and touches nothing; without it, it reinstalls
+        # from the network. It also keeps a postinstall from running against
+        # the store. `yarn run` is not affected. NODE_ENV has to stay unset:
+        # yarn skips its up-to-date shortcut under NODE_ENV=production.
+        export YARN_IGNORE_SCRIPTS=true
+      ''}
 
       # A classic bench always has sites/common_site_config.json, and some
       # vite configs read it unconditionally on load (erpnext/banking's
       # proxyOptions.ts, for the dev-server proxy port) — a missing file is an
-      # ENOENT in the middle of `yarn build`. Build-time only: installPhase
-      # takes sites/ from benchRoot, and the real file is the operator's.
+      # ENOENT in the middle of `yarn build`. Frontends also import
+      # socketio_port from it by name (frappe/studio/frontend's socket.js),
+      # which Vite 8 refuses when the key is absent; the bundle uses it only
+      # on a page served from an explicit port, so it gets bench's default.
+      # Build-time only: installPhase takes sites/ from benchRoot, and the
+      # real file is the operator's.
       [ -f $TMPDIR/bench/sites/common_site_config.json ] \
-        || echo '{}' > $TMPDIR/bench/sites/common_site_config.json
+        || echo '{"socketio_port": 9000}' > $TMPDIR/bench/sites/common_site_config.json
 
       # --force: build frappe's assets rather than first trying frappe's
       # prebuilt ones. That download finds its release tag with git in
@@ -671,6 +872,9 @@ in
     ++
       lib.optional (missingLocks != [ ])
         "missing: ${lib.concatMapStringsSep " " (t: t.key) missingLocks}";
+  # The real-directory entries in effect, per target key: the built-in ones
+  # with the caller's merged over them — as data, for tests/node-links.nix.
+  nodeRealEntries = realEntries;
   # The pnpm packages the apps' lockfiles and package.json name, for the
   # dev shell's PATH (yarn is there already).
   inherit pnpmManagers;

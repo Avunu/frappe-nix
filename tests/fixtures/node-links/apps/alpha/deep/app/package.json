@@ -1,0 +1,8 @@
+{
+  "name": "deep-app",
+  "private": true,
+  "dependencies": {
+    "@fixture/ui": "link:../../ui",
+    "is-number": "^6.0.0"
+  }
+}

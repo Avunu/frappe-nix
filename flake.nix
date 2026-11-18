@@ -193,14 +193,14 @@
         // {
           default = app;
           frappe-init = app;
-          # `nix run github:Avunu/frappe-nix/release-1#bootstrap -- ROOT`: a
+          # `nix run github:Avunu/frappe-nix/release#bootstrap -- ROOT`: a
           # fresh clone's apps, before its flake is evaluated (a bench's .envrc).
           bootstrap = {
             type = "app";
             program = pkgs.lib.getExe (shellTools pkgs).bootstrap;
             meta.description = "Check out a fresh clone's apps before Nix evaluates the bench's flake";
           };
-          # `nix run github:Avunu/frappe-nix/release-2#repair`, from a bench: its
+          # `nix run github:Avunu/frappe-nix/release#repair`, from a bench: its
           # apps, settled, when Nix cannot read its flake. Here and not in the
           # bench's flake, which Nix cannot evaluate in that state.
           repair = {
@@ -358,6 +358,13 @@
                   node ${./tests/esbuild-preload.js} ${./lib/js}/esbuild-preload.js
                 } 2>&1 | tee "$out"
               '';
+
+          # frappe-rename-app's site half over an in-memory database: an app
+          # renamed in place, and one that the new app has absorbed (both
+          # installed, the new one declaring the old one's modules).
+          rename-absorb = checks.script "rename-absorb" { tools = [ pkgs.python3 ]; } ''
+            python3 -I ${./tests/rename-absorb.py} ${./lib/rename/frappe_rename_app.py} 2>&1 | tee "$out"
+          '';
 
           # Native Sass for the watcher: the packaged sass-embedded finds
           # nixpkgs' compiler and serves the legacy render() frappe's postcss
@@ -682,6 +689,13 @@
           inherit pkgs checks;
           base = inputs.python-devops-nix.lib;
           inherit (inputs) pnpm2nix;
+        }
+        # link: dependencies and a frontend two levels down with its own lock:
+        # each node_modules built offline, linked into benchRoot, and asked of
+        # yarn what Frappe's build asks.
+        // import ./tests/node-links.nix {
+          inherit pkgs checks;
+          base = inputs.python-devops-nix.lib;
         }
         # The bench workspace app mode assembles around a single app.
         // import ./tests/app-workspace.nix { inherit pkgs checks; }

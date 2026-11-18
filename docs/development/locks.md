@@ -137,7 +137,7 @@ The apps, and any other package the lock installs from a directory, are built by
 
 ## Node: each app's yarn.lock
 
-Each app with a `package.json`, and each nested frontend under it, is a **node target**. A nested frontend is an immediate subdirectory with its own `package.json`, such as `erpnext/banking`, `hrms/frontend` or `commit/dashboard`. A subdirectory the app tracks as a git submodule, such as `hrms/frappe-ui`, is a project of its own and is skipped.
+Each app with a `package.json`, and each nested frontend under it, is a **node target**. A nested frontend is an immediate subdirectory with its own `package.json`, such as `erpnext/banking`, `hrms/frontend` or `commit/dashboard`. A directory one level further down, such as `frappe/studio/frontend`, is a target only when it ships a `yarn.lock` or `pnpm-lock.yaml` of its own beside its `package.json`. A subdirectory the app tracks as a git submodule, such as `hrms/frappe-ui`, is a project of its own and is skipped.
 
 Each target gets a `node_modules` in the bench package, built from the target's own **`yarn.lock`**, or its **`pnpm-lock.yaml`** for an app that has moved to pnpm ([below](#pnpm-apps)). Nothing about it is committed to the bench or computed by hand.
 
@@ -150,6 +150,18 @@ Lifecycle scripts are not run in the sandbox. Every native piece a Frappe fronte
 `nodeOverrides.<TARGET>` is merged into that target's derivation: `postPatch`, `nativeBuildInputs`, `preInstall`, or a `yarnOfflineCache` of your own. The install flags are the hook's.
 
 In the bench tree each target's `node_modules` is a real directory of links into the store, not a link to the store's directory. Vite creates `node_modules/.vite-temp` while bundling an ESM `vite.config`, and only a permission error is tolerated: the sandbox's read-only store answers `EROFS`.
+
+### `link:` dependencies
+
+A target may depend on a directory of the source tree instead of a package: `"@framework/ui": "link:../ui"` in `frappe/flow`, `"link:../../frappe/ui"` in `erpnext/islands`. yarn installs such a dependency as a symlink, and the store's `node_modules` cannot hold a link to the bench tree. For a target with one:
+
+- **The install sees the linked package's `package.json`** at the path the link names, as well as the target's own manifests. yarn installs a linked package's dependencies into the target, and without that file it leaves them out without a word. The file is cut down to the name and the dependencies the target's lock has an entry for. An upstream lock can be older than the linked package's newest dependency, and offline one missing entry fails the install. A dependency left out this way is named in the build log. The linked package still resolves it, from its own `node_modules`, since it is a target too.
+- **The link is made in the bench tree**, with the relative text yarn writes (`node_modules/@framework/ui -> ../../../ui`), and its scope is a real directory there. The store's copy carries no link.
+- **The link has to stay inside `apps/`, in an app the bench has.** `erpnext/islands` needs `frappe`; a bench without the linked app is an evaluation error that says so.
+- **A `patch-package` postinstall that reads its patches through a link is applied by the install.** For `patch-package --patch-dir node_modules/<LINK>/<DIR>`, the patches in that directory are applied to the target's `node_modules` with `patch`, and a patch that does not apply fails the derivation. It is the one lifecycle script that is honoured, because nothing else can do it: in the bench tree the packages are the store's.
+- **`node_modules/.yarn-integrity` names the lock as the app ships it.** The offline install runs on a copy of the lock rewritten to mirror file names, and yarn records what it installed from. Each entry's `resolved` is put back, and the derivation then runs `yarn check --integrity` against the app's lock and fails if yarn disagrees. [Frappe's build asks yarn the same question](assets.md#frappes-own-yarn-installs).
+
+A target with a `link:` dependency cannot take a generated lock from `node-locks/`: it builds from the `yarn.lock` it ships.
 
 `bench build` is unchanged: `yarn run production`, then `yarn build` in every app with a build script. The dev shell is unchanged too. Its `node_modules` is a plain online `yarn install`, as upstream tooling expects. See [The development shell](README.md#node_modules-in-the-dev-shell).
 
@@ -195,7 +207,9 @@ The build log names the remedies next to that line. There are two.
 
 **Force a fallback.** Run `bench-update --node-locks <APP>/<SUBDIR>`. It resolves a lock seeded from upstream's own: its pins stay and only the gap is filled from the registry. The lock is stamped `forced`, and that target builds from `node-locks/<APP>/<SUBDIR>/yarn.lock` instead of the upstream file. A forced lock follows the upstream `yarn.lock` on `--pull`, the way the others follow `package.json`.
 
-Nested frontends are discovered one level deep.
+Nested frontends are discovered one level deep, and one level further when they ship their own lockfile. Excluding a directory also leaves out the targets under it.
+
+Excluding a frontend disarms a `package.json` script that names it. It does not disarm a build that Frappe starts itself: Frappe 16.60 and later install and build `frappe/flow`, `frappe/island-toolchain` and `frappe/studio/frontend` from its own build code, whatever the excludes say.
 
 ### Coming from the earlier schemes
 

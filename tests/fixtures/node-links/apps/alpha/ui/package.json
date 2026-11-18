@@ -1,0 +1,10 @@
+{
+  "name": "@fixture/ui",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "is-number": "^7.0.0",
+    "is-odd": "^3.0.1"
+  }
+}
