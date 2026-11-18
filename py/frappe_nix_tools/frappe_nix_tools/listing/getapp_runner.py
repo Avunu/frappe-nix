@@ -16,11 +16,11 @@ import sys
 import traceback
 from pathlib import Path
 
-from pilot.config import AppConfig, BenchConfig  # ty: ignore[unresolved-import]
-from pilot.core.app import App  # ty: ignore[unresolved-import]
-from pilot.core.app.validator.validator import _all_checks  # ty: ignore[unresolved-import]
-from pilot.core.bench import Bench  # ty: ignore[unresolved-import]
-from pilot.managers.environment import PythonEnvManager  # ty: ignore[unresolved-import]
+from pilot.config import AppConfig, BenchConfig  # ty: ignore[import-not-found]
+from pilot.core.app import App  # ty: ignore[import-not-found]
+from pilot.core.app.validator.validator import _all_checks  # ty: ignore[import-not-found]
+from pilot.core.bench import Bench  # ty: ignore[import-not-found]
+from pilot.managers.environment import PythonEnvManager  # ty: ignore[import-not-found]
 
 
 def main(request_path: str) -> int:
