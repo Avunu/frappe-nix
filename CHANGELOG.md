@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.9.1](https://github.com/Avunu/frappe-nix/compare/v2.9.0...v2.9.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** bump the github-actions group with 7 updates ([#294](https://github.com/Avunu/frappe-nix/issues/294)) ([73d3060](https://github.com/Avunu/frappe-nix/commit/73d3060c5fbf37e16da4fff985c53a2e619f4201))
+* **deps:** bump the nix group across 1 directory with 9 updates ([#267](https://github.com/Avunu/frappe-nix/issues/267)) ([bcac200](https://github.com/Avunu/frappe-nix/commit/bcac2001d98700b163f5914e364e979fce715665))
+* **python:** build Frappe's flow harness in the dev and production virtualenvs ([#288](https://github.com/Avunu/frappe-nix/issues/288)) ([4c54da6](https://github.com/Avunu/frappe-nix/commit/4c54da6bdbacec997dc1c4cef934765403098cd3))
+
 ## [2.9.0](https://github.com/Avunu/frappe-nix/compare/v2.8.0...v2.9.0) (2026-11-18)
 
 
