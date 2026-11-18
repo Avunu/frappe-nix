@@ -1,0 +1,38 @@
+version = 1
+revision = 5
+requires-python = ">=3.14"
+
+[manifest]
+members = [
+    "flow-webui-bench",
+    "frappe",
+]
+
+[[package]]
+name = "flow-webui-bench"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "frappe" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "frappe", editable = "apps/frappe" }]
+
+[[package]]
+name = "frappe"
+version = "0.0.0"
+source = { editable = "apps/frappe" }
+dependencies = [
+    { name = "frappe-flow" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "frappe-flow", editable = "apps/frappe/flow/harness" }]
+
+[[package]]
+name = "frappe-flow"
+version = "0.1.0"
+source = { editable = "apps/frappe/flow/harness" }
+
+[package.metadata]
