@@ -1,0 +1,8 @@
+# A bench with no Frappe apps registered: only its JavaScript is under test
+# (tests/node-links.nix).
+[project]
+name = "node-links-fixture"
+version = "0.0.0"
+
+[tool.uv.workspace]
+members = []

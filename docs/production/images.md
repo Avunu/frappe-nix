@@ -28,7 +28,7 @@ Every app with a `package.json` is a node target. So is each immediate subdirect
 
 You commit no hashes. The derivation sees only `package.json`, `yarn.lock`, `.yarnrc` and `.npmrc`, so editing other files in an app does not rebuild its `node_modules`.
 
-Lifecycle scripts do not run in the sandbox. The frontends frappe-nix was built against need only prebuilt or platform-specific packages, so this works for them. If an app does need extra build steps, `nodeOverrides.<TARGET>` lets you add attributes such as `postPatch` or `nativeBuildInputs` to that target's derivation.
+Lifecycle scripts do not run in the sandbox. The frontends frappe-nix was built against need only prebuilt or platform-specific packages, so this works for them. The one exception is a `patch-package` postinstall whose patches come from a [`link:` dependency](../development/locks.md#link-dependencies): the install applies those patches itself. If an app does need extra build steps, `nodeOverrides.<TARGET>` lets you add attributes such as `postPatch` or `nativeBuildInputs` to that target's derivation.
 
 An app's own `yarn.lock` always wins. If an app ships a `package.json` but no `yarn.lock`, generate a fallback from the bench's dev shell and commit it:
 

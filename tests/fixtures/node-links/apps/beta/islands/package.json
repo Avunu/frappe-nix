@@ -1,0 +1,10 @@
+{
+  "name": "islands",
+  "private": true,
+  "scripts": {
+    "postinstall": "patch-package --patch-dir node_modules/@fixture/ui/patches"
+  },
+  "dependencies": {
+    "@fixture/ui": "link:../../alpha/ui"
+  }
+}

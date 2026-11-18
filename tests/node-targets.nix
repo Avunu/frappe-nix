@@ -16,6 +16,7 @@ let
 
   all = targets.discover { inherit names appSrcOf; };
   desk = lib.findFirst (t: t.key == "alpha/desk") null all;
+  panel = lib.findFirst (t: t.key == "alpha/tools/panel") null all;
 in
 {
   node-targets = checks.script "node-targets" { } ''
@@ -26,25 +27,42 @@ in
 
     # alpha (root + desk), beta (no yarn.lock — still a target); not alpha's
     # node_modules, not its .gitmodules-listed vendored/, and nothing under
-    # gamma, which has no package.json of its own.
+    # gamma, which has no package.json of its own. Two levels down,
+    # tools/panel ships a yarn.lock and is one; tools/nolock, with a
+    # package-lock.json only, is not.
     eq "an app with package.json and its nested frontends are targets; nothing else is" \
-      "alpha alpha/desk beta" \
+      "alpha alpha/desk alpha/tools/panel beta" \
       ${lib.escapeShellArg (lib.concatStringsSep " " (keysOf { }))}
 
     eq "an excluded frontend is left out" \
       "alpha beta" \
       ${lib.escapeShellArg (
         lib.concatStringsSep " " (keysOf {
-          excludes = [ "alpha/desk" ];
+          excludes = [
+            "alpha/desk"
+            "alpha/tools/panel"
+          ];
         })
       )}
+
+    eq "excluding a directory leaves out what is under it" \
+      "alpha alpha/desk beta" \
+      ${lib.escapeShellArg (
+        lib.concatStringsSep " " (keysOf {
+          excludes = [ "alpha/tools" ];
+        })
+      )}
+
+    eq "a deeper target's subdir is its path under the app" \
+      "alpha tools/panel" \
+      ${lib.escapeShellArg "${panel.app} ${panel.subdir}"}
 
     eq "a nested target knows its app and subdir" \
       "alpha desk" \
       ${lib.escapeShellArg "${desk.app} ${desk.subdir}"}
 
     eq "the app order is the caller's" \
-      "beta alpha alpha/desk" \
+      "beta alpha alpha/desk alpha/tools/panel" \
       ${lib.escapeShellArg (
         lib.concatStringsSep " " (
           map (t: t.key) (
