@@ -684,6 +684,13 @@
           base = inputs.python-devops-nix.lib;
           inherit (inputs) pnpm2nix;
         }
+        # link: dependencies and a frontend two levels down with its own lock:
+        # each node_modules built offline, linked into benchRoot, and asked of
+        # yarn what Frappe's build asks.
+        // import ./tests/node-links.nix {
+          inherit pkgs checks;
+          base = inputs.python-devops-nix.lib;
+        }
         # The bench workspace app mode assembles around a single app.
         // import ./tests/app-workspace.nix { inherit pkgs checks; }
         # `frappe-init --migrate` over a synthetic classic bench. Offline, so it

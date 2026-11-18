@@ -4,9 +4,12 @@
 # A target is an app whose root has a package.json, plus each immediate
 # subdirectory of it that has one too — a nested frontend (erpnext/banking,
 # hrms/frontend, commit/dashboard), built by the parent app's own build script.
-# One level deep on purpose: deeper package.json files are fixtures and
+# One level deep by default: deeper package.json files are fixtures and
 # DocType JSON (frappe/frappe/core/doctype/package/package.json is one), not
-# projects.
+# projects. A directory one level further down counts only when it ships a
+# lockfile of its own beside its package.json (frappe/studio/frontend): a
+# lock is what says "this is installed here", and Frappe's build installs
+# and builds such a frontend where it stands.
 #
 # Not a target: node_modules itself; a subdirectory the app tracks as a git
 # submodule (hrms/frappe-ui is a whole other project nothing in the bench
@@ -53,29 +56,40 @@
           else
             [ ];
 
-        subdirs = builtins.attrNames (
-          lib.filterAttrs (_: type: type == "directory") (builtins.readDir src)
+        subdirs = dirsOf src;
+
+        dirsOf =
+          dir: builtins.attrNames (lib.filterAttrs (_: type: type == "directory") (builtins.readDir dir));
+
+        # Neither a target nor searched for deeper ones.
+        skipped =
+          sub: sub == "node_modules" || lib.elem sub submodulePaths || lib.elem "${app}/${sub}" excludes;
+
+        entry = sub: {
+          key = "${app}/${sub}";
+          inherit app;
+          subdir = sub;
+          src = src + "/${sub}";
+        };
+
+        nested = map entry (
+          lib.filter (sub: !(skipped sub) && builtins.pathExists (src + "/${sub}/package.json")) subdirs
         );
 
-        nested = lib.concatMap (
+        hasOwnLock =
+          dir: builtins.pathExists (dir + "/yarn.lock") || builtins.pathExists (dir + "/pnpm-lock.yaml");
+
+        deeper = lib.concatMap (
           sub:
-          let
-            dir = src + "/${sub}";
-            key = "${app}/${sub}";
-          in
-          lib.optional
-            (
-              sub != "node_modules"
-              && builtins.pathExists (dir + "/package.json")
-              && !(lib.elem sub submodulePaths)
-              && !(lib.elem key excludes)
-            )
-            {
-              inherit key app;
-              subdir = sub;
-              src = dir;
-            }
-        ) subdirs;
+          map entry (
+            lib.filter (
+              deep:
+              !(skipped deep)
+              && builtins.pathExists (src + "/${deep}/package.json")
+              && hasOwnLock (src + "/${deep}")
+            ) (map (d: "${sub}/${d}") (lib.filter (d: d != "node_modules") (dirsOf (src + "/${sub}"))))
+          )
+        ) (lib.filter (sub: !(skipped sub)) subdirs);
       in
       lib.optionals (builtins.pathExists (src + "/package.json")) (
         [
@@ -86,6 +100,7 @@
           }
         ]
         ++ nested
+        ++ deeper
       )
     ) names;
 }

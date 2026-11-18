@@ -201,7 +201,8 @@ class TestUnbuildable(unittest.TestCase):
 				"bare@1.0.0: no integrity and no #hash on https://registry.yarnpkg.com/b/-/b-1.0.0.tgz",
 				'"u@git+https://x/u": a git dependency without a commit: git+https://x/u',
 				"cu@1.0.0: a git dependency without a commit: https://codeload.github.com/o/r/tar.gz/main",
-				'"l@link:../l": a file:/link: dependency, which the Nix build cannot fetch',
+				'"l@link:../l": a file:/link: dependency, which a generated lock cannot cover'
+				" (a target with a link: dependency builds from the yarn.lock it ships)",
 				"nores@1.0.0: no resolved URL",
 			],
 		)
