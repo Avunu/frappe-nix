@@ -46,7 +46,7 @@
 #                           only nix, uv and pre-commit bumps and holds the rest
 #                           (github-actions above all); and no reusable workflow from
 #                           elsewhere gets the key at a pin that runs it on a self-hosted
-#                           runner (only python-devops-nix e76d5d8, #72, is named hosted),
+#                           runner (only python-devops-nix 7e15da6, #75, is named hosted),
 #                           and frappe-nix's own call excludes github_actions and lists the
 #                           key jobs' actions under review-dependencies; rollout.yml (§5.8)
 #                           runs every job on ubuntu-latest with minimal permissions, its
@@ -301,8 +301,11 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # python-devops-nix 0c9a3a0 ran its dependabot-* jobs on ["self-hosted","nixos"];
         # python-devops-nix#72 (merged as e76d5d8) runs every job of both on ubuntu-latest, and
         # its key job only after `policy` and `diff`, neither of which holds the key. A pin is
-        # named here only once its workflows have been read at that commit.
-        HOSTED_PINS = {"e76d5d850b35e4d0abc58fae6617713764f3683a"}
+        # named here only once its workflows have been read at that commit: 7e15da6 (#75) is
+        # e76d5d8 plus a single-release-branch change to python-devops-nix's own release.yml and
+        # docs.yml, and its dependabot-* workflows and every action under .github/actions that
+        # they use are byte-identical to e76d5d8's.
+        HOSTED_PINS = {"7e15da6b870daab04d56ab00f0817ecee193a97c"}
         key_pins = set()
         for path in sorted(glob.glob(".github/workflows/*.yml")):
             for name, job in yaml.safe_load(open(path))["jobs"].items():
