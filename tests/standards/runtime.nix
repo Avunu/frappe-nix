@@ -752,7 +752,10 @@ in
         fail() { echo "FAIL $*" >&2; exit 1; }
         export HOME="$TMPDIR" UV_CACHE_DIR="$TMPDIR/uv-cache" UV_NO_CONFIG=1 UV_OFFLINE=1 \
           UV_PYTHON=${lib.getExe pkgs.python314} UV_PYTHON_DOWNLOADS=never UV_PYTHON_PREFERENCE=only-system
-        unset SSL_CERT_FILE NIX_SSL_CERT_FILE
+        # uv 0.13 builds its HTTP client even offline, and refuses to start without a trust
+        # store; the sandbox's SSL_CERT_FILE is /no-cert-file.crt, so it gets cacert's bundle.
+        export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+        unset NIX_SSL_CERT_FILE
 
         # main's root: the template's, byte for byte, without the two test tools
         # and without the bench-dev group the app's [tool.bench.dev-dependencies]
