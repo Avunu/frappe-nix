@@ -17,6 +17,14 @@ extra-paths = [
     "py/frappe_nix_tools",
 ]
 
+[rules]
+# ty 0.0.100 renamed unresolved-import to import-not-found and unresolved-attribute to
+# missing-attribute. This repository's own comments and settings use the new names, but the
+# files python-devops-nix supplies (lib/grafts.nix's `vendored`, devguard's mail_stdlib.py)
+# still say `# ty: ignore[unresolved-attribute]`, and the ty check treats a warning as a
+# failure. Drop this once python-devops-nix's comments name the new rules.
+renamed-rule-in-ignore-comment = "ignore"
+
 [src]
 # lib/tui and its test run on the menu's own interpreter (textual, and
 # python-devops-nix's devtui), which the dev env does not have; tests/tui.nix
@@ -30,7 +38,8 @@ exclude = ["tests/fixtures", "lib/tui", "tests/test_tui.py"]
 include = ["**/tests/**", "tests/**"]
 
 [overrides.rules]
-unresolved-attribute = "ignore"
+missing-attribute = "ignore"
+missing-union-attribute = "ignore"
 invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 invalid-attribute-access = "ignore"
