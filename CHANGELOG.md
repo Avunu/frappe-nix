@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.2](https://github.com/Avunu/frappe-nix/compare/v2.9.1...v2.9.2) (2026-11-18)
+
+
+### Bug Fixes
+
+* **deps:** move nixpkgs forward to 2026-11-17 ([#298](https://github.com/Avunu/frappe-nix/issues/298)) ([295ce6f](https://github.com/Avunu/frappe-nix/commit/295ce6fb81e295028be587f1d3a957bbef903e4c))
+
 ## [2.9.1](https://github.com/Avunu/frappe-nix/compare/v2.9.0...v2.9.1) (2026-11-18)
 
 
