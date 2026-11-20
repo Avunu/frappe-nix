@@ -46,7 +46,11 @@ let
   # App mode: apps/frappe is only what uv2nix and the lock audit read.
   appMode = envsOf { frappe = ./fixtures/flow-webui-input; };
   # The same, the way a flake input arrives: a store path string with context.
-  appModeInput = envsOf { frappe = "${./fixtures/flow-webui-input}"; };
+  # Made from this flake's own source, not `"${./fixtures/…}"`: that copies the
+  # fixture to a store path of its own, which `nix flake check --no-build`
+  # (read-only) never writes, and the evaluation stops on "is not a valid
+  # store path".
+  appModeInput = envsOf { frappe = "${inputs.self}/tests/fixtures/flow-webui-input"; };
   # A bench whose harness is not one lib/flow-web-ui.nix knows.
   unknown = envsOf { };
 
