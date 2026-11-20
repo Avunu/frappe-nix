@@ -2326,6 +2326,16 @@ in
           inherit pkgs lib;
           inherit (cfg) python name nodejs;
           workspaceRoot = effectiveWorkspaceRoot;
+          # The bench's absolute path, not "$FRAPPE_BENCH_ROOT": a process started
+          # with a scrubbed environment (Frappe's Flow daemon keeps only its
+          # INHERITED_ENV) expands the variable to nothing and loses every editable
+          # app. Same value as FRAPPE_BENCH_ROOT (benchPath, below).
+          # perSystem's config has no devenv.root; the shell's evaluated config does.
+          editableRoot =
+            let
+              root = config.devenv.shells.default.devenv.root;
+            in
+            if appMode then "${root}/${cfg.app.benchDir}" else root;
           lockAuditRelock = if appMode then appRelockAdvice else null;
           # Keyed on the distribution name uv resolved the member to, which is
           # what the package set is indexed by — the app's own [project].name,
