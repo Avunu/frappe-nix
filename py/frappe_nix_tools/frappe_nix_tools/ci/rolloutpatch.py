@@ -23,7 +23,9 @@ b. **Lock files** are the only content taken from the plan: ``flake.lock``,
      ``release-<N>`` branch, the same with ``ref = "release"`` (the rollout's one-time move
      off it).
    - ``uv.lock`` sources: pypi.org (files from files.pythonhosted.org), a git source, URL or
-     registry the base's locks already have, and a relative workspace or editable path.
+     registry the base's locks already have, a directory inside one the base installs
+     editable (verify-relock's ``inside_trusted_tree``: Frappe's flow harness under
+     ``apps/frappe``), and the lock's own ``virtual = "."`` root.
      ``frappe-runtime`` is only ever ``nix/uv.lock``'s, once, and exactly the tag's:
      ``source = { git = "https://github.com/Avunu/frappe-nix?subdirectory=runtime#<tag sha>" }``,
      no file to download, and the version and dependencies (names and extras) frappe-nix's
@@ -669,10 +671,10 @@ def uv_problems(
 				continue
 			if kind == "registry" and value == lockcheck.PYPI:
 				continue
-			if kind in ("editable", "virtual", "directory", "path") and isinstance(value, str):
-				p = PurePosixPath(value)
-				if not p.is_absolute() and "://" not in value and ".." not in p.parts:
-					continue
+			if lockcheck.inside_trusted_tree(kind, value, trusted):
+				continue
+			if kind == "virtual" and value == ".":
+				continue  # the lock's own root, which installs nothing (a tools/uv.lock that is new)
 			rejects.append(f"{path}: {name} comes from {kind} {value!r}, which is not allowed")
 		for url in lockcheck._uv_urls(pkg):
 			host = urllib.parse.urlsplit(url).hostname or ""

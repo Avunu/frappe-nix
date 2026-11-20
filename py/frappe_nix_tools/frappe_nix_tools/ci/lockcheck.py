@@ -9,8 +9,9 @@ lock files of the tree to be pushed (``--head``) with a commit the integration b
 (``--base``: the PR's merge-base, or the commit the weekly relock ran on), read from git:
 
 - ``nix/uv.lock`` may not be deleted. Every package entry that is not the base's (by name,
-  version, source, files and dependency edges) comes from PyPI (``registry = "https://pypi.org/simple"``) or from a
-  source the base lock already has, and each of its files is an https URL on
+  version, source, files and dependency edges) comes from PyPI (``registry = "https://pypi.org/simple"``), from a
+  source the base lock already has, or from a directory inside one the base installs editable
+  (``inside_trusted_tree``: Frappe's flow harness under ``apps/frappe``), and each of its files is an https URL on
   files.pythonhosted.org that names that package and version, or a URL the base lock already
   has. A git source the base has at another commit (frappe's ``pypika`` or ``gunicorn`` fork after
   a frappe bump) is ``needs-review``; any other new source is ``reject``.
@@ -136,6 +137,38 @@ def _same_version(a: str, b: str) -> bool:
 
 def _source_key(source: dict) -> list[str]:
 	return [f"{kind}={source[kind]}" for kind in sorted(source) if isinstance(source[kind], str)]
+
+
+# A segment of a local source path: what a package or app directory is called. No ``.``/``..``,
+# separator, drive, scheme, ``~``, whitespace or control character can be one.
+_PATH_SEGMENT = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+
+
+def _local_segments(value: object) -> tuple[str, ...] | None:
+	"""``value``'s segments if it is a plain relative path (``apps/frappe/flow/harness``) and
+	nothing else: not absolute, no ``..``/``.``/empty segment, no backslash, ``:`` or ``~``; else
+	``None``. Read as text only, so the same string means the same tree everywhere it is read."""
+	if not isinstance(value, str) or not value:
+		return None
+	segments = tuple(value.split("/"))
+	return segments if all(_PATH_SEGMENT.fullmatch(s) for s in segments) else None
+
+
+def inside_trusted_tree(kind: str, value: object, trusted: BaseLocks) -> bool:
+	"""Whether a uv ``editable`` or ``directory`` source is a package inside the directory of one
+	the base already installs ``editable``: Frappe's flow harness (``apps/frappe/flow/harness``,
+	from 16.60) under ``apps/frappe``. Its files are that app's own, pinned by the same
+	``flake.lock`` entry (which a relock does not change), so the lock names nothing the base
+	did not already build from. The match is by whole segments (``apps/frappe-x`` is not under
+	``apps/frappe``), and the tree itself, ``.`` or a new top-level directory are not inside one."""
+	if kind not in ("editable", "directory") or (path := _local_segments(value)) is None:
+		return False
+	for key in trusted.sources:
+		root_kind, _, root_value = key.partition("=")
+		root = _local_segments(root_value) if root_kind == "editable" else None
+		if root is not None and len(path) > len(root) and path[: len(root)] == root:
+			return True
+	return False
 
 
 def _edges(pkg: dict) -> str:
@@ -411,6 +444,8 @@ def uv_problems(base_text: str | None, head_text: str, trusted: BaseLocks) -> tu
 			continue
 		for kind, value in source.items():
 			if f"{kind}={value}" in trusted.sources or (kind == "registry" and value == PYPI):
+				continue
+			if inside_trusted_tree(kind, value, trusted):
 				continue
 			if kind == "git" and isinstance(value, str) and _git_repo(value) in git_repos:
 				reviews.append(f"{path}: {name} {version} moves to {value}, another commit of a git source")
