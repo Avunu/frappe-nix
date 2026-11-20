@@ -617,6 +617,8 @@ let
       # Build store path of the last successful migrate; guards against redundant
       # re-runs (e.g. on every reboot) when the app build hasn't changed.
       marker = "${siteCfg.siteDir}/.frappe-migrate-build";
+      # The snapshot a rollback is loading, while it loads (see `restore`).
+      restoring = "${siteCfg.siteDir}/.frappe-migrate-restoring";
 
       # Messages are this unit's: "frappe-migrate(<site>): …". Each step's stderr
       # is the journal, which reads a leading <N> as the line's syslog priority
@@ -647,6 +649,25 @@ let
         '';
 
       check = step "check" ''
+        # A rollback that never finished (see `restore`) comes first, whatever
+        # the build: until it is done the database is neither the snapshot nor
+        # anything migrate may run on or snapshot. Finish it from the snapshot
+        # it was loading (pruning runs only after a successful migrate, so the
+        # file is still there) or stop without touching anything.
+        if [ -e "${restoring}" ]; then
+          SNAP="$(cat "${restoring}")"
+          if [ ! -f "$SNAP" ]; then
+            echo "<3>frappe-migrate(${name}): an interrupted rollback was loading $SNAP, which is gone; the database is partial. Restore it by hand, remove ${restoring}, then redeploy." >&2
+            exit 1
+          fi
+          echo "<4>frappe-migrate(${name}): the last rollback was interrupted; finishing it from $SNAP" >&2
+          if ! ${restore} "$SNAP"; then
+            echo "<3>"${say "could not finish the interrupted rollback; the database is partial."} >&2
+            exit 1
+          fi
+          echo ${say "interrupted rollback finished"}
+        fi
+
         if [ "$(cat "${marker}" 2>/dev/null || true)" = "${pkg}" ]; then
           echo ${say "build unchanged since last successful migrate; skipping."}
           exit 100
@@ -684,7 +705,17 @@ let
       # restores the pre-migrate tables and data). FK checks off so drop order
       # does not matter. Both halves run whatever the first did, as before: a
       # load over a partial drop still puts back every table the dump has.
+      #
+      # The restore is not atomic: killed partway (a deploy that restarts the
+      # host or container mid-rollback), it leaves the tables the dump had
+      # reached and none after them. Nothing about such a database looks wrong
+      # to the next run, which would snapshot it, call the snapshot whole (the
+      # dump of a half database still ends in "-- Dump completed"), fail, and
+      # "roll back" to it. So the restore records the snapshot it is loading
+      # in ${restoring} first and removes the record only once it has finished;
+      # `check` finishes a restore it finds recorded before anything else runs.
       restore = step "restore" ''
+        printf '%s' "$1" > "${restoring}"
         ${dbCredentials}
         rc=0
         { echo "SET FOREIGN_KEY_CHECKS=0;"
@@ -692,6 +723,7 @@ let
             "SELECT CONCAT('DROP ', IF(TABLE_TYPE='VIEW','VIEW','TABLE'), ' IF EXISTS \`', TABLE_NAME, '\`;') FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${dbName}';"
         } | ${mysql} ${connArgs} ${dbName} || rc=1
         ${gzip} -cd -- "$1" | ${mysql} ${connArgs} ${dbName} || rc=1
+        [ "$rc" -eq 0 ] && rm -f -- "${restoring}"
         exit "$rc"
       '';
 

@@ -214,6 +214,7 @@ let
   themeDir = "/var/lib/frappe/${siteName}/sites/${siteName}/public/files/website_theme";
   snapDir = "/var/lib/frappe/${siteName}/snapshots";
   markerPath = "/var/lib/frappe/${siteName}/.frappe-migrate-build";
+  restoringPath = "/var/lib/frappe/${siteName}/.frappe-migrate-restoring";
   migrateUnit = "frappe-migrate-${siteName}.service";
   siteDir = "/var/lib/frappe/${siteName}/sites/${siteName}";
   probeDir = "${siteDir}/private/files/admin-probe";
@@ -332,6 +333,8 @@ in
     machine.succeed("systemctl is-failed ${migrateUnit}")
     assert machine.succeed("jq -r .maintenance_mode ${cfgPath}").strip() == "1"
     machine.fail("test -e ${markerPath}")
+    # A rollback that finished leaves no record of being in progress.
+    machine.fail("test -e ${restoringPath}")
     machine.succeed("journalctl -u ${migrateUnit} | grep -q 'MIGRATION FAILED'")
     # Findable by priority, not only by wording: `journalctl -p err` is what a
     # log store's alert filters on.
@@ -344,6 +347,35 @@ in
     machine.wait_for_unit("${migrateUnit}")
     machine.succeed("test -e ${markerPath}")
     assert machine.succeed("jq -r .maintenance_mode ${cfgPath}").strip() == "0"
+
+    # A rollback killed partway (a deploy restarting the machine mid-restore)
+    # leaves a partial database and its record behind. Stand one up: the
+    # canary table never got loaded, and the record names the newest snapshot.
+    # The build marker stays, so a check that only compared builds would skip;
+    # the interrupted rollback must be finished first anyway, and before any
+    # new snapshot is taken of the partial database.
+    snap = machine.succeed("ls -t ${snapDir}/premigrate-*.sql.gz | head -n 1").strip()
+    snaps_before = machine.succeed("ls ${snapDir} | wc -l").strip()
+    machine.succeed("${mysql} ${dbName} -e 'DROP TABLE canary'")
+    machine.succeed(f"printf %s {snap} > ${restoringPath} && chown frappe:frappe ${restoringPath}")
+    machine.succeed("systemctl restart ${migrateUnit}")
+    assert machine.succeed("${mysql} -N ${dbName} -e 'SELECT v FROM canary'").strip() == "1"
+    machine.fail("test -e ${restoringPath}")
+    machine.succeed("journalctl -u ${migrateUnit} | grep -q 'last rollback was interrupted'")
+    machine.succeed("journalctl -u ${migrateUnit} | grep -q 'interrupted rollback finished'")
+    # The build was unchanged, so after finishing the restore it skipped: no
+    # snapshot of anything was taken.
+    assert machine.succeed("ls ${snapDir} | wc -l").strip() == snaps_before
+
+    # A record naming a snapshot that is gone cannot be finished: the unit
+    # fails, says so, and takes no snapshot of the partial database.
+    machine.succeed("printf %s ${snapDir}/premigrate-gone.sql.gz > ${restoringPath} && chown frappe:frappe ${restoringPath}")
+    # reset-failed: the restarts above count against systemd's start limit.
+    machine.succeed("systemctl reset-failed ${migrateUnit}")
+    machine.fail("systemctl restart ${migrateUnit}")
+    machine.succeed("journalctl -u ${migrateUnit} -p err | grep -q 'which is gone; the database is partial'")
+    assert machine.succeed("ls ${snapDir} | wc -l").strip() == snaps_before
+    machine.succeed("rm -f ${restoringPath}")
 
     # The `bench` an operator runs from a root shell runs as the service user,
     # so what it writes under the site is the service's, not root's. Piped:
