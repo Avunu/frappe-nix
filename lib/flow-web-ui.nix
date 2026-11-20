@@ -42,9 +42,23 @@
 }:
 
 # The harness root (the directory holding hatch_build.py): a path or a store path.
-harness:
+harness0:
 
 let
+  # As a path value. In app mode the harness is a subdirectory of the frappe
+  # input, a string that still refers to its store path (it carries the
+  # input's context), and so does every string made from it: lib.node uses
+  # the lock's file name (`baseNameOf`) as an attribute name, which such a
+  # string cannot be, and evaluation stopped there with "the string
+  # 'package-lock.json' is not allowed to refer to a store path". The input
+  # is fetched before anything here is evaluated, so its store path exists,
+  # and as a path it is copied (filtered, below) like any other source.
+  harness =
+    if builtins.isPath harness0 then
+      harness0
+    else
+      /. + builtins.unsafeDiscardStringContext (toString harness0);
+
   ui = harness + "/ui";
 
   recognised =
