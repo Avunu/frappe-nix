@@ -1306,7 +1306,7 @@
           },
           "cooldown-days": {
             "type": "integer",
-            "default": 3,
+            "default": 7,
             "minimum": 0
           },
           "ignore": {

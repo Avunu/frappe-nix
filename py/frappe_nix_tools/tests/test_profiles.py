@@ -57,9 +57,9 @@ class TestBuiltinProfiles(unittest.TestCase):
 
 	def test_schema_defaults_are_the_recommended_values(self):
 		# minimal sets no parameters: a module turned on over it gets the schema defaults,
-		# which must be the recommended@1.0 values (§8.5).
+		# which must be the values of the newest snapshot, recommended@2.10.
 		defaults = schema.defaults("profile.schema.json")
-		recommended = load("recommended@1.0")
+		recommended = load("recommended@2.10")
 
 		def subset(default, value):
 			if isinstance(value, dict) and value:

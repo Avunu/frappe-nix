@@ -1,5 +1,8 @@
-# Every entry targets {{ branches.integration }}. nix, github-actions and pre-commit bumps commit as fix(deps), so each
-# bump that changes what the app runs ships as a patch release; the other entries commit as chore(deps)/chore(deps-dev).
+# Every entry targets {{ branches.integration }}. Bumps that change what the app runs commit as fix(deps) and ship as patch
+# releases: nix, github-actions, pre-commit, gitsubmodule and the npm entries' dependencies. On the npm entries,
+# prefix-development chore(deps) sends their devDependencies (Dependabot's Development dependency group) to chore(deps),
+# which ships nothing. Those two entries write their prefixes whole, without include: scope. uv /tools and npm /docs-site
+# commit as chore(deps)/chore(deps-dev).
 {% if modules.ci %}
 # deps.yml decides what merges automatically.
 {% endif %}
@@ -88,8 +91,8 @@ updates:
 {{ schedule("npm") }}    cooldown:
       default-days: {{ cooldown }}
     commit-message:
-      prefix: chore
-      include: scope
+      prefix: fix(deps)
+      prefix-development: chore(deps)
     labels: [dependencies]
 {{ ignore("npm", "/") }}    groups:
       toolchain:
@@ -107,8 +110,8 @@ updates:
 {{ schedule("npm") }}    cooldown:
       default-days: {{ cooldown }}
     commit-message:
-      prefix: chore
-      include: scope
+      prefix: fix(deps)
+      prefix-development: chore(deps)
     labels: [dependencies]
 {{ ignore("npm", "/" ~ d) }}    groups:
       {{ d }}:
@@ -200,7 +203,7 @@ updates:
 {{ schedule("gitsubmodule") }}    cooldown:
       default-days: {{ cooldown }}
     commit-message:
-      prefix: chore
+      prefix: fix
       include: scope
     labels: [dependencies]
 {{ ignore("gitsubmodule", "/") }}{% endif %}
