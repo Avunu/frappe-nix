@@ -615,6 +615,41 @@ class TestLockChecks(unittest.TestCase):
 		trusted = lockcheck.trusted_locks({path: base.encode()})
 		return rolloutpatch.uv_problems(path, base, new, TS, trusted, explained, RUNTIME)
 
+	def test_uv_local_sources(self):
+		"""verify-relock's rule (``lockcheck.inside_trusted_tree``): a local package inside a
+		directory the base installs editable, such as Frappe's flow harness; else ``reject``."""
+		frappe = '\n[[package]]\nname = "frappe"\nversion = "16.0.0"\nsource = { editable = "apps/frappe" }\n'
+		base = uv_lock(REV, extra=frappe)
+
+		def local(source: str) -> str:
+			return uv_lock(
+				TS,
+				extra=frappe
+				+ f'\n[[package]]\nname = "frappe-flow"\nversion = "0.1.28"\nsource = {{ {source} }}\n',
+			)
+
+		for source in ('editable = "apps/frappe/flow/harness"', 'directory = "apps/frappe/flow/harness"'):
+			with self.subTest(source=source):
+				rejects, _ = self.uv_problems("nix/uv.lock", base, local(source))
+				self.assertEqual(rejects, [])
+		for source in (
+			'editable = "apps/frappe-evil/flow"',
+			'editable = "apps/frappe/../evil"',
+			'editable = "/apps/frappe/flow"',
+			'editable = "apps/evil"',
+			'path = "nix/node-locks/evil.whl"',
+			'virtual = "nix"',
+		):
+			with self.subTest(source=source):
+				rejects, _ = self.uv_problems("nix/uv.lock", base, local(source))
+				self.assertTrue(any("frappe-flow comes from" in r for r in rejects), rejects)
+		# A tools/uv.lock the base does not have yet: its own root is all it may name locally.
+		tools = tools_lock() + '\n[[package]]\nname = "tools"\nversion = "0"\nsource = { virtual = "." }\n'
+		rejects, _ = rolloutpatch.uv_problems(
+			"tools/uv.lock", None, tools, TS, lockcheck.BaseLocks(), frozenset(), RUNTIME
+		)
+		self.assertEqual(rejects, [])
+
 	def test_uv_entries_are_tied_to_their_files(self):
 		wheel = (
 			'\nwheels = [{{ url = "https://files.pythonhosted.org/packages/ab/{f}", hash = "sha256:{h}" }}]\n'

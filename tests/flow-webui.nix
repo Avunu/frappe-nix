@@ -9,7 +9,8 @@
 #     its own (lib/flow-web-ui.nix), and the UI is in the result — the fixture's
 #     hook fails the build where the real one would have run `npm ci`;
 #   - in app mode, where `apps/frappe` is a mirror of an input, the harness is
-#     taken from that input too;
+#     taken from that input too, and the input may be a string that refers to
+#     its store path (a flake input's outPath) as much as a path;
 #   - Node and npm are in the build of what is built from source, and the
 #     development set does not build a web UI.
 #
@@ -44,6 +45,12 @@ let
 
   # App mode: apps/frappe is only what uv2nix and the lock audit read.
   appMode = envsOf { frappe = ./fixtures/flow-webui-input; };
+  # The same, the way a flake input arrives: a store path string with context.
+  # Made from this flake's own source, not `"${./fixtures/…}"`: that copies the
+  # fixture to a store path of its own, which `nix flake check --no-build`
+  # (read-only) never writes, and the evaluation stops on "is not a valid
+  # store path".
+  appModeInput = envsOf { frappe = "${inputs.self}/tests/fixtures/flow-webui-input"; };
   # A bench whose harness is not one lib/flow-web-ui.nix knows.
   unknown = envsOf { };
 
@@ -51,6 +58,7 @@ let
   has = name: pkg: lib.boolToString (lib.any (n: lib.hasPrefix name n) (inputsOf pkg));
 
   prod = appMode.prodPythonSet.frappe-flow;
+  prodInput = appModeInput.prodPythonSet.frappe-flow;
   dev = appMode.editablePythonSet.frappe-flow;
 in
 {
@@ -68,6 +76,8 @@ in
       "yes" "$(grep -q 'built from the workspace member' "$site/flow_harness/server/webui/index.html" && echo yes || echo no)"
     eq "the web UI is built on its own, from the UI's tree" \
       "true" ${lib.escapeShellArg (lib.boolToString (prod ? webui))}
+    eq "…and from an input given as a store path string" \
+      "yes" "$([ -f "$(echo ${prodInput}/lib/python*/site-packages)/flow_harness/server/webui/index.html" ] && echo yes || echo no)"
 
     # The development build: editables is there, and nothing builds a UI.
     eq "the development build has editables" "true" ${has "editables" dev}

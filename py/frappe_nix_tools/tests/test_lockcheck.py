@@ -166,6 +166,55 @@ class TestCheck(unittest.TestCase):
 		with self.subTest(why="deleted"):
 			self.assertEqual(self.decide(with_(uv=None)).decision(), "reject")
 
+	def test_a_package_inside_a_trusted_editable_tree(self):
+		"""Frappe's flow harness (16.60+): a local package under ``apps/frappe``, which the base
+		already installs editable, is the app's own files; anything else local is not."""
+		harness = pkg("frappe-flow", "0.1.28", 'editable = "apps/frappe/flow/harness"', files=[])
+		res = self.decide(with_(uv=uv_lock(*BASE_PKGS, harness)))
+		self.assertEqual(res.decision(), "needs-review", res.reasons())  # a new name, nothing else
+		self.assertEqual(res.reasons(), ["needs-review: nix/uv.lock adds frappe-flow"])
+		directory = pkg("frappe-flow", "0.1.28", 'directory = "apps/frappe/flow/harness"', files=[])
+		self.assertEqual(self.decide(with_(uv=uv_lock(*BASE_PKGS, directory))).decision(), "needs-review")
+		for source in (
+			'editable = "apps/frappe-evil/x"',  # a sibling that only shares the prefix
+			'editable = "apps/frapp/x"',
+			'editable = "apps/frappe/../evil"',
+			'editable = "apps/frappe/./x/../../evil"',
+			'editable = "apps/frappe//x"',
+			'editable = "apps/frappe/x/"',
+			'editable = "/apps/frappe/x"',
+			'editable = "/nix/store/x/apps/frappe/x"',
+			'editable = "~/apps/frappe/x"',
+			'editable = "apps\\\\frappe\\\\x"',
+			'editable = "C:/apps/frappe/x"',
+			'editable = "file:///apps/frappe/x"',
+			'editable = "apps/evil"',  # a new top-level app
+			'editable = "nix/node-locks/evil"',  # not inside any trusted tree
+			'path = "apps/frappe/x/evil.whl"',  # a file, not a package directory
+			'virtual = "apps/frappe/x"',
+			'directory = "apps/pypika/x"',  # pypika is trusted as git, not as an editable tree
+		):
+			with self.subTest(source=source):
+				evil = pkg("evil", "1.0", source, files=[])
+				res = self.decide(with_(uv=uv_lock(*BASE_PKGS, evil)))
+				self.assertEqual(res.decision(), "reject", res.reasons())
+				self.assertTrue(any("evil 1.0 comes from" in r for r in res.reasons()), res.reasons())
+
+	def test_inside_trusted_tree(self):
+		trusted = lockcheck.trusted_locks({"nix/uv.lock": uv_lock(*BASE_PKGS)})
+		inside = lockcheck.inside_trusted_tree
+		self.assertTrue(inside("editable", "apps/frappe/flow/harness", trusted))
+		self.assertTrue(inside("directory", "apps/frappe/flow", trusted))
+		self.assertFalse(inside("editable", "apps/frappe", trusted))
+		self.assertFalse(inside("editable", "apps/frappe-evil/flow", trusted))
+		self.assertFalse(inside("editable", ".", trusted))
+		self.assertFalse(inside("editable", None, trusted))
+		# The root (`virtual = "."`) is no tree: everything would be inside it.
+		self.assertFalse(inside("editable", "nix/evil", trusted))
+		# A base that trusts an editable at the top makes nothing inside "." trusted either.
+		dot = lockcheck.trusted_locks({"nix/uv.lock": uv_lock(pkg("x", "1", 'editable = "."', files=[]))})
+		self.assertFalse(inside("editable", "evil", dot))
+
 	def test_yarn_rejects(self):
 		cases = {
 			"a tarball off the registry": yarn(("vue@^3.4.0", "3.4.5", "https://evil.example/vue-3.4.5.tgz")),
