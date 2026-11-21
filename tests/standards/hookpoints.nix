@@ -416,7 +416,7 @@ in
         echo "ok   frappe-nix nonexistent exits 2 and lists the commands"
 
         for rel in known-apps.json schema/tool-frappe-nix.schema.json schema/profile.schema.json \
-          profiles/minimal.toml profiles/recommended@1.0.toml; do
+          profiles/minimal.toml profiles/recommended@1.0.toml profiles/recommended@2.10.toml; do
           p="$(frappe-nix data-path "$rel")"
           [ -f "$p" ] || fail "data-path $rel printed '$p', which is not a file"
           echo "ok   data-path $rel"
@@ -467,7 +467,7 @@ in
         export HOME="$PWD"
         [ "$(frappe-nix config modules.ssort)" = false ] || fail "config modules.ssort is not false"
         [ "$(frappe-nix config modules.ci)" = true ] || fail "config modules.ci is not true"
-        [ "$(frappe-nix config profile.name)" = recommended@1.0 ] || fail "config profile.name is not recommended@1.0"
+        [ "$(frappe-nix config profile.name)" = recommended@2.10 ] || fail "config profile.name is not recommended@2.10"
         echo "ok   frappe-nix config on the fixture app"
 
         touch "$out"
