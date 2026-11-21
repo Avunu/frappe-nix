@@ -459,7 +459,9 @@ class TestDependabot(CallerCase):
 				ecosystem, message = update["package-ecosystem"], update["commit-message"]
 				with self.subTest(ecosystem=ecosystem, directory=update["directory"]):
 					if ecosystem == "npm" and update["directory"] != "/docs-site":
-						self.assertEqual(message, {"prefix": "fix(deps)", "prefix-development": "chore(deps)"})
+						self.assertEqual(
+							message, {"prefix": "fix(deps)", "prefix-development": "chore(deps)"}
+						)
 					elif ecosystem == "uv" or update["directory"] == "/docs-site":
 						self.assertEqual(message, {"prefix": "chore", "include": "scope"})
 					else:
