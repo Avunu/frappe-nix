@@ -14,6 +14,14 @@ class TestBuiltinProfiles(unittest.TestCase):
 		self.assertIn("recommended@1.0", config.builtin_names())
 		self.assertEqual(config.builtin_name("recommended"), config.builtin_names()[-1])
 
+	def test_recommended_2_10_changes_only_the_cooldown(self):
+		# recommended@2.10 is recommended@1.0 with one value raised: the Dependabot cooldown, 3 days to 7.
+		old, new = load("recommended@1.0"), load("recommended@2.10")
+		self.assertEqual(old["dependabot"]["cooldown-days"], 3)
+		self.assertEqual(new["dependabot"]["cooldown-days"], 7)
+		new["dependabot"]["cooldown-days"] = 3
+		self.assertEqual(old, new)
+
 	def test_validate_against_the_profile_schema(self):
 		for stem in config.builtin_names():
 			with self.subTest(stem=stem):

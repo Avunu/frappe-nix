@@ -17,6 +17,7 @@ from typing import Any
 
 from packaging.version import InvalidVersion, Version
 
+from frappe_nix_tools import __version__
 from frappe_nix_tools.common import config, repo
 from frappe_nix_tools.common.report import EnvError
 
@@ -77,7 +78,9 @@ def warn_changed(root: Path, plan: Any) -> list[str]:
 	if plan.cfg.get("profile") != "recommended":
 		return []
 	at_head = head_version(root)
-	if at_head is None:
+	# A snapshot can ship before its release bumps the version, so only a running frappe-nix
+	# newer than HEAD's is a bump that can move the defaults.
+	if at_head is None or at_head >= Version(__version__):
 		return []
 	old = snapshot_at(at_head)
 	new = config.builtin_name("recommended")

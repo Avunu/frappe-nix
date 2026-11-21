@@ -97,11 +97,14 @@ class TestResolve(unittest.TestCase):
 		self.assertEqual(r.cfg["python-lint"]["select"][:3], ["F", "E", "W"])
 
 	def test_recommended_is_the_newest_snapshot(self):
-		plain, pinned = self.resolve(profile="recommended"), self.resolve(profile="recommended@1.0")
+		plain, pinned = self.resolve(profile="recommended"), self.resolve(profile="recommended@2.10")
 		self.assertEqual(plain.cfg | {"profile": None}, pinned.cfg | {"profile": None})
 		self.assertEqual(plain.modules, pinned.modules)
 		self.assertEqual(plain.profile, pinned.profile)
-		self.assertEqual(plain.profile["name"], "recommended@1.0")
+		self.assertEqual(plain.profile["name"], "recommended@2.10")
+		# The newest snapshot waits seven days before proposing a bump; the one before it keeps three.
+		self.assertEqual(plain.cfg["dependabot"]["cooldown-days"], 7)
+		self.assertEqual(self.resolve(profile="recommended@1.0").cfg["dependabot"]["cooldown-days"], 3)
 
 	def test_unknown_snapshot_is_exit_2(self):
 		code, message = code_of(lambda: self.resolve(profile="recommended@9.9"))
@@ -304,7 +307,7 @@ class TestResolve(unittest.TestCase):
 		r = self.resolve(profile="recommended")
 		self.assertIs(r.get("modules.ssort"), False)
 		self.assertEqual(r.get("tests.coverage.target"), 80)
-		self.assertEqual(r.get("profile.name"), "recommended@1.0")
+		self.assertEqual(r.get("profile.name"), "recommended@2.10")
 		self.assertIsNone(r.get("releases.bootstrap-sha"))
 		for key in ("nonsense", "tests.nonsense", "modules.nonsense", "profile.nonsense"):
 			with self.subTest(key=key), self.assertRaises(ConfigError):

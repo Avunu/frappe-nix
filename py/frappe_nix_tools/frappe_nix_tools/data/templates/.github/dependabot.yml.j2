@@ -1,4 +1,5 @@
-# Every entry targets {{ branches.integration }} and commits as chore(deps)/chore(deps-dev), so no bump cuts a release.
+# Every entry targets {{ branches.integration }}. nix, github-actions and pre-commit bumps commit as fix(deps), so each
+# bump that changes what the app runs ships as a patch release; the other entries commit as chore(deps)/chore(deps-dev).
 {% if modules.ci %}
 # deps.yml decides what merges automatically.
 {% endif %}
@@ -55,7 +56,7 @@ updates:
       exclude: {{ docs_cooldown_exclude | tojson }}
 {% endif %}
     commit-message:
-      prefix: chore
+      prefix: fix
       include: scope
     labels: [dependencies]
     # frappe-nix pins move through the frappe-nix release rollout (`frappe-nix repo rollout`), not Dependabot.
@@ -158,7 +159,7 @@ updates:
 {{ schedule("pre-commit") }}    cooldown:
       default-days: {{ cooldown }}
     commit-message:
-      prefix: chore
+      prefix: fix
       include: scope
     labels: [dependencies]
 {{ ignore("pre-commit", "/") }}    groups:
@@ -178,7 +179,7 @@ updates:
       default-days: {{ cooldown }}
     open-pull-requests-limit: 5
     commit-message:
-      prefix: chore
+      prefix: fix
       include: scope
     labels: [dependencies]
     # frappe-nix and the org profile move only through `frappe-nix repo rollout` (S5, S38): their bump can rewrite
