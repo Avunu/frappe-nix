@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.9.3](https://github.com/Avunu/frappe-nix/compare/v2.9.2...v2.9.3) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** bump Avunu/site-docs/.github/workflows/check-docs.yml ([#303](https://github.com/Avunu/frappe-nix/issues/303)) ([353161f](https://github.com/Avunu/frappe-nix/commit/353161f95ceb69860ec34e0919b495e01e820e4b))
+* **deps:** bump the nix group with 5 updates ([#300](https://github.com/Avunu/frappe-nix/issues/300)) ([0098ac7](https://github.com/Avunu/frappe-nix/commit/0098ac725589ef1800edeb128e130c279970df10))
+* **migrate:** finish an interrupted rollback before snapshotting again ([#296](https://github.com/Avunu/frappe-nix/issues/296)) ([2e7e0b7](https://github.com/Avunu/frappe-nix/commit/2e7e0b72f797b0d9c186bd1423f6872c7e3ee538))
+* **python:** point editable installs at the bench's absolute path ([#297](https://github.com/Avunu/frappe-nix/issues/297)) ([7d7b1c7](https://github.com/Avunu/frappe-nix/commit/7d7b1c73342cc06ad9c897dc458c1b8d49f88d50))
+* relock and build Frappe's flow harness as a sub-package of the framework source ([#305](https://github.com/Avunu/frappe-nix/issues/305)) ([53a46f3](https://github.com/Avunu/frappe-nix/commit/53a46f30797c6ac9600e0f272249cae3513d6476))
+
 ## [2.9.2](https://github.com/Avunu/frappe-nix/compare/v2.9.1...v2.9.2) (2026-11-18)
 
 
