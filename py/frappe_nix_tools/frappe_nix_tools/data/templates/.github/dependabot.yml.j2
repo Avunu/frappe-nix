@@ -1,8 +1,9 @@
 # Every entry targets {{ branches.integration }}. Bumps that change what the app runs commit as fix(deps) and ship as patch
-# releases: nix, github-actions, pre-commit, gitsubmodule and the npm entries' dependencies. On the npm entries,
-# prefix-development chore(deps) sends their devDependencies (Dependabot's Development dependency group) to chore(deps),
-# which ships nothing. Those two entries write their prefixes whole, without include: scope. uv /tools and npm /docs-site
-# commit as chore(deps)/chore(deps-dev).
+# releases: nix, github-actions, pre-commit, gitsubmodule and the npm entries' dependencies. Each npm entry has a production
+# and a development group (dependency-type), so a grouped PR holds one kind of dependency. prefix-development chore(deps) on
+# the npm root and nested entries sends devDependencies (Dependabot's Development dependency group) to chore(deps), which
+# ships nothing; those two write their prefixes whole, without include: scope. uv /tools and npm /docs-site commit as
+# chore(deps)/chore(deps-dev).
 {% if modules.ci %}
 # deps.yml decides what merges automatically.
 {% endif %}
@@ -95,10 +96,12 @@ updates:
       prefix-development: chore(deps)
     labels: [dependencies]
 {{ ignore("npm", "/") }}    groups:
-      toolchain:
-        patterns: [oxlint, oxfmt, typescript, frappe-types, "@types/node", "stylelint*"]
+      production:
+        dependency-type: production
+        patterns: ["*"]
         update-types: [minor, patch]
-      runtime:
+      development:
+        dependency-type: development
         patterns: ["*"]
         update-types: [minor, patch]
 {% endif %}
@@ -114,7 +117,12 @@ updates:
       prefix-development: chore(deps)
     labels: [dependencies]
 {{ ignore("npm", "/" ~ d) }}    groups:
-      {{ d }}:
+      {{ d }}-production:
+        dependency-type: production
+        patterns: ["*"]
+        update-types: [minor, patch]
+      {{ d }}-development:
+        dependency-type: development
         patterns: ["*"]
         update-types: [minor, patch]
 {% endfor %}
@@ -136,7 +144,11 @@ updates:
       include: scope
     labels: [dependencies]
 {{ ignore("npm", "/docs-site") }}    groups:
-      docs-site-packages:
+      docs-site-production:
+        dependency-type: production
+        patterns: ["*"]
+      docs-site-development:
+        dependency-type: development
         patterns: ["*"]
 {% endif %}
 {% endif %}

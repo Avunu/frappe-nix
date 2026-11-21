@@ -466,6 +466,12 @@ class TestDependabot(CallerCase):
 						self.assertEqual(message, {"prefix": "chore", "include": "scope"})
 					else:
 						self.assertEqual(message, {"prefix": "fix", "include": "scope"})
+					if ecosystem == "npm":
+						# One group per dependency type, so a grouped PR holds one kind of dependency.
+						self.assertEqual(
+							sorted(group["dependency-type"] for group in update["groups"].values()),
+							["development", "production"],
+						)
 
 	def test_ignore_goes_into_the_matching_entries(self) -> None:
 		"""An ecosystem key reaches every managed entry of it, an ecosystem:directory key one
