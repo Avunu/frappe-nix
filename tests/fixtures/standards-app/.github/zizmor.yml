@@ -9,4 +9,4 @@ rules:
   # Every dependabot entry needs a cooldown of at least dependabot.cooldown-days.
   dependabot-cooldown:
     config:
-      days: 3
+      days: 7

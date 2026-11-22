@@ -442,6 +442,37 @@ class TestDependabot(CallerCase):
 		self.assertEqual(files[".github/zizmor.yml"]["rules"]["dependabot-cooldown"]["config"]["days"], 5)
 		self.assertEqual(files[".github/dependabot.yml"]["updates"][0]["cooldown"]["default-days"], 5)
 
+	def test_plain_recommended_is_seven_days_and_the_pinned_snapshot_three(self) -> None:
+		# Plain recommended is the newest snapshot, recommended@2.10. An app that pins recommended@1.0
+		# keeps the three days that snapshot shipped with. The prefixes are the template's (spec §2.17):
+		# fix(deps) for nix, github-actions, pre-commit and gitsubmodule, npm devDependencies on chore(deps).
+		pinned = self.render()
+		self.assertEqual(pinned[".github/dependabot.yml"]["updates"][0]["cooldown"]["default-days"], 3)
+		self.base = self.base.replace('profile = "./.standards-profile"', 'profile = "recommended"')
+		plain = self.render()
+		self.assertEqual(plain[".github/dependabot.yml"]["updates"][0]["cooldown"]["default-days"], 7)
+		self.assertEqual(plain[".github/zizmor.yml"]["rules"]["dependabot-cooldown"]["config"]["days"], 7)
+		for files in (pinned, plain):
+			updates = files[".github/dependabot.yml"]["updates"]
+			self.assertTrue({"github-actions", "nix"} <= {u["package-ecosystem"] for u in updates})
+			for update in updates:
+				ecosystem, message = update["package-ecosystem"], update["commit-message"]
+				with self.subTest(ecosystem=ecosystem, directory=update["directory"]):
+					if ecosystem == "npm" and update["directory"] != "/docs-site":
+						self.assertEqual(
+							message, {"prefix": "fix(deps)", "prefix-development": "chore(deps)"}
+						)
+					elif ecosystem == "uv" or update["directory"] == "/docs-site":
+						self.assertEqual(message, {"prefix": "chore", "include": "scope"})
+					else:
+						self.assertEqual(message, {"prefix": "fix", "include": "scope"})
+					if ecosystem == "npm":
+						# One group per dependency type, so a grouped PR holds one kind of dependency.
+						self.assertEqual(
+							sorted(group["dependency-type"] for group in update["groups"].values()),
+							["development", "production"],
+						)
+
 	def test_ignore_goes_into_the_matching_entries(self) -> None:
 		"""An ecosystem key reaches every managed entry of it, an ecosystem:directory key one
 		entry; both follow the entry's own ignores."""

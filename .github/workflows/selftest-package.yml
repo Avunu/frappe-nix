@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           frappe-nix --version
           for rel in known-apps.json schema/tool-frappe-nix.schema.json schema/profile.schema.json \
-            profiles/minimal.toml profiles/recommended@1.0.toml; do
+            profiles/minimal.toml profiles/recommended@1.0.toml profiles/recommended@2.10.toml; do
             path="$(frappe-nix data-path "$rel")"
             test -f "$path"
             case "$path" in
@@ -86,5 +86,5 @@ jobs:
           cp "$GITHUB_WORKSPACE/tests/fixtures/standards-app/pyproject.toml" pyproject.toml
           test "$(frappe-nix config modules.ci --pyproject pyproject.toml)" = true
           test "$(frappe-nix config modules.ssort --pyproject pyproject.toml)" = false
-          test "$(frappe-nix config profile.name --pyproject pyproject.toml)" = recommended@1.0
+          test "$(frappe-nix config profile.name --pyproject pyproject.toml)" = recommended@2.10
           echo "ok   frappe-nix config resolves the fixture app"
