@@ -2322,6 +2322,20 @@ in
           chromeHeadlessShell.link chromeHeadlessShell.package "$FRAPPE_BENCH_ROOT"
         );
 
+        # The wkhtmltopdf Frappe's classic PDF generator runs: python-devops-nix's
+        # pdfkiln, a drop-in that renders with Chromium (nixpkgs' chromium on Linux,
+        # google-chrome on darwin).
+        pdfkiln = inputs.python-devops-nix.packages.${pkgs.stdenv.hostPlatform.system}.pdfkiln;
+
+        # The darwin shell's browser. google-chrome is unfree, and the bench's pkgs
+        # (flake-parts', from its nixpkgs) allow no unfree package, so it comes from
+        # an import that allows that one package and no other.
+        googleChrome =
+          (import inputs.nixpkgs {
+            inherit (pkgs.stdenv.hostPlatform) system;
+            config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ "google-chrome" ];
+          }).google-chrome;
+
         pythonEnvs = import ../lib/python.nix {
           inherit pkgs lib;
           inherit (cfg) python name nodejs;
@@ -3362,11 +3376,12 @@ in
                 zlib
                 libffi
 
-                # PDF/printing
+                # PDF/printing. nixpkgs has no chromium for darwin, so the darwin
+                # shell names google-chrome; pdfkiln renders with the same browser.
                 cups
                 poppler-utils
-                chromium
-                wkhtmltopdf
+                (if pkgs.stdenv.hostPlatform.isDarwin then googleChrome else chromium)
+                pdfkiln
 
                 # Package managers. yarn is languages.javascript's; pnpm, in
                 # the major its package.json names, when an app's lockfile is

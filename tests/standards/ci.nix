@@ -304,8 +304,10 @@ lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         # named here only once its workflows have been read at that commit: 7e15da6 (#75) is
         # e76d5d8 plus a single-release-branch change to python-devops-nix's own release.yml and
         # docs.yml, and its dependabot-* workflows and every action under .github/actions that
-        # they use are byte-identical to e76d5d8's.
-        HOSTED_PINS = {"7e15da6b870daab04d56ab00f0817ecee193a97c"}
+        # they use are byte-identical to e76d5d8's. 19c28d0 (1.8.0) is 7e15da6 plus release changes
+        # outside those two workflows: they and every action under .github/actions are
+        # byte-identical to 7e15da6's, read at 19c28d0.
+        HOSTED_PINS = {"19c28d07fc29d5d9495893eea65251ebad0baba1"}
         key_pins = set()
         for path in sorted(glob.glob(".github/workflows/*.yml")):
             for name, job in yaml.safe_load(open(path))["jobs"].items():

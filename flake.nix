@@ -102,7 +102,21 @@
         "aarch64-linux"
         "aarch64-darwin"
       ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      # Every output's nixpkgs. It allows exactly one unfree package, google-chrome,
+      # the darwin dev shell's browser (modules/devenv.nix). The module imports its
+      # own nixpkgs with the same allowance, since a bench's pkgs carry none.
+      # allowUnfree stays unset.
+      forAllSystems =
+        f:
+        nixpkgs.lib.genAttrs systems (
+          system:
+          f (
+            import nixpkgs {
+              inherit system;
+              config.allowUnfreePredicate = pkg: builtins.elem (nixpkgs.lib.getName pkg) [ "google-chrome" ];
+            }
+          )
+        );
       frappeInit =
         pkgs:
         import ./lib/init.nix {
@@ -132,9 +146,11 @@
       # importApply keeps the file's own path in the module system's errors.
       # The module takes python-devops-nix's lib: the thread caps, the unit
       # hardening, the migrate flow, the socket and nginx pieces and the journald
-      # vocabulary it shares with odoo-nix.
+      # vocabulary it shares with odoo-nix. And python-devops-nix itself, for
+      # packages.<system>.pdfkiln, the wkhtmltopdf the sites render PDFs with.
       nixosModules.default = nixpkgs.lib.modules.importApply ./modules/nixos.nix {
         base = inputs.python-devops-nix.lib;
+        pythonDevopsNix = inputs.python-devops-nix;
       };
 
       lib = {

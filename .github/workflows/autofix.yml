@@ -45,7 +45,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: true # zizmor: ignore[artipacked] the action pushes
 
-      - uses: Avunu/python-devops-nix/.github/actions/pre-commit-autofix@7e15da6b870daab04d56ab00f0817ecee193a97c # python-devops-nix main, #26 (no release yet)
+      - uses: Avunu/python-devops-nix/.github/actions/pre-commit-autofix@19c28d07fc29d5d9495893eea65251ebad0baba1 # python-devops-nix v1.8.0
         with:
           fixers: nix fmt
           dispatch: |

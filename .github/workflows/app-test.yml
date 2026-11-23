@@ -335,7 +335,7 @@ jobs:
             echo "_${SHA:0:7}, from [this run]($RUN_URL)._"
           } > "$RUNNER_TEMP/test-report/comment.md"
 
-      - uses: Avunu/python-devops-nix/.github/actions/sticky-comment@7e15da6b870daab04d56ab00f0817ecee193a97c # python-devops-nix main, #26 (no release yet)
+      - uses: Avunu/python-devops-nix/.github/actions/sticky-comment@19c28d07fc29d5d9495893eea65251ebad0baba1 # python-devops-nix v1.8.0
         with:
           marker: frappe-test-${{ inputs.app }}
           body-file: ${{ runner.temp }}/test-report/comment.md
