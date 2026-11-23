@@ -107,7 +107,7 @@ jobs:
         run: nix build -L --show-trace --no-link .#checks.x86_64-linux.dev-tools 2>&1 | tee "$RUNNER_TEMP/nix.log"
 
       - if: failure() && steps.build.outcome == 'failure'
-        uses: Avunu/python-devops-nix/.github/actions/nix-failures@7e15da6b870daab04d56ab00f0817ecee193a97c # python-devops-nix main, #26 (no release yet)
+        uses: Avunu/python-devops-nix/.github/actions/nix-failures@19c28d07fc29d5d9495893eea65251ebad0baba1 # python-devops-nix v1.8.0
         with:
           log: ${{ runner.temp }}/nix.log
           title: canary-dev-tools

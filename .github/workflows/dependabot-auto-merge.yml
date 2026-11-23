@@ -61,7 +61,7 @@ jobs:
     permissions:
       contents: write # gh pr merge --auto
       pull-requests: write # gh pr merge --auto
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@7e15da6b870daab04d56ab00f0817ecee193a97c # python-devops-nix main, #72 (no release yet)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml@19c28d07fc29d5d9495893eea65251ebad0baba1 # python-devops-nix v1.8.0
     with:
       # Backstops to the `if:` above: a github-actions bump never auto-merges, and a diff that
       # touches a workflow or action file, or a `uses:` of an action or workflow that runs with
@@ -114,7 +114,7 @@ jobs:
       contents: write # update-branch without the App
       pull-requests: write # update-branch
       actions: write # without the App, dispatch the required checks on the new head
-    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@7e15da6b870daab04d56ab00f0817ecee193a97c # python-devops-nix main, #72 (no release yet)
+    uses: Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml@19c28d07fc29d5d9495893eea65251ebad0baba1 # python-devops-nix v1.8.0
     with:
       # Without the App: the workflows of the checks main requires ("flake", "build / Check"),
       # and pr-policy.
