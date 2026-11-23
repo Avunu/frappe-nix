@@ -552,7 +552,9 @@ diagnose_no_bench() {
 cmd_rename_site() {
   devenv up -D
   local port=""
-  for _ in $(seq 150); do
+  # The rename runs inside the runtime's start, behind the apps reconcile's site lock: on a
+  # loaded runner that takes minutes. 600 tries two seconds apart give it 20.
+  for _ in $(seq 600); do
     port="$(jq -r '.webserver_port // empty' "$FRAPPE_BENCH_ROOT/sites/common_site_config.json" 2> /dev/null || true)"
     if [ -n "$port" ] && web_up "$port"; then break; fi
     port=""

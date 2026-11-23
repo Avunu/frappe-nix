@@ -90,7 +90,8 @@ jobs:
   bench:
     name: ${{ matrix.suite }}
     runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || fromJSON('["self-hosted","nixos"]') }}
-    timeout-minutes: 120
+    # Passing runs took 26-83 min; on a loaded runner some ran past 120 and were cancelled at the cap.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
