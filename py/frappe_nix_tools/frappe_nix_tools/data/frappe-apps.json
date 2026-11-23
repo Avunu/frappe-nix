@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-16",
+ "generated": "2026-11-23",
  "sources": [
   "github.com/frappe/marketplace",
   "github.com/frappe"
@@ -267,6 +267,20 @@
    "logo": "https://cloud.frappe.io/files/builder_logo_hd.png",
    "listed": true,
    "releases": [
+    {
+     "version": "1.40.1",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "1.40.0",
+     "branch": "master",
+     "frappe_core": ">=15.121.3,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "1.39.0",
      "branch": "master",
@@ -660,6 +674,34 @@
    "listed": true,
    "releases": [
     {
+     "version": "16.3.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.2.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.1.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.0.4",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "16.0.3",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
@@ -684,9 +726,7 @@
      "version": "2.0.0-dev",
      "branch": "develop",
      "frappe_core": ">=16.0.0-dev,<=17.0.0-dev",
-     "dependencies": {
-      "whatsapp": ">=1.0.0-dev,<2.0.0"
-     },
+     "dependencies": {},
      "channel": "nightly"
     },
     {
@@ -1163,6 +1203,20 @@
      "channel": "nightly"
     },
     {
+     "version": "16.60.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.60.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "16.55.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.55.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "16.37.0",
      "branch": "version-16",
      "frappe_core": ">=16.21.0,<17.0.0",
@@ -1497,6 +1551,57 @@
     }
    ],
    "default_branch": "version-16",
+   "branches": [
+    "version-16"
+   ]
+  },
+  {
+   "name": "erpnext_rd",
+   "repo": "daniellora7/ERPNext-DR-Compliance",
+   "title": "RD Compliance",
+   "description": "Dominican Republic localization for ERPNext and Frappe HR: NCF and e-CF (DGII electronic invoicing), DGII tax reports, RNC registry and Dominican payroll",
+   "category": "Compliance",
+   "categories": [
+    "Compliance",
+    "Localization",
+    "Accounting",
+    "Human Resources"
+   ],
+   "stars": 0,
+   "website": "https://github.com/daniellora7/ERPNext-DR-Compliance",
+   "documentation": "https://github.com/daniellora7/ERPNext-DR-Compliance/blob/main/docs/GUIA-DE-USO.md",
+   "logo": "https://raw.githubusercontent.com/daniellora7/ERPNext-DR-Compliance/main/erpnext_rd/public/images/erpnext_rd_logo.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.5.5",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.5.2",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "0.5.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.0.0,<17.0.0"
+     },
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
    "branches": [
     "version-16"
    ]
@@ -1930,7 +2035,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 72,
+   "stars": 81,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -2312,6 +2417,27 @@
    "listed": true,
    "releases": [
     {
+     "version": "0.1.36",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.35",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.34",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0-dev",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "0.1.33",
      "branch": "develop",
      "frappe_core": ">=16.0.0-dev",
@@ -2646,6 +2772,33 @@
    "listed": true,
    "releases": [
     {
+     "version": "17.0.0-dev",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "nightly"
+    },
+    {
+     "version": "16.2.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
+     "version": "16.2.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {
+      "telephony": ">=0.0.1,<1.0.0"
+     },
+     "channel": "stable"
+    },
+    {
      "version": "16.1.0",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
@@ -2749,6 +2902,15 @@
      "channel": "nightly"
     },
     {
+     "version": "16.60.0",
+     "branch": "version-16",
+     "frappe_core": ">=16.60.0,<17.0.0",
+     "dependencies": {
+      "erpnext": ">=16.50.0,<17.0.0"
+     },
+     "channel": "stable"
+    },
+    {
      "version": "16.20.1",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
@@ -2829,7 +2991,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 29,
+   "stars": 31,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -3125,65 +3287,29 @@
    "listed": true,
    "releases": [
     {
-     "version": "16.1.1",
+     "version": "16.4.0",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
      "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
+      "payments": ">=0.0.1,<17.0.0"
      },
      "channel": "stable"
     },
     {
-     "version": "16.1.0",
+     "version": "16.3.0",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
      "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
+      "payments": ">=0.0.1,<17.0.0"
      },
      "channel": "stable"
     },
     {
-     "version": "16.0.0",
+     "version": "16.2.0",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
      "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
-     },
-     "channel": "stable"
-    },
-    {
-     "version": "2.69.0",
-     "branch": "main",
-     "frappe_core": ">=15.121.0,<17.0.0",
-     "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
-     },
-     "channel": "stable"
-    },
-    {
-     "version": "2.67.1",
-     "branch": "main",
-     "frappe_core": ">=15.121.0,<17.0.0",
-     "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
-     },
-     "channel": "stable"
-    },
-    {
-     "version": "2.67.0",
-     "branch": "main",
-     "frappe_core": ">=15.121.0,<17.0.0",
-     "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
-     },
-     "channel": "stable"
-    },
-    {
-     "version": "2.64.0",
-     "branch": "main",
-     "frappe_core": ">=15.121.0,<17.0.0",
-     "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
+      "payments": ">=0.0.1,<17.0.0"
      },
      "channel": "stable"
     },
@@ -3192,7 +3318,7 @@
      "branch": "develop",
      "frappe_core": ">=17.0.0-dev,<18.0.0",
      "dependencies": {
-      "payments": ">=0.0.1,<1.0.0"
+      "payments": ">=0.0.1,<18.0.0"
      },
      "channel": "nightly"
     }
@@ -3203,6 +3329,44 @@
     "version-15",
     "version-13",
     "version-1"
+   ]
+  },
+  {
+   "name": "login_studio",
+   "repo": "thinkspedia/login_studio",
+   "title": "Login Studio",
+   "description": "Professional, configurable and pluggable login page layouts for Frappe / ERPNext",
+   "category": "Extensions",
+   "categories": [
+    "Extension",
+    "Themes",
+    "Website"
+   ],
+   "stars": 0,
+   "website": "https://thinkspedia.id",
+   "documentation": "https://github.com/thinkspedia/login_studio#readme",
+   "logo": "https://raw.githubusercontent.com/thinkspedia/login_studio/version-16/login_studio/public/images/login-studio-logo.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.1.2",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "0.1.1",
+     "branch": "version-16",
+     "frappe_core": ">=15.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": [
+    "version-16",
+    "version-15"
    ]
   },
   {
@@ -3455,6 +3619,33 @@
    ]
   },
   {
+   "name": "nepali_calendar",
+   "repo": "photexnp/nepali_calendar",
+   "title": "Nepali Calendar",
+   "description": "Bikram Sambat (BS) dates for Frappe and ERPNext: BS date picker, BS dates in forms, lists, reports, calendar, prints and exports",
+   "category": "Utilities",
+   "categories": [
+    "Localization",
+    "Utilities"
+   ],
+   "stars": 0,
+   "website": "https://github.com/photexnp/nepali_calendar",
+   "documentation": "https://github.com/photexnp/nepali_calendar/blob/develop/README.md",
+   "logo": "https://raw.githubusercontent.com/photexnp/nepali_calendar/develop/nepali_calendar/public/images/logo.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.1.0",
+     "branch": "develop",
+     "frappe_core": ">=17.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
+  },
+  {
    "name": "newsletter",
    "repo": "frappe/newsletter",
    "title": "Newsletter",
@@ -3695,6 +3886,20 @@
    "listed": true,
    "releases": [
     {
+     "version": "16.0.1",
+     "branch": "version-16",
+     "frappe_core": ">=16.0.0,<17.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
+     "version": "15.0.1",
+     "branch": "version-15",
+     "frappe_core": ">=15.0.0,<16.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
+    {
      "version": "0.0.1",
      "branch": "version-16",
      "frappe_core": ">=16.0.0,<17.0.0",
@@ -3759,6 +3964,33 @@
    "branches": [
     "version-15"
    ]
+  },
+  {
+   "name": "pdf_forms",
+   "repo": "frappe/pdf_forms",
+   "title": "PDF Forms",
+   "description": "Fill any PDF form from your documents: map its fields once, print from Frappe",
+   "category": "Utilities",
+   "categories": [
+    "Utilities",
+    "Official"
+   ],
+   "stars": 0,
+   "website": "https://github.com/frappe/pdf_forms",
+   "documentation": "https://github.com/frappe/pdf_forms/blob/develop/README.md",
+   "logo": "https://raw.githubusercontent.com/frappe/pdf_forms/develop/pdf_forms/public/images/pdf-forms-logo-large.svg",
+   "listed": true,
+   "releases": [
+    {
+     "version": "0.0.1",
+     "branch": "develop",
+     "frappe_core": ">=16.0.0,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    }
+   ],
+   "default_branch": "develop",
+   "branches": []
   },
   {
    "name": "pdf_on_submit",
@@ -4048,7 +4280,7 @@
      "channel": "stable"
     }
    ],
-   "default_branch": "version-15-hotfix",
+   "default_branch": "version-16-hotfix",
    "branches": [
     "version-16",
     "version-15",
@@ -4596,7 +4828,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 8,
+   "stars": 9,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -4847,7 +5079,7 @@
    "categories": [
     "Official"
    ],
-   "stars": 212,
+   "stars": 214,
    "website": "",
    "documentation": "",
    "logo": "",
@@ -4876,6 +5108,13 @@
    "logo": null,
    "listed": true,
    "releases": [
+    {
+     "version": "1.3.0",
+     "branch": "main",
+     "frappe_core": ">=16.0.0-dev,<18.0.0",
+     "dependencies": {},
+     "channel": "stable"
+    },
     {
      "version": "1.1.1",
      "branch": "main",
