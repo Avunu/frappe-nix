@@ -35,6 +35,9 @@ let
 
   stubChromium = pkgs.writeShellScriptBin "chromium" "exit 0";
   stubWkhtmltopdf = pkgs.writeShellScriptBin "wkhtmltopdf" "exit 0";
+  # The default wkhtmltopdf: python-devops-nix's pdfkiln for this system. Named
+  # through plain below, so the check does not build it.
+  pdfkiln = self.inputs.python-devops-nix.packages.${pkgs.stdenv.hostPlatform.system}.pdfkiln;
 
   eval =
     renderers:
@@ -71,6 +74,8 @@ let
     lib.boolToString (
       lib.hasInfix (plain needle) (plain config.systemd.services."frappe-${site}".environment.PATH)
     );
+  # The site's runtime unit's value of an environment variable, "" when unset.
+  envOf = config: name: config.systemd.services."frappe-${site}".environment.${name} or "";
   # Whether every font the options promise is in fonts.packages.
   fontsOf =
     config:
@@ -97,6 +102,10 @@ let
     };
   };
   off = eval { };
+  # wkhtmltopdf on with the default package.
+  pdfOnly = eval {
+    wkhtmltopdf.enable = true;
+  };
 
   link = "chromium/chrome-linux/headless_shell";
 
@@ -134,7 +143,7 @@ in
       'ln -sfn ${lib.getExe stubChromium} "$FRAPPE_BENCH_ROOT/${link}"' ${benchOf chromium}
     lacks "common_site_config.json is left to the operator" "chromium_path" ${initOf chromium}
     is "Liberation and Noto are in fonts.packages" "${fontsOf chromium}" true
-    is "no wkhtmltopdf on the units' PATH" "${onPathOf chromium "wkhtmltopdf"}" false
+    is "no pdfkiln on the units' PATH" "${onPathOf chromium "${pdfkiln}/bin"}" false
 
     echo "wkhtmltopdf.enable = true:"
     is "the site's unit has it on PATH" "${onPathOf wkhtmltopdf "${stubWkhtmltopdf}/bin"}" true
@@ -142,12 +151,16 @@ in
     has "the bench wrapper puts it on PATH too" "${stubWkhtmltopdf}/bin" ${benchOf wkhtmltopdf}
     is "Liberation and Noto are in fonts.packages" "${fontsOf wkhtmltopdf}" true
     lacks "frappe-init makes no Chromium link" "chromium" ${initOf wkhtmltopdf}
+    is "the default package is python-devops-nix's pdfkiln" "${plain "${pdfOnly.services.frappe-nix.wkhtmltopdf.package}"}" "${plain "${pdfkiln}"}"
+    is "…and the site's unit has pdfkiln on PATH" "${onPathOf pdfOnly "${pdfkiln}/bin"}" true
+    is "…and its Chromium may write its crash reporter under the unit's /tmp" "${envOf wkhtmltopdf "XDG_CONFIG_HOME"}" "/tmp"
 
     echo "both off (the default):"
     lacks "frappe-init makes no link" "chromium" ${initOf off}
     lacks "the bench wrapper neither links nor adds anything" "chromium" ${benchOf off}
-    lacks "…" "${builtins.unsafeDiscardStringContext "${pkgs.wkhtmltopdf}"}/bin" ${benchOf off}
-    is "no wkhtmltopdf on the units' PATH" "${onPathOf off "wkhtmltopdf"}" false
+    lacks "…and no pdfkiln in the bench wrapper" "${plain "${pdfkiln}"}/bin" ${benchOf off}
+    is "no pdfkiln on the units' PATH" "${onPathOf off "${pdfkiln}/bin"}" false
+    is "no XDG_CONFIG_HOME set" "${envOf off "XDG_CONFIG_HOME"}" ""
     is "no fonts added" "${fontsOf off}" false
 
     echo "the dev shell (lib/chrome-headless-shell.nix):"

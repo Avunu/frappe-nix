@@ -36,6 +36,9 @@
         nodejs = builtBench.passthru.nodejs;
         appsPath = builtBench.passthru.appsPath "${builtBench}/bench";
 
+        # wkhtmltopdf: python-devops-nix's pdfkiln, a drop-in that renders with Chromium.
+        pdfkiln = inputs.python-devops-nix.packages.${pkgs.stdenv.hostPlatform.system}.pdfkiln;
+
         containerRuntimeDeps =
           with pkgs;
           [
@@ -48,7 +51,7 @@
             cacert
             file
             jq
-            wkhtmltopdf
+            pdfkiln
             chromium
             libjpeg
             libpng
