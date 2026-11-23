@@ -276,6 +276,19 @@ let
   ]
   ++ lib.optional (cfg.chromium.enable || cfg.wkhtmltopdf.enable) "chromium";
 
+  # The system call filter of a unit that renders PDFs: the chromium profile's
+  # (python-devops-nix), with the mount group added. Chromium's namespace
+  # sandbox chroots to /proc/self/fdinfo to drop its file-system access, and a
+  # refused chroot aborts the zygote (ChrootToSelfFdinfo, under
+  # Credentials::DropFileSystemAccess). chroot is in @mount, which
+  # @system-service lacks. Its namespace calls (unshare, setns, clone3) are
+  # already in @process, which @system-service has; systemd has no namespace
+  # group to add.
+  pdfSystemCallFilter = [
+    "@system-service"
+    "@mount"
+  ];
+
   # Only unix sockets: a unit that reaches nothing over TCP.
   unixOnly = [ "AF_UNIX" ];
 
@@ -902,7 +915,16 @@ let
             inherit role identifier;
             site = name;
           }
-          // harden { inherit readWritePaths profiles; }
+          // harden {
+            inherit readWritePaths profiles;
+            # A unit whose profiles name chromium renders PDFs: the runtime, the
+            # web (gunicorn) and the workers. The others keep the baseline. A
+            # default, like the baseline's keys, so a host can relax it on one
+            # unit without a conflict.
+            overrides = optionalAttrs (lib.elem "chromium" profiles) {
+              SystemCallFilter = lib.mkDefault pdfSystemCallFilter;
+            };
+          }
           // optionalAttrs (stopTimeout != null) {
             TimeoutStopSec = toString stopTimeout;
           }
@@ -1114,7 +1136,9 @@ let
         }
         # Runs Frappe code, so the profiles of the units that do (see
         # frappeProfiles: after_migrate regenerates the Website Theme with
-        # Node). The snapshots are under the site directory.
+        # Node). The snapshots are under the site directory. With chromium on
+        # it takes that profile, but not pdfSystemCallFilter: migrate renders
+        # no PDF.
         // harden {
           readWritePaths = [ siteCfg.siteDir ];
           profiles = frappeProfiles;

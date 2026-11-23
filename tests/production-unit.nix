@@ -8,6 +8,9 @@
 #     `chromium` when chromium or wkhtmltopdf (pdfkiln, which renders with
 #     Chromium) is on; socket.io `jit`; the scheduler and init none; init and
 #     the password sync only unix sockets;
+#   * the units that render PDFs (the runtime, gunicorn, the workers) add
+#     `@mount` to the filter, which Chromium's sandbox needs; migrate, which
+#     renders none, keeps the chromium profile's filter;
 #   * with hardening.enable = false no unit carries any of the sandbox;
 #   * no unit it defines has a UMask (frappe-nix#83);
 #   * a host can relax one key on one unit without a conflict;
@@ -100,6 +103,11 @@ let
       ProtectHome = "read-only";
       ReadWritePaths = [ "/srv/extra" ];
     };
+  };
+
+  # A host narrowing the filter of a PDF unit: the mount group is a default.
+  pdfRelaxed = eval { chromium.enable = true; } {
+    systemd.services."frappe-${site}".serviceConfig.SystemCallFilter = [ "@system-service" ];
   };
 
   # hardening.enable = false: no unit carries any of it.
@@ -225,8 +233,8 @@ let
       (key runtime "frappe-migrate-${site}" "RestrictAddressFamilies")
     ]
     [
-      "with chromium.enable, gunicorn may drop capabilities (capset)"
-      "@system-service"
+      "with chromium.enable, gunicorn may drop capabilities (capset) and chroot (Chromium's sandbox)"
+      "@system-service @mount"
       (key split "frappe-web-${site}" "SystemCallFilter")
     ]
     [
@@ -241,7 +249,7 @@ let
     ]
     [
       "a worker renders PDFs too"
-      "@system-service"
+      "@system-service @mount"
       (key split "frappe-worker-long-${site}" "SystemCallFilter")
     ]
     [
@@ -250,9 +258,19 @@ let
       (key pdfOnly "frappe-${site}" "RestrictNamespaces")
     ]
     [
+      "…and chroot, for Chromium's sandbox (pdfkiln renders with it on)"
+      "@system-service @mount"
+      (key pdfOnly "frappe-${site}" "SystemCallFilter")
+    ]
+    [
       "…and with no renderer it keeps the baseline"
       "true"
       (key runtime "frappe-${site}" "RestrictNamespaces")
+    ]
+    [
+      "migrate renders no PDF: it keeps the chromium profile's filter"
+      "@system-service"
+      (key split "frappe-migrate-${site}" "SystemCallFilter")
     ]
     [
       "the scheduler only enqueues: no JIT, no renderer"
@@ -282,6 +300,11 @@ let
       "…and its ReadWritePaths add to the site's"
       "/srv/extra ${siteDir}"
       (toString (lib.sort lib.lessThan (sc relaxed "frappe-${site}").ReadWritePaths))
+    ]
+    [
+      "…and on a PDF unit a host may drop the mount group, as a default"
+      "@system-service"
+      (key pdfRelaxed "frappe-${site}" "SystemCallFilter")
     ]
     [
       "environmentFiles reaches the runtime"

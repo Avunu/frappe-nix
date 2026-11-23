@@ -86,13 +86,13 @@ The service units start after, and require, their `frappe-init-<SITE>`. The modu
 
 ### The sandbox
 
-Every unit above runs under a systemd sandbox, the baseline frappe-nix shares with odoo-nix ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `lib.nixos.hardening`). The file system is read-only (`ProtectSystem=strict`) except for the site's directory, `siteDir`, which holds everything a Frappe process writes: the runtime bench tree with its `config/` and `logs/`, `sites/` and the migrate snapshots. `/run` stays writable, for the sockets. `/home` and `/root` are hidden, `/tmp` is private to each unit, and the units have no capabilities, cannot gain privileges, and run under a system call filter (`@system-service`, without `@privileged`).
+Every unit above runs under a systemd sandbox, the baseline frappe-nix shares with odoo-nix ([python-devops-nix](https://github.com/Avunu/python-devops-nix)'s `lib.nixos.hardening`). The file system is read-only (`ProtectSystem=strict`) except for the site's directory, `siteDir`, which holds everything a Frappe process writes: the runtime bench tree with its `config/` and `logs/`, `sites/` and the migrate snapshots. `/run` stays writable, for the sockets. `/home` and `/root` are hidden, `/tmp` is private to each unit, and the units have no capabilities, cannot gain privileges, and run under a system call filter (`@system-service`, without `@privileged`). The units that render PDFs also allow `@mount`, which Chromium's own sandbox needs to chroot.
 
 The baseline also refuses memory that is both writable and executable, which a just-in-time compiler needs, so a unit names what it runs:
 
 | Unit                                                   | Profile                                                                                                   |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` when you turn `chromium` or `wkhtmltopdf` on, since both render with Chromium |
+| `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` when you turn `chromium` or `wkhtmltopdf` on, since both render with Chromium. The runtime, the web and the workers, which render PDFs, also allow `@mount`; migrate does not |
 | `frappe-socketio-<SITE>`                               | `jit` (Node)                                                                                              |
 | `frappe-scheduler-<SITE>`, `frappe-init-<SITE>`, `frappe-db-password-<SITE>` | none; `frappe-init` and `frappe-db-password` also reach nothing but unix sockets  |
 
