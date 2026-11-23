@@ -29,9 +29,10 @@
 #     };
 #   };
 #
-# flake.nix applies this file to python-devops-nix's lib (lib.modules.importApply),
-# so it is nixosModules.default, not this path, that a host imports.
-{ base }:
+# flake.nix applies this file to python-devops-nix's lib and flake
+# (lib.modules.importApply), so it is nixosModules.default, not this path, that a
+# host imports.
+{ base, pythonDevopsNix }:
 {
   config,
   lib,
@@ -220,6 +221,14 @@ let
     // optionalAttrs (siteCfg.database.socket != "") {
       FRAPPE_DB_SOCKET = siteCfg.database.socket;
     }
+    // optionalAttrs cfg.wkhtmltopdf.enable {
+      # pdfkiln runs nixpkgs' full Chromium, whose crash reporter creates
+      # $XDG_CONFIG_HOME/chromium/Crash Reports and aborts when it cannot. A
+      # unit's home is read-only (ProtectSystem=strict), so this points it at the
+      # unit's own private /tmp. The chrome-headless-shell that chromium.enable
+      # links has no crash reporter, and does not need it.
+      XDG_CONFIG_HOME = "/tmp";
+    }
     // cfg.extraEnv;
 
   # The journald fields every unit this module defines carries, shared with
@@ -260,13 +269,12 @@ let
   # worker, migrate). `jit`: Frappe starts the bench's Node by bare name to
   # build a Website Theme's CSS (generate_bootstrap_theme.js, on saving a
   # theme and in after_migrate), and V8 aborts at start without W+X memory.
-  # The PDF renderers, when they are on: a print can render in a request or a
-  # job.
+  # `chromium` when a PDF renderer is on: a print can render in a request or a
+  # job, and wkhtmltopdf (pdfkiln) renders with Chromium too.
   frappeProfiles = [
     "jit"
   ]
-  ++ lib.optional cfg.chromium.enable "chromium"
-  ++ lib.optional cfg.wkhtmltopdf.enable "wkhtmltopdf";
+  ++ lib.optional (cfg.chromium.enable || cfg.wkhtmltopdf.enable) "chromium";
 
   # Only unix sockets: a unit that reaches nothing over TCP.
   unixOnly = [ "AF_UNIX" ];
@@ -324,9 +332,10 @@ let
   ++ wkhtmltopdfPath
   ++ cfg.extraPath;
 
-  # wkhtmltopdf, for print formats on Frappe's original PDF generator. Frappe
-  # runs it by bare name, through pdfkit, which finds it by running `which`
-  # first, so that has to be on PATH too. Unlike Chromium, nothing is linked.
+  # wkhtmltopdf (pdfkiln, by default), for print formats on Frappe's original
+  # PDF generator. Frappe runs it by bare name, through pdfkit, which finds it by
+  # running `which` first, so that has to be on PATH too. Unlike Chromium, nothing
+  # is linked: pdfkiln's wrapper runs the browser it was built with.
   wkhtmltopdfPath = lib.optionals cfg.wkhtmltopdf.enable [
     cfg.wkhtmltopdf.package
     pkgs.which
@@ -2157,17 +2166,19 @@ in
         wkhtmltopdf for PDFs: Frappe's "wkhtmltopdf" PDF generator, which is
         what the Standard print and every classic (HTML) print format render
         with unless they name another. Print-builder formats use Chromium or
-        Typst instead. Puts it on the units' PATH, with the `which` that pdfkit
+        Typst instead. It is pdfkiln, a wkhtmltopdf drop-in that renders with
+        Chromium. Puts it on the units' PATH, with the `which` that pdfkit
         finds it through, and adds the same fonts as chromium.enable. Off by
-        default because it adds about 200 MiB to the closure'';
+        default because its browser adds to the closure: nixpkgs' Chromium'';
 
       package = mkOption {
         type = types.package;
-        default = pkgs.wkhtmltopdf;
-        defaultText = lib.literalExpression "pkgs.wkhtmltopdf";
+        default = pythonDevopsNix.packages.${pkgs.stdenv.hostPlatform.system}.pdfkiln;
+        defaultText = lib.literalMD "`pdfkiln` from python-devops-nix, `packages.<system>.pdfkiln`";
         description = ''
-          The wkhtmltopdf the sites render PDFs with. Frappe's headers and
-          footers need a build "with patched qt", as nixpkgs' is.
+          The wkhtmltopdf the sites render PDFs with: pdfkiln, which renders
+          with nixpkgs' Chromium. It reports "with patched qt", which Frappe's
+          headers and footers need.
         '';
       };
     };

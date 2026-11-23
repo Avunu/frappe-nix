@@ -92,7 +92,7 @@ The baseline also refuses memory that is both writable and executable, which a j
 
 | Unit                                                   | Profile                                                                                                   |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` and `wkhtmltopdf` when you turn those on |
+| `frappe-<SITE>`, `frappe-web-<SITE>`, the workers, `frappe-migrate-<SITE>` | `jit`, because Frappe starts Node to build a Website Theme's CSS; plus `chromium` when you turn `chromium` or `wkhtmltopdf` on, since both render with Chromium |
 | `frappe-socketio-<SITE>`                               | `jit` (Node)                                                                                              |
 | `frappe-scheduler-<SITE>`, `frappe-init-<SITE>`, `frappe-db-password-<SITE>` | none; `frappe-init` and `frappe-db-password` also reach nothing but unix sockets  |
 
@@ -248,7 +248,7 @@ services.frappe-nix.chromium.enable = true;
 services.frappe-nix.wkhtmltopdf.enable = true;
 ```
 
-Both are off by default because of their size. Chromium adds about 0.5 GiB to the system closure with the fonts below, and wkhtmltopdf about 200 MiB.
+Both are off by default because of their size. Chromium adds about 0.5 GiB to the system closure with the fonts below, and wkhtmltopdf about 1.8 GiB, since pdfkiln runs nixpkgs' full Chromium on Linux.
 
 ### Chromium
 
@@ -259,7 +259,7 @@ Frappe and Print Designer look for the browser at `chromium/chrome-linux/headles
 
 ### wkhtmltopdf
 
-Frappe runs `wkhtmltopdf` by name, through pdfkit, which finds it with `which`. `wkhtmltopdf.enable` puts both on the units' `PATH` and on the `bench` wrapper's. nixpkgs' build is the one "with patched qt", which Frappe's PDF headers and footers need.
+Frappe runs `wkhtmltopdf` by name, through pdfkit, which finds it with `which`. `wkhtmltopdf.enable` puts both on the units' `PATH` and on the `bench` wrapper's. The command is pdfkiln from [python-devops-nix](https://github.com/Avunu/python-devops-nix), a wkhtmltopdf drop-in that renders with Chromium: nixpkgs' `chromium` on Linux, which is what this service runs. On darwin the dev shell uses nixpkgs' `google-chrome` instead, since nixpkgs has no `chromium` there. pdfkiln reports "with patched qt", which Frappe's PDF headers and footers need. Its Chromium needs a writable `XDG_CONFIG_HOME`, which the units set to their private `/tmp` while `wkhtmltopdf.enable` is on.
 
 ### Fonts
 

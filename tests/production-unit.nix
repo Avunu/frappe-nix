@@ -5,8 +5,9 @@
 #     defines runs under lib.nixos.hardening, writes only
 #     its site directory, and names the profile for what it runs: the Python
 #     units and migrate `jit` (Frappe starts Node for a Website Theme), plus
-#     `chromium` / `wkhtmltopdf` when those are on; socket.io `jit`; the
-#     scheduler and init none; init and the password sync only unix sockets;
+#     `chromium` when chromium or wkhtmltopdf (pdfkiln, which renders with
+#     Chromium) is on; socket.io `jit`; the scheduler and init none; init and
+#     the password sync only unix sockets;
 #   * with hardening.enable = false no unit carries any of the sandbox;
 #   * no unit it defines has a UMask (frappe-nix#83);
 #   * a host can relax one key on one unit without a conflict;
@@ -87,6 +88,10 @@ let
     wkhtmltopdf.enable = true;
     # A web socket alone in its directory: nginx only connects to it.
     sites.${site}.web.socketPath = "/run/frappe-web/web.sock";
+  } { };
+  # wkhtmltopdf alone: pdfkiln drives Chromium, so the runtime takes the chromium profile.
+  pdfOnly = eval {
+    wkhtmltopdf.enable = true;
   } { };
   # A host relaxing one key on one unit, as lib.nixos.hardening promises.
   relaxed = eval { } {
@@ -238,6 +243,16 @@ let
       "a worker renders PDFs too"
       "@system-service"
       (key split "frappe-worker-long-${site}" "SystemCallFilter")
+    ]
+    [
+      "wkhtmltopdf alone: the runtime takes the chromium profile (no namespace restriction)"
+      "false"
+      (key pdfOnly "frappe-${site}" "RestrictNamespaces")
+    ]
+    [
+      "…and with no renderer it keeps the baseline"
+      "true"
+      (key runtime "frappe-${site}" "RestrictNamespaces")
     ]
     [
       "the scheduler only enqueues: no JIT, no renderer"
