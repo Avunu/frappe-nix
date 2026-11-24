@@ -10,6 +10,8 @@ This page takes you from an empty directory to a running Frappe site. It uses th
 
 ## Prerequisites
 
+New to Nix, or setting up a new machine? Do [Get started with Nix-based development on a new host](https://avunu.net/kb/nixos/getting-started-nix-development/) first: it installs Nix, enables direnv and sets up VS Code for macOS, Windows (WSL) and NixOS.
+
 You need:
 
 - [Nix](https://nixos.org/download.html) with flakes enabled.
