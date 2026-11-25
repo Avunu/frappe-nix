@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import ClassVar
 from unittest import mock
 
+import yaml
 from frappe_nix_tools.scaffold import manifest
 from helpers import run_cli
 from scaffold_helpers import AppCase, git
@@ -659,6 +660,26 @@ class TestZizmorConfig(AppCase):
 		text = self.read(self.ZIZMOR)
 		self.assertTrue(text.startswith("# frappe-nix:managed"), text)
 		self.assertIn('"*": hash-pin', text)
+		# The built-in default lists no reusable workflow that may name a release tag (S37).
+		self.assertNotIn("ref-pin", text)
+
+
+class TestZizmorConfigReleaseTags(AppCase):
+	"""workflow-lint.release-tag-workflows becomes ref-pin policies; "*" stays hash-pin (§2.18)."""
+
+	extra_pyproject = (
+		"\n[tool.frappe-nix.workflow-lint]\nrelease-tag-workflows = "
+		'["example-org/docs-tool/.github/workflows/check-docs.yml", "example-org/gitops/*"]\n'
+	)
+
+	def test_listed_workflows_are_ref_pinned(self):
+		self.synced()
+		text = self.read(TestZizmorConfig.ZIZMOR)
+		self.assertIn('"*": hash-pin', text)
+		self.assertIn('"example-org/docs-tool/.github/workflows/check-docs.yml": ref-pin', text)
+		self.assertIn('"example-org/gitops/*": ref-pin', text)
+		policies = yaml.safe_load(text)["rules"]["unpinned-uses"]["config"]["policies"]
+		self.assertEqual(policies["example-org/gitops/*"], "ref-pin")
 
 
 class TestZizmorConfigNothingToAudit(AppCase):

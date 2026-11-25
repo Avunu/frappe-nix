@@ -1,10 +1,24 @@
+{% set tag_workflows = cfg["workflow-lint"]["release-tag-workflows"] %}
+{% if tag_workflows %}
+# Every `uses:` is hash-pinned with a version comment, except a call to one of the reusable
+# workflows listed under unpinned-uses (workflow-lint.release-tag-workflows), which may name its
+# exact release tag (vX.Y.Z). frappe-nix's lint gate (reusable-pins) refuses a branch in any
+# reusable call. dependabot moves third-party pins;
+{% else %}
 # Every `uses:` is hash-pinned with a version comment. dependabot moves third-party pins;
+{% endif %}
 # `frappe-init --sync` moves {{ frappe_nix.owner }}/{{ frappe_nix.name }}'s.
 rules:
   unpinned-uses:
     config:
       policies:
         "*": hash-pin
+{% if tag_workflows %}
+        # workflow-lint.release-tag-workflows. Steps and composite actions stay hash-pinned.
+{% for w in tag_workflows %}
+        {{ w | json_string }}: ref-pin
+{% endfor %}
+{% endif %}
   # Every dependabot entry needs a cooldown of at least dependabot.cooldown-days.
   dependabot-cooldown:
     config:
