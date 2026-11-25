@@ -66,7 +66,7 @@ from pathlib import Path
 
 import yaml
 
-from frappe_nix_tools.common import data_path, repo
+from frappe_nix_tools.common import data_path, repo, workflow_pins
 from frappe_nix_tools.common.appgates import AppConfig
 from frappe_nix_tools.common.appgates import load as load_app
 from frappe_nix_tools.common.pins import copy_tree, pin_path
@@ -258,6 +258,19 @@ def cooldowns(path: Path) -> tuple[str, str]:
 	return "ok", ""
 
 
+def reusable_pins(paths: list[Path], root: Path) -> tuple[str, str]:
+	"""Every reusable workflow call in PATHS is pinned as the convention allows: a full commit SHA,
+	or an Avunu workflow's exact release tag. A branch never is (``common.workflow_pins``)."""
+	found = [
+		line
+		for path in paths
+		for line in workflow_pins.findings(path.read_text(), str(path.relative_to(root)))
+	]
+	if found:
+		return "failed", "; ".join(found[:3]) + (" ..." if len(found) > 3 else "")
+	return "ok", ""
+
+
 def lint(g: Gate) -> None:
 	root, tracked = g.root, set(repo.ls_files(g.root))
 
@@ -275,6 +288,13 @@ def lint(g: Gate) -> None:
 		g.skip("dependabot-cooldown", "dependabot", ".github/dependabot.yml is not tracked")
 	else:
 		g.step("dependabot-cooldown", "dependabot", lambda: cooldowns(root / ".github" / "dependabot.yml"))
+
+	workflows = [
+		root / f
+		for f in sorted(tracked)
+		if f.startswith(".github/workflows/") and f.endswith((".yml", ".yaml"))
+	]
+	g.step("reusable-pins", "ci", lambda: reusable_pins(workflows, root))
 
 	has_tools = (root / "tools" / "pyproject.toml").is_file()
 	if ".pre-commit-config.yaml" not in tracked:

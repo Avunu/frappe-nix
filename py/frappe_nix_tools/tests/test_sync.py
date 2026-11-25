@@ -659,6 +659,9 @@ class TestZizmorConfig(AppCase):
 		text = self.read(self.ZIZMOR)
 		self.assertTrue(text.startswith("# frappe-nix:managed"), text)
 		self.assertIn('"*": hash-pin', text)
+		# The Avunu reusable workflows an app calls may name an exact release tag (ref-pin), not
+		# only the Avunu steps of a composite action (those stay hash-pinned under "*").
+		self.assertIn('"Avunu/site-docs/.github/workflows/check-docs.yml": ref-pin', text)
 
 
 class TestZizmorConfigNothingToAudit(AppCase):
