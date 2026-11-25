@@ -6,10 +6,13 @@ plan, provisioning's apps and port, and the configuration schema.
 """
 
 import contextlib
+import fcntl
 import io
 import json
 import os
+import signal
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import ClassVar
@@ -357,6 +360,81 @@ class TestReconcile(unittest.TestCase):
 		code, out = self.run_it(apps_config(), "nowhere.local")
 		self.assertEqual((code, self.calls), (0, []))
 		self.assertIn("sites/nowhere.local does not exist yet", out)
+
+	def test_a_copy_that_waits_for_the_holder_then_does_the_work(self):
+		lock = self.root / "sites/site.local/locks/reconcile-apps.lock"
+		lock.parent.mkdir(parents=True, exist_ok=True)
+		holder = open(lock, "w")
+		fcntl.flock(holder, fcntl.LOCK_EX)
+		timer = threading.Timer(0.5, holder.close)
+		timer.start()
+		self.addCleanup(timer.cancel)
+		with mock.patch.object(reconcile, "LOCK_POLL", 0.01):
+			code, out = self.run_it(apps_config(), "site.local")
+		self.assertEqual(code, 0)
+		self.assertEqual([c[4] for c in self.calls if c[3] == "install-app"], ["erpnext", "hrms"])
+		self.assertIn("is held by another copy; waiting for it", out)
+		self.assertIn("got site.local's reconcile lock after", out)
+
+	def test_a_waiting_copy_whose_starter_is_gone_does_no_work(self):
+		lock = self.root / "sites/site.local/locks/reconcile-apps.lock"
+		lock.parent.mkdir(parents=True, exist_ok=True)
+		holder = open(lock, "w")
+		self.addCleanup(holder.close)
+		fcntl.flock(holder, fcntl.LOCK_EX)
+		# The first getppid records the starter; the second passes the first check
+		# of the wait; after that the starter's pid is gone (the copy was reparented).
+		parents = iter([4242, 4242] + [1] * 1000)
+		with (
+			mock.patch.object(reconcile, "LOCK_POLL", 0.01),
+			mock.patch.object(reconcile.os, "getppid", side_effect=lambda: next(parents)),
+		):
+			code, out = self.run_it(apps_config(), "site.local")
+		self.assertEqual(code, reconcile.STOPPED)
+		self.assertEqual([c for c in self.calls if c[3] == "install-app"], [])
+		self.assertIn(
+			"stopped before waiting for site.local's reconcile lock: the process that started it is gone", out
+		)
+
+	def test_sigterm_lets_the_install_in_progress_finish_and_starts_no_more(self):
+		def attempt(cmd, cwd=None, env=None, quiet=False):
+			self.calls.append(list(cmd))
+			if cmd[3] == "install-app":
+				self.installed.append(cmd[4])
+				os.kill(os.getpid(), signal.SIGTERM)  # arrives while this install runs
+			return 0
+
+		self.attempt = attempt
+		code, out = self.run_it(apps_config(), "site.local")
+		self.assertEqual(code, reconcile.STOPPED)
+		self.assertEqual([c[4] for c in self.calls if c[3] == "install-app"], ["erpnext"])
+		self.assertIn("stopped before installing hrms: signal SIGTERM", out)
+
+	def test_a_waiting_copy_stops_when_the_process_above_its_starter_is_gone(self):
+		lock = self.root / "sites/site.local/locks/reconcile-apps.lock"
+		lock.parent.mkdir(parents=True, exist_ok=True)
+		holder = open(lock, "w")
+		self.addCleanup(holder.close)
+		fcntl.flock(holder, fcntl.LOCK_EX)
+		# The copy's parent stays 4242, its starter, which is still alive; the
+		# starter's own parent goes from 100 to init when the run above it is killed.
+		above = iter([100] + [1] * 1000)
+		with (
+			mock.patch.object(reconcile, "LOCK_POLL", 0.01),
+			mock.patch.object(reconcile.os, "getppid", return_value=4242),
+			mock.patch.object(reconcile, "_ppid", side_effect=lambda pid: next(above)),
+		):
+			code, out = self.run_it(apps_config(), "site.local")
+		self.assertEqual(code, reconcile.STOPPED)
+		self.assertEqual([c for c in self.calls if c[3] == "install-app"], [])
+		self.assertIn(
+			"stopped before waiting for site.local's reconcile lock: the process that started it is gone", out
+		)
+
+	@unittest.skipUnless(os.path.exists("/proc/self/stat"), "reads the parent from /proc")
+	def test_ppid_reads_the_parent_from_proc(self):
+		self.assertEqual(reconcile._ppid(os.getpid()), os.getppid())
+		self.assertIsNone(reconcile._ppid(-1))
 
 
 class TestRootSync(unittest.TestCase):
