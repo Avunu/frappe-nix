@@ -420,7 +420,14 @@ def provision(site: str, compose: Compose) -> bool:
 		env={**os.environ, "FRAPPE_SITE": site},
 		stdin_text="\n",
 	)
+	# A start runs each process's tasks first (the apps reconcile waits on the site lock,
+	# which takes minutes on a loaded runner): say when it begins and when it returns.
+	if stopped:
+		say(f"frappe-nix: starting {', '.join(stopped)}")
+	began = time.monotonic()
 	compose.start(stopped)
+	if stopped:
+		say(f"frappe-nix: started in {time.monotonic() - began:.0f} s")
 	return rc == 0
 
 
