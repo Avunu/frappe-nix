@@ -112,7 +112,8 @@
 			"when": "discover.github_workflows or modules.ci or modules['pilot-assets'] or modules.dependabot",
 			"header": "yaml",
 			"uses": [
-				"dependabot.cooldown-days"
+				"dependabot.cooldown-days",
+				"workflow-lint.release-tag-workflows"
 			]
 		}
 	]

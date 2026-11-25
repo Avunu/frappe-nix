@@ -1,26 +1,24 @@
-# Every `uses:` is hash-pinned with a version comment, except a call to one of the Avunu reusable
-# workflows listed under unpinned-uses, which may name its exact release tag (vX.Y.Z). frappe-nix's
-# lint gate (reusable-pins) refuses a branch in any reusable call. dependabot moves third-party pins;
+{% set tag_workflows = cfg["workflow-lint"]["release-tag-workflows"] %}
+{% if tag_workflows %}
+# Every `uses:` is hash-pinned with a version comment, except a call to one of the reusable
+# workflows listed under unpinned-uses (workflow-lint.release-tag-workflows), which may name its
+# exact release tag (vX.Y.Z). frappe-nix's lint gate (reusable-pins) refuses a branch in any
+# reusable call. dependabot moves third-party pins;
+{% else %}
+# Every `uses:` is hash-pinned with a version comment. dependabot moves third-party pins;
+{% endif %}
 # `frappe-init --sync` moves {{ frappe_nix.owner }}/{{ frappe_nix.name }}'s.
 rules:
   unpinned-uses:
     config:
       policies:
         "*": hash-pin
-        # The Avunu reusable workflows an app calls. Steps and composite actions stay hash-pinned.
-        "Avunu/site-docs/.github/workflows/check-docs.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-deps.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-lint.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-marketplace.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-nightly.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-pr-policy.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-release.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-test.yml": ref-pin
-        "Avunu/frappe-nix/.github/workflows/app-typecheck.yml": ref-pin
-        "Avunu/gitops/.github/workflows/dependabot-auto-merge.yml": ref-pin
-        "Avunu/gitops/.github/workflows/dependabot-update-branches.yml": ref-pin
-        "Avunu/python-devops-nix/.github/workflows/dependabot-auto-merge.yml": ref-pin
-        "Avunu/python-devops-nix/.github/workflows/dependabot-update-branches.yml": ref-pin
+{% if tag_workflows %}
+        # workflow-lint.release-tag-workflows. Steps and composite actions stay hash-pinned.
+{% for w in tag_workflows %}
+        {{ w | json_string }}: ref-pin
+{% endfor %}
+{% endif %}
   # Every dependabot entry needs a cooldown of at least dependabot.cooldown-days.
   dependabot-cooldown:
     config:

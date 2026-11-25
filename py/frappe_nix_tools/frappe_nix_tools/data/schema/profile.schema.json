@@ -1116,9 +1116,18 @@
             "type": "boolean",
             "default": false,
             "description": "Whether the module is on (spec \u00a78.2). A module is effectively on only when every module it needs is on too."
+          },
+          "release-tag-workflows": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "default": [],
+            "description": "Reusable workflows (zizmor unpinned-uses policy keys: owner/repo/.github/workflows/file.yml, or owner/repo/* or owner/*) whose `jobs.<id>.uses` call may name its exact release tag (vX.Y.Z) instead of a commit SHA. .github/zizmor.yml makes each a ref-pin, and the lint gate's reusable-pins step refuses a branch. An org's value: the built-in default is empty, so every call is SHA-pinned (spec \u00a72.18, S37)."
           }
         },
-        "description": "zizmor and actionlint hooks, .github/zizmor.yml."
+        "description": "zizmor and actionlint hooks, .github/zizmor.yml, and the reusable workflows whose call may name a release tag."
       },
       "shell-lint": {
         "type": "object",
