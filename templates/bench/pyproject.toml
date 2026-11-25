@@ -65,6 +65,7 @@ requires-dist = ["pypika"]
 # >>> frappe-nix: sdist build deps (managed) >>>
 "cairocffi" = ["setuptools", "cffi", "pycparser"]
 "frappe-runtime" = ["hatchling"]
+"watchdog" = ["setuptools"]
 # <<< frappe-nix: sdist build deps (managed) <<<
 
 # Managed by frappe-nix: `frappe-init`, `bench-get-app` and `bench-new-app` all

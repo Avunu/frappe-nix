@@ -35,6 +35,10 @@ let
     # is not enough: the backend is named again. A git source in a bench, so the
     # lock has no wheel for it and the derived entry would say setuptools.
     frappe-runtime = [ "hatchling" ];
+    # Wheels for every platform but macOS: 6.0.0 ships macOS wheels only up to
+    # cp313, so on Python 3.14 darwin builds the sdist, which uses setuptools
+    # without declaring it. The lock has wheels, so the derived entry omits it.
+    watchdog = [ "setuptools" ];
     # A cffi wrapper whose setup.py imports cffi; sdist-only on some locks.
     cairocffi = [
       "setuptools"
