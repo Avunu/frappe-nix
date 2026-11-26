@@ -78,4 +78,5 @@ frappe-branch = "version-16"
 "pypika" = ["setuptools"]
 "pyqrcode" = ["setuptools"]
 "rauth" = ["setuptools"]
+"watchdog" = ["setuptools"]
 # <<< frappe-nix: sdist build deps (managed) <<<

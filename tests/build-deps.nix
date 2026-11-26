@@ -82,6 +82,7 @@ let
     "docopt" = ["setuptools"]
     "frappe-runtime" = ["hatchling"]
     "jsonata" = ["setuptools", "pybind11"]
+    "watchdog" = ["setuptools"]
     # <<< frappe-nix: sdist build deps (managed) <<<
   '';
 in
