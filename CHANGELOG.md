@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.10.1](https://github.com/Avunu/frappe-nix/compare/v2.10.0...v2.10.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* **ci:** pin the docs check to site-docs v0.4.2, which raises its cap to 40 minutes ([#323](https://github.com/Avunu/frappe-nix/issues/323)) ([8f91d31](https://github.com/Avunu/frappe-nix/commit/8f91d310a9cec7483378534f528dace5c4ef4fc1))
+* **deps:** bump https://github.com/astral-sh/uv-pre-commit ([#318](https://github.com/Avunu/frappe-nix/issues/318)) ([132a1d1](https://github.com/Avunu/frappe-nix/commit/132a1d16ee5d9a06edf0626df2225171b2b2a156))
+* **deps:** give watchdog setuptools for its macOS sdist build ([#316](https://github.com/Avunu/frappe-nix/issues/316)) ([bf222d9](https://github.com/Avunu/frappe-nix/commit/bf222d9aa4f192edf738d78d606710c4ee02edb3))
+
 ## [2.10.0](https://github.com/Avunu/frappe-nix/compare/v2.9.2...v2.10.0) (2026-11-26)
 
 
